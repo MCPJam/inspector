@@ -1,8 +1,10 @@
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import { UIMessage } from "@ai-sdk/react";
 import { MessageCircle } from "lucide-react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 
+import { Button } from "@mcpjam/design-system/button";
+import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
 import type { RecorderProps } from "./recorder-types";
@@ -76,6 +78,23 @@ interface MessageViewProps {
    * sessionId + per-message id.
    */
   renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
+  /**
+   * When provided, user messages gain a pencil action that swaps the bubble
+   * for an inline editor. Saving rewinds the thread to this message and
+   * re-runs the turn from the edited text. Omit it (compare mode, read-only
+   * transcripts, surfaces with no history to rewind back to) and no edit
+   * affordance renders.
+   *
+   * `text` is ALL of the message's text parts joined with a blank line (see
+   * `extractEditableUserMessageText`), not just the first. The resulting send
+   * is a single `text` part, so a multi-part user message does not survive an
+   * edit as multiple parts — it round-trips as one. That is intentional: the
+   * text is what the user actually edited, and the join is reversible enough
+   * for the model.
+   */
+  onEditUserMessage?: (message: UIMessage, text: string) => void;
+  /** Blocks the edit affordance while a response is streaming. */
+  editDisabled?: boolean;
   /** Tier 3 recorder bundle, forwarded to the assistant tool PartSwitch. */
   recorder?: RecorderProps;
   /**
@@ -184,12 +203,184 @@ function areMessageViewPropsEqual(
     prev.claudeFooterMode === next.claudeFooterMode &&
     prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
+    prev.onEditUserMessage === next.onEditUserMessage &&
+    prev.editDisabled === next.editDisabled &&
     isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
     prev.showSenderAvatar === next.showSenderAvatar &&
     // Tier 3: arming/disarming recording flips the recorder bundle's identity;
     // without this the memo skips the re-render and recordMode never reaches
     // the widget (the recorder appears "unavailable").
     prev.recorder === next.recorder
+  );
+}
+
+/**
+ * Every text part of a user message, joined for the inline editor.
+ *
+ * Deliberately NOT `extractUserMessageText` (chat-helpers.ts): that helper
+ * returns only the *first* text part, which is fine for its callers (prompt
+ * previews) but would silently drop every part after the first here — the
+ * read-only bubble renders all of them, so the editor must round-trip all of
+ * them too, or saving an edit would discard part of the user's own message.
+ * Parts are joined with a blank line because the bubble renders each text
+ * part as its own block (`UserMessageBubble`'s `space-y-3`); a blank line
+ * preserves that separation instead of running unrelated parts together.
+ */
+function extractEditableUserMessageText(message: UIMessage): string {
+  const parts = (message.parts ?? []) as Array<{
+    type?: string;
+    text?: unknown;
+  }>;
+  return parts
+    .filter(
+      (part): part is { type: string; text: string } =>
+        part.type === "text" && typeof part.text === "string"
+    )
+    .map((part) => part.text)
+    .join("\n\n");
+}
+
+/**
+ * The user-side transcript row. Owns the inline-edit state locally so the host
+ * only has to supply a submit handler — nothing about "which message is being
+ * edited" has to cross a component boundary. File attachments stay rendered
+ * above the editor, since editing revises the text and keeps the files.
+ */
+function UserMessageRow({
+  message,
+  files,
+  bubble,
+  actions,
+  onEditUserMessage,
+  editDisabled,
+  senderAvatar,
+  showSenderAvatar,
+}: {
+  message: UIMessage;
+  files: React.ReactNode;
+  bubble: React.ReactNode;
+  actions: React.ReactNode;
+  onEditUserMessage?: (message: UIMessage, text: string) => void;
+  editDisabled: boolean;
+  senderAvatar?: ProjectThreadOwnerAvatar;
+  showSenderAvatar: boolean;
+}) {
+  const originalText = extractEditableUserMessageText(message);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(originalText);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Size the textarea to its content and drop the caret at the end on open,
+  // so a long prompt is fully visible and ready to append to.
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }, [editing]);
+
+  const startEditing = () => {
+    setDraft(originalText);
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    setDraft(originalText);
+  };
+
+  const submitEdit = () => {
+    // Guard here rather than only on the Send button: Enter reaches this too,
+    // and the parent returns early while `sendBlocked`. Closing the editor
+    // first would drop the draft with nothing to recover it from — reopening
+    // resets to `originalText`. Keep the editor open until sending is allowed.
+    if (editDisabled) return;
+    const next = draft.trim();
+    if (!next || next === originalText.trim()) {
+      cancelEditing();
+      return;
+    }
+    setEditing(false);
+    onEditUserMessage?.(message, next);
+  };
+
+  const showActionRow = Boolean(actions) || Boolean(onEditUserMessage);
+
+  return (
+    <div className="group/user-message flex w-full min-w-0 flex-col items-end gap-2">
+      {showSenderAvatar && senderAvatar ? (
+        <div className="flex max-w-[min(100%,48rem)] justify-end">
+          <SenderAvatar avatar={senderAvatar} />
+        </div>
+      ) : null}
+      {/* File attachments above the bubble */}
+      {files}
+      {editing ? (
+        <div className="flex w-full max-w-[min(100%,48rem)] flex-col gap-2">
+          <textarea
+            ref={textareaRef}
+            aria-label="Edit message"
+            value={draft}
+            rows={1}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              const textarea = event.currentTarget;
+              textarea.style.height = "auto";
+              textarea.style.height = `${textarea.scrollHeight}px`;
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                cancelEditing();
+                return;
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submitEdit();
+              }
+            }}
+            className="max-h-[50vh] w-full resize-none overflow-y-auto rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground outline-none focus-visible:border-ring"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={cancelEditing}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={submitEdit}
+              disabled={editDisabled}
+            >
+              Send
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Text and other parts inside the bubble */}
+          {bubble}
+          {showActionRow ? (
+            <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+              {onEditUserMessage ? (
+                <EditMessageAction
+                  onClick={startEditing}
+                  disabled={editDisabled}
+                />
+              ) : null}
+              {actions}
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -223,6 +414,8 @@ function MessageViewImpl({
   claudeFooterMode = "none",
   mcpjamFooterActive = false,
   renderUserMessageActions,
+  onEditUserMessage,
+  editDisabled = false,
   senderAvatar,
   showSenderAvatar = false,
   recorder,
@@ -253,89 +446,91 @@ function MessageViewImpl({
     const otherParts =
       message.parts?.filter((part) => part.type !== "file") ?? [];
 
+    const filesNode =
+      fileParts.length > 0 ? (
+        <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
+          {fileParts.map((part, i) => (
+            <PartSwitch
+              key={`file-${i}`}
+              part={part}
+              role={role}
+              chatSessionId={chatSessionId}
+              onSendFollowUp={onSendFollowUp}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              onWidgetStateChange={onWidgetStateChange}
+              onModelContextUpdate={onModelContextUpdate}
+              onAppToolInvocationChange={onAppToolInvocationChange}
+              pipWidgetId={pipWidgetId}
+              fullscreenWidgetId={fullscreenWidgetId}
+              onRequestPip={onRequestPip}
+              onExitPip={onExitPip}
+              onRequestFullscreen={onRequestFullscreen}
+              onExitFullscreen={onExitFullscreen}
+              onRequestTeardown={onRequestTeardown}
+              tornDownWidgetIds={tornDownWidgetIds}
+              displayMode={displayMode}
+              onDisplayModeChange={onDisplayModeChange}
+              toolRenderOverrides={toolRenderOverrides}
+              showInlineEdit={showInlineEdit}
+              minimalMode={minimalMode}
+              interactive={interactive}
+              reasoningDisplayMode={reasoningDisplayMode}
+              mcpToolResultImageRendering={mcpToolResultImageRendering}
+            />
+          ))}
+        </div>
+      ) : null;
+
+    const bubbleNode =
+      otherParts.length > 0 || fileParts.length === 0 ? (
+        <UserMessageBubble>
+          {otherParts.map((part, i) => (
+            <PartSwitch
+              key={i}
+              part={part}
+              role={role}
+              chatSessionId={chatSessionId}
+              onSendFollowUp={onSendFollowUp}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              onWidgetStateChange={onWidgetStateChange}
+              onModelContextUpdate={onModelContextUpdate}
+              onAppToolInvocationChange={onAppToolInvocationChange}
+              pipWidgetId={pipWidgetId}
+              fullscreenWidgetId={fullscreenWidgetId}
+              onRequestPip={onRequestPip}
+              onExitPip={onExitPip}
+              onRequestFullscreen={onRequestFullscreen}
+              onExitFullscreen={onExitFullscreen}
+              onRequestTeardown={onRequestTeardown}
+              tornDownWidgetIds={tornDownWidgetIds}
+              displayMode={displayMode}
+              onDisplayModeChange={onDisplayModeChange}
+              toolRenderOverrides={toolRenderOverrides}
+              showInlineEdit={showInlineEdit}
+              minimalMode={minimalMode}
+              interactive={interactive}
+              reasoningDisplayMode={reasoningDisplayMode}
+              mcpToolResultImageRendering={mcpToolResultImageRendering}
+            />
+          ))}
+        </UserMessageBubble>
+      ) : null;
+
     return (
-      <div className="group/user-message flex w-full min-w-0 flex-col items-end gap-2">
-        {showSenderAvatar && senderAvatar ? (
-          <div className="flex max-w-[min(100%,48rem)] justify-end">
-            <SenderAvatar avatar={senderAvatar} />
-          </div>
-        ) : null}
-        {/* File attachments above the bubble */}
-        {fileParts.length > 0 && (
-          <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
-            {fileParts.map((part, i) => (
-              <PartSwitch
-                key={`file-${i}`}
-                part={part}
-                role={role}
-                chatSessionId={chatSessionId}
-                onSendFollowUp={onSendFollowUp}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                onWidgetStateChange={onWidgetStateChange}
-                onModelContextUpdate={onModelContextUpdate}
-                onAppToolInvocationChange={onAppToolInvocationChange}
-                pipWidgetId={pipWidgetId}
-                fullscreenWidgetId={fullscreenWidgetId}
-                onRequestPip={onRequestPip}
-                onExitPip={onExitPip}
-                onRequestFullscreen={onRequestFullscreen}
-                onExitFullscreen={onExitFullscreen}
-                onRequestTeardown={onRequestTeardown}
-                tornDownWidgetIds={tornDownWidgetIds}
-                displayMode={displayMode}
-                onDisplayModeChange={onDisplayModeChange}
-                toolRenderOverrides={toolRenderOverrides}
-                showInlineEdit={showInlineEdit}
-                minimalMode={minimalMode}
-                interactive={interactive}
-                reasoningDisplayMode={reasoningDisplayMode}
-                mcpToolResultImageRendering={mcpToolResultImageRendering}
-              />
-            ))}
-          </div>
-        )}
-        {/* Text and other parts inside the bubble */}
-        {(otherParts.length > 0 || fileParts.length === 0) && (
-          <UserMessageBubble>
-            {otherParts.map((part, i) => (
-              <PartSwitch
-                key={i}
-                part={part}
-                role={role}
-                chatSessionId={chatSessionId}
-                onSendFollowUp={onSendFollowUp}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                onWidgetStateChange={onWidgetStateChange}
-                onModelContextUpdate={onModelContextUpdate}
-                onAppToolInvocationChange={onAppToolInvocationChange}
-                pipWidgetId={pipWidgetId}
-                fullscreenWidgetId={fullscreenWidgetId}
-                onRequestPip={onRequestPip}
-                onExitPip={onExitPip}
-                onRequestFullscreen={onRequestFullscreen}
-                onExitFullscreen={onExitFullscreen}
-                onRequestTeardown={onRequestTeardown}
-                tornDownWidgetIds={tornDownWidgetIds}
-                displayMode={displayMode}
-                onDisplayModeChange={onDisplayModeChange}
-                toolRenderOverrides={toolRenderOverrides}
-                showInlineEdit={showInlineEdit}
-                minimalMode={minimalMode}
-                interactive={interactive}
-                reasoningDisplayMode={reasoningDisplayMode}
-                mcpToolResultImageRendering={mcpToolResultImageRendering}
-              />
-            ))}
-          </UserMessageBubble>
-        )}
-        {renderUserMessageActions ? (
-          <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
-            {renderUserMessageActions(message)}
-          </div>
-        ) : null}
-      </div>
+      <UserMessageRow
+        message={message}
+        files={filesNode}
+        bubble={bubbleNode}
+        actions={
+          renderUserMessageActions ? renderUserMessageActions(message) : null
+        }
+        onEditUserMessage={onEditUserMessage}
+        editDisabled={editDisabled}
+        senderAvatar={senderAvatar}
+        showSenderAvatar={showSenderAvatar}
+      />
     );
   }
 

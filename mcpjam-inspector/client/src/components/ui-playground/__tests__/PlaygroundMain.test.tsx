@@ -24,11 +24,17 @@ vi.mock("framer-motion", async (importOriginal) => {
 });
 
 const mockThread = vi.fn();
+const mockChatInputProps = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockTraceViewer = vi.fn();
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
+// Convex auth is what decides whether chat history — and therefore the way back
+// from a branch — is reachable at all. Mutable so the edit/branch tests can
+// exercise both sides of that gate. Defaults to signed out, which is what every
+// other test in this file has always run as.
+const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
 
 // Mock lucide-react icons
 vi.mock("lucide-react", async (importOriginal) => ({
@@ -164,7 +170,7 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({
-    isAuthenticated: false,
+    isAuthenticated: mockConvexAuthState.isAuthenticated,
     isLoading: false,
   }),
   // `useHost` (and any other Convex-backed hook PlaygroundMain pulls in)
@@ -237,6 +243,7 @@ const mockUseChatSession = {
   tokenUsage: null,
   resetChat: vi.fn(),
   loadChatSession: vi.fn(async () => undefined),
+  rewindToMessage: vi.fn(),
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},
@@ -291,17 +298,43 @@ vi.mock("@/components/chat-v2/thread", () => ({
     messages,
     isLoading,
     loadingIndicatorVariant,
+    onEditUserMessage,
+    editDisabled,
   }: {
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
+    onEditUserMessage?: (message: any, text: string) => void;
+    editDisabled?: boolean;
   }) =>
     (() => {
-      mockThread({ messages, isLoading, loadingIndicatorVariant });
+      mockThread({
+        messages,
+        isLoading,
+        loadingIndicatorVariant,
+        onEditUserMessage,
+        editDisabled,
+      });
       return (
         <div data-testid="thread">
           <span data-testid="message-count">{messages.length}</span>
           {isLoading && <span data-testid="thread-loading">Loading...</span>}
+          {/* Stands in for the per-message edit affordance — mirrors the
+              "Edit first message" button in ChatTabV2's test suite. Only
+              rendered when the affordance isn't suppressed, same as the real
+              Thread/MessageView action row. */}
+          {onEditUserMessage && (
+            <button
+              type="button"
+              data-testid="edit-first-message"
+              disabled={editDisabled}
+              onClick={() =>
+                onEditUserMessage(messages[0], "Edited text should not leak")
+              }
+            >
+              Edit first message
+            </button>
+          )}
         </div>
       );
     })(),
@@ -309,19 +342,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
 
 // Mock ChatInput component
 vi.mock("@/components/chat-v2/chat-input", () => ({
-  ChatInput: ({
-    value,
-    onChange,
-    onSubmit,
-    disabled,
-    submitDisabled,
-    isLoading,
-    placeholder,
-    pulseSubmit,
-    clientSelector,
-    onChangeSkillResults,
-    skillResults,
-  }: {
+  ChatInput: (props: {
     value: string;
     onChange: (v: string) => void;
     onSubmit: (e: any) => void;
@@ -333,53 +354,75 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     clientSelector?: unknown;
     onChangeSkillResults?: (results: unknown[]) => void;
     skillResults?: unknown[];
-  }) => (
-    <form
-      data-testid="chat-input"
-      data-loading={isLoading ? "true" : "false"}
-      data-skill-count={skillResults?.length ?? 0}
-      data-client-selector={clientSelector ? "true" : "false"}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit(e);
-      }}
-    >
-      <input
-        data-testid="chat-input-field"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        placeholder={placeholder}
-      />
-      {/* Stands in for the composer's skill picker: attaching a skill is what
-          populates `skillResults`, and the injection rule only exists on that
-          path. */}
-      <button
-        type="button"
-        data-testid="chat-input-attach-skill"
-        onClick={() =>
-          onChangeSkillResults?.([
-            {
-              id: "skill-1",
-              skillId: "sk_1",
-              name: "release-notes",
-              content: "skill body",
-            },
-          ])
-        }
+    onModelSelectorOpenChange?: (open: boolean) => void;
+  }) => {
+    // Captures the FULL props object (not just the fields this stub renders)
+    // so tests can reach into props the rendered markup below never surfaces
+    // — e.g. `onModelSelectorOpenChange`, which drives the layout lock that
+    // keeps the single-pane Thread mounted across a compare-mode flip.
+    // Mirrors ChatTabV2.trace-views.test.tsx's `mockChatInput` pattern.
+    mockChatInputProps(props);
+    const {
+      value,
+      onChange,
+      onSubmit,
+      disabled,
+      submitDisabled,
+      isLoading,
+      placeholder,
+      pulseSubmit,
+      clientSelector,
+      onChangeSkillResults,
+      skillResults,
+    } = props;
+    return (
+      <form
+        data-testid="chat-input"
+        data-loading={isLoading ? "true" : "false"}
+        data-skill-count={skillResults?.length ?? 0}
+        data-client-selector={clientSelector ? "true" : "false"}
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit(e);
+        }}
       >
-        Attach skill
-      </button>
-      <button
-        type="submit"
-        disabled={disabled || !!submitDisabled}
-        data-testid="chat-submit-button"
-        data-pulsing={pulseSubmit ? "true" : "false"}
-      >
-        Send
-      </button>
-    </form>
-  ),
+        <input
+          data-testid="chat-input-field"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          placeholder={placeholder}
+        />
+        {/* Stands in for the composer's skill picker: attaching a skill is
+            what populates `skillResults`, and the injection rule only exists
+            on that path. */}
+        <button
+          type="button"
+          data-testid="chat-input-attach-skill"
+          onClick={() =>
+            onChangeSkillResults?.([
+              {
+                id: "skill-1",
+                skillId: "sk_1",
+                name: "release-notes",
+                content: "skill body",
+              },
+            ])
+          }
+        >
+          Attach skill
+        </button>
+        <button
+          type="submit"
+          disabled={disabled || !!submitDisabled}
+          data-testid="chat-submit-button"
+          data-pulsing={pulseSubmit ? "true" : "false"}
+        >
+          Send
+        </button>
+      </form>
+    );
+  },
 }));
 
 // Mock ErrorBox
@@ -629,6 +672,7 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mockConvexAuthState.isAuthenticated = false;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     mockGetChatHistoryDetail.mockReset();
@@ -671,8 +715,12 @@ describe("PlaygroundMain", () => {
       hasTraceSnapshot: false,
       hasLiveTimelineContent: false,
       traceViewsSupported: false,
+      // Fresh instance per test: a prior test's `mockResolvedValue` on the
+      // shared object would otherwise leak into the next one.
+      rewindToMessage: vi.fn(),
     });
     mockThread.mockClear();
+    mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
   });
@@ -996,6 +1044,256 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("thread-loading")).toBeInTheDocument();
+    });
+  });
+
+  describe("message edit and branch", () => {
+    beforeEach(() => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Original" }] },
+      ];
+      // The affordance requires reachable history (see the gating test at the
+      // end of this block), so these tests run signed in.
+      mockConvexAuthState.isAuthenticated = true;
+    });
+
+    afterEach(() => {
+      // The URL test below navigates; `window.location` is shared across tests.
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("rewinds on edit and tracks it", async () => {
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue({
+        previousChatSessionId: "prev-session-1",
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messageId: "1",
+            text: "Edited text should not leak",
+          }),
+        );
+      });
+
+      // The `edit_message` analytics only fires once `rewindToMessage` actually
+      // branched — it lives AFTER the `if (!outcome) return` guard in the
+      // handler, and this pins that. Nothing is shown to the user: the branch is
+      // deliberately silent, so analytics is the only observable effect left.
+      expect(track).toHaveBeenCalledWith("edit_message", {
+        location: "playground",
+        model_id: "gpt-4",
+        model_name: "GPT-4",
+        model_provider: "openai",
+      });
+    });
+
+    it("refuses silently when rewindToMessage resolves null: no analytics", async () => {
+      // `null` means the rewind was refused (a turn started in the gap after
+      // `ensureSelectedServerReadyForChat`'s round trip, or the message is
+      // gone). Nothing branched, so the `edit_message` event must not fire —
+      // this pins the ordering the review flagged: it sits AFTER
+      // `if (!outcome) return`, never before it.
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue(null);
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+
+      expect(track).not.toHaveBeenCalledWith(
+        "edit_message",
+        expect.anything(),
+      );
+    });
+
+    it("detaches from the resumed thread before the branch's turn is dispatched", async () => {
+      // The post-stream conflict check captures its baseline the instant the
+      // stream starts — and that happens INSIDE `rewindToMessage`, just after
+      // the branch is minted. Still attached to the ORIGINAL thread at that
+      // moment, the baseline names the original, the branch's completed stream
+      // is compared against it, and a deliberate branch surfaces as a phantom
+      // "this chat changed elsewhere" (which also re-forks, so the user's next
+      // message lands in a third session). Detaching therefore has to happen
+      // BEFORE the rewind is dispatched, which is what this asserts — the check
+      // runs from inside the rewind, since "after it returned" is already late.
+      // Deliberately does NOT seed `resumedVersion`: the handler clears it
+      // unconditionally, so seeding it would prove nothing here while leaking a
+      // mutation of the shared mock into later tests. The realistic
+      // resumed-thread path — rail attached, version 4, detaching to "none" —
+      // is covered in `ChatTabV2.history-sync.test.tsx`, whose mock reflects
+      // `syncResumedVersion` back onto `resumedVersion`. This pins the ordering.
+      mockUseChatSession.syncResumedVersion.mockClear();
+
+      let clearedBeforeRewind: boolean | undefined = undefined;
+      mockUseChatSession.rewindToMessage = vi.fn().mockImplementation(async () => {
+        clearedBeforeRewind =
+          mockUseChatSession.syncResumedVersion.mock.calls.some(
+            ([version]: [number | null]) => version === null,
+          );
+        return { previousChatSessionId: "prev-session-1" };
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      // Guard against a vacuous pass: nothing may have cleared it during the
+      // render, or "it was already null" would prove nothing about ordering.
+      expect(
+        mockUseChatSession.syncResumedVersion.mock.calls.some(
+          ([version]: [number | null]) => version === null,
+        ),
+      ).toBe(false);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+
+      expect(clearedBeforeRewind).toBe(true);
+    });
+
+    it("drops the original conversation from the URL when a rewind branches", async () => {
+      // Regression. Detaching from the resumed thread (the fix above) clears
+      // `activeHistorySessionId`, and that is one of the two guards holding the
+      // conversation-URL restore effect back:
+      //
+      //     if (activeHistorySessionId) return;
+      //     if (hasMessages) return;
+      //
+      // The other falls too when the user edits the FIRST message: the prefix
+      // before it is empty, so the branch is seeded with an empty transcript.
+      // With both guards down and `?conversation=` still naming the ORIGINAL,
+      // the restore effect refetched the original and reloaded it over the
+      // branch — the edit appeared to do nothing but show a toast.
+      //
+      // `onReset("fork")` deliberately does not clear the URL (auth-bootstrap
+      // re-mints are the SAME conversation and must keep it), so a branch has
+      // to say so itself — exactly as New Chat does via `onReset("reset")`.
+      //
+      // This asserts the fix's mechanism rather than replaying the empty-thread
+      // window, which the chat-session mock cannot produce: it never actually
+      // truncates the transcript.
+      const ORIGINAL_CONVERSATION_ID = "original-chat-session";
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`,
+      );
+      // The live session IS the one the URL names — the hook's stated invariant
+      // ("restored ⇔ chatSessionId === param"). Without this the sync effect
+      // overwrites the param with the mock's default id on the first render and
+      // the setup never reaches the state being tested.
+      mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue({
+        previousChatSessionId: ORIGINAL_CONVERSATION_ID,
+      });
+
+      render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+
+      // Guard against a vacuous pass: the param has to be there to be dropped.
+      expect(window.location.search).toContain(ORIGINAL_CONVERSATION_ID);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+
+      // Not "no param at all": once the branch's transcript has content the sync
+      // effect writes the BRANCH's id here. What must never survive is the
+      // original's, which is what the restore effect would act on.
+      await waitFor(() => {
+        expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
+      });
+    });
+
+    it("withholds the edit affordance when signed out, where there is no history to go back to", () => {
+      // The Playground ships in the desktop / `npx` build (it sits in the base
+      // navigation), and `PlaygroundLeftRail` renders `ChatHistoryRail` there
+      // with no `HOSTED_MODE` gate — but every path that would get the user
+      // back to a branched-away thread needs a bearer token: the rail's
+      // reactive Convex query, its signed-out REST fallback, and
+      // `/chat-history/detail`, which the branch notice calls to reopen the
+      // original. Signed out, editing would discard the original thread with
+      // no way back while promising "still in your history".
+      mockConvexAuthState.isAuthenticated = false;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.queryByTestId("edit-first-message"),
+      ).not.toBeInTheDocument();
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeUndefined();
+    });
+
+    it("suppresses the edit affordance when hideMessageEdit is set", () => {
+      render(<PlaygroundMain {...defaultProps} hideMessageEdit />);
+
+      expect(
+        screen.queryByTestId("edit-first-message"),
+      ).not.toBeInTheDocument();
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeUndefined();
+    });
+
+    it("suppresses the edit affordance when compare mode is live, independent of hideMessageEdit", async () => {
+      // `enableMultiModelChat` + 2 `availableModels` makes `canEnableMultiModel`
+      // true; flipping `multiModelEnabled` then makes `isCompareMode` true.
+      mockUseChatSession.availableModels = [
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+        {
+          id: "anthropic/claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+
+      // Sanity check: single-model mode, editing is available.
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeInstanceOf(Function);
+
+      // `useModelSelectorLayoutLock` keeps whichever surface was mounted when
+      // the model selector opens mounted through a subsequent mode flip (see
+      // ChatTabV2.trace-views.test.tsx's identical pattern), so opening it
+      // here keeps the single-pane Thread mounted even once compare mode
+      // goes live below — isolating the ternary's `isCompareMode` arm from
+      // the (separately-tested, and separately real) fact that compare mode
+      // normally unmounts Thread in favor of the multi-model card grid.
+      const chatInputProps = mockChatInputProps.mock.calls.at(-1)?.[0] as {
+        onModelSelectorOpenChange?: (open: boolean) => void;
+      };
+      act(() => {
+        chatInputProps.onModelSelectorOpenChange?.(true);
+      });
+
+      mockUseChatSession.multiModelEnabled = true;
+      rerender(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      // Confirms the lock actually held — Thread, not the compare grid, is
+      // still what's on screen. If this assertion fails, the test below it
+      // is meaningless (it would just be re-proving "compare mode unmounts
+      // Thread", not the ternary).
+      expect(screen.getByTestId("thread")).toBeInTheDocument();
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeUndefined();
     });
   });
 

@@ -407,7 +407,48 @@ export interface UseChatSessionReturn {
     metadata?: Record<string, unknown>;
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     widgetModelContext?: WidgetModelContextEntry[];
-  }) => void;
+    /**
+     * Resolves `true` once the message was actually dispatched, `false` on
+     * every fail-closed preflight path (server-id resolution failed, or the
+     * target/session changed while it was being prepared). Those paths surface
+     * their own toast and RESOLVE rather than reject, so awaiting alone cannot
+     * tell "sent" from "swallowed" — `rewindToMessage` needs the boolean to
+     * avoid treating a branch whose turn never ran as a success. Fire-and-forget
+     * callers can ignore it.
+     */
+  }) => Promise<boolean>;
+  /**
+   * Rewind to a past user message and re-run the turn from edited text.
+   *
+   * The thread BRANCHES rather than being overwritten: the original session
+   * keeps its full transcript and the edited thread continues under a fresh
+   * `chatSessionId`. Resolves to the previous session id so callers can offer a
+   * way back, or `null` when the rewind was refused, which happens for any of
+   * four reasons: a turn is in flight (`status` is `"submitted"` or
+   * `"streaming"` — a failed turn is deliberately allowed, since rewinding is
+   * how a user recovers from one); the message is no longer in the thread; or
+   * the branch's session id is not the live one by the time hydration
+   * resolves — a concurrent session change (`loadChatSession`/`resetChat`/
+   * fork) superseded it first, and the live id could be either the original
+   * (nothing else committed) or an unrelated third session (the interloper's
+   * own change won), neither of which is safe to send into; or the send itself
+   * failed closed after the branch was minted — `sendMessage`'s preflight
+   * (hosted server-id resolution, or the target/session changing under it)
+   * resolves `false` without dispatching, and an underlying throw is caught.
+   * The branch exists in that last case but its turn never ran, so callers
+   * must not report success.
+   */
+  rewindToMessage: (options: {
+    messageId: string;
+    text: string;
+    files?: Array<{
+      type: "file";
+      mediaType: string;
+      filename?: string;
+      url: string;
+    }>;
+    metadata?: Record<string, unknown>;
+  }) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -470,13 +511,25 @@ export interface UseChatSessionReturn {
 
   // Actions
   resetChat: () => void;
+  /**
+   * Mint a fresh `chatSessionId`, seed it with `messages`, and reset
+   * `resumedVersion` to null. Resolves once the seeded messages have been
+   * applied (the hydration `useLayoutEffect` has run) to the session id it
+   * minted — NOT necessarily the id that's live by the time it resolves: a
+   * concurrent session change (another `startChatWithMessages`/
+   * `loadChatSession`/`resetChat`/fork) can supersede this one first, in
+   * which case the live `chatSessionId` will differ from the resolved value.
+   * Callers that need to confirm their own branch actually went live (e.g.
+   * `rewindToMessage`) should compare the resolved id against the live one,
+   * not just treat resolution as success.
+   */
   startChatWithMessages: (
     messages: UIMessage[],
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     }
-  ) => Promise<void>;
+  ) => Promise<string>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -3283,7 +3336,13 @@ export function useChatSession(
         widgetModelContext && widgetModelContext.length > 0
           ? widgetModelContext
           : undefined;
-      return (async () => {
+      // Resolves `true` once `baseSendMessage` has actually been invoked, and
+      // `false` on every fail-closed path below. The preflight bails by
+      // RETURNING (after surfacing its own toast), not by rejecting, so a caller
+      // that merely awaits this promise cannot tell "sent" from "swallowed" —
+      // `rewindToMessage` needs that distinction to avoid announcing a branch
+      // whose turn never ran. Callers that fire-and-forget are unaffected.
+      return (async (): Promise<boolean> => {
         // Hosted preflight: resolve selected runtime server NAMES → persisted
         // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
         // transport body builds, so the hosted send never carries a display
@@ -3298,6 +3357,15 @@ export function useChatSession(
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
         const serverNamesSnapshot = selectedServers;
+        // Snapshot the session this message was composed against. `useChat` is
+        // wired to `proxyTransport`, which delegates at REQUEST time to
+        // `latestTransportRef.current` — reassigned every render — so the POST
+        // body carries whatever `chatSessionId` is live when it fires, not the
+        // one this send was bound to. That indirection is what makes
+        // `rewindToMessage`'s branch work; it also means a session change
+        // during the preflight below would post this turn under an unrelated
+        // session and ingest it into that transcript.
+        const sessionAtSend = chatSessionIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -3324,7 +3392,19 @@ export function useChatSession(
               toast.error(
                 "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
               );
-              return;
+              return false;
+            }
+            // Same class of guard, on the session rather than the target: the
+            // thread moved (new chat, a history thread, or a rewind branch)
+            // while this message was being prepared, so the POST would land in
+            // a transcript this message was never composed for. Fail closed.
+            if (chatSessionIdRef.current !== sessionAtSend) {
+              pendingWidgetModelContextRef.current = undefined;
+              resolvedHostedServersRef.current = null;
+              toast.error(
+                "The chat changed while this message was being prepared. Send it again to run it in the current thread."
+              );
+              return false;
             }
             resolvedHostedServersRef.current = {
               serverIds: resolved.map((r) => r.serverId),
@@ -3338,7 +3418,7 @@ export function useChatSession(
                 ? error.message
                 : "Couldn't prepare the selected servers for this run."
             );
-            return; // fail closed — do not send with unresolved servers
+            return false; // fail closed — do not send with unresolved servers
           }
         }
         try {
@@ -3353,6 +3433,7 @@ export function useChatSession(
           resolvedHostedServersRef.current = null;
           throw error;
         }
+        return true;
       })();
     },
     [
@@ -3364,6 +3445,26 @@ export function useChatSession(
       hostedRequiresWebChatApi,
     ]
   );
+
+  // `sendMessage` is NOT a stable function, and callers that cross an `await`
+  // must not hold onto it. `useChat` recreates its internal `Chat` whenever its
+  // `id` changes, and the `sendMessage` it returns is a per-instance arrow
+  // property bound to THAT instance's private message state. `baseSendMessage`
+  // is therefore a new identity after every session change, which propagates
+  // into this wrapper (it lists `baseSendMessage` in its deps).
+  //
+  // `rewindToMessage` awaits a session change and then sends. A closure-captured
+  // `sendMessage` would send on the PRE-branch instance: the POST body would
+  // carry the branch's `chatSessionId` (the transport proxy reads a ref) while
+  // `messages` came from the original, untruncated store — and the response
+  // would stream into a `Chat` nothing is rendering. Read it through this ref
+  // instead, like `messagesRef`/`statusRef`/`chatSessionIdRef`.
+  //
+  // Assigned during render (not in an effect) so it is already fresh by the
+  // time any layout effect — including the one that resolves session
+  // hydration — runs.
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
 
   // Reset chat
   const resetChat = useCallback(() => {
@@ -3401,21 +3502,149 @@ export function useChatSession(
       skipNextForkDetectionRef.current = true;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
-      // Return the hydration promise so callers can chain work that must run
-      // AFTER the seeded messages are applied (e.g. the eval handoff sending a
-      // widget's `ui/message` follow-up so the model replies to the seeded
-      // conversation). Existing callers ignore the return value.
+      // Resolve to the minted session id (not just a void hydration signal) so
+      // callers can chain work that must run AFTER the seeded messages are
+      // applied (e.g. the eval handoff sending a widget's `ui/message`
+      // follow-up so the model replies to the seeded conversation) AND, per
+      // `rewindToMessage`, so a caller can confirm ITS OWN id — not some
+      // superseding session change — is the one that actually went live.
+      // Existing callers that ignore the return value are unaffected.
+      const nextSessionId = generateId();
       const hydrationPromise = queueSessionHydration({
-        sessionId: generateId(),
+        sessionId: nextSessionId,
         messages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],
       });
       onResetRef.current?.(options?.resetReason ?? "fork");
-      return hydrationPromise;
+      return hydrationPromise.then(() => nextSessionId);
     },
     [queueSessionHydration]
+  );
+
+  /**
+   * Rewind to a past user message and re-run the turn from edited text.
+   *
+   * BRANCHES instead of overwriting. Every turn ships the COMPLETE history to a
+   * row keyed by `chatSessionId` (`server/utils/web-chat-turn.ts:845-849`,
+   * `server/utils/chat-ingestion.ts:403`), so rewinding in place would replace
+   * the original transcript with the truncated one — the messages would be gone
+   * from the backend, not just from this tab.
+   *
+   * `startChatWithMessages` does the work: it mints a fresh `chatSessionId`
+   * seeded with the prefix and resets `resumedVersion` to null, which drops
+   * `expectedVersion` from the branch's first ingest and makes a 409 on that
+   * write impossible.
+   *
+   * Deliberately does NOT pass `messageId` to the AI SDK. That mutates the Chat
+   * store directly, so the wrapped `setMessages` never runs and no branch is
+   * ever created.
+   *
+   * The `await` is load-bearing: the transport `body()` reads `chatSessionId`
+   * from render scope, so sending before hydration lands would write this
+   * turn to the ORIGINAL row.
+   *
+   * That await resolving is NOT proof the new id ever committed, though: a
+   * superseded hydration (`clearPendingSessionHydration`, triggered by a
+   * `loadChatSession`/`resetChat`/fork-detecting `setMessages` that lands
+   * first) resolves the same promise — but the live id it leaves behind can
+   * be either the ORIGINAL id (nothing else committed either) or some THIRD
+   * id (the interloper's own session change won the race). Neither is safe
+   * to send into: the first re-creates the original data-loss bug, the second
+   * silently contaminates a session that has nothing to do with this branch.
+   * `startChatWithMessages` now resolves to the id IT minted, so the
+   * post-await check below can require an EXACT match against the live id —
+   * not just "it changed from what it was" — and refuse either failure mode.
+   *
+   * Return value:
+   * - `{ previousChatSessionId }` — the branch is live AND the edited turn was
+   *   actually dispatched on it. Callers may report success and offer a way
+   *   back to `previousChatSessionId`.
+   * - `null` — nothing to report. Either no branch was created (refused
+   *   mid-stream, target message gone, or a concurrent session switch won the
+   *   race) or a branch was created but the send could NOT be dispatched — the
+   *   `sendMessage` preflight failed closed, having already surfaced its own
+   *   error toast. Callers must stay silent and must not touch bookkeeping.
+   */
+  const rewindToMessage = useCallback(
+    async (options: {
+      messageId: string;
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+      metadata?: Record<string, unknown>;
+    }): Promise<{ previousChatSessionId: string } | null> => {
+      // Refuse only mid-flight. A failed turn ("error") is deliberately
+      // allowed through — rewinding is the natural way to recover from one,
+      // and the prefix excludes the broken tail by construction.
+      if (
+        statusRef.current === "submitted" ||
+        statusRef.current === "streaming"
+      ) {
+        return null;
+      }
+
+      const targetIndex = messagesRef.current.findIndex(
+        (message) => message.id === options.messageId
+      );
+      if (targetIndex < 0) {
+        return null;
+      }
+
+      const previousChatSessionId = chatSessionIdRef.current;
+      const prefix = messagesRef.current.slice(0, targetIndex);
+
+      const branchSessionId = await startChatWithMessages(prefix, {
+        resetReason: "fork",
+      });
+
+      // An awaited resolve is not proof of commit: clearPendingSessionHydration
+      // resolves a SUPERSEDED hydration too. If anything switched sessions in
+      // that window, the live id is either still the original or some third
+      // session an interloper installed — sending into either corrupts a row
+      // that has nothing to do with this branch. Refuse instead.
+      if (chatSessionIdRef.current !== branchSessionId) {
+        return null;
+      }
+
+      // Read through the ref, NOT the closure: the `sendMessage` captured
+      // before the await belongs to the pre-branch `Chat` instance and would
+      // send the original untruncated history. See `sendMessageRef`.
+      // Awaited, not fire-and-forget. `sendMessage` runs its own async preflight
+      // (hosted server-id resolution) that can fail CLOSED — it surfaces its own
+      // toast and returns without ever calling `baseSendMessage` — and by then
+      // the branch has already been minted. Returning success before that
+      // settles gave the user "New branch created" plus a server-resolution
+      // error, sitting on a truncated prefix whose turn never ran and with the
+      // original detached: exactly the orphan branch the pre-mint readiness
+      // checks exist to prevent.
+      //
+      // Note the fail-closed paths RESOLVE rather than reject, so awaiting alone
+      // proves nothing — hence the boolean. The try/catch covers the remaining
+      // case where the underlying send throws, which would otherwise escape as
+      // an unhandled rejection.
+      let dispatched = false;
+      try {
+        dispatched = await sendMessageRef.current({
+          text: options.text,
+          files: options.files,
+          metadata: options.metadata,
+        });
+      } catch {
+        return null;
+      }
+      if (!dispatched) {
+        return null;
+      }
+
+      return { previousChatSessionId };
+    },
+    [startChatWithMessages]
   );
 
   const loadChatSession = useCallback(
@@ -3976,6 +4205,7 @@ export function useChatSession(
     // Chat state
     messages,
     setMessages,
+    rewindToMessage,
     sendMessage,
     stop: stopChat,
     status,

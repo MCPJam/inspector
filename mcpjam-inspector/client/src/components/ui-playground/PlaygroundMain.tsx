@@ -368,6 +368,8 @@ interface PlaygroundMainProps {
   // View-mode controls
   disableChatInput?: boolean;
   hideInlineEdit?: boolean;
+  /** Suppresses the per-user-message edit/branch affordance. */
+  hideMessageEdit?: boolean;
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
@@ -521,6 +523,7 @@ export function PlaygroundMain({
   onTimeZoneChange: _onTimeZoneChange,
   disableChatInput = false,
   hideInlineEdit = false,
+  hideMessageEdit = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   initialInputTypewriter = false,
@@ -879,6 +882,7 @@ export function PlaygroundMain({
     addToolApprovalResponse,
     isSessionBootstrapComplete,
     loadChatSession,
+    rewindToMessage,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -3803,6 +3807,115 @@ export function PlaygroundMain({
     await performComposerSubmit();
   };
 
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
+  // so the original transcript survives in history.
+  //
+  // Server readiness is checked BEFORE the branch is minted: a branch that
+  // never sends would leave an empty orphan thread behind.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return;
+      // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
+      // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
+      // try/FINALLY with no catch, so a rejected connect propagates straight
+      // out of this handler. `UserMessageRow.submitEdit` does not await it, so
+      // that surfaces as an unhandled rejection with the editor already closed.
+      let serverReady: boolean;
+      try {
+        serverReady = await ensureSelectedServerReadyForChat();
+      } catch (error) {
+        console.error(
+          "[PlaygroundMain] Failed to prepare the server for an edit",
+          error
+        );
+        toast.error("Couldn't prepare the server for that edit. Try again.");
+        return;
+      }
+      if (!serverReady) return;
+      // Detach from the resumed thread BEFORE the rewind, not after it returns.
+      // `rewindToMessage` mints the branch and dispatches its turn internally,
+      // and the post-stream conflict check captures its baseline the instant
+      // that turn starts. Still attached, the baseline names the ORIGINAL
+      // thread, the branch's completed stream is compared against it, and the
+      // deliberate branch surfaces as a phantom "this chat changed elsewhere" —
+      // which also re-forks, sending the next message to a third session.
+      //
+      // `cancelPendingHistorySelection` is load-bearing beyond the baseline: it
+      // clears `activeHistorySessionId`, which is what stops the reactive
+      // history effect from reloading the ORIGINAL transcript over the branch.
+      //
+      // These are the same three lines every other deliberate session change
+      // runs (`handleNewChat`, and `detachHistorySession` itself). They are NOT
+      // restored when the rewind is refused: both refusal causes — a turn
+      // started in the gap, or the target message is gone — mean the thread
+      // moved under us, so the resumed baseline is stale either way and
+      // continuing locally is the honest state.
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      // And the conversation has to leave the URL with it. Clearing
+      // `activeHistorySessionId` above removes one of the two guards holding the
+      // restore effect back (`use-playground-conversation-url.ts:233-234`); the
+      // other — `hasMessages` — falls too whenever the FIRST message is the one
+      // being edited, because the prefix before it is empty. With both down and
+      // `?conversation=` still naming the ORIGINAL, the restore refetched the
+      // original and reloaded it over the branch: the edit looked like it did
+      // nothing but raise a toast.
+      //
+      // `onReset("fork")` deliberately will not do this — an auth-bootstrap
+      // re-mint is the SAME conversation and must keep its id — so a branch says
+      // so here, the way New Chat does through `onReset("reset")`.
+      pendingRestoredModelRef.current = null;
+      clearConversationUrlRef.current();
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file"
+      );
+      // `rewindToMessage` guards its own send, but the branch mint ahead of it
+      // (`startChatWithMessages`) can still reject. `UserMessageRow.submitEdit`
+      // invokes this handler fire-and-forget, so a rejection escapes as an
+      // unhandled one and the user is left on a closed editor with no turn and
+      // no explanation. Refusal (`null`) stays silent; a throw does not.
+      let outcome: Awaited<ReturnType<typeof rewindToMessage>>;
+      try {
+        outcome = await rewindToMessage({
+          messageId: message.id,
+          text,
+          files: files.length > 0 ? files : undefined,
+          metadata: outgoingSenderMetadata,
+        });
+      } catch (error) {
+        console.error("[PlaygroundMain] Failed to rewind to message", error);
+        toast.error("Couldn't apply that edit. Try again.");
+        return;
+      }
+      // `null` means the rewind was refused — nothing branched, so say nothing.
+      if (!outcome) return;
+      track("edit_message", {
+        location: "playground",
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
+      // Nothing is announced. A rewind forks the session so the original
+      // transcript survives in the database, but that is deliberately invisible
+      // — same as Claude Code and Codex, where editing a message just edits it.
+      // This used to raise a "New branch created" toast with an "Open original"
+      // action; both were removed on the task author's call.
+    },
+    [
+      sendBlocked,
+      ensureSelectedServerReadyForChat,
+      cancelPendingHistorySelection,
+      syncResumedVersion,
+      rewindToMessage,
+      outgoingSenderMetadata,
+      selectedModel,
+    ]
+  );
+
   // Eval Quick Run: re-run the case in the live preview. Two phases so the send
   // never races the reset's `setMessages`:
   //   1. On a new `runPreviewRequest` nonce, reset the thread and mark a pending
@@ -4276,6 +4389,37 @@ export function PlaygroundMain({
                   effectiveMcpToolResultImageRendering
                 }
                 showInlineEdit={!hideInlineEdit}
+                // Also gated on `isConvexAuthenticated`, not just compare mode
+                // and the evals panel's opt-out. Editing seeds a fresh session
+                // with the prefix and leaves the original behind, and the whole
+                // justification for that is the original SURVIVING — persisted
+                // under its own row, which is what the task author asked for
+                // ("if a user decides to rewind messages we shouldn't delete
+                // them, from our db"). Signed out there is no row and no
+                // persistence: every path needs a bearer token (the reactive
+                // Convex query in `use-chat-history.ts`, and the REST fallback
+                // whose endpoint `assertBearerToken`s in
+                // `server/routes/web/chat-history.ts`). A rewind there is a
+                // purely destructive truncation — exactly what this feature
+                // exists to replace.
+                //
+                // NOTE: this gate was originally justified by "signed out there
+                // is no way back to the original". That reason no longer
+                // separates the two cases — the way back (the branch notice and
+                // its "Open original" action) was removed for everyone. The gate
+                // now rests only on persistence, which is a narrower but still
+                // sufficient reason. Worth a second look if the retention
+                // requirement ever changes.
+                //
+                // Keyed on auth rather than `HOSTED_MODE` or a project id: a
+                // signed-in desktop user persists through the same API, and a
+                // signed-in user with no project still gets personal history.
+                onEditUserMessage={
+                  isCompareMode || hideMessageEdit || !isConvexAuthenticated
+                    ? undefined
+                    : handleEditUserMessage
+                }
+                editDisabled={sendBlocked}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
