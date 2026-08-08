@@ -51,15 +51,20 @@ const JOURNEY_NODE: InsightsSelection = {
 vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
   ChatboxInsightsSankey: ({
     onSelectNode,
+    selection,
     stageTitles,
     headerActions,
   }: {
     onSelectNode: (selection: InsightsSelection) => void;
+    selection?: InsightsSelection | null;
     stageTitles?: Partial<Record<string, string>>;
     headerActions?: React.ReactNode;
   }) => (
     <>
       <span data-testid="goal-header">{stageTitles?.goal ?? "Goal"}</span>
+      <span data-testid="selected-themes">
+        {(selection?.themes ?? []).map((theme) => theme.clusterId).join(",")}
+      </span>
       {headerActions}
       <button type="button" onClick={() => onSelectNode(JOURNEY_NODE)}>
         pick journey theme
@@ -157,21 +162,61 @@ describe("SwarmInsightsPanel", () => {
     expect(breakdownChips).toEqual([]);
   });
 
-  it("fillViewport puts a capped top rail above the diagram and swaps it to the drill-down", async () => {
+  it("restores a URL selection and keeps it beside the Sankey", async () => {
+    render(
+      <SwarmInsightsPanel
+        projectId="proj-1"
+        fillViewport
+        urlSelection={[{ dimension: "goal", clusterId: "journey-1" }]}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-themes")).toHaveTextContent(
+        "journey-1",
+      ),
+    );
+    expect(screen.getByTestId("swarm-insights-drill-panel")).toBeInTheDocument();
+    expect(lastDrilldownCall().enabled !== false).toBe(true);
+  });
+
+  it("persists click and close changes, including Escape", async () => {
+    const user = userEvent.setup();
+    const onSelectionChange = vi.fn();
+    render(
+      <SwarmInsightsPanel
+        projectId="proj-1"
+        fillViewport
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+    expect(onSelectionChange).toHaveBeenLastCalledWith([
+      { dimension: "goal", clusterId: "journey-1", label: "Draw a diagram" },
+    ]);
+    await user.keyboard("{Escape}");
+    expect(onSelectionChange).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByTestId("swarm-insights-drill-panel")).toBeNull();
+  });
+
+  it("fillViewport keeps the statline and diagram visible beside the drill-down", async () => {
     const user = userEvent.setup();
     render(
-      <SwarmInsightsPanel projectId="proj-1" journeyRunIds={["run-a"]} fillViewport>
-        <div data-testid="idle-footer">findings</div>
-      </SwarmInsightsPanel>,
+      <SwarmInsightsPanel
+        projectId="proj-1"
+        journeyRunIds={["run-a"]}
+        fillViewport
+      />,
     );
     const panel = screen.getByTestId("swarm-insights-panel");
     expect(panel.className).toContain("flex-col");
-    const rail = screen.getByTestId("swarm-insights-rail");
-    expect(rail.className).toContain("max-h-[40%]");
-    expect(rail.className).toContain("sm:flex-row");
-    expect(screen.getByTestId("idle-footer")).toBeInTheDocument();
+    expect(screen.getByTestId("swarm-insights-statline")).toBeInTheDocument();
+    expect(screen.queryByTestId("swarm-insights-rail")).toBeNull();
+    expect(screen.getByTestId("goal-header")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));
-    expect(screen.queryByTestId("idle-footer")).toBeNull();
+    expect(screen.getByTestId("swarm-insights-drill-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("goal-header")).toBeInTheDocument();
     expect(lastDrilldownCall().enabled !== false).toBe(true);
   });
 

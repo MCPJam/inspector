@@ -183,3 +183,60 @@ describe("EnvironmentPicker — archived rows stay detach-only", () => {
     expect(onChange).toHaveBeenCalledWith([]);
   });
 });
+
+/**
+ * Ad-hoc rows are machine-minted from a swarm composition and carry no name.
+ * They are the reason the picker fetches them at all: a journey's
+ * `environmentIds` can point at one, so the trigger has to be able to NAME what
+ * is selected — while never letting anyone pick one.
+ */
+describe("EnvironmentPicker — ad-hoc rows", () => {
+  const adhoc = (id: string) =>
+    env(id, undefined as unknown as string, { origin: "adhoc" });
+
+  it("never offers an ad-hoc row for selection", () => {
+    mockEnvironments.value = [env("env_1", "Staging"), adhoc("env_adhoc")];
+    render(
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    // The named row is offerable…
+    expect(screen.getByLabelText("Staging")).toBeInTheDocument();
+    // …and the ad-hoc one is absent from the list entirely.
+    expect(screen.queryByLabelText("Automatic environment")).toBeNull();
+  });
+
+  it("still labels a SELECTED ad-hoc row rather than showing the orphan ellipsis", () => {
+    mockEnvironments.value = [env("env_1", "Staging"), adhoc("env_adhoc")];
+    render(
+      <EnvironmentPicker
+        projectId="p_1"
+        value={["env_adhoc"]}
+        onChange={vi.fn()}
+        multi
+        triggerTestId="picker"
+      />
+    );
+    // "…" is reserved for an id NO row resolves. An ad-hoc row resolves — it
+    // just has no name — so it must read as a real thing.
+    expect(screen.getByTestId("picker")).toHaveTextContent(
+      "Automatic environment"
+    );
+    expect(screen.getByTestId("picker")).not.toHaveTextContent("…");
+  });
+
+  it("treats a row with no origin and no name as ad-hoc, not as a blank label", () => {
+    // Skew: a backend mid-rollout may omit `origin`. Name-presence decides.
+    mockEnvironments.value = [
+      env("env_x", undefined as unknown as string),
+      env("env_1", "Staging"),
+    ];
+    render(
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByLabelText("Staging")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Automatic environment")).toBeNull();
+  });
+});

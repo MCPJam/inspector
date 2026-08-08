@@ -683,12 +683,10 @@ export function groupSwarmSessionsByGoal(
 /**
  * `chatSessionPromote:getChatSessionPromoteDetail` result — the promote
  * dialog's session-servers detail for any promotable sourceType.
- * `usedServerIds` is derived server-side from the stored transcript;
- * `hostId` is the session row's authoritative host attribution (used to
- * pre-seed the new-suite client attachment). The action THROWS on
- * unauthorized access, non-promotable sourceTypes, incomplete swarm run
- * attempts, and unreadable transcripts — adapters surface that as the
- * dialog's detail error.
+ * `usedServerIds` is derived server-side from the stored transcript. The
+ * action THROWS on unauthorized access, non-promotable sourceTypes,
+ * incomplete swarm run attempts, and unreadable transcripts — adapters
+ * surface that as the dialog's detail error.
  */
 export interface SwarmSessionPromoteDetail {
   sessionId: string;
@@ -700,7 +698,26 @@ export interface SwarmSessionPromoteDetail {
   messageCount: number;
   usedServerIds: string[];
   selectedServers: string[];
+  /**
+   * The session row's recorded host attribution. Display/compat — prefer
+   * `suggestedHostAttachment.namedHostId` when seeding, because on
+   * environment-backed chatboxes this records the PUBLISH-TIME host while
+   * the environment may since have been re-pointed.
+   */
   hostId: string | null;
+  /**
+   * Backend-resolved attachment for the new-suite branch: the host the
+   * session actually executes against plus its server set, already
+   * environment-aware. Null when the session has no id-shaped selection to
+   * donate (transcript-name surfaces), when its host is outside the suite's
+   * project, or when the selection is empty. Optional on the wire so the
+   * client keeps working against a backend that predates the field.
+   */
+  suggestedHostAttachment?: {
+    namedHostId: string;
+    selectedServerIds: string[];
+    serverNames: string[];
+  } | null;
 }
 
 /**
