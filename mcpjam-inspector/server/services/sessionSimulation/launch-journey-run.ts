@@ -266,9 +266,25 @@ export async function launchJourneyRun(
       err.status >= 400 &&
       err.status < 500
     ) {
+      // Keep the backend's MEANING, not just its status. Collapsing every 4xx
+      // to VALIDATION_ERROR tells a caller that branches on `code` to go fix
+      // its request — which is wrong advice for a launch refused on
+      // permissions, aimed at a journey that does not exist, or replaying a
+      // key that conflicts. The status was already distinct; the code should
+      // be too. Anything else 4xx really is "your request was not acceptable".
+      const code =
+        err.status === 401
+          ? ErrorCode.UNAUTHORIZED
+          : err.status === 403
+            ? ErrorCode.FORBIDDEN
+            : err.status === 404
+              ? ErrorCode.NOT_FOUND
+              : err.status === 409
+                ? ErrorCode.CONFLICT
+                : ErrorCode.VALIDATION_ERROR;
       throw new WebRouteError(
         err.status,
-        ErrorCode.VALIDATION_ERROR,
+        code,
         err.bodyText || "This journey can't be launched."
       );
     }
@@ -308,27 +324,16 @@ export async function launchJourneyRun(
   }
   const hosts = snapshot.hosts;
 
-  // Resolve the MCPJam test-IdP issuer NOW, while the request `Context` is
-  // still live (it reads `x-forwarded-proto` off `c`). `createAuthorized
-  // Manager` fails closed for a `useXaa` server unless `options.xaaIssuer`
-  // is present, so a pinned host with a Cross-App-Access server would 500 in
-  // the manager factory without this. Resolved eagerly and captured so the
-  // fire-and-forget factory (which runs after the 202) doesn't depend on a
-  // possibly-finalized Context.
-  const xaaIssuer = deps.xaaIssuer;
-
-  // One client for the run's D2 re-gates, built LAZILY on first use.
-  // `managerFactory` runs once per SESSION attempt, so constructing per
-  // call would be wasteful — but constructing EAGERLY here is worse:
-  // `createConvexClient` throws when `CONVEX_URL` is unset, and we are past
-  // `createJourneyRun`, where any throw orphans a durable run with no
-  // runner (see the comment above). Memoized thunk gets both: at most one
-  // client per run, and none at all for a journey that pins no plugins.
-  // NOT memoized across the run any more, only within one session's
-  // re-gate: the client bakes its auth token in at construction, so a
-  // whole-run singleton would carry the launch-time bearer for hours. The
-  // per-session cost is one client object; the alternative was a re-gate
-  // that starts 401ing partway through a long fan-out.
+  // Client for the run's D2 re-gates. Constructed PER CALL and deliberately
+  // not memoized: a client bakes its auth token in at construction, so a
+  // whole-run singleton would carry the launch-time bearer for hours and start
+  // 401ing partway through a long fan-out. The cost is one client object per
+  // session; the alternative was a re-gate that stops working mid-run.
+  //
+  // Lazy for a second reason: `createConvexClient` throws when `CONVEX_URL` is
+  // unset, and we are past `createJourneyRun` — a throw here would orphan a
+  // durable run row with no runner. A journey that pins no plugins never calls
+  // this at all.
   const getPluginRegateClient = async () =>
     createConvexClient(await deps.getRunBearer());
 
@@ -410,7 +415,7 @@ export async function launchJourneyRun(
             accessScope: "project_member",
             // XAA servers fail closed without the issuer; resolved above
             // from the live request Context.
-            xaaIssuer,
+            xaaIssuer: deps.xaaIssuer,
             // Enterprise-managed policy from the PINNED host snapshot
             // (server-side, mcpProfile copied verbatim at run-create) —
             // the run reproduces the snapshot's policy, and an invalid

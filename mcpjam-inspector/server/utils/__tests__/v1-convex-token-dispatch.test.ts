@@ -52,7 +52,11 @@ beforeEach(() => {
         JSON.stringify({
           ok: true,
           token: "delegated-jwt",
-          expiresAt: Date.now() + 60_000,
+          // TWO HOURS, not a minute. The cache treats anything inside
+          // `EXPIRY_SLACK_MS` (10 min) as due for refresh, so a short-lived
+          // mock would re-mint on every call and the test would never exercise
+          // the cached hit that the thunk exists to make cheap.
+          expiresAt: Date.now() + 2 * 60 * 60 * 1000,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       )
@@ -110,6 +114,10 @@ describe("v1 Convex bearer dispatch", () => {
     // Both entry points, one answer. This is the assertion that fails if the
     // two dispatches ever drift.
     expect(thunk).toBe(direct);
+    // Proves the delegated path was actually TAKEN. Without this the test
+    // passes if some future branch returns the right-looking string without
+    // exchanging anything. Exactly once: the second call is a cache hit.
+    expect(mintFetch).toHaveBeenCalledTimes(1);
   });
 
   it("forwards the caller's own bearer when the method is NOT delegated", async () => {

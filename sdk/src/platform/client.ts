@@ -1213,17 +1213,6 @@ export class PlatformApiClient {
   }
 
   /**
-   * Stop a running journey run.
-   *
-   * Idempotent: cancelling an already-cancelled run succeeds with
-   * `alreadyCanceled: true` rather than conflicting. A run that finished on
-   * its own is a 409 — reporting success there would tell you that you stopped
-   * something that had already completed.
-   *
-   * NOT behind the beta flag, unlike launching: stopping a run must keep
-   * working for an organization that has lost it.
-   */
-  /**
    * Launch a journey. Returns as soon as the run exists — **202**, not a
    * finished run: a fan-out can take hours, so poll `getJourneyRun` or watch
    * `listJourneyRunSessions`.
@@ -1263,6 +1252,17 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * Stop a running journey run.
+   *
+   * Idempotent: cancelling an already-cancelled run succeeds with
+   * `alreadyCanceled: true` rather than conflicting. A run that finished on
+   * its own is a 409 — reporting success there would tell you that you stopped
+   * something that had already completed.
+   *
+   * NOT behind the beta flag, unlike launching: stopping a run must keep
+   * working for an organization that has lost it.
+   */
   cancelJourneyRun(
     params: { projectId: string; runId: string },
     options?: RequestOptions

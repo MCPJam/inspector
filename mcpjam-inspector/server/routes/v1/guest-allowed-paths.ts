@@ -71,6 +71,9 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // the stated intent rather than widening it.
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/,
+    // GET-only: a read is what earned this rule, and a method-less entry would
+    // hand a guest any future mutation added at the same URL for free.
+    methods: ["GET"],
   },
   { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
   { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },

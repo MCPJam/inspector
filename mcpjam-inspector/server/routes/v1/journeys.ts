@@ -329,7 +329,15 @@ const launchBodySchema = z.object({
    * (live, in-project, duplicate-free, capped) inside the launch transaction,
    * because only it can see the project's environments.
    */
-  environmentIds: z.array(z.string().min(1)).optional(),
+  environmentIds: z
+    .array(z.string().min(1))
+    // NON-EMPTY when present. `[]` is a caller saying "fan out across these",
+    // naming none — and the route would have dropped it and launched the
+    // journey's AUTHORED targets instead. Silently running something other
+    // than what was asked for is bad anywhere; on an operation that spends, it
+    // is worse. Omit the field to mean "as authored".
+    .min(1, "environmentIds must name at least one environment")
+    .optional(),
 });
 
 /**
@@ -359,32 +367,38 @@ async function readOptionalJsonBody(c: {
 /**
  * Assert `journeyId` belongs to `projectId`, and return it.
  *
- * There is no `journeys:getJourney` by id, so this reads the project's list —
- * which is the authoritative, membership-checked answer to "is this journey in
- * this project" and costs one query. A journey in another project (even one
- * the caller can see) is a 404.
+ * `journeys:getJourney` takes BOTH ids and asserts the scope itself, next to
+ * the membership check. This used to list the project's journeys and scan for
+ * the id — the list-and-scan gateway preflight the v1 README calls out, which
+ * costs a full read per request and, worse, puts the scope rule in the gateway
+ * where it has to be re-derived for every resource. It belongs in one place,
+ * and that place is Convex.
+ *
+ * Convex answers `null` for a journey in ANOTHER project, identical to one
+ * that does not exist — so this 404s without ever being an existence oracle
+ * for a project the caller cannot see.
  */
 async function requireJourneyInProject(
   client: ConvexHttpClient,
   projectId: string,
   journeyId: string
 ): Promise<JourneyRow> {
-  let rows: JourneyRow[] | null;
+  let row: JourneyRow | null;
   try {
-    rows = (await client.query(
-      "journeys:listJourneysByProject" as never,
+    row = (await client.query(
+      "journeys:getJourney" as never,
       {
         projectId,
+        journeyRefId: journeyId,
       } as never
-    )) as JourneyRow[] | null;
+    )) as JourneyRow | null;
   } catch (error) {
     throw translateReadError(error);
   }
-  const found = (rows ?? []).find((row) => String(row._id) === journeyId);
-  if (!found) {
+  if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Journey not found");
   }
-  return found;
+  return row;
 }
 
 /** Assert `runId` belongs to `projectId`, and return it. */
@@ -586,7 +600,11 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
   await requireJourneyInProject(client, projectId, journeyId);
 
   const body = await readOptionalJsonBody(c);
-  const parsed = launchBodySchema.safeParse(body ?? {});
+  // `body === undefined` is "no body at all", which is the common case and
+  // means "as authored". An explicit `null` is NOT that — it is a malformed
+  // client, and `?? {}` would have quietly turned it into a launch with every
+  // option discarded. Let the schema reject it.
+  const parsed = launchBodySchema.safeParse(body === undefined ? {} : body);
   if (!parsed.success) {
     throw new WebRouteError(
       400,

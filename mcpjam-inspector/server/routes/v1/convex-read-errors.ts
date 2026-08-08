@@ -61,6 +61,36 @@ export function classifyConvexReadError(error: unknown): ConvexReadFailure {
  * it, and request ids that mean nothing to a caller and are a free read of our
  * internals to anyone else. The detail goes to the log instead.
  */
+/**
+ * What we are willing to put in a log line.
+ *
+ * Convex's failure text is written for us, and an argument-validator failure
+ * quotes the ARGUMENTS — which on these routes can include ids and, on a
+ * write, whatever the caller sent. Sentry and Axiom are a wider audience than
+ * a server console, so the obvious credential shapes come out and the rest is
+ * capped: a validator dump is long, and the first few hundred characters are
+ * the part anyone reads.
+ *
+ * NOT a general PII scrubber, and not sold as one — it removes the things that
+ * are recognizable as secrets by shape. The real protection is that this text
+ * never reaches the RESPONSE; this only narrows what an operator's tooling
+ * accumulates.
+ */
+const LOG_MESSAGE_MAX = 400;
+
+function redactForLog(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const scrubbed = raw
+    // `Bearer <token>`, and the token on its own if it has a known prefix.
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\b(sk|slk|dsc|api)_[A-Za-z0-9._-]+/g, "$1_[redacted]")
+    // Anything JWT-shaped.
+    .replace(/\beyJ[A-Za-z0-9._-]{10,}/g, "[redacted-jwt]");
+  return scrubbed.length > LOG_MESSAGE_MAX
+    ? `${scrubbed.slice(0, LOG_MESSAGE_MAX)}… [truncated]`
+    : scrubbed;
+}
+
 export function translateConvexReadError(
   error: unknown,
   options: { scope: string; notFoundMessage?: string }
@@ -81,9 +111,11 @@ export function translateConvexReadError(
       "Invalid or expired credentials."
     );
   }
-  logger.error(`[${options.scope}] upstream read failed`, error, {
-    message: error instanceof Error ? error.message : String(error),
-  });
+  logger.error(
+    `[${options.scope}] upstream read failed`,
+    error,
+    { message: redactForLog(error) }
+  );
   return new WebRouteError(
     502,
     ErrorCode.SERVER_UNREACHABLE,

@@ -852,7 +852,7 @@ export interface PlatformScenarioDeleted {
   id?: string;
 }
 
-/** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
+/** Result of `POST /projects/{p}/journeys/{journeyId}/runs`. */
 export interface PlatformJourneyRunLaunched {
   /** The run id. Poll `getJourneyRun` with it, or stop it with `cancel`. */
   id: string;
@@ -872,6 +872,7 @@ export interface PlatformJourneyRunLaunched {
   deduped: boolean;
 }
 
+/** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
 export interface PlatformJourneyRunCanceled {
   id: string;
   /** The run's terminal status after the cancel settled it. */

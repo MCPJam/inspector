@@ -118,7 +118,7 @@ describe("launchJourneyRun", () => {
 
   it("forwards a backend 4xx as a caller-facing error, not a 500", async () => {
     createRunMock.mockRejectedValue(
-      new SwarmAgentError(400, "This journey has no hosts")
+      new SwarmAgentError(400, "This journey has no hosts", "bad request")
     );
 
     await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
@@ -127,11 +127,33 @@ describe("launchJourneyRun", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [401, "UNAUTHORIZED"],
+    [403, "FORBIDDEN"],
+    [404, "NOT_FOUND"],
+    [409, "CONFLICT"],
+    [422, "VALIDATION_ERROR"],
+  ])("maps a backend %i to %s, not a blanket validation error", async (
+    status,
+    code
+  ) => {
+    // The status was always distinct; the CODE was not, and a client that
+    // branches on `code` was told to go fix its request for a launch refused
+    // on permissions or replaying a conflicting key.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(status as number, "nope", "nope")
+    );
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      status,
+      code,
+    });
+  });
+
   it("does NOT swallow a backend 5xx into a 4xx", async () => {
     // A 400 tells the caller to change something. An upstream fault is not
     // theirs to fix, and dressing it as one sends them looking at their own
     // journey config during an incident.
-    createRunMock.mockRejectedValue(new SwarmAgentError(503, "upstream down"));
+    createRunMock.mockRejectedValue(new SwarmAgentError(503, "upstream down", "upstream down"));
 
     await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
       status: 503,

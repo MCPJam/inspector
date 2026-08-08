@@ -144,16 +144,24 @@ describe("GET /projects/:projectId/journeys", () => {
 
 describe("cross-project scoping", () => {
   it("404s a journey that belongs to ANOTHER project the caller can also see", async () => {
-    // The list is the authoritative answer for "is this journey in this
-    // project": Convex returns only the named project's journeys, and the
-    // requested id is not among them.
-    queryMock.mockResolvedValue([journeyRow({ _id: "jrn_other" })]);
+    // `journeys:getJourney` takes BOTH ids and asserts the scope itself, so a
+    // journey outside the project reads as `null` — the same answer as one
+    // that does not exist. This used to list the project and scan, which put
+    // the scope rule in the gateway; it lives in Convex now.
+    queryMock.mockResolvedValue(null);
 
     const res = await get(`/projects/${PROJECT}/journeys/${JOURNEY}/runs`);
     expect(res.status).toBe(404);
     // And it stopped at the preflight — it never asked for the runs.
     expect(queryMock).toHaveBeenCalledTimes(1);
-    expect(queryMock.mock.calls[0]?.[0]).toBe("journeys:listJourneysByProject");
+    expect(queryMock.mock.calls[0]?.[0]).toBe("journeys:getJourney");
+    // Scoped by BOTH ids. Dropping `projectId` would still return null from
+    // this mock and still 404 here, while in production it would resolve a
+    // journey from any project the caller can reach.
+    expect(queryMock.mock.calls[0]?.[1]).toEqual({
+      projectId: PROJECT,
+      journeyRefId: JOURNEY,
+    });
   });
 
   it("404s a run whose projectId disagrees with the path", async () => {
@@ -354,10 +362,10 @@ describe("POST .../journey-runs/:runId/cancel", () => {
 describe("POST .../journeys/:journeyId/runs", () => {
   beforeEach(() => {
     launchMock.mockResolvedValue({ runId: "run_new" });
-    // The scoping preflight reads the project's journeys; the default is "this
-    // journey IS in this project" so each case can override just the one thing
-    // it is about.
-    queryMock.mockResolvedValue([{ _id: JOURNEY, projectId: PROJECT }]);
+    // `journeys:getJourney` returns the ROW or null; the default is "this
+    // journey IS in this project" so each case overrides only the one thing it
+    // is about.
+    queryMock.mockResolvedValue({ _id: JOURNEY, projectId: PROJECT });
   });
 
   const launch = (init: RequestInit = {}) =>
@@ -415,9 +423,16 @@ describe("POST .../journeys/:journeyId/runs", () => {
     // The launch resolves the project from the journey itself, so without the
     // preflight a member of two projects could launch B's journey through A's
     // URL and be billed under a project the URL never named.
-    queryMock.mockResolvedValue([{ _id: "jrn_other", projectId: OTHER_PROJECT }]);
+    // Convex answers `null` for a journey outside the project — the same
+    // answer as one that does not exist, which is what keeps this from being
+    // an existence oracle.
+    queryMock.mockResolvedValue(null);
     expect((await launch()).status).toBe(404);
     expect(launchMock).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith("journeys:getJourney", {
+      projectId: PROJECT,
+      journeyRefId: JOURNEY,
+    });
   });
 
   it("surfaces the beta gate as 403 with its real message", async () => {
@@ -434,6 +449,51 @@ describe("POST .../journeys/:journeyId/runs", () => {
     expect((await res.json()) as { message?: string }).toMatchObject({
       message: "Swarms is not currently available.",
     });
+  });
+
+  it("forwards the fan-out options — the whole point of accepting a body", async () => {
+    const res = await launch({
+      body: JSON.stringify({
+        waveId: "wave_9",
+        environmentIds: ["env_1", "env_2"],
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(202);
+    expect(launchMock.mock.calls[0]![1]).toMatchObject({
+      waveId: "wave_9",
+      environmentIds: ["env_1", "env_2"],
+    });
+  });
+
+  it("400s an EMPTY environmentIds rather than falling back to the authored targets", async () => {
+    // `[]` is a caller naming no environments, which is not the same request
+    // as omitting the field. Dropping it and launching as authored would run
+    // something other than what was asked for — on an operation that spends.
+    const res = await launch({
+      body: JSON.stringify({ environmentIds: [] }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it("400s a NULL body — that is a broken client, not an empty one", async () => {
+    const res = await launch({
+      body: "null",
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it("400s an out-of-shape option", async () => {
+    const res = await launch({
+      body: JSON.stringify({ environmentIds: "env_1" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+    expect(launchMock).not.toHaveBeenCalled();
   });
 
   it("rejects a malformed body rather than launching on a guess", async () => {
