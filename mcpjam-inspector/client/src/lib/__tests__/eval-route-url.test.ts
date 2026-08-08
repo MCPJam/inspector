@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCiEvalsPath, buildEvalsPath } from "../app-navigation";
+import { buildEvalsRunsPath, buildEvalsPath } from "../app-navigation";
 import { parseEvalRouteFromUrl } from "../eval-route-url";
 
 describe("eval-route-url", () => {
@@ -7,7 +7,7 @@ describe("eval-route-url", () => {
     expect(parseEvalRouteFromUrl("/evals", "/evals")).toEqual({
       type: "list",
     });
-    expect(parseEvalRouteFromUrl("/ci-evals", "ci-evals")).toEqual({
+    expect(parseEvalRouteFromUrl("/evals/runs", "evals/runs")).toEqual({
       type: "list",
     });
     expect(parseEvalRouteFromUrl("/evals", "/evals/create")).toEqual({
@@ -188,11 +188,11 @@ describe("eval-route-url", () => {
     ).toBe("/evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
   });
 
-  it("parses ci eval commit detail query state", () => {
+  it("parses runs-mode commit detail query state", () => {
     expect(
       parseEvalRouteFromUrl(
-        "/ci-evals",
-        "/ci-evals/commit/abc1234567890",
+        "/evals/runs",
+        "/evals/runs/commit/abc1234567890",
         "?suite=s_abc&iteration=i_4"
       )
     ).toEqual({
@@ -203,30 +203,30 @@ describe("eval-route-url", () => {
     });
   });
 
-  it("builds ci eval commit detail and suite routes", () => {
+  it("builds runs-mode commit detail and suite routes", () => {
     expect(
-      buildCiEvalsPath({
+      buildEvalsRunsPath({
         type: "commit-detail",
         commitSha: "abc1234567890",
         suite: "s_abc",
         iteration: "i_4",
       })
-    ).toBe("/ci-evals/commit/abc1234567890?suite=s_abc&iteration=i_4");
+    ).toBe("/evals/runs/commit/abc1234567890?suite=s_abc&iteration=i_4");
     expect(
-      buildCiEvalsPath({
+      buildEvalsRunsPath({
         type: "suite-overview",
         suiteId: "s_abc",
         view: "test-cases",
         fromCommit: "sha9abcdef",
       })
-    ).toBe("/ci-evals/suite/s_abc?view=test-cases&fromCommit=sha9abcdef");
+    ).toBe("/evals/runs/suite/s_abc?view=test-cases&fromCommit=sha9abcdef");
   });
 
-  it("parses ci eval suite drill-down paths", () => {
+  it("parses runs-mode suite drill-down paths", () => {
     expect(
       parseEvalRouteFromUrl(
-        "/ci-evals",
-        "/ci-evals/suite/s_123/test/t_789/edit",
+        "/evals/runs",
+        "/evals/runs/suite/s_123/test/t_789/edit",
         "?compare=1"
       )
     ).toEqual({
@@ -238,7 +238,29 @@ describe("eval-route-url", () => {
   });
 
   it("returns null outside the requested prefix", () => {
-    expect(parseEvalRouteFromUrl("/ci-evals", "/evals/suite/s_123")).toBeNull();
+    expect(
+      parseEvalRouteFromUrl("/evals/runs", "/evals/suite/s_123")
+    ).toBeNull();
+  });
+
+  it("keeps the two modes mutually exclusive under the shared /evals root", () => {
+    // Runs lives inside Suites' path space, so Suites must NOT swallow a Runs
+    // URL as a bare list route — that would render the wrong lens instead of
+    // letting the Runs route match.
+    expect(parseEvalRouteFromUrl("/evals", "/evals/runs")).toBeNull();
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/runs/suite/s_123")
+    ).toBeNull();
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/runs/commit/abc123")
+    ).toBeNull();
+  });
+
+  it("degrades a commit route built in Suites mode to that mode's list", () => {
+    // Commits are a Runs-only lens; Suites has no cross-suite SHA view.
+    expect(
+      buildEvalsPath({ type: "commit-detail", commitSha: "abc1234567890" })
+    ).toBe("/evals");
   });
 
   it("decodes path params", () => {
