@@ -132,6 +132,9 @@ describe("launchJourneyRun", () => {
     [403, "FORBIDDEN"],
     [404, "NOT_FOUND"],
     [409, "CONFLICT"],
+    // The one that is RETRYABLE. Reading a quota rejection as invalid input
+    // turns "wait and try again" into "this request can never work".
+    [429, "RATE_LIMITED"],
     [422, "VALIDATION_ERROR"],
   ])("maps a backend %i to %s, not a blanket validation error", async (
     status,

@@ -268,20 +268,22 @@ export async function launchJourneyRun(
     ) {
       // Keep the backend's MEANING, not just its status. Collapsing every 4xx
       // to VALIDATION_ERROR tells a caller that branches on `code` to go fix
-      // its request — which is wrong advice for a launch refused on
-      // permissions, aimed at a journey that does not exist, or replaying a
-      // key that conflicts. The status was already distinct; the code should
-      // be too. Anything else 4xx really is "your request was not acceptable".
-      const code =
-        err.status === 401
-          ? ErrorCode.UNAUTHORIZED
-          : err.status === 403
-            ? ErrorCode.FORBIDDEN
-            : err.status === 404
-              ? ErrorCode.NOT_FOUND
-              : err.status === 409
-                ? ErrorCode.CONFLICT
-                : ErrorCode.VALIDATION_ERROR;
+      // its request — wrong advice for a launch refused on permissions, aimed
+      // at a journey that does not exist, replaying a conflicting key, or
+      // rejected on quota. The status was already distinct; the code should be
+      // too. Anything else 4xx really is "your request was not acceptable".
+      //
+      // 429 matters most of the five: it is the only RETRYABLE one, and
+      // reading it as invalid input turns "wait and try again" into "this
+      // request can never work".
+      const CODE_BY_STATUS: Record<number, ErrorCode> = {
+        401: ErrorCode.UNAUTHORIZED,
+        403: ErrorCode.FORBIDDEN,
+        404: ErrorCode.NOT_FOUND,
+        409: ErrorCode.CONFLICT,
+        429: ErrorCode.RATE_LIMITED,
+      };
+      const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
       throw new WebRouteError(
         err.status,
         code,
