@@ -48,6 +48,10 @@ export const logger = {
   /**
    * Log an error. Always sends to Sentry and Axiom, only prints to console in dev/verbose mode.
    *
+   * This is the server's single Sentry capture path for free-form errors —
+   * `Hono.onError` routes through here, so route handlers never call
+   * `captureException` themselves and nothing double-counts.
+   *
    * NOTE: For new production diagnostics in `server/routes/web/`, prefer `logger.event()` —
    * free-form messages are not queryable in Axiom. Legacy callers (CLI, system code,
    * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
@@ -68,15 +72,21 @@ export const logger = {
   },
 
   /**
-   * Log a warning. Always sends to Sentry and Axiom, only prints to console in dev/verbose mode.
+   * Log a warning. Sends to Axiom, only prints to console in dev/verbose mode.
+   *
+   * Deliberately does NOT capture to Sentry. Every `logger.warn` in the tree
+   * used to become a Sentry event, which across thousands of self-hosted
+   * installs is the single largest quota-spike vector we have — and a warning
+   * is by definition something we chose not to treat as a failure. Axiom is
+   * the right home for it: queryable, cheap, no issue-tracker noise. A warning
+   * that genuinely needs a Sentry issue should be an explicit
+   * `logger.event(..., { error, sentry: true })` at the callsite that owns it.
    *
    * NOTE: For new production diagnostics in `server/routes/web/`, prefer `logger.event()` —
    * free-form messages are not queryable in Axiom. Legacy callers (CLI, system code,
    * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
    */
   warn(message: string, context?: Record<string, unknown>) {
-    Sentry.captureMessage(message, { level: "warning", extra: context });
-
     ingestToAxiom("warn", message, context);
 
     if (shouldLog()) {

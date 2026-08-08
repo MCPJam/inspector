@@ -140,6 +140,30 @@ describe("logger", () => {
         ]);
       });
 
+      it("does NOT send warnings to Sentry", async () => {
+        // Every logger.warn in the tree used to become a Sentry event. Across
+        // self-hosted installs that is the largest quota-spike vector we have,
+        // and a warning is by definition something we chose not to fail on.
+        const Sentry = await import("@sentry/node");
+        logger.warn("watch out", { userId: "123" });
+
+        expect(Sentry.captureMessage).not.toHaveBeenCalled();
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+      });
+
+      it("still sends errors to Sentry", async () => {
+        const Sentry = await import("@sentry/node");
+        const error = new Error("boom");
+        logger.error("fail", error, { userId: "123" });
+
+        expect(Sentry.captureException).toHaveBeenCalledWith(
+          error,
+          expect.objectContaining({
+            extra: expect.objectContaining({ message: "fail", userId: "123" }),
+          }),
+        );
+      });
+
       it("ingests info logs to Axiom", () => {
         logger.info("started", { port: 3000 });
 
