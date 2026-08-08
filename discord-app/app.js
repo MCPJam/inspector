@@ -18,6 +18,7 @@ import {
 	Routes,
 	SlashCommandBuilder,
 } from "discord.js";
+import { deriveConversation, ensureThreadBinding } from "./conversation.js";
 import { createDiscordDelivery } from "./delivery.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
@@ -143,19 +144,23 @@ client.on(Events.MessageCreate, async (message) => {
 		const claim = await claims.claimEvent(dedupeKey);
 		if (claim.outcome !== "claimed") return;
 	}
+	// The stable pair, NOT `message.id` for both: the binding key must be
+	// identical for every message in the conversation or a written binding can
+	// never be found again.
+	const { conversationId, threadId } = deriveConversation(message);
 	const ref = {
 		surfaceKind: "discord",
 		tenantId: message.guildId,
 		actorId: message.author.id,
 		projectId: process.env.MCPJAM_PROJECT_ID,
-		conversationId: message.channelId,
-		threadId: message.id,
+		conversationId,
+		threadId,
 	};
 	const delivery = createDiscordDelivery(message.channel);
 	try {
 		const target = await resolveTurnTarget(ref, {
-			conversationId: message.channelId,
-			threadId: message.id,
+			conversationId,
+			threadId,
 		});
 		if (target.mode === "unlinked") {
 			const url = await mintConnectUrl({
@@ -193,6 +198,29 @@ client.on(Events.MessageCreate, async (message) => {
 			return;
 		}
 		ref.projectId = target.projectId;
+		// A new conversation binds to the initiator's org/project so later
+		// speakers stay in it. Fail the turn rather than running unbound — an
+		// unbound conversation re-resolves per speaker and drifts between
+		// projects (see conversation.js).
+		const bound = await ensureThreadBinding({
+			backend: claimBackend,
+			target,
+			tenantId: message.guildId,
+			actorId: message.author.id,
+			conversationId,
+			threadId,
+		});
+		if (!bound.ok) {
+			const content = textContent(
+				"I could not pin this conversation to a project. Try again in a moment.",
+				"warning",
+			);
+			await delivery.deliver(ref, content);
+			if (claims.hasClaimBackend())
+				await claims.completeEvent(dedupeKey, content);
+			return;
+		}
+		if (bound.projectId) ref.projectId = bound.projectId;
 		const result = await runTurn({
 			ref,
 			fetchHistory: (args) =>
@@ -209,7 +237,7 @@ client.on(Events.MessageCreate, async (message) => {
 			turn: (history) =>
 				api
 					.runAgentTurn(history, ref, {
-						conversationId: message.channelId,
+						conversationId,
 						idempotencyKey: dedupeKey,
 					})
 					.then((result) => ({
