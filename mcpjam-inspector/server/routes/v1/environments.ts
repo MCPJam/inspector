@@ -36,24 +36,39 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
-import {
-  parseWithSchema,
-  ErrorCode,
-  WebRouteError,
-  mapRuntimeError,
-} from "../web/errors.js";
+import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { translateConvexWriteError } from "./convex-errors.js";
 
 const environments = new Hono();
 
 // ── Convex row shapes (hand-mirrored from convex/projectEnvironments.ts) ─────
 type SkillSelection = { mode: "explicit"; skillIds: string[] };
 
+/**
+ * A row this API is willing to emit.
+ *
+ * Mirrors the client's `environmentOrigin`: trust `origin` when the backend
+ * sends it, and fall back to name-presence when it doesn't, so a deployment
+ * that predates the split reads every row as named — which they all are.
+ */
+function isNamedEnvironmentRow(row: {
+  name?: string;
+  origin?: "named" | "adhoc";
+}): boolean {
+  if (row.origin === "named") return true;
+  if (row.origin === "adhoc") return false;
+  return typeof row.name === "string" && row.name.trim().length > 0;
+}
+
 type EnvironmentRow = {
   environmentId: string;
   projectId: string;
-  name: string;
+  /** Absent on ad-hoc rows, which `/v1` never emits — see `isNamedEnvironmentRow`. */
+  name?: string;
+  /** Absent from a backend that predates the named/ad-hoc split ⇒ named. */
+  origin?: "named" | "adhoc";
   description?: string;
   hostId: string;
   serverAttachmentId?: string;
@@ -217,69 +232,18 @@ function translateConvexError(
   error: unknown,
   fallbackMessage = "Environment write rejected by the platform"
 ): WebRouteError {
-  if (error instanceof WebRouteError) return error;
-  const data = convexErrorData(error);
-  const code = typeof data?.code === "string" ? data.code : undefined;
-  const structuredMessage =
-    typeof data?.message === "string" ? data.message : undefined;
-
-  if (code === "CONFLICT") {
-    return new WebRouteError(
-      409,
-      ErrorCode.CONFLICT,
-      structuredMessage ?? "Environment changed since you loaded it."
-    );
-  }
-  if (code === "VALIDATION") {
-    return new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      structuredMessage ?? fallbackMessage
-    );
-  }
-  if (code === "NOT_FOUND") {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found");
-  }
-  if (code === "FORBIDDEN") {
-    if (structuredMessage && /admin/i.test(structuredMessage)) {
-      return new WebRouteError(403, ErrorCode.FORBIDDEN, structuredMessage);
-    }
-    return new WebRouteError(
-      404,
-      ErrorCode.NOT_FOUND,
-      "Environment or project not found, or you do not have access to it."
-    );
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-  if (/not found|unauthorized|not a member/i.test(message)) {
-    return new WebRouteError(
-      404,
-      ErrorCode.NOT_FOUND,
-      "Environment or project not found, or you do not have access to it."
-    );
-  }
-  // Infrastructure failures (timeouts, connection resets) are 5xx, not a 400
-  // validation error — defer to the shared runtime classifier so a transient
-  // outage isn't reported to callers as bad input.
-  if (
-    /timed out|timeout|fetch failed|network|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up/i.test(
-      message
-    )
-  ) {
-    return mapRuntimeError(error);
-  }
-  const cleaned = message
-    .replace(/\[Request ID:[^\]]*\]\s*/g, "")
-    .replace(/^Server Error\s*/i, "")
-    .replace(/Uncaught (Error|ConvexError):\s*/i, "")
-    .split("\n")[0]!
-    .trim();
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    cleaned || fallbackMessage
-  );
+  return translateConvexWriteError(error, {
+    resource: "Environment",
+    fallbackMessage,
+    // "Not a project member" must read the same as "no such project"; only the
+    // admin gate below is allowed to be specific.
+    notFoundMessage:
+      "Environment or project not found, or you do not have access to it.",
+    conflictMessage: "Environment changed since you loaded it.",
+    // The caller demonstrably CAN see the environment, so telling them the
+    // block is their role rather than a bad id reveals nothing new.
+    adminFailureIsForbidden: true,
+  });
 }
 
 /**
@@ -408,6 +372,15 @@ const revisionBodySchema = z.strictObject({
 // GET /v1/projects/:projectId/environments — list a project's environments.
 // Archived rows are excluded unless `?includeArchived=true`; without it there
 // is no way to find an archived environment to restore.
+//
+// AD-HOC rows are excluded unconditionally — not even opt-in. `/v1` is the
+// NAMED-environments API: `PlatformEnvironment.name` is a required field in the
+// published SDK type, so emitting a nameless DTO here would be a breaking
+// change for every external consumer. Ad-hoc rows are an internal
+// run-provenance concept; the browser surfaces read them through Convex.
+//
+// The backend's own default is already named-only, so this filter is belt and
+// braces against a backend that widens that default later.
 environments.get("/projects/:projectId/environments", async (c) => {
   const projectId = c.req.param("projectId");
   const includeArchived = c.req.query("includeArchived") === "true";
@@ -421,7 +394,10 @@ environments.get("/projects/:projectId/environments", async (c) => {
   } catch (error) {
     throw translateConvexError(error);
   }
-  return v1PageJson(c, (rows ?? []).map(toEnvironmentDto));
+  return v1PageJson(
+    c,
+    (rows ?? []).filter(isNamedEnvironmentRow).map(toEnvironmentDto)
+  );
 });
 
 // GET /v1/projects/:projectId/environments/:environmentId
