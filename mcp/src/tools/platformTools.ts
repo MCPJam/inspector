@@ -118,6 +118,30 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  launch_journey_run: "Pre-GA product — expose at GA.",
+  cancel_journey_run: "Pre-GA product — expose with the launch it pairs with.",
+  // Scenarios (user testing) and journeys (Swarms) are held out of this
+  // catalog WHOLESALE until GA — a CATALOG policy, not the flag.
+  //
+  // The distinction matters, because a maintainer who reads "flag-gated" here
+  // will reach for the flag when deciding what to expose, and the flag does
+  // not cover most of this list. `sandboxes-enabled` gates only the
+  // exposure-CREATING writes (publish, launch, authoring); the reads,
+  // `cancel_journey_run` and `unpublish_scenario` are deliberately ungated, so
+  // an organization that has just lost the flag can still see what is running,
+  // stop it, and take a live scenario down. None of them ever answers
+  // FEATURE_UNAVAILABLE. What keeps them out is that this catalog is STATIC —
+  // one tool list for every caller, built with no organization in hand — so a
+  // beta cannot be advertised selectively here at all.
+  publish_scenario:
+    "Pre-GA product, and publishing exposes an environment publicly — not an unattended-catalog action.",
+  unpublish_scenario:
+    "Pre-GA product — expose at GA, with its publish counterpart.",
+  list_journeys: "Pre-GA product — expose at GA.",
+  list_journey_runs: "Pre-GA product — expose at GA.",
+  get_journey_run: "Pre-GA product — expose at GA.",
+  list_journey_run_sessions: "Pre-GA product — expose at GA.",
+
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
   create_project:
     "Project lifecycle writes are intentionally outside the unattended MCP catalog.",

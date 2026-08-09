@@ -518,20 +518,6 @@ app.route("/relay", relayRoutes);
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
 
-// Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
-// We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
-// CORS preflight
-app.options("/sse/message", (c) => {
-  return c.body(null, 204, {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Authorization, Content-Type, Accept, Accept-Language",
-    "Access-Control-Max-Age": "86400",
-    Vary: "Origin, Access-Control-Request-Headers",
-  });
-});
-
 // Health check
 app.get("/health", (c) => {
   return c.json({

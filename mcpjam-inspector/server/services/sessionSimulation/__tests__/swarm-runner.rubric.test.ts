@@ -23,7 +23,7 @@ const runSwarmChecksMock = vi.fn();
 
 vi.mock("../../swarm-agent.js", async () => {
   const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
-    "../../swarm-agent.js",
+    "../../swarm-agent.js"
   );
   return {
     ...actual,
@@ -40,7 +40,7 @@ vi.mock("../../swarm-agent.js", async () => {
 
 vi.mock("../runner.js", async () => {
   const actual = await vi.importActual<typeof import("../runner.js")>(
-    "../runner.js",
+    "../runner.js"
   );
   return {
     ...actual,
@@ -83,8 +83,7 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
     maxTurns: 3,
     hasRubric: true,
     convexHttpUrl: "https://convex.site",
-    bearer: "token",
-    authHeader: "Bearer token",
+    getBearer: async () => "token",
     managerFactory: async () => ({
       manager: {} as never,
       connectedServerIds: ["server-1"],
@@ -156,7 +155,9 @@ describe("swarm runner — rubric grading hook", () => {
     expect(runSwarmChecksMock).not.toHaveBeenCalled();
     // The attempt itself is unaffected.
     expect(
-      reportAttemptMock.mock.calls.some((c) => (c[2] as any).status === "succeeded"),
+      reportAttemptMock.mock.calls.some(
+        (c) => (c[2] as any).status === "succeeded"
+      )
     ).toBe(true);
   });
 
@@ -170,7 +171,7 @@ describe("swarm runner — rubric grading hook", () => {
             gradeSettled = true;
             resolve({ status: "completed", results: [] });
           };
-        }),
+        })
     );
 
     const running = startJourneyRun(baseOpts());
@@ -191,7 +192,7 @@ describe("swarm runner — rubric grading hook", () => {
     runSwarmChecksMock.mockRejectedValue(new Error("backend exploded"));
 
     await expect(
-      startJourneyRun(baseOpts({ sessionsPerTarget: 2 })),
+      startJourneyRun(baseOpts({ sessionsPerTarget: 2 }))
     ).resolves.toBeUndefined();
 
     // Both sessions still ran and both reported their terminal.

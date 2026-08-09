@@ -505,8 +505,31 @@ function useAppRouteContext() {
   return context ?? useOutletContext<AppRouteContext>();
 }
 
+/**
+ * The no-router render path.
+ *
+ * REACHABLE — it is what renders when the app runs without React Router
+ * (App.tsx mounts it twice). It is easy to assume otherwise because the router
+ * table in `router.tsx` looks like the only route map, which is exactly why the
+ * two had drifted: the router handles the legacy `chat` and `client-config`
+ * aliases and this switch did not, so those two tab ids fell through to
+ * `default` and rendered Servers.
+ *
+ * `client-config` happened to be harmless (Servers IS its redirect target);
+ * `chat` was not — it rendered Servers while the sidebar showed Playground.
+ * Both are explicit arms now, pointing at the same destinations `router.tsx`
+ * uses. When you add a route there, add it here.
+ */
 function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
   switch (activeTab) {
+    // Legacy aliases, mirroring router.tsx's ChatAliasRoute /
+    // ServersRedirectRoute. A navigate-away effect also fires for these; the
+    // arm is what they render in the meantime, so it must match where they
+    // are going.
+    case "chat":
+      return <PlaygroundRoute />;
+    case "client-config":
+      return <ServersRoute />;
     case "registry":
       return <RegistryRoute />;
     case "tools":
@@ -1288,7 +1311,9 @@ export function ChatboxesRoute() {
   // reserving the word here means route-ordering can't quietly turn the create
   // page into a "Scenario not found".
   const scenarioId =
-    rawScenarioId && rawScenarioId !== "new" ? decodeParam(rawScenarioId) : null;
+    rawScenarioId && rawScenarioId !== "new"
+      ? decodeParam(rawScenarioId)
+      : null;
 
   return (
     <UserTestingTab
