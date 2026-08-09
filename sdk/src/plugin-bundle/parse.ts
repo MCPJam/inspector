@@ -413,21 +413,17 @@ export async function parsePluginBundle(
         sourcePath: MCP_CONFIG_PATH,
         manifestSchemaVersion: manifest.schemaVersion,
         issues,
+        // Declared-entry cap, enforced before entry isolation: a flood of
+        // malformed entries must not bypass the limit. Bundle-fatal via the
+        // final throwIfErrors.
+        maxServers: limits.maxMcpServers,
       });
       skipped.push(...normalized.skipped);
-      if (normalized.servers.length > limits.maxMcpServers) {
-        issues.error(
-          "MCP_TOO_MANY_SERVERS",
-          `bundle declares ${normalized.servers.length} MCP servers; the limit is ${limits.maxMcpServers}`,
-          { path: MCP_CONFIG_PATH }
-        );
-      } else {
-        for (const server of normalized.servers) {
-          mcpServers.push({
-            ...server,
-            configHash: await hashCanonicalJson(server.config),
-          });
-        }
+      for (const server of normalized.servers) {
+        mcpServers.push({
+          ...server,
+          configHash: await hashCanonicalJson(server.config),
+        });
       }
     }
   }

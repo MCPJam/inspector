@@ -30,10 +30,14 @@ import {
 } from "./validation.js";
 import { resolveContainedPath } from "./paths.js";
 
-/** Canonical MCP-config schema identifiers per Agent Plugins version. */
-export const PLUGIN_MCP_SCHEMAS: Record<string, string> = {
-  "1.0.0": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-};
+/**
+ * Canonical MCP-config schema identifiers per Agent Plugins version.
+ * Frozen: this map IS the compiled-in allowlist.
+ */
+export const PLUGIN_MCP_SCHEMAS: Readonly<Record<string, string>> =
+  Object.freeze({
+    "1.0.0": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  });
 
 export const PLUGIN_ROOT_PLACEHOLDER = "${PLUGIN_ROOT}";
 export const PLUGIN_DATA_PLACEHOLDER = "${PLUGIN_DATA}";
@@ -259,8 +263,10 @@ function normalizeEnv(
       continue;
     }
     // A secret-looking literal (or a composite whose remainder failed the
-    // screen). Never persist it — it may be a credential.
-    byNameMap.set(name, { name, required: false });
+    // screen). Never persist it — it may be a credential. The bundle DID
+    // declare a value here, so the component cannot run until the user
+    // re-supplies one: the requirement is required, not optional.
+    byNameMap.set(name, { name, required: true });
     issues.warn(
       "MCP_ENV_VALUE_OMITTED",
       `server "${serverKey}": literal value of env "${name}" is not stored; configure it during setup`,
@@ -307,14 +313,15 @@ function normalizeHeaders(
       );
       continue;
     }
-    const secret = SECRET_HEADER_NAME.test(name);
+    const secretName = SECRET_HEADER_NAME.test(name);
     if (value === "" || ENV_REFERENCE.test(value)) {
-      requirements.push({ name, secret });
+      requirements.push({ name, secret: secretName });
       continue;
     }
-    if (!secret && !isSecretLikeValue(value)) {
+    const secretValue = isSecretLikeValue(value);
+    if (!secretName && !secretValue) {
       // Screened non-secret literal ("X-Api-Version: 2") — store it.
-      requirements.push({ name, secret, value });
+      requirements.push({ name, secret: false, value });
       continue;
     }
     issues.warn(
@@ -322,7 +329,9 @@ function normalizeHeaders(
       `server "${serverKey}": literal value of header "${name}" is not stored; configure it during setup`,
       { componentKey }
     );
-    requirements.push({ name, secret });
+    // A value that LOOKED secret marks the header secret even under an
+    // innocuous name, so setup UIs mask what the user re-enters.
+    requirements.push({ name, secret: secretName || secretValue });
   }
   // Sorted so the configHash is insensitive to source key order.
   return requirements.sort(byName);
@@ -521,8 +530,8 @@ function normalizeServer(
   }
 
   if (declared === "stdio") {
-    const command = record.command;
-    if (typeof command !== "string" || command.length === 0) {
+    const declaredCommand = record.command;
+    if (typeof declaredCommand !== "string" || declaredCommand.length === 0) {
       issues.error(
         "MCP_MISSING_COMMAND",
         `server "${serverKey}": stdio servers require a non-empty "command"`,
@@ -530,6 +539,7 @@ function normalizeServer(
       );
       return null;
     }
+    let command: string = declaredCommand;
     // Spec: plugin variables expand only in args, env values, and cwd —
     // a placeholder in `command` can never be expanded, so reject the entry.
     if (containsPluginPlaceholder(command)) {
@@ -540,7 +550,12 @@ function normalizeServer(
       );
       return null;
     }
-    // `./` commands resolve against the plugin root with containment.
+    // `./` commands resolve against the plugin root with containment (spec).
+    // The stored config carries the CANONICAL `${PLUGIN_ROOT}/...` form: a
+    // bare relative string would look like an ordinary server config to the
+    // runtime and spawn against the host process directory, while the
+    // placeholder form routes through materialization and substitutes to the
+    // verified bundle path — the only correct resolution.
     if (command.startsWith("./")) {
       const resolved = resolveContainedPath("", command);
       if (!resolved.ok) {
@@ -549,6 +564,7 @@ function normalizeServer(
         });
         return null;
       }
+      command = `${PLUGIN_ROOT_PLACEHOLDER}/${resolved.path}`;
     }
     let args: string[] = [];
     if (record.args !== undefined) {
@@ -824,9 +840,16 @@ export function normalizePluginMcpConfig(
     sourcePath: string;
     manifestSchemaVersion: string;
     issues: PluginIssueCollector;
+    /**
+     * Bundle-level cap on DECLARED `mcpServers` entries. Enforced before
+     * entry isolation runs, so a flood of malformed entries cannot bypass
+     * the limit or bloat the skipped/warning lists. Emitted as an
+     * error-severity issue — the caller's throw makes it bundle-fatal.
+     */
+    maxServers?: number;
   }
 ): PluginMcpConfigNormalization {
-  const { sourcePath, manifestSchemaVersion, issues } = context;
+  const { sourcePath, manifestSchemaVersion, issues, maxServers } = context;
   const disabled = (
     code: PluginIssueCode,
     message: string
@@ -891,6 +914,16 @@ export function normalizePluginMcpConfig(
       "MCP_INVALID_CONFIG",
       `mcp.json requires an "mcpServers" object`
     );
+  }
+
+  const declaredKeys = Object.keys(serverMap as Record<string, unknown>);
+  if (maxServers !== undefined && declaredKeys.length > maxServers) {
+    issues.error(
+      "MCP_TOO_MANY_SERVERS",
+      `mcp.json declares ${declaredKeys.length} MCP servers; the limit is ${maxServers}`,
+      { path: sourcePath }
+    );
+    return { servers: [], skipped: [], documentVersion };
   }
 
   const servers: Array<Omit<ParsedPluginServer, "configHash">> = [];

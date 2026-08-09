@@ -22,10 +22,15 @@ import {
 
 export const PLUGIN_MANIFEST_PATH = "plugin.json";
 
-/** Canonical schema identifiers per supported Agent Plugins version. */
-export const PLUGIN_MANIFEST_SCHEMAS: Record<string, string> = {
-  "1.0.0": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-};
+/**
+ * Canonical schema identifiers per supported Agent Plugins version. Frozen:
+ * this map IS the compiled-in allowlist, so a caller mutating it at runtime
+ * would defeat the local-schema-selection contract.
+ */
+export const PLUGIN_MANIFEST_SCHEMAS: Readonly<Record<string, string>> =
+  Object.freeze({
+    "1.0.0": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  });
 
 /** Reverse-domain namespace MCPJam reads its own extension data from. */
 export const MCPJAM_EXTENSION_NAMESPACE = "com.mcpjam";
@@ -198,13 +203,23 @@ function readHttpsUrl(
   return value;
 }
 
-/** Read MCPJam presentation metadata out of the `com.mcpjam` namespace. */
+/**
+ * Read MCPJam presentation metadata out of the `com.mcpjam` namespace.
+ *
+ * Reads from the RAW extensions record, not the sanitized copy: the shared
+ * secret-value screen drops long opaque runs, and a legitimate icon path
+ * (`assets/brand-name-banner-icon-desktop-retina-display.png`) can trip it.
+ * These three fields have their own validation — a string type check plus,
+ * for icon/logo, containment and existence in the bundle — so nothing
+ * unvetted is stored.
+ */
 function applyMcpjamExtension(
   manifest: NormalizedPluginManifest,
+  rawExtensions: Record<string, unknown>,
   filePaths: ReadonlySet<string>,
   issues: PluginIssueCollector
 ): void {
-  const raw = manifest.extensions[MCPJAM_EXTENSION_NAMESPACE];
+  const raw = rawExtensions[MCPJAM_EXTENSION_NAMESPACE];
   if (raw === undefined) return;
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     issues.warn(
@@ -287,8 +302,6 @@ export function normalizePluginManifest(
     return { manifest: null };
   }
   const record = raw as Record<string, unknown>;
-
-  scanForPlaceholders(record, "", issues);
 
   // $schema — required; selects the locally supported validation contract.
   const schema = record.$schema;
@@ -426,7 +439,12 @@ export function normalizePluginManifest(
           label: "manifest extensions",
         }
       );
-      applyMcpjamExtension(manifest, filePaths, issues);
+      applyMcpjamExtension(
+        manifest,
+        extensions as Record<string, unknown>,
+        filePaths,
+        issues
+      );
     }
   }
 
@@ -446,6 +464,16 @@ export function normalizePluginManifest(
       `manifest field "${key}" is not part of Agent Plugins ${schemaVersion}; ignored`
     );
   }
+
+  // Placeholder hygiene runs over the NORMALIZED manifest, not the raw
+  // record: an unresolved [TODO: ...] in a field we keep is fatal, but one
+  // inside an unknown field we already reported and ignored must not be —
+  // ignored means ignored.
+  scanForPlaceholders(
+    manifest as unknown as Record<string, unknown>,
+    "",
+    issues
+  );
 
   return { manifest };
 }

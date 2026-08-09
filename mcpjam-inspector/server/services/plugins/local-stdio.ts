@@ -30,7 +30,10 @@ import {
   resolvePluginStdioLaunch,
   type PluginStdioLaunchSpec,
 } from "./plugin-root.js";
-import type { PluginFileSource } from "@mcpjam/sdk/plugin-bundle";
+import {
+  containsPluginPlaceholder,
+  type PluginFileSource,
+} from "@mcpjam/sdk/plugin-bundle";
 
 export { PluginBundleCache, PluginBundleCacheError };
 
@@ -107,6 +110,16 @@ export type PluginStdioPreparationFailure =
       reason: "bundle_not_materialized" | "bundle_verification_failed";
       origin: PluginServerOrigin;
       message: string;
+    }
+  | {
+      /**
+       * A placeholder survived substitution — today that means
+       * `${PLUGIN_DATA}`, whose writable-directory runtime is not built yet.
+       * Fail closed: a child process must never see a placeholder verbatim.
+       */
+      reason: "unsupported_placeholder";
+      origin: PluginServerOrigin;
+      placeholder: string;
     };
 
 export type PluginStdioPreparation =
@@ -175,6 +188,26 @@ export async function preparePluginStdioLaunch(args: {
     };
   }
 
+  const launch = resolvePluginStdioLaunch(args.spec, root);
+
+  // Substitution expands only ${PLUGIN_ROOT}; anything still carrying a
+  // placeholder (today: ${PLUGIN_DATA}, pending its runtime) must not spawn —
+  // the literal string would reach the child as an argv/env/cwd value.
+  const leftover = [
+    launch.command,
+    ...launch.args,
+    ...Object.values(launch.env),
+    ...(launch.workingDirectory !== undefined ? [launch.workingDirectory] : []),
+  ].find(containsPluginPlaceholder);
+  if (leftover !== undefined) {
+    return {
+      ok: false,
+      reason: "unsupported_placeholder",
+      origin,
+      placeholder: leftover,
+    };
+  }
+
   // Unique per call, not just per server: a reconnect acquires the new lease
   // BEFORE releasing the old one, and two holders sharing an id would make
   // that release drop the live lease too.
@@ -186,7 +219,7 @@ export async function preparePluginStdioLaunch(args: {
     ok: true,
     origin,
     pluginRoot: root,
-    launch: resolvePluginStdioLaunch(args.spec, root),
+    launch,
     release,
   };
 }
@@ -311,6 +344,18 @@ function pluginStdioFailureToRouteError(
           pluginId: failure.origin.pluginId,
           bundleHash: failure.origin.bundleHash,
           details: failure.message,
+        }
+      );
+    case "unsupported_placeholder":
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        `Plugin "${failure.origin.name}" uses \${PLUGIN_DATA}, which this MCPJam version cannot provide yet, so the component will not be launched.`,
+        {
+          reason: failure.reason,
+          serverName,
+          pluginId: failure.origin.pluginId,
+          placeholder: failure.placeholder,
         }
       );
   }

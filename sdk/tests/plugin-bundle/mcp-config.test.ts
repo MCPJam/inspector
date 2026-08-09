@@ -204,18 +204,57 @@ describe("stdio server normalization", () => {
     );
     const config = parsed.mcpServers[0].config;
     if (config.transport === "stdio") {
+      // The bundle declared a value we refused to store: the component
+      // cannot run until the user re-supplies it, so it is REQUIRED setup.
       expect(config.envRequirements).toEqual([
-        { name: "SERVICE_TOKEN", required: false },
+        { name: "SERVICE_TOKEN", required: true },
       ]);
     }
     expect(JSON.stringify(parsed)).not.toContain("sk-live-abcdef123456");
     expect(
       parsed.warnings.some((issue) => issue.code === "MCP_ENV_VALUE_OMITTED")
     ).toBe(true);
-    // A dropped literal becomes a setup requirement.
+    // A dropped literal becomes a required setup requirement.
     expect(parsed.setupRequirements).toEqual([
-      expect.objectContaining({ kind: "env", name: "SERVICE_TOKEN" }),
+      expect.objectContaining({
+        kind: "env",
+        name: "SERVICE_TOKEN",
+        required: true,
+      }),
     ]);
+  });
+
+  it("drops literals embedding URL basic-auth credentials", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        db: {
+          type: "stdio",
+          command: "node",
+          env: { DATABASE_URL: "postgres://svc:hunter2@db.internal:5432/app" },
+        },
+      })
+    );
+    const config = parsed.mcpServers[0].config;
+    if (config.transport === "stdio") {
+      expect(config.envRequirements).toEqual([
+        { name: "DATABASE_URL", required: true },
+      ]);
+    }
+    expect(JSON.stringify(parsed)).not.toContain("hunter2");
+  });
+
+  it("canonicalizes ./ commands to the ${PLUGIN_ROOT} form", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({ local: { type: "stdio", command: "./bin/server" } })
+    );
+    const config = parsed.mcpServers[0].config;
+    expect(config.transport).toBe("stdio");
+    if (config.transport === "stdio") {
+      // The placeholder form is what routes the component through
+      // materialization — a bare relative command would spawn against the
+      // host process directory.
+      expect(config.command).toBe("${PLUGIN_ROOT}/bin/server");
+    }
   });
 
   it("skips entries whose env defines the reserved placeholder keys", async () => {
@@ -449,8 +488,9 @@ describe("secret hygiene", () => {
       transport: "stdio",
       command: "node",
       args: [],
-      // Dropped literal: name only, no valueTemplate, no value.
-      envRequirements: [{ name: "API_KEY", required: false }],
+      // Dropped literal: name only, no valueTemplate, no value — and
+      // required, because the bundle declared a value the user must replace.
+      envRequirements: [{ name: "API_KEY", required: true }],
     });
     expect(JSON.stringify(parsed)).not.toContain("sk-live-abc");
     expect(
@@ -512,10 +552,35 @@ describe("secret hygiene", () => {
     const config = parsed.mcpServers[0].config;
     if (config.transport === "stdio") {
       expect(config.envRequirements).toEqual([
-        { name: "CONN", required: false },
+        { name: "CONN", required: true },
       ]);
     }
     expect(JSON.stringify(parsed)).not.toContain("sk-live-aaaabbbbccccdddd");
+  });
+
+  it("marks a header secret when its VALUE looks secret under an innocuous name", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        api: {
+          type: "streamable-http",
+          url: "https://api.example.com/mcp",
+          headers: { "X-Custom": "Bearer sk-live-abc123" },
+        },
+      })
+    );
+    const config = parsed.mcpServers[0].config;
+    if (config.transport === "http") {
+      // Dropped AND flagged secret, so setup UIs mask the re-entered value.
+      expect(config.headerRequirements).toEqual([
+        { name: "X-Custom", secret: true },
+      ]);
+    }
+    expect(JSON.stringify(parsed)).not.toContain("sk-live-abc123");
+    expect(
+      parsed.warnings.some(
+        (issue) => issue.code === "MCP_HEADER_VALUE_OMITTED"
+      )
+    ).toBe(true);
   });
 });
 
@@ -527,6 +592,18 @@ describe("limits and hash stability", () => {
         type: "streamable-http",
         url: `https://s${i}.example.com/mcp`,
       };
+    }
+    await expectParseError(withMcp(servers), "MCP_TOO_MANY_SERVERS", {
+      limits: { maxMcpServers: 2 },
+    });
+  });
+
+  it("counts DECLARED entries — invalid ones cannot bypass the limit", async () => {
+    const servers: Record<string, unknown> = {
+      good: { type: "streamable-http", url: "https://ok.example.com/mcp" },
+    };
+    for (let i = 0; i < 4; i++) {
+      servers[`broken-${i}`] = { type: "websocket" };
     }
     await expectParseError(withMcp(servers), "MCP_TOO_MANY_SERVERS", {
       limits: { maxMcpServers: 2 },

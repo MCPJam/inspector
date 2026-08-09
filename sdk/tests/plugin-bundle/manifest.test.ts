@@ -136,11 +136,22 @@ describe("plugin manifest validation", () => {
     );
   });
 
-  it("rejects unresolved [TODO: ...] placeholders anywhere in the manifest", async () => {
+  it("rejects unresolved [TODO: ...] placeholders in fields it keeps", async () => {
     await expectParseError(
       minimalBundle({}, { description: "[TODO: describe the plugin]" }),
       "MANIFEST_PLACEHOLDER"
     );
+  });
+
+  it("does not reject a [TODO: ...] inside an unknown, ignored field", async () => {
+    // Ignored means ignored: unknown-field content must never be fatal.
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { future_field: "[TODO: fill this in]" })
+    );
+    expect(parsed.manifest.name).toBe("demo-plugin");
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MANIFEST_UNKNOWN_FIELD")
+    ).toBe(true);
   });
 
   it("requires author to be an object", async () => {
@@ -195,12 +206,13 @@ describe("plugin manifest validation", () => {
   it("reads displayName, icon, and logo from the com.mcpjam namespace", async () => {
     const parsed = await parsePluginBundle(
       minimalBundle(
-        { "assets/icon.png": PNG_BYTES },
+        { "assets/icon.png": PNG_BYTES, "assets/logo.png": PNG_BYTES },
         {
           extensions: {
             "com.mcpjam": {
-              displayName: "Demo Plugin",
+              display_name: "Demo Plugin",
               icon: "./assets/icon.png",
+              logo: "assets/logo.png",
             },
             "com.example.other": { anything: true },
           },
@@ -209,16 +221,29 @@ describe("plugin manifest validation", () => {
     );
     expect(parsed.manifest.displayName).toBe("Demo Plugin");
     expect(parsed.manifest.icon).toBe("assets/icon.png");
+    expect(parsed.manifest.logo).toBe("assets/logo.png");
     expect(parsed.manifest.extensions["com.example.other"]).toEqual({
       anything: true,
     });
     expect(parsed.assets).toEqual([
-      expect.objectContaining({
-        path: "assets/icon.png",
-        kind: "icon",
-        contentType: "image/png",
-      }),
+      expect.objectContaining({ path: "assets/icon.png", kind: "icon" }),
+      expect.objectContaining({ path: "assets/logo.png", kind: "logo" }),
     ]);
+  });
+
+  it("keeps long asset paths readable despite the secret-value screen", async () => {
+    // 40+ chars of [A-Za-z0-9-] trips the shared opaque-token heuristic; the
+    // com.mcpjam presentation fields are read from the RAW namespace with
+    // their own validation, so a long path still resolves.
+    const longPath =
+      "assets/brand-name-banner-icon-desktop-retina-display-final.png";
+    const parsed = await parsePluginBundle(
+      minimalBundle(
+        { [longPath]: PNG_BYTES },
+        { extensions: { "com.mcpjam": { icon: longPath } } }
+      )
+    );
+    expect(parsed.manifest.icon).toBe(longPath);
   });
 
   it("warns (never fails) when a com.mcpjam icon reference is missing or escapes", async () => {
