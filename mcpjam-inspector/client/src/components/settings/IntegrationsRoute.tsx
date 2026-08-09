@@ -5,7 +5,7 @@ import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
-import { SettingsNav } from "./SettingsNav";
+import { SettingsPageShell } from "./SettingsPageShell";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import { discordInstallUrl } from "@/lib/config";
@@ -170,10 +170,10 @@ function SlackIntegrationCard({
     connections === undefined
       ? ""
       : !installedCount
-        ? "Not connected"
-        : `${installedCount} ${
-            installedCount === 1 ? "workspace" : "workspaces"
-          } connected`;
+      ? "Not connected"
+      : `${installedCount} ${
+          installedCount === 1 ? "workspace" : "workspaces"
+        } connected`;
 
   return (
     <IntegrationCard
@@ -240,34 +240,25 @@ export function IntegrationsRoute({
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-10 space-y-8 max-w-3xl">
-        <div className="space-y-4">
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <SettingsNav
-            active="integrations"
-            activeOrganizationId={activeOrganizationId}
-          />
-        </div>
+    <SettingsPageShell
+      active="integrations"
+      activeOrganizationId={activeOrganizationId}
+    >
+      <p className="max-w-prose text-sm text-muted-foreground">
+        Connect MCPJam to the services your team already uses.
+      </p>
 
-        <p className="text-sm text-muted-foreground">
-          Connect MCPJam to the services your team already uses.
-        </p>
+      <div className="space-y-2">
+        <ErrorBoundary fallback={null}>
+          <GithubChecksCard activeOrganizationId={activeOrganizationId} />
+        </ErrorBoundary>
 
-        <div className="space-y-2">
-          <ErrorBoundary fallback={null}>
-            <GithubChecksCard activeOrganizationId={activeOrganizationId} />
-          </ErrorBoundary>
+        <ErrorBoundary fallback={null}>
+          <SlackIntegrationCard activeOrganizationId={activeOrganizationId} />
+        </ErrorBoundary>
 
-          <ErrorBoundary fallback={null}>
-            <SlackIntegrationCard
-              activeOrganizationId={activeOrganizationId}
-            />
-          </ErrorBoundary>
-
-          <DiscordCard />
-        </div>
+        <DiscordCard />
       </div>
-    </div>
+    </SettingsPageShell>
   );
 }
