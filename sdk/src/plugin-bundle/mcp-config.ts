@@ -608,7 +608,27 @@ function normalizeServer(
         );
         return null;
       }
-      workingDirectory = cwd;
+      // `./` working directories canonicalize to the `${PLUGIN_ROOT}` form,
+      // same as commands: the bare relative string carries no placeholder,
+      // so nothing downstream would ever resolve it against the bundle.
+      if (cwd.startsWith("./")) {
+        if (cwd === "./") {
+          workingDirectory = PLUGIN_ROOT_PLACEHOLDER;
+        } else {
+          const resolved = resolveContainedPath("", cwd);
+          if (!resolved.ok) {
+            issues.error(
+              resolved.code,
+              `server "${serverKey}": ${resolved.message}`,
+              { componentKey }
+            );
+            return null;
+          }
+          workingDirectory = `${PLUGIN_ROOT_PLACEHOLDER}/${resolved.path}`;
+        }
+      } else {
+        workingDirectory = cwd;
+      }
     }
 
     return {

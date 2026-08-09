@@ -1022,6 +1022,12 @@ export async function resolveLocalServerForConnect(
         command: stdioConfig.command,
         args: stdioConfig.args ?? [],
         env: stdioConfig.env ?? {},
+        // A plugin component's declared cwd rides the config as a
+        // `${PLUGIN_ROOT}`-rooted template; substitution happens with the
+        // rest of the launch spec.
+        ...(stdioConfig.cwd !== undefined
+          ? { workingDirectory: stdioConfig.cwd }
+          : {}),
       },
     });
     if (materialized) {
@@ -1037,6 +1043,9 @@ export async function resolveLocalServerForConnect(
           command: materialized.command,
           args: materialized.args,
           env: materialized.env,
+          ...(materialized.workingDirectory !== undefined
+            ? { cwd: materialized.workingDirectory }
+            : {}),
         },
       };
     }

@@ -141,6 +141,64 @@ describe("plugin stdio origin resolution", () => {
     expect(cache.activeEntries()).toEqual([]);
   });
 
+  it("substitutes a ${PLUGIN_ROOT}-rooted working directory", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        workingDirectory: "${PLUGIN_ROOT}/server",
+      },
+      leaseId: SERVER_ID,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.launch.workingDirectory).toBe(
+      `${prepared.pluginRoot}/server`
+    );
+    prepared.release();
+  });
+
+  it("fails closed on a ${PLUGIN_DATA} placeholder, reporting only the token", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        args: [
+          "${PLUGIN_ROOT}/server/index.js",
+          "--cache=${PLUGIN_DATA}/cache.db",
+        ],
+      },
+      leaseId: SERVER_ID,
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "unsupported_placeholder",
+      // The bare token only — never the containing argv value, which can
+      // embed expanded paths or adjacent secrets.
+      placeholder: "${PLUGIN_DATA}",
+    });
+    // Nothing spawned, nothing leased.
+    expect(cache.activeEntries()).toEqual([]);
+  });
+
   it.each([
     [
       "a plugin that no longer resolves",

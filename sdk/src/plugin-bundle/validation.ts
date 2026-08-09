@@ -215,7 +215,7 @@ export const SECRET_FIELD_NAME =
  * (`postgres://user:hunter2@db/app`) that the token-run heuristic misses.
  */
 const SECRET_LIKE_VALUE =
-  /(bearer\s+\S|-----BEGIN|\b(?:sk|pk|rk|xox[a-z])-[A-Za-z0-9]|[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@|[A-Za-z0-9+/_-]{40,})/i;
+  /(bearer\s+\S|-----BEGIN|\b(?:sk|pk|rk|xox[a-z])-[A-Za-z0-9]|[a-z][a-z0-9+.-]*:\/\/[^/\s:@]*:[^/\s@]+@|[A-Za-z0-9+/_-]{40,})/i;
 
 /**
  * Does a string VALUE look like a credential? Shared by the recursive

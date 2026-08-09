@@ -315,19 +315,33 @@ describe("stdio server normalization", () => {
     ).toBe(true);
   });
 
-  it.each(["./server", "${PLUGIN_ROOT}/server", "${PLUGIN_DATA}", "${PLUGIN_DATA}/cache"])(
-    "accepts spec-conforming cwd %j",
-    async (cwd) => {
-      const parsed = await parsePluginBundle(
-        withMcp({ ok: { type: "stdio", command: "node", cwd } })
-      );
-      const config = parsed.mcpServers[0].config;
-      expect(config.transport).toBe("stdio");
-      if (config.transport === "stdio") {
-        expect(config.workingDirectory).toBe(cwd);
-      }
+  it.each([
+    // `./` cwds canonicalize to the placeholder form, same as commands.
+    ["./server", "${PLUGIN_ROOT}/server"],
+    ["./", "${PLUGIN_ROOT}"],
+    ["${PLUGIN_ROOT}/server", "${PLUGIN_ROOT}/server"],
+    ["${PLUGIN_DATA}", "${PLUGIN_DATA}"],
+    ["${PLUGIN_DATA}/cache", "${PLUGIN_DATA}/cache"],
+  ])("accepts spec-conforming cwd %j as %j", async (cwd, expected) => {
+    const parsed = await parsePluginBundle(
+      withMcp({ ok: { type: "stdio", command: "node", cwd } })
+    );
+    const config = parsed.mcpServers[0].config;
+    expect(config.transport).toBe("stdio");
+    if (config.transport === "stdio") {
+      expect(config.workingDirectory).toBe(expected);
     }
-  );
+  });
+
+  it("skips entries whose ./ cwd escapes the plugin root", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({ bad: { type: "stdio", command: "node", cwd: "./a/../../out" } })
+    );
+    expect(parsed.mcpServers).toEqual([]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "PATH_ESCAPES_ROOT")
+    ).toBe(true);
+  });
 
   it.each(["/Users/someone/plugin", "relative/path", "..", "${OTHER_VAR}/x"])(
     "skips entries with non-conforming cwd %j",

@@ -32,6 +32,7 @@ import {
 } from "./plugin-root.js";
 import {
   containsPluginPlaceholder,
+  PLUGIN_PLACEHOLDERS,
   type PluginFileSource,
 } from "@mcpjam/sdk/plugin-bundle";
 
@@ -116,6 +117,8 @@ export type PluginStdioPreparationFailure =
        * A placeholder survived substitution — today that means
        * `${PLUGIN_DATA}`, whose writable-directory runtime is not built yet.
        * Fail closed: a child process must never see a placeholder verbatim.
+       * `placeholder` is the bare token only — never the containing value,
+       * which may embed expanded paths or adjacent secrets.
        */
       reason: "unsupported_placeholder";
       origin: PluginServerOrigin;
@@ -192,19 +195,25 @@ export async function preparePluginStdioLaunch(args: {
 
   // Substitution expands only ${PLUGIN_ROOT}; anything still carrying a
   // placeholder (today: ${PLUGIN_DATA}, pending its runtime) must not spawn —
-  // the literal string would reach the child as an argv/env/cwd value.
-  const leftover = [
+  // the literal string would reach the child as an argv/env/cwd value. Only
+  // the placeholder TOKEN is reported: the containing string may embed an
+  // expanded cache path or an adjacent secret, and this reason surfaces in
+  // an error response.
+  const launchValues = [
     launch.command,
     ...launch.args,
     ...Object.values(launch.env),
     ...(launch.workingDirectory !== undefined ? [launch.workingDirectory] : []),
-  ].find(containsPluginPlaceholder);
-  if (leftover !== undefined) {
+  ];
+  const leftoverToken = PLUGIN_PLACEHOLDERS.find((placeholder) =>
+    launchValues.some((value) => value.includes(placeholder))
+  );
+  if (leftoverToken !== undefined) {
     return {
       ok: false,
       reason: "unsupported_placeholder",
       origin,
-      placeholder: leftover,
+      placeholder: leftoverToken,
     };
   }
 
@@ -268,6 +277,8 @@ export async function materializePluginStdioForConnect(args: {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** Substituted working directory, when the component declared one. */
+  workingDirectory?: string;
   pluginRoot: string;
   origin: PluginServerOrigin;
 } | null> {
@@ -291,6 +302,9 @@ export async function materializePluginStdioForConnect(args: {
     command: prepared.launch.command,
     args: prepared.launch.args,
     env: prepared.launch.env,
+    ...(prepared.launch.workingDirectory !== undefined
+      ? { workingDirectory: prepared.launch.workingDirectory }
+      : {}),
     pluginRoot: prepared.pluginRoot,
     origin: prepared.origin,
   };
