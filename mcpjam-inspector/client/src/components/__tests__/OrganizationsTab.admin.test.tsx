@@ -263,6 +263,24 @@ describe("OrganizationsTab member management", () => {
     mockUpdateOrganizationLogo.mockResolvedValue({ success: true });
   });
 
+  // The org page is one of four Settings sections and has to render inside the
+  // same shell as the rest. It used to own its container and skip the page
+  // heading, so selecting Organization moved the tab strip out from under the
+  // pointer and dropped "Settings" off the page.
+  it("renders inside the shared settings shell", () => {
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Settings sections" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Organization settings sections" })
+    ).toBeInTheDocument();
+  });
+
   it("shows members section for owners and allows role changes", async () => {
     render(<OrganizationsTab organizationId="org-1" />);
 
@@ -428,7 +446,7 @@ describe("OrganizationsTab member management", () => {
     ).toBeInTheDocument();
     expect(mockUseOrganizationBilling).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(signIn).toHaveBeenCalledTimes(1);
   });
 
