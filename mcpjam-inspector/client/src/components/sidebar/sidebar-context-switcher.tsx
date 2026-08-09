@@ -254,7 +254,13 @@ export function SidebarContextSwitcher({
         <SidebarMenuItem>
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             {onLearnMoreExpand ? (
-              <LearnMoreHoverCard tabId="projects" onExpand={onLearnMoreExpand}>
+              <LearnMoreHoverCard
+                tabId="projects"
+                onExpand={onLearnMoreExpand}
+                // Both open to the right of this same trigger, so the preview
+                // card would otherwise animate over the open menu.
+                suppressed={menuOpen}
+              >
                 <DropdownMenuTrigger asChild>
                   {triggerButton}
                 </DropdownMenuTrigger>
@@ -325,10 +331,15 @@ export function SidebarContextSwitcher({
                         }}
                         onOpenSettings={
                           onNavigateToSettings
-                            ? async () => {
+                            ? () => {
                                 setMenuOpen(false);
+                                // Switch and navigate in one gesture. Awaiting
+                                // the switch first let the project change land
+                                // on the old route, where the snap-to-Servers
+                                // effect read it as a bare project switch and
+                                // bounced off the settings page.
                                 if (project.id !== activeProjectId) {
-                                  await onSwitchProject(project.id);
+                                  onSwitchProject(project.id);
                                 }
                                 onNavigateToSettings();
                               }
@@ -573,7 +584,9 @@ function ProjectRow({
         projectId={project.sharedProjectId ?? null}
         isAuthenticated={isAuthenticated}
       />
-      <div className="hidden group-hover/proj:flex group-focus-within/proj:flex items-center gap-0.5 shrink-0">
+      {/* Keep the cluster in flow (invisible, not display:none) so revealing it
+          on hover doesn't shove the member avatars sideways. */}
+      <div className="invisible group-hover/proj:visible group-focus-within/proj:visible flex items-center gap-0.5 shrink-0">
         {onOpenSettings ? (
           <button
             type="button"

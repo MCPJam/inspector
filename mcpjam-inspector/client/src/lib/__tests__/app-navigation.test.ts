@@ -153,6 +153,20 @@ describe("shouldSnapToServersOnActiveProjectChange", () => {
     ).toBe(false);
   });
 
+  it("does NOT snap while on project settings", () => {
+    // Regression: the switcher's per-row gear switches project and opens that
+    // project's settings as one gesture. Snapping here flashed the settings
+    // page and bounced the user to Servers. Project settings renders whichever
+    // project is active, so it is still correct after the switch.
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "p1",
+        nextActiveProjectId: "p2",
+        activeTab: "project-settings",
+      }),
+    ).toBe(false);
+  });
+
   it("does not snap on initial hydration (no previous project id)", () => {
     expect(
       shouldSnapToServersOnActiveProjectChange({
