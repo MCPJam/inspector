@@ -7,10 +7,7 @@ const DEFAULT_BASE_URL = "https://app.mcpjam.com";
 const trimOrigin = (value) => String(value || "").replace(/\/+$/, "");
 
 /**
- * TWO SECRETS, TWO JOBS. They are not interchangeable and must never fall back
- * to one another — a single value doing both jobs is exactly the coupling
- * slack-app's .env.sample forbids, because it widens the blast radius of either
- * secret leaking to both surfaces of the system.
+ * TWO NAMES, TWO JOBS — but, for now, ONE VALUE.
  *
  *   DISCORD_SERVICE_TOKEN        the CONVEX service credential. Presented as
  *                                the `x-discord-service-token` header to the
@@ -22,13 +19,34 @@ const trimOrigin = (value) => String(value || "").replace(/\/+$/, "");
  *                                `Authorization: Bearer` to `/api/v1/*` and
  *                                `/api/surface-link/session`. The server
  *                                requires a `dsc_` prefix and hash-matches it
- *                                against MCPJAM_DISCORD_SERVICE_TOKEN_HASH, so
- *                                handing it the Convex token cannot work — it
- *                                fails the prefix check before anything else.
+ *                                against MCPJAM_DISCORD_SERVICE_TOKEN_HASH.
  *
- * The old code had three different precedence orders for "the token" across one
- * file, and the only configuration that worked was one secret doing both jobs.
- * These accessors exist so there is exactly one answer per job, named.
+ * THEY MUST CURRENTLY HOLD THE SAME `dsc_` VALUE, and that is not a nicety of
+ * configuration — it is forced by the server. The inspector does not terminate
+ * the bot's bearer token: it FORWARDS it to Convex verbatim as
+ * `x-discord-service-token`, on both legs.
+ *
+ *   /api/v1/*                    surface-service-auth.ts hands the bearer to
+ *                                `resolveSurfaceActingUser(..., {surfaceServiceToken})`
+ *   /api/surface-link/session    surface-link/index.ts hands it to
+ *                                `createSurfaceLinkSession(args, token)`
+ *
+ * Both land in `slack-backend.ts`'s `post()`, which sets
+ * `x-discord-service-token: <that same bearer>`. Convex then checks it against
+ * ITS `DISCORD_SERVICE_TOKEN`. So the app API token has to satisfy the Convex
+ * check too, which means one value seeded in three places — and it must carry
+ * the `dsc_` prefix, because the /api/v1 hash check runs first.
+ *
+ * Splitting them for real needs a server change: the inspector→Convex hop has
+ * to present its OWN Convex credential instead of relaying the caller's. These
+ * accessors are the seam that makes that a configuration change rather than a
+ * code change — every call site already asks for the token by JOB, so the day
+ * the hop is fixed the two variables can diverge and nothing here moves.
+ *
+ * What this module does fix today is the mess it replaces: three different
+ * precedence orders for "the token" across one file, one of which preferred the
+ * Convex-shaped token for the connect-link mint — a route that rejects anything
+ * without a `dsc_` prefix, so it could never have worked.
  */
 
 /** The Convex service credential, or undefined when unset. */
@@ -41,18 +59,30 @@ export function apiServiceToken() {
 	return process.env.MCPJAM_DISCORD_SERVICE_TOKEN || undefined;
 }
 
+const API_TOKEN_PREFIX = "dsc_";
+
 /**
  * The app API credential, or a NAMED config error.
  *
  * Callers that mint a connect link need the failure to say which variable is
- * missing: the message is shown to an operator, and "Unable to create a connect
+ * wrong: the message is shown to an operator, and "Unable to create a connect
  * link: undefined" tells them nothing.
+ *
+ * The prefix is checked HERE as well as on the server. The server's check is
+ * the one that matters for security, but it answers a bare "Invalid API key" —
+ * so a token pasted from the wrong variable looks identical to a revoked one.
+ * Failing locally names the variable and the expected shape instead.
  */
 export function requireApiServiceToken() {
 	const token = apiServiceToken();
 	if (!token)
 		throw new McpjamApiError(
 			"MCPJAM_DISCORD_SERVICE_TOKEN must be set to reach the MCPJam API (see .env.sample).",
+			{ code: "CONFIG" },
+		);
+	if (!token.startsWith(API_TOKEN_PREFIX))
+		throw new McpjamApiError(
+			`MCPJAM_DISCORD_SERVICE_TOKEN must start with "${API_TOKEN_PREFIX}" — the server rejects anything else before it checks the value (see .env.sample).`,
 			{ code: "CONFIG" },
 		);
 	return token;
@@ -71,14 +101,22 @@ export function appUrl() {
 }
 
 /**
- * Origins a minted connect link is allowed to point at. Empty entries are
- * dropped rather than defaulted, so an unset variable narrows the allowlist
- * instead of silently widening it.
+ * Origins a minted connect link is allowed to point at.
+ *
+ * Every entry is normalized, because the allowlist is compared against a
+ * canonical `new URL(...).origin`, which never carries a trailing slash. An
+ * unnormalized `MCPJAM_APP_URL=https://app.example.com/` therefore matches
+ * nothing and makes the bot unlinkable — the variable looks right, the link
+ * mints, and the check rejects it.
+ *
+ * Empty entries are dropped rather than defaulted, so an unset variable narrows
+ * the allowlist instead of silently widening it. `trimOrigin(undefined)` is the
+ * empty string, which is exactly what the filter removes.
  */
 export function connectLinkOrigins() {
 	return [
-		process.env.MCPJAM_APP_URL,
-		process.env.DISCORD_LINK_PUBLIC_ORIGIN,
+		trimOrigin(process.env.MCPJAM_APP_URL),
+		trimOrigin(process.env.DISCORD_LINK_PUBLIC_ORIGIN),
 		baseUrl(),
 	].filter(Boolean);
 }

@@ -78,6 +78,25 @@ test("a missing API token throws a CONFIG error naming the variable", () => {
 	});
 });
 
+test("an API token without the dsc_ prefix fails locally, not as a bare 401", () => {
+	// The server rejects a non-`dsc_` token with "Invalid API key", which reads
+	// identically to a revoked one. Failing here names the variable instead.
+	withEnv({ MCPJAM_DISCORD_SERVICE_TOKEN: "sk_wrong_variable" }, () => {
+		assert.throws(
+			() => requireApiServiceToken(),
+			(error) => {
+				assert.equal(error.code, "CONFIG");
+				assert.match(error.message, /dsc_/);
+				return true;
+			},
+		);
+	});
+
+	withEnv({ MCPJAM_DISCORD_SERVICE_TOKEN: "dsc_ok" }, () => {
+		assert.equal(requireApiServiceToken(), "dsc_ok");
+	});
+});
+
 test("getConfig resolves the API token, not the Convex one", () => {
 	withEnv(
 		{
@@ -192,4 +211,26 @@ test("connect-link origins drop unset entries instead of widening", () => {
 	withEnv({ MCPJAM_BASE_URL: "https://api.example.com" }, () => {
 		assert.deepEqual(connectLinkOrigins(), ["https://api.example.com"]);
 	});
+});
+
+test("connect-link origins are normalized, or the bot becomes unlinkable", () => {
+	// The allowlist is compared against a canonical `new URL(...).origin`, which
+	// never carries a trailing slash. An unnormalized entry matches nothing: the
+	// variable looks right, the link mints, and the check rejects it.
+	withEnv(
+		{
+			MCPJAM_BASE_URL: "https://api.example.com/",
+			MCPJAM_APP_URL: "https://app.example.com/",
+			DISCORD_LINK_PUBLIC_ORIGIN: "https://link.example.com//",
+		},
+		() => {
+			assert.deepEqual(connectLinkOrigins(), [
+				"https://app.example.com",
+				"https://link.example.com",
+				"https://api.example.com",
+			]);
+			for (const origin of connectLinkOrigins())
+				assert.equal(origin, new URL(origin).origin);
+		},
+	);
 });
