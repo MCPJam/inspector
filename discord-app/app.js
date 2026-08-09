@@ -22,6 +22,13 @@ import {
 	deriveConversationIdentity,
 	ensureThreadBinding,
 } from "./conversation.js";
+import {
+	baseUrl,
+	connectLinkOrigins,
+	convexServiceToken,
+	getConfig,
+	requireApiServiceToken,
+} from "./credentials.js";
 import { createDiscordDelivery } from "./delivery.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
@@ -50,31 +57,14 @@ const claims = createEventClaims({
 });
 const resolveTurnTarget = createTurnTargetResolver({
 	backend: claimBackend,
-	hasPerUserAuth: () => Boolean(process.env.DISCORD_SERVICE_TOKEN),
+	hasPerUserAuth: () => Boolean(convexServiceToken()),
 	legacyProjectId: () => process.env.MCPJAM_PROJECT_ID,
 });
 const api = createApiClient({
 	routePrefix: "/agent",
 	conversationField: "conversationId",
 	baseUrl: process.env.MCPJAM_BASE_URL,
-	getConfig: (ctx, overrides = {}) => ({
-		apiKey:
-			overrides.apiKey ||
-			process.env.MCPJAM_DISCORD_SERVICE_TOKEN ||
-			process.env.DISCORD_SERVICE_TOKEN ||
-			process.env.DISCORD_API_TOKEN,
-		projectId: overrides.projectId || ctx.projectId,
-		baseUrl:
-			overrides.baseUrl ||
-			process.env.MCPJAM_BASE_URL ||
-			"https://app.mcpjam.com",
-		appUrl: process.env.MCPJAM_APP_URL || "https://app.mcpjam.com",
-		headers: {
-			"x-mcpjam-surface-tenant-id": ctx.tenantId,
-			"x-mcpjam-surface-actor-id": ctx.actorId,
-		},
-		routePrefix: "/agent",
-	}),
+	getConfig,
 });
 
 client.once(Events.ClientReady, async (ready) => {
@@ -105,22 +95,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 		allowedMentions: { parse: [] },
 	});
 	try {
-		const baseUrl = process.env.MCPJAM_BASE_URL || "https://app.mcpjam.com";
-		const origins = [
-			process.env.MCPJAM_APP_URL,
-			process.env.DISCORD_LINK_PUBLIC_ORIGIN,
-			baseUrl,
-		].filter(Boolean);
 		const url = await mintConnectUrl({
 			surfaceKind: "discord",
 			tenantId: interaction.guildId,
 			actorId: interaction.user.id,
-			token:
-				process.env.DISCORD_SERVICE_TOKEN ||
-				process.env.MCPJAM_DISCORD_SERVICE_TOKEN ||
-				process.env.DISCORD_API_TOKEN,
-			baseUrl,
-			origins,
+			token: requireApiServiceToken(),
+			baseUrl: baseUrl(),
+			origins: connectLinkOrigins(),
 		});
 		await interaction.editReply({
 			content: `Connect MCPJam: ${url}`,
@@ -169,13 +150,9 @@ client.on(Events.MessageCreate, async (message) => {
 				surfaceKind: "discord",
 				tenantId: message.guildId,
 				actorId: message.author.id,
-				token: process.env.DISCORD_SERVICE_TOKEN,
-				baseUrl: process.env.MCPJAM_BASE_URL || "https://app.mcpjam.com",
-				origins: [
-					process.env.MCPJAM_APP_URL,
-					process.env.DISCORD_LINK_PUBLIC_ORIGIN,
-					process.env.MCPJAM_BASE_URL || "https://app.mcpjam.com",
-				].filter(Boolean),
+				token: requireApiServiceToken(),
+				baseUrl: baseUrl(),
+				origins: connectLinkOrigins(),
 			});
 			const content = {
 				severity: "info",
