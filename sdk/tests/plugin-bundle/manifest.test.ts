@@ -85,13 +85,20 @@ describe("plugin manifest validation", () => {
     );
   });
 
-  it.each(["com.example.plugin", "a", "deploy.tools-2", "demo-plugin"])(
-    "accepts Agent Plugins name %j",
-    async (name) => {
-      const parsed = await parsePluginBundle(minimalBundle({}, { name }));
-      expect(parsed.manifest.name).toBe(name);
-    }
-  );
+  it.each([
+    "com.example.plugin",
+    "a",
+    "deploy.tools-2",
+    "demo-plugin",
+    // The canonical schema pattern excludes only same-character doubles
+    // ("--", ".."); mixed adjacent separators are spec-VALID names and
+    // must not be rejected.
+    "foo.-bar",
+    "foo-.bar",
+  ])("accepts Agent Plugins name %j", async (name) => {
+    const parsed = await parsePluginBundle(minimalBundle({}, { name }));
+    expect(parsed.manifest.name).toBe(name);
+  });
 
   it.each([
     "Demo Plugin",

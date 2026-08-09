@@ -97,6 +97,12 @@ type LocalAuthorizeServerConfig =
       command: string;
       args: string[];
       env: Record<string, string>;
+      /**
+       * Working directory for the child process. For plugin components this
+       * arrives as a `${PLUGIN_ROOT}`-rooted template and is substituted at
+       * materialization, immediately before the SDK config is built.
+       */
+      cwd?: string;
       hasEnv?: boolean;
       timeout?: number;
       clientCapabilities?: unknown;
@@ -616,6 +622,10 @@ export function toMCPServerConfig(
       args: serverConfig.args ?? [],
       env: serverConfig.env ?? {},
     };
+    // A plugin component's substituted working directory (or any declared
+    // cwd) must reach the transport — the MCPClientManager forwards it to
+    // the child process spawn.
+    if (serverConfig.cwd !== undefined) stdio.cwd = serverConfig.cwd;
     if (typeof timeout === "number") stdio.timeout = timeout;
     if (clientCapabilities) {
       stdio.capabilities = clientCapabilities;

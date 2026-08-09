@@ -72,8 +72,12 @@ export interface NormalizedPluginManifest {
 }
 
 /**
- * Agent Plugins name rule: lowercase alphanumerics with single `-`/`.`
- * separators; no leading/trailing separator, no `--`, no `..`; 1–64 chars.
+ * Agent Plugins name rule, byte-for-byte the canonical
+ * plugin.schema.json pattern: lowercase alphanumerics plus `-`/`.`, no
+ * leading/trailing separator, no `--`, no `..`; 1–64 chars. Note the
+ * published pattern DOES accept mixed adjacent separators (`foo.-bar`,
+ * `foo-.bar`) — only same-character doubles are excluded — and rejecting
+ * them here would reject spec-valid names.
  */
 const AP_NAME = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 const MAX_NAME_LENGTH = 64;
