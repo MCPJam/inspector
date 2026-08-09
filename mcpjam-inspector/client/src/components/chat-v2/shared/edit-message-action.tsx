@@ -1,4 +1,4 @@
-import { Pencil } from "lucide-react";
+import { Undo2 } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -33,16 +33,16 @@ export function EditMessageAction({
         <span className="inline-flex shrink-0">
           <button
             type="button"
-            aria-label="Edit this message"
+            aria-label="Rewind to here"
             disabled={disabled}
             className="flex size-6 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
             onClick={onClick}
           >
-            <Pencil className="h-3.5 w-3.5" aria-hidden />
+            <Undo2 className="h-3.5 w-3.5" aria-hidden />
           </button>
         </span>
       </TooltipTrigger>
-      <TooltipContent>Edit message</TooltipContent>
+      <TooltipContent>Rewind to here</TooltipContent>
     </Tooltip>
   );
 }

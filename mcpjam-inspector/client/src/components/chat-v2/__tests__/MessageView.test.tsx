@@ -184,7 +184,7 @@ describe("MessageView", () => {
 
     const editButton = () =>
       screen.getByRole("button", {
-        name: "Edit this message",
+        name: "Rewind to here",
       });
 
     it("renders the edit affordance only when a handler is provided", () => {
@@ -194,7 +194,7 @@ describe("MessageView", () => {
       );
       expect(
         screen.queryByRole("button", {
-          name: "Edit this message",
+          name: "Rewind to here",
         })
       ).not.toBeInTheDocument();
       unmount();
@@ -223,7 +223,7 @@ describe("MessageView", () => {
       );
       expect(
         screen.queryByRole("button", {
-          name: "Edit this message",
+          name: "Rewind to here",
         })
       ).not.toBeInTheDocument();
     });
