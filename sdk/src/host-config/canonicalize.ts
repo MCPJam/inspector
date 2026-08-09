@@ -817,21 +817,31 @@ function canonicalizeMcpProfile(
     }
   }
 
-  // Cross-field rule: when `mcpProtocolVersion` pins a stateful (pre-2026)
-  // version AND the caller supplied an advertised list, that list must contain
-  // the pin. Absence means "no capability constraint" and must stay absent:
-  // the connection layer already proposes the pin at runtime. Persisting a
-  // derived singleton here would turn the first selected version into a
-  // permanent allow-list and make every later protocol switch fail.
+  // Cross-field rule (Option A): when `mcpProtocolVersion` pins a stateful
+  // (pre-2026) version, the legacy `initialize` handshake runs and must
+  // advertise that exact version. Derive when caller didn't set one; throw if
+  // they set both AND the pin isn't in the list. Stateless versions skip
+  // initialize entirely, so leave `supportedProtocolVersions` alone there.
   if (
     out.mcpProtocolVersion !== undefined &&
     !isStatelessProtocolVersion(out.mcpProtocolVersion)
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
-    if (
-      advertised !== undefined &&
-      !advertised.includes(out.mcpProtocolVersion)
-    ) {
+    if (advertised === undefined) {
+      const initBase = out.initialize ?? {};
+      const initWithDerived: NonNullable<HostConfigMcpProfileV1["initialize"]> =
+        {
+          ...initBase,
+          supportedProtocolVersions: [out.mcpProtocolVersion],
+        };
+      const sortedInit: NonNullable<HostConfigMcpProfileV1["initialize"]> = {};
+      for (const k of Object.keys(initWithDerived).sort()) {
+        (sortedInit as Record<string, unknown>)[k] = (
+          initWithDerived as Record<string, unknown>
+        )[k];
+      }
+      out.initialize = sortedInit;
+    } else if (!advertised.includes(out.mcpProtocolVersion)) {
       throw new Error(
         `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${
           out.mcpProtocolVersion
