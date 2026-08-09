@@ -2,9 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import {
-  emptySwarmTargetComposerState,
-  type SwarmTargetComposerState,
-} from "../swarm-target-types";
+  emptyComposerState,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
 
 const flagState = vi.hoisted(() => ({
   skills: false,
@@ -107,8 +107,8 @@ function Harness({
     updatedAt: number;
   }>;
 }) {
-  const [value, setValue] = useState<SwarmTargetComposerState>(
-    emptySwarmTargetComposerState
+  const [value, setValue] = useState<EnvironmentComposerState>(
+    emptyComposerState
   );
   return (
     <SwarmTargetComposer

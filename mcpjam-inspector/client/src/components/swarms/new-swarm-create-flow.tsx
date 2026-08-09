@@ -39,11 +39,11 @@ import {
   type CreateProjectEnvironmentFn,
 } from "@/components/swarms/swarm-target-materialize";
 import {
-  emptySwarmTargetComposerState,
-  isSwarmComposeMode,
-  swarmTargetCount,
-  type SwarmTargetComposerState,
-} from "@/components/swarms/swarm-target-types";
+  composerTargetCount,
+  emptyComposerState,
+  isComposeMode,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
 import { MAX_PERSONAS_PER_PROJECT } from "@/components/swarms/GenerateSwarmDialog";
 import {
   PersonaPixelAvatar,
@@ -288,8 +288,8 @@ export function NewSwarmCreateFlow({
     "describe"
   );
   const [draft, setDraft] = useState("");
-  const [targetState, setTargetState] = useState<SwarmTargetComposerState>(
-    emptySwarmTargetComposerState
+  const [targetState, setTargetState] = useState<EnvironmentComposerState>(
+    emptyComposerState
   );
   /** Env ids after materialize (compose path). Cleared when the composer changes. */
   const [resolvedEnvironmentIds, setResolvedEnvironmentIds] = useState<
@@ -381,16 +381,16 @@ export function NewSwarmCreateFlow({
   const persistedSwarmIdRef = useRef<string | null>(null);
 
   const envList = useMemo(() => environments ?? [], [environments]);
-  const composeMode = isSwarmComposeMode(targetState);
-  const targetCount = swarmTargetCount(targetState);
+  const composeMode = isComposeMode(targetState);
+  const targetCount = composerTargetCount(targetState);
   const environmentIds = useMemo(() => {
     if (resolvedEnvironmentIds) return resolvedEnvironmentIds;
-    if (!composeMode) return targetState.castleIds;
+    if (!composeMode) return targetState.environmentIds;
     return [];
   }, [
     composeMode,
     resolvedEnvironmentIds,
-    targetState.castleIds,
+    targetState.environmentIds,
   ]);
   const envListForPayload = useMemo(() => {
     const byId = new Map(envList.map((e) => [e.environmentId, e]));
@@ -407,10 +407,10 @@ export function NewSwarmCreateFlow({
     () =>
       [
         composeMode ? "compose" : "castles",
-        ...[...targetState.castleIds].sort(),
-        ...[...targetState.legos.hostIds].sort(),
-        targetState.legos.serverAttachmentId ?? "",
-        targetState.legos.computerEnvironmentId ?? "",
+        ...[...targetState.environmentIds].sort(),
+        ...[...targetState.stack.hostIds].sort(),
+        targetState.stack.serverAttachmentId ?? "",
+        targetState.stack.computerEnvironmentId ?? "",
         targetState.customized ? "custom" : "seeded",
       ].join("|"),
     [composeMode, targetState]
@@ -443,8 +443,8 @@ export function NewSwarmCreateFlow({
   );
 
   const hasGenerateTargets =
-    (!composeMode && targetState.castleIds.length > 0) ||
-    (composeMode && targetState.legos.hostIds.length > 0);
+    (!composeMode && targetState.environmentIds.length > 0) ||
+    (composeMode && targetState.stack.hostIds.length > 0);
 
   // Generating and reusing are two independent doors into Confirm, and they
   // compose. Writing anything in the box asks for a generation (which needs
@@ -490,7 +490,7 @@ export function NewSwarmCreateFlow({
     () => ({
       projectId,
       stackName: draft.trim() || "Swarm setup",
-      legos: targetState.legos,
+      legos: targetState.stack,
       hostName: hostNameById,
       liveEnvironments: envList,
       createEnvironment,
@@ -505,7 +505,7 @@ export function NewSwarmCreateFlow({
       hostNameById,
       projectId,
       skillsEnabled,
-      targetState.legos,
+      targetState.stack,
     ]
   );
 
@@ -519,8 +519,8 @@ export function NewSwarmCreateFlow({
     })();
     const resolved = await resolveSwarmJourneyPayload({
       compose: composeMode,
-      castleIds: targetState.castleIds,
-      legos: targetState.legos,
+      castleIds: targetState.environmentIds,
+      legos: targetState.stack,
       liveEnvironments: liveWithOverlay,
       materialize: {
         ...materializeArgs(),
@@ -550,7 +550,7 @@ export function NewSwarmCreateFlow({
   ]);
 
   const handleSaveAsEnvironments = useCallback(async () => {
-    if (!composeMode || targetState.legos.hostIds.length === 0) return;
+    if (!composeMode || targetState.stack.hostIds.length === 0) return;
     setMaterializing(true);
     setErrorMessage(null);
     try {
@@ -565,11 +565,11 @@ export function NewSwarmCreateFlow({
           return [...byId.values()];
         });
       }
-      // Commit to pure castle selection so launch skips re-create. Overlay
-      // covers names until the live list query catches up.
+      // Commit to a pure saved-environment selection so launch skips re-create.
+      // Overlay covers names until the live list query catches up.
       setTargetState({
-        castleIds: result.environmentIds,
-        legos: targetState.legos,
+        environmentIds: result.environmentIds,
+        stack: targetState.stack,
         customized: false,
       });
       setResolvedEnvironmentIds(result.environmentIds);
@@ -590,7 +590,7 @@ export function NewSwarmCreateFlow({
     } finally {
       setMaterializing(false);
     }
-  }, [composeMode, materializeArgs, targetState.legos]);
+  }, [composeMode, materializeArgs, targetState.stack]);
 
   const handleGenerate = useCallback(async () => {
     if (!canGenerate || inFlightRef.current) return;
@@ -743,7 +743,7 @@ export function NewSwarmCreateFlow({
       if (
         proposed.length > 0 ||
         composeMode ||
-        targetState.castleIds.length > 0
+        targetState.environmentIds.length > 0
       ) {
         try {
           const resolved = await resolveTargets();
@@ -1101,7 +1101,7 @@ export function NewSwarmCreateFlow({
       proposed,
       pushIntensity,
       resolveTargets,
-      targetState.castleIds.length,
+      targetState.environmentIds.length,
     ]
   );
 
@@ -1159,7 +1159,7 @@ export function NewSwarmCreateFlow({
   );
 
   const groundingEnvironmentId =
-    environmentIds[0] ?? targetState.castleIds[0] ?? null;
+    environmentIds[0] ?? targetState.environmentIds[0] ?? null;
 
   return (
     <div
