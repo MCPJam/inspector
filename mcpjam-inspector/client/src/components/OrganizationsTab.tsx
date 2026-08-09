@@ -1239,12 +1239,12 @@ function OrganizationPage({
           className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-3 pt-1 sm:px-4"
           aria-label="Organization settings sections"
         >
-          {organizationSections.map((section) => (
+          {organizationSections.map((tab) => (
             <SectionTab
-              key={section.id}
-              label={section.label}
-              isActive={activeSection === section.id}
-              onSelect={() => navigateToSection(section.id)}
+              key={tab.id}
+              label={tab.label}
+              isActive={activeSection === tab.id}
+              onSelect={() => navigateToSection(tab.id)}
             />
           ))}
         </nav>
