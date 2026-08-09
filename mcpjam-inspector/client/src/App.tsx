@@ -106,6 +106,7 @@ import {
 import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
@@ -2328,6 +2329,9 @@ export default function App() {
   }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
 
   usePostHogIdentify();
+  // Stops replay while on `/results/<token>` — the init-time
+  // `disable_session_recording` flag cannot cover in-app navigation into it.
+  useSessionRecordingPathGuard();
 
   const lastLaunchedActorRef = useRef<string | null>(null);
   useEffect(() => {

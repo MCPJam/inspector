@@ -18,6 +18,7 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env";
+import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
@@ -85,6 +86,18 @@ process.on("unhandledRejection", (reason, _promise) => {
       error: reason,
       sentry: true,
     }
+  );
+});
+
+// Sentry's OnUncaughtException integration owns CAPTURE (and the exit) for
+// these; this handler exists only so the crash also lands in Axiom with the
+// same shape as every other system event. Deliberately NOT `sentry: true` —
+// that would double-count against the integration.
+process.on("uncaughtException", (error) => {
+  sysLogger.event(
+    "process.uncaught_exception",
+    { errorCode: error instanceof Error ? error.name : "unknown" },
+    { error }
   );
 });
 
@@ -259,6 +272,12 @@ try {
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
 
+// Immediately after the env load and before anything that can throw: the init
+// reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
+// once `loadInspectorEnv` has run. Deliberately a call, not an import side
+// effect — an import would be hoisted above the env load.
+initServerSentry();
+
 // Generate session token for API authentication
 generateSessionToken();
 setXaaIdpLogger(appLogger);
@@ -278,7 +297,13 @@ startLocalBrowserRenderingSetupInBackground();
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
-  appLogger.error("Unhandled error:", err);
+  // The logger owns Sentry capture for the server (logger.error ->
+  // captureException). Path + method are what make the issue actionable;
+  // without them every unhandled route error groups into one blob.
+  appLogger.error("Unhandled error", err, {
+    path: c.req.path,
+    method: c.req.method,
+  });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
   // observes the throw — it just sees a 500 response. Record the cause here so

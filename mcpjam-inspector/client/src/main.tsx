@@ -8,6 +8,8 @@ import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
+import { reportCaught } from "./lib/error-reporting";
+import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
@@ -291,6 +293,9 @@ if (isInIframe) {
       }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);
+      // This branch replaces the whole app with a static screen — without a
+      // report the failure is invisible outside the user's own console.
+      reportCaught(error, { source: "session_token_bootstrap" });
       // Show error UI instead of crashing
       root.render(
         <StrictMode>
@@ -344,9 +349,17 @@ if (isInIframe) {
 
     root.render(
       <StrictMode>
-        <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
-          {Providers}
-        </PostHogProvider>
+        {/* OUTSIDE PostHogProvider on purpose: a crash while the provider
+            initializes must still be caught and reported, and Sentry capture
+            needs no React context. */}
+        <ErrorBoundary name="root">
+          <PostHogProvider
+            apiKey={getPostHogKey()}
+            options={getPostHogOptions()}
+          >
+            {Providers}
+          </PostHogProvider>
+        </ErrorBoundary>
       </StrictMode>
     );
   }
