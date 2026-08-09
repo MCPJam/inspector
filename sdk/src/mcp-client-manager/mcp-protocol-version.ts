@@ -23,8 +23,13 @@
  */
 
 /**
- * Every MCP protocol version a server connection can be pinned to. Order
- * is purely historical; UI ordering lives in the inspector's dropdown.
+ * Every MCP protocol version a server connection can be pinned to.
+ *
+ * MUST stay chronological: `protocolVersionLabel` reads the last element as
+ * the newest revision, so every protocol dropdown in the inspector marks
+ * whatever sits at the tail as "Latest". Append new revisions; never insert
+ * or reorder. UI ordering is separate — the dropdowns reverse this for
+ * display.
  */
 export const MCP_PROTOCOL_VERSIONS = [
   "2025-03-26",
