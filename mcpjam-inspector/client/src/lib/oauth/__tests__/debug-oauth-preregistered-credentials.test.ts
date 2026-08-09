@@ -184,15 +184,23 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
   it("forwards the Basic header through the debug proxy on the actual exchange", async () => {
     vi.useFakeTimers();
     const { authFetch } = await import("@/lib/session-token");
-    vi.mocked(authFetch).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: 200,
-        statusText: "OK",
-        headers: { "content-type": "application/json" },
-        body: { access_token: "tok", token_type: "Bearer" },
-      }),
-    } as unknown as Response);
+    // Self-hosted debugging first opens a flow, then proxies through it, so the
+    // mock has to answer both endpoints.
+    vi.mocked(authFetch).mockImplementation(
+      async (input: RequestInfo | URL) =>
+        ({
+          ok: true,
+          json: async () =>
+            String(input).includes("/oauth/debug/flows")
+              ? { flowId: "flow-123" }
+              : {
+                  status: 200,
+                  statusText: "OK",
+                  headers: { "content-type": "application/json" },
+                  body: { access_token: "tok", token_type: "Bearer" },
+                },
+        }) as unknown as Response,
+    );
 
     const { machine, getState, updateState } = createPreregisteredHarness({
       protocolVersion: "2025-11-25",
@@ -210,10 +218,13 @@ describe("OAuth debugger pre-registered client credentials (#3029)", () => {
 
     await machine.proceedToNextStep();
 
-    expect(authFetch).toHaveBeenCalled();
-    const proxyPayload = JSON.parse(
-      vi.mocked(authFetch).mock.calls.at(-1)![1]!.body as string,
-    );
+    const proxyCall = vi
+      .mocked(authFetch)
+      .mock.calls.findLast(([url]) =>
+        String(url).includes("/oauth/debug/proxy"),
+      );
+    expect(proxyCall).toBeDefined();
+    const proxyPayload = JSON.parse(proxyCall![1]!.body as string);
     expect(proxyPayload.headers.Authorization).toBe(
       `Basic ${btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)}`,
     );
