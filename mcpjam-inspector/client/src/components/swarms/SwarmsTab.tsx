@@ -124,6 +124,7 @@ import { GenerateSwarmDialog } from "@/components/swarms/GenerateSwarmDialog";
 import { NewSwarmCreateFlow } from "@/components/swarms/new-swarm-create-flow";
 import {
   formatJourneyRelativeTime,
+  journeyRunDisplayStatus,
   runStatusChipClass,
   runSummaryLine,
 } from "@/components/swarms/journey-run-format";
@@ -1379,10 +1380,10 @@ function RunDetailPanel({
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                runStatusChipClass(run.status)
+                runStatusChipClass(journeyRunDisplayStatus(run))
               )}
             >
-              {run.status.replace(/_/g, " ")}
+              {journeyRunDisplayStatus(run).replace(/_/g, " ")}
             </span>
             <span className="min-w-0 truncate font-normal text-muted-foreground">
               {journey.goal}

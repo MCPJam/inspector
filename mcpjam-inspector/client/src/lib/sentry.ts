@@ -14,3 +14,17 @@ export function initSentry() {
     ],
   });
 }
+
+/**
+ * Report a caught problem that is worth an alert but must not stop the app.
+ *
+ * Thin wrapper over `Sentry.captureException` so callers do not each import
+ * the SDK — and so the "we chose to keep running" cases are visibly one thing
+ * rather than scattered raw SDK calls that read like error handling.
+ */
+export function captureSentryException(
+  error: Error,
+  context?: { tags?: Record<string, string> }
+): void {
+  Sentry.captureException(error, context);
+}

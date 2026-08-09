@@ -89,9 +89,22 @@ export function normalizeEnvelope(raw, opts) {
 			timestampMs > triggerMs
 		)
 			continue;
+		// IDEMPOTENT. A row that already carries a `role` and none of the raw
+		// authorship fields has been through here (or through a surface adapter
+		// that normalizes first) — trust it. Re-deriving from `isBot`/`authorId`
+		// on such a row would find neither and label EVERY message "user",
+		// silently erasing the assistant's turns from its own history and making
+		// a multi-turn thread read as a wall of user messages. Both entry points
+		// (`runTurnForEvent` and `runTurn`) share this function, so both get it.
+		const preNormalized =
+			typeof message.role === "string" &&
+			message.isBot === undefined &&
+			message.authorId === undefined;
 		messages.push({
-			role:
-				message.isBot || (opts.botUserId && message.authorId === opts.botUserId)
+			role: preNormalized
+				? message.role
+				: message.isBot ||
+						(opts.botUserId && message.authorId === opts.botUserId)
 					? "assistant"
 					: "user",
 			content: capMessageContent(content),
@@ -115,7 +128,20 @@ export function normalizeThreadMessages(raw, opts = {}) {
 				message.timestampMs ??
 				(message.ts ? Number.parseFloat(message.ts) * 1000 : undefined),
 			authorId: message.authorId ?? message.user,
-			isBot: message.isBot ?? Boolean(message.bot_id),
+			// ABSENT STAYS ABSENT. `isBot ?? Boolean(bot_id)` looks harmless and
+			// is not: with neither field present it produces `false`, which is a
+			// real answer where there was no answer. `normalizeEnvelope` reads
+			// exactly that distinction to decide whether a row is already
+			// normalized — so a pre-normalized `{role:"assistant"}` arriving
+			// through this wrapper failed the check and was re-derived to "user",
+			// undoing the idempotency downstream and erasing the assistant's own
+			// turns from its history. Only map `bot_id` when there IS a `bot_id`.
+			isBot:
+				message.isBot !== undefined
+					? message.isBot
+					: message.bot_id !== undefined
+						? Boolean(message.bot_id)
+						: undefined,
 		})),
 		opts,
 	);

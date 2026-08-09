@@ -46,7 +46,7 @@ Clients like ChatGPT, Claude, and Cursor all read your server differently. MCPJa
 | **Chat**             | Multi-server chat on frontier models for free, or bring your own API key. Compare up to 3 models side by side. [Read more](https://docs.mcpjam.com/inspector/chat)                                                  |
 | **OAuth Debugger**   | Visualize your OAuth & EMA requests step-by-step to find the source of errors. Guided MCP OAuth conformance checks across protocol versions 03-26, 06-18, 11-25, and 2026-07-28; DCR, client pre-registration, and CIMD. [Read more](https://docs.mcpjam.com/inspector/guided-oauth) |
 | **Server Debugging** | Manually run tools, resources, templates, prompts, and elicitation flows with full JSON-RPC logs.                                                                                                                  |
-| **Skills**           | Extend models with local, reusable behaviors in Chat and Playground — local filesystem only. [Read more](https://docs.mcpjam.com/inspector/skills)                                                                  |
+| **Skills**           | Extend models with reusable behaviors in Chat and Playground. Local skills are read from your filesystem and never leave your machine; a project can also carry hosted skills, available on accounts where that is enabled. [Read more](https://docs.mcpjam.com/inspector/skills) |
 | **Workspaces**       | Shared server groups with real-time team sync, so everyone tests the same config. [Read more](https://docs.mcpjam.com/inspector/workspaces)                                                                         |
 | **Evals**            | Test cases with expected tool calls, run across LLMs, with accuracy metrics over time. [Read more](https://docs.mcpjam.com/inspector/test-cases)                                                                    |
 | **CLI**              | Probe servers, run doctor checks, exercise OAuth, and list tools/resources/prompts from your terminal. [Read more](https://docs.mcpjam.com/cli/overview)                                                            |
@@ -92,7 +92,7 @@ Everything you need to test an MCP server by hand: run tools, resources, resourc
 
 ## Skills
 
-Use Skills in Chat and Playground to extend models with local, reusable behaviors. Local filesystem only — your data never leaves your machine. [Read more](https://docs.mcpjam.com/inspector/skills)
+Use Skills in Chat and Playground to extend models with reusable behaviors. Local skills are read from your filesystem and never leave your machine; a project can also carry hosted skills, available on accounts where that is enabled. [Read more](https://docs.mcpjam.com/inspector/skills)
 
 ## Workspaces
 
