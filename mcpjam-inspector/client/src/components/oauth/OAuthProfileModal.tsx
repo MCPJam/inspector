@@ -21,6 +21,8 @@ import { Label } from "@mcpjam/design-system/label";
 import {
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
+  MCP_PROTOCOL_VERSIONS,
+  protocolVersionLabel,
   type OAuthProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type {
@@ -59,6 +61,19 @@ interface OAuthProfileModalProps {
     profile: OAuthTestProfile;
   }) => void | Promise<void>;
 }
+
+/**
+ * Every revision the debugger can drive a flow against, oldest-first, with
+ * the labels the host protocol picker and the Connect page use. Derived so a
+ * new revision cannot leave this dropdown claiming an older one is Latest.
+ */
+const PROTOCOL_OPTIONS: Array<{
+  value: OAuthProtocolVersion;
+  label: string;
+}> = MCP_PROTOCOL_VERSIONS.map((version) => ({
+  value: version,
+  label: protocolVersionLabel(version),
+}));
 
 interface HeaderRow {
   id: string;
@@ -391,18 +406,15 @@ export function OAuthProfileModal({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="2025-03-26" className="text-xs">
-                        2025-03-26
-                      </SelectItem>
-                      <SelectItem value="2025-06-18" className="text-xs">
-                        2025-06-18
-                      </SelectItem>
-                      <SelectItem value="2025-11-25" className="text-xs">
-                        2025-11-25 (November)
-                      </SelectItem>
-                      <SelectItem value="2026-07-28" className="text-xs">
-                        2026-07-28 (Latest)
-                      </SelectItem>
+                      {PROTOCOL_OPTIONS.map((option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className="text-xs"
+                        >
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

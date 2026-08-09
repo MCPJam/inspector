@@ -183,6 +183,7 @@ export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
   type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
 

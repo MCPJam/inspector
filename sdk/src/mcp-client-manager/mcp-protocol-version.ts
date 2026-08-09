@@ -35,6 +35,30 @@ export const MCP_PROTOCOL_VERSIONS = [
 export type McpProtocolVersion = (typeof MCP_PROTOCOL_VERSIONS)[number];
 
 /**
+ * Newest known revision. Derived from the tail of
+ * `MCP_PROTOCOL_VERSIONS` so the "Latest" marker walks forward on its own
+ * when a revision is appended.
+ */
+const LATEST_PROTOCOL_VERSION: McpProtocolVersion | undefined =
+  MCP_PROTOCOL_VERSIONS[MCP_PROTOCOL_VERSIONS.length - 1];
+
+/**
+ * Product label for a revision, shared by every protocol dropdown so they
+ * cannot disagree about which revision is current:
+ *
+ * - **Latest** = newest known revision, derived above.
+ * - **November** = the 2025-11-25 revision.
+ *
+ * Older revisions render bare — a fixed marker on them would be one more
+ * string to walk forward by hand.
+ */
+export function protocolVersionLabel(version: McpProtocolVersion): string {
+  if (version === LATEST_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === "2025-11-25") return `November (${version})`;
+  return version;
+}
+
+/**
  * Closed list of stateful (pre-2026) protocol versions. Hardcoded by
  * design (mirrors upstream `packages/core/src/shared/stateless.ts`):
  * deriving from `MCP_PROTOCOL_VERSIONS` would silently misclassify any
