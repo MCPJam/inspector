@@ -35,6 +35,7 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // exercise both sides of that gate. Defaults to signed out, which is what every
 // other test in this file has always run as.
 const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
+const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
 // (Claude Code, Codex). Default null = an ordinary model host.
 const mockHarnessState = vi.hoisted(() => ({
@@ -189,8 +190,11 @@ vi.mock("convex/react", () => ({
   // `useHost` (and any other Convex-backed hook PlaygroundMain pulls in)
   // calls useQuery. The test doesn't exercise auth flows, so a static
   // null is enough — the consumer treats it as "no host resolved yet".
-  useQuery: (_name: string, args: unknown) =>
-    args === "skip" ? undefined : null,
+  useQuery: (name: string, args: unknown) => {
+    if (args === "skip") return undefined;
+    if (name === "hosts:getHost") return mockHostQueryState.result;
+    return null;
+  },
   useMutation: () => () => Promise.resolve(),
   // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
   // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
@@ -681,6 +685,7 @@ describe("PlaygroundMain", () => {
     vi.clearAllMocks();
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
+    mockHostQueryState.result = null;
     mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
@@ -1315,6 +1320,38 @@ describe("PlaygroundMain", () => {
       expect(
         mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
       ).toBeUndefined();
+    });
+
+    it("withholds edit until a newly selected ordinary host resolves", () => {
+      localStorage.setItem(
+        "mcp-previewed-host-id",
+        JSON.stringify({ "project-1": "host-loading" })
+      );
+      mockHostQueryState.result = undefined;
+
+      const props = { ...defaultProps, activeProjectId: "project-1" };
+      const { rerender } = render(<PlaygroundMain {...props} />);
+
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
+      ).toBeUndefined();
+
+      mockHostQueryState.result = {
+        hostId: "host-loading",
+        name: "Ordinary host",
+        config: {
+          id: "config-1",
+          modelId: "",
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+          serverIds: [],
+          optionalServerIds: [],
+        },
+      };
+      rerender(<PlaygroundMain {...props} />);
+
+      expect(mockThread.mock.calls.at(-1)?.[0].onEditUserMessage).toBeDefined();
     });
 
     it("keeps the edit affordance on ordinary model hosts", () => {

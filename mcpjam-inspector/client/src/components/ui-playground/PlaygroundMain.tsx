@@ -815,6 +815,12 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  // A newly selected host is unknown for one render while its config loads.
+  // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
+  // opaque harness sessions cannot be safely rewound. Ordinary model hosts get
+  // editing back as soon as their config resolves.
+  const previewedHostConfigUnresolved =
+    previewedHostId !== null && previewedHost?.hostId !== previewedHostId;
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
@@ -4431,6 +4437,7 @@ export function PlaygroundMain({
                   isCompareMode ||
                   hideMessageEdit ||
                   !isConvexAuthenticated ||
+                  previewedHostConfigUnresolved ||
                   previewedHarnessId
                     ? undefined
                     : handleEditUserMessage
