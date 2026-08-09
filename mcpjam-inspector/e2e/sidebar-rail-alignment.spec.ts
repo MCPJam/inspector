@@ -26,7 +26,11 @@ test("collapsed sidebar rail centers the footer icons", async ({ page }) => {
 
   const sidebar = page.locator('[data-slot="sidebar"][data-state]');
   if ((await sidebar.getAttribute("data-state")) !== "collapsed") {
-    await page.keyboard.press("Control+b");
+    // Use the visible sidebar control instead of the keyboard shortcut. The
+    // guest utility buttons render synchronously once auth resolves, while the
+    // shortcut listener is installed in an effect; racing that effect made the
+    // collapse keystroke disappear and left the rail at its expanded width.
+    await page.getByRole("button", { name: "Collapse sidebar" }).click();
   }
   await expect(sidebar).toHaveAttribute("data-state", "collapsed");
 
