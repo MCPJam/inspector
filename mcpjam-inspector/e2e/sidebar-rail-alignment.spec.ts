@@ -4,6 +4,17 @@ import { expect, test } from "@playwright/test";
 // the footer must sit on the rail's horizontal centerline. This is geometry
 // the vitest suite can't see (jsdom has no layout engine).
 test("collapsed sidebar rail centers the footer icons", async ({ page }) => {
+  // Seed completed onboarding so the NUX first-run redirect doesn't fire. It
+  // navigates "/" → /playground asynchronously, which remounts the sidebar at
+  // its default expanded width — after the collapse poll below has passed, so
+  // the geometry loop would measure an expanded rail. See nux.spec.ts.
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "completed", completedAt: 1 })
+    );
+  });
+
   await page.goto("/");
   await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
 
