@@ -34,6 +34,19 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // exercise both sides of that gate. Defaults to signed out, which is what every
 // other test in this file has always run as.
 const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
+// Non-null `harnessId` means the chat executes inside a harness runtime
+// (Claude Code, Codex). Default null = an ordinary model host.
+const mockHarnessState = vi.hoisted(() => ({
+  harnessId: null as string | null,
+}));
+vi.mock("@/hooks/useHarnessBuiltinTools", () => ({
+  useHarnessBuiltinTools: () => ({
+    harnessId: mockHarnessState.harnessId,
+    tools: [],
+    loading: false,
+  }),
+  useHarnessBuiltinToolCatalog: () => ({ tools: [], loading: false }),
+}));
 
 // Mock lucide-react icons
 vi.mock("lucide-react", async (importOriginal) => ({
@@ -506,7 +519,7 @@ vi.mock(
           <button onClick={onCancel}>Cancel</button>
         </div>
       ) : null,
-  }),
+  })
 );
 
 // Mock FullscreenChatOverlay
@@ -576,11 +589,7 @@ vi.mock("@/stores/ui-playground-store", () => ({
 
 // Mock ClientContextHeader which exports PRESET_DEVICE_CONFIGS
 vi.mock("@/components/shared/ClientContextHeader", () => ({
-  ClientContextHeader: ({
-    showThemeToggle,
-  }: {
-    showThemeToggle?: boolean;
-  }) => (
+  ClientContextHeader: ({ showThemeToggle }: { showThemeToggle?: boolean }) => (
     <div data-testid="host-context-header">
       {showThemeToggle ? (
         <button data-testid="host-context-theme-toggle">Toggle theme</button>
@@ -618,10 +627,9 @@ vi.mock("@/state/app-state-context", () => ({
 // Mock chat-helpers (keep real placeholders; stub formatError + a fixed
 // starter so tests don't churn when the real starter copy changes)
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@/components/chat-v2/shared/chat-helpers")
-    >();
+  const actual = await importOriginal<
+    typeof import("@/components/chat-v2/shared/chat-helpers")
+  >();
   return {
     ...actual,
     formatErrorMessage: (error: any) =>
@@ -668,6 +676,7 @@ describe("PlaygroundMain", () => {
     vi.clearAllMocks();
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
+    mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     mockGetChatHistoryDetail.mockReset();
@@ -731,7 +740,7 @@ describe("PlaygroundMain", () => {
 
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
       expect(
-        screen.queryByTestId("fullscreen-overlay"),
+        screen.queryByTestId("fullscreen-overlay")
       ).not.toBeInTheDocument();
     });
 
@@ -745,7 +754,9 @@ describe("PlaygroundMain", () => {
     it("renders theme toggle button", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      expect(screen.getByTestId("host-context-theme-toggle")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("host-context-theme-toggle")
+      ).toBeInTheDocument();
     });
 
     it("starts shared-session rail chats with project visibility", async () => {
@@ -753,7 +764,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
       expect(capturedChatSessionOptions.directVisibility).toBe("private");
@@ -807,14 +818,14 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
       // Private sessions get the chat-input client chip wired up.
       expect(screen.getByTestId("chat-input")).toHaveAttribute(
         "data-client-selector",
-        "true",
+        "true"
       );
 
       await act(async () => {
@@ -831,7 +842,7 @@ describe("PlaygroundMain", () => {
           bridge?.onSessionAction?.({
             action: "share",
             session: privateSessionLocal,
-          }),
+          })
         );
       });
 
@@ -841,7 +852,7 @@ describe("PlaygroundMain", () => {
       // Shared sessions can't switch hosts — `clientSelector` is left undefined.
       expect(screen.getByTestId("chat-input")).toHaveAttribute(
         "data-client-selector",
-        "false",
+        "false"
       );
     });
 
@@ -885,7 +896,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
@@ -903,7 +914,7 @@ describe("PlaygroundMain", () => {
           bridge?.onSessionAction?.({
             action: "share",
             session: privateSession,
-          }),
+          })
         );
       });
 
@@ -950,7 +961,7 @@ describe("PlaygroundMain", () => {
       });
       expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
         "data-thread-theme",
-        "dark",
+        "dark"
       );
 
       act(() => {
@@ -959,9 +970,11 @@ describe("PlaygroundMain", () => {
 
       expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
         "data-thread-theme",
-        "light",
+        "light"
       );
-      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass("dark");
+      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass(
+        "dark"
+      );
     });
   });
 
@@ -973,7 +986,7 @@ describe("PlaygroundMain", () => {
       expect(
         screen.getByRole("heading", {
           name: /This is your playground for MCP./i,
-        }),
+        })
       ).toBeInTheDocument();
     });
 
@@ -998,7 +1011,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} showPostConnectGuide={true} />);
 
       expect(
-        screen.queryByRole("button", { name: /Skip onboarding/i }),
+        screen.queryByRole("button", { name: /Skip onboarding/i })
       ).not.toBeInTheDocument();
     });
 
@@ -1006,7 +1019,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} showPostConnectGuide={true} />);
 
       expect(
-        screen.getByText("Try asking Excalidraw to draw something."),
+        screen.getByText("Try asking Excalidraw to draw something.")
       ).toBeInTheDocument();
     });
   });
@@ -1071,7 +1084,7 @@ describe("PlaygroundMain", () => {
           expect.objectContaining({
             messageId: "1",
             text: "Edited text should not leak",
-          }),
+          })
         );
       });
 
@@ -1103,10 +1116,44 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
       });
 
-      expect(track).not.toHaveBeenCalledWith(
-        "edit_message",
-        expect.anything(),
+      expect(track).not.toHaveBeenCalledWith("edit_message", expect.anything());
+    });
+
+    it("leaves the thread attached when the rewind is refused", async () => {
+      // Regression. The teardown used to run BEFORE `rewindToMessage`, so a
+      // refusal left the ORIGINAL session id live with its
+      // optimistic-concurrency guard already gone: `resumedVersion` null means
+      // the next ordinary send carries no `expectedVersion`, and the backend
+      // then rewrites that session's row without checking whether another tab
+      // or device advanced it — silently dropping their turns. A refused
+      // rewind touches nothing, so the guard has to survive it.
+      mockUseChatSession.syncResumedVersion.mockClear();
+      const ORIGINAL_CONVERSATION_ID = "original-chat-session";
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`
       );
+      mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
+      // Refuses without ever minting a branch — `onBeforeBranch` is not called.
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue(null);
+
+      render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+
+      expect(
+        mockUseChatSession.syncResumedVersion.mock.calls.some(
+          ([version]: [number | null]) => version === null
+        )
+      ).toBe(false);
+      // And the conversation keeps its place in the URL, so a refresh still
+      // lands on the thread instead of a blank Playground.
+      expect(window.location.search).toContain(ORIGINAL_CONVERSATION_ID);
     });
 
     it("detaches from the resumed thread before the branch's turn is dispatched", async () => {
@@ -1128,13 +1175,19 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.syncResumedVersion.mockClear();
 
       let clearedBeforeRewind: boolean | undefined = undefined;
-      mockUseChatSession.rewindToMessage = vi.fn().mockImplementation(async () => {
-        clearedBeforeRewind =
-          mockUseChatSession.syncResumedVersion.mock.calls.some(
-            ([version]: [number | null]) => version === null,
-          );
-        return { previousChatSessionId: "prev-session-1" };
-      });
+      // The real hook fires `onBeforeBranch` as the branch is minted, just
+      // before the turn dispatches; observing after it is what makes this an
+      // ordering assertion rather than a no-op.
+      mockUseChatSession.rewindToMessage = vi
+        .fn()
+        .mockImplementation(async (options) => {
+          options?.onBeforeBranch?.();
+          clearedBeforeRewind =
+            mockUseChatSession.syncResumedVersion.mock.calls.some(
+              ([version]: [number | null]) => version === null
+            );
+          return { previousChatSessionId: "prev-session-1" };
+        });
 
       render(<PlaygroundMain {...defaultProps} />);
 
@@ -1142,8 +1195,8 @@ describe("PlaygroundMain", () => {
       // render, or "it was already null" would prove nothing about ordering.
       expect(
         mockUseChatSession.syncResumedVersion.mock.calls.some(
-          ([version]: [number | null]) => version === null,
-        ),
+          ([version]: [number | null]) => version === null
+        )
       ).toBe(false);
 
       fireEvent.click(screen.getByTestId("edit-first-message"));
@@ -1180,16 +1233,21 @@ describe("PlaygroundMain", () => {
       window.history.replaceState(
         {},
         "",
-        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`,
+        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`
       );
       // The live session IS the one the URL names — the hook's stated invariant
       // ("restored ⇔ chatSessionId === param"). Without this the sync effect
       // overwrites the param with the mock's default id on the first render and
       // the setup never reaches the state being tested.
       mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
-      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue({
-        previousChatSessionId: ORIGINAL_CONVERSATION_ID,
-      });
+      // The URL is dropped from `onBeforeBranch`, which the real hook fires as
+      // the branch is minted — so a refused rewind keeps its `?conversation=`.
+      mockUseChatSession.rewindToMessage = vi
+        .fn()
+        .mockImplementation(async (options) => {
+          options?.onBeforeBranch?.();
+          return { previousChatSessionId: ORIGINAL_CONVERSATION_ID };
+        });
 
       render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
 
@@ -1224,21 +1282,53 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.queryByTestId("edit-first-message"),
+        screen.queryByTestId("edit-first-message")
       ).not.toBeInTheDocument();
       expect(
-        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
       ).toBeUndefined();
+    });
+
+    it("withholds the edit affordance on harness hosts", () => {
+      // Claude Code / Codex keep the conversation on their own side, filed
+      // under the chat session id, and receive only the newest user message.
+      // `@ai-sdk/harness` offers resume-this-exact-session and nothing else —
+      // no fork, no rewind, and the resume payload is opaque, so the discarded
+      // tail cannot be trimmed from it. A branch mints a NEW session id, so
+      // there is nothing to resume: the harness would answer the edited
+      // message with no memory of the conversation while the persisted
+      // transcript still shows the whole history.
+      mockConvexAuthState.isAuthenticated = true;
+      mockHarnessState.harnessId = "claude-code";
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.queryByTestId("edit-first-message")
+      ).not.toBeInTheDocument();
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
+      ).toBeUndefined();
+    });
+
+    it("keeps the edit affordance on ordinary model hosts", () => {
+      // Guards the gate above against over-reach: no harness, pencil stays.
+      mockConvexAuthState.isAuthenticated = true;
+      mockHarnessState.harnessId = null;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(mockThread.mock.calls.at(-1)?.[0].onEditUserMessage).toBeDefined();
     });
 
     it("suppresses the edit affordance when hideMessageEdit is set", () => {
       render(<PlaygroundMain {...defaultProps} hideMessageEdit />);
 
       expect(
-        screen.queryByTestId("edit-first-message"),
+        screen.queryByTestId("edit-first-message")
       ).not.toBeInTheDocument();
       expect(
-        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
       ).toBeUndefined();
     });
 
@@ -1255,12 +1345,12 @@ describe("PlaygroundMain", () => {
       ];
 
       const { rerender } = render(
-        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />
       );
 
       // Sanity check: single-model mode, editing is available.
       expect(
-        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
       ).toBeInstanceOf(Function);
 
       // `useModelSelectorLayoutLock` keeps whichever surface was mounted when
@@ -1278,7 +1368,9 @@ describe("PlaygroundMain", () => {
       });
 
       mockUseChatSession.multiModelEnabled = true;
-      rerender(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+      rerender(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />
+      );
 
       // Confirms the lock actually held — Thread, not the compare grid, is
       // still what's on screen. If this assertion fails, the test below it
@@ -1286,7 +1378,7 @@ describe("PlaygroundMain", () => {
       // Thread", not the ternary).
       expect(screen.getByTestId("thread")).toBeInTheDocument();
       expect(
-        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
       ).toBeUndefined();
     });
   });
@@ -1302,7 +1394,7 @@ describe("PlaygroundMain", () => {
           key: "Escape",
           bubbles: true,
           cancelable: true,
-        }),
+        })
       );
 
       expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
@@ -1316,7 +1408,7 @@ describe("PlaygroundMain", () => {
           key: "Escape",
           bubbles: true,
           cancelable: true,
-        }),
+        })
       );
 
       expect(mockUseChatSession.stop).not.toHaveBeenCalled();
@@ -1362,14 +1454,14 @@ describe("PlaygroundMain", () => {
           key: "Escape",
           bubbles: true,
           cancelable: true,
-        }),
+        })
       );
 
       await waitFor(() => {
         expect(
           mockMultiModelPlaygroundCard.mock.calls.some(
-            ([props]) => props.stopRequestId === 1,
-          ),
+            ([props]) => props.stopRequestId === 1
+          )
         ).toBe(true);
       });
     });
@@ -1377,7 +1469,7 @@ describe("PlaygroundMain", () => {
     it("passes the previewed host id into multi-model card runtime context", () => {
       localStorage.setItem(
         "mcp-previewed-host-id",
-        JSON.stringify({ "project-1": "host-claude-code" }),
+        JSON.stringify({ "project-1": "host-claude-code" })
       );
       mockUseChatSession.availableModels = [
         {
@@ -1402,7 +1494,7 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           activeProjectId="project-1"
           enableMultiModelChat={true}
-        />,
+        />
       );
 
       expect(mockMultiModelPlaygroundCard.mock.calls.length).toBeGreaterThan(0);
@@ -1425,7 +1517,7 @@ describe("PlaygroundMain", () => {
           key: "Escape",
           bubbles: true,
           cancelable: true,
-        }),
+        })
       );
 
       window.removeEventListener("keydown", preventEscape, true);
@@ -1442,19 +1534,19 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.traceViewsSupported = true;
 
       const { rerender } = render(
-        <PlaygroundMain {...defaultProps} enableTraceViews={true} />,
+        <PlaygroundMain {...defaultProps} enableTraceViews={true} />
       );
 
       // Trace / Chat / Raw row in PlaygroundCenterHeaderBar (second strip).
       expect(
-        screen.getByTestId("playground-trace-view-tabs"),
+        screen.getByTestId("playground-trace-view-tabs")
       ).toBeInTheDocument();
 
       mockUseChatSession.traceViewsSupported = false;
       rerender(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
       expect(
-        screen.queryByTestId("playground-trace-view-tabs"),
+        screen.queryByTestId("playground-trace-view-tabs")
       ).not.toBeInTheDocument();
     });
 
@@ -1465,7 +1557,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
       expect(
-        screen.getByTestId("playground-trace-view-tabs"),
+        screen.getByTestId("playground-trace-view-tabs")
       ).toBeInTheDocument();
     });
 
@@ -1475,11 +1567,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
+      expect(screen.getByTestId("playground-main-header")).toBeInTheDocument();
       expect(
-        screen.getByTestId("playground-main-header"),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByTestId("playground-trace-view-tabs"),
+        screen.getByTestId("playground-trace-view-tabs")
       ).toBeInTheDocument();
     });
 
@@ -1495,8 +1585,8 @@ describe("PlaygroundMain", () => {
       expect(pending).toBeInTheDocument();
       expect(
         within(pending).getByTestId(
-          "playground-live-raw-pending-sample-preview",
-        ),
+          "playground-live-raw-pending-sample-preview"
+        )
       ).toBeInTheDocument();
       expect(within(pending).getByTestId("trace-raw-view")).toBeInTheDocument();
       expect(screen.getByText(/Sample raw request/i)).toBeInTheDocument();
@@ -1519,12 +1609,12 @@ describe("PlaygroundMain", () => {
       expect(pending).toBeInTheDocument();
       expect(
         within(pending).getByTestId(
-          "playground-live-trace-pending-sample-preview",
-        ),
+          "playground-live-trace-pending-sample-preview"
+        )
       ).toBeInTheDocument();
       expect(within(pending).getByTestId("trace-viewer")).toBeInTheDocument();
       expect(
-        screen.getByTestId("playground-trace-diagnostics"),
+        screen.getByTestId("playground-trace-diagnostics")
       ).toBeInTheDocument();
       expect(screen.getByTestId("thread")).toBeInTheDocument();
     });
@@ -1563,10 +1653,10 @@ describe("PlaygroundMain", () => {
 
       const timelineProps = mockTraceViewer.mock.calls.at(-1)?.[0];
       expect(timelineProps.traceStartedAtMs).toBe(
-        sampleLiveTraceEnvelope.traceStartedAtMs,
+        sampleLiveTraceEnvelope.traceStartedAtMs
       );
       expect(timelineProps.traceEndedAtMs).toBe(
-        sampleLiveTraceEnvelope.traceEndedAtMs,
+        sampleLiveTraceEnvelope.traceEndedAtMs
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Raw" }));
@@ -1574,10 +1664,10 @@ describe("PlaygroundMain", () => {
       const rawProps = mockTraceViewer.mock.calls.at(-1)?.[0];
       expect(rawProps.forcedViewMode).toBe("raw");
       expect(rawProps.traceStartedAtMs).toBe(
-        sampleLiveTraceEnvelope.traceStartedAtMs,
+        sampleLiveTraceEnvelope.traceStartedAtMs
       );
       expect(rawProps.traceEndedAtMs).toBe(
-        sampleLiveTraceEnvelope.traceEndedAtMs,
+        sampleLiveTraceEnvelope.traceEndedAtMs
       );
     });
 
@@ -1604,18 +1694,18 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           enableTraceViews={true}
           pendingExecution={pendingExecution}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Raw" }));
 
       expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
         "data-mode",
-        "raw",
+        "raw"
       );
       expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
         "data-trace",
-        expect.stringContaining("Execute `create_view`"),
+        expect.stringContaining("Execute `create_view`")
       );
 
       mockUseChatSession.hasTraceSnapshot = true;
@@ -1627,21 +1717,21 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           enableTraceViews={true}
           pendingExecution={null}
-        />,
+        />
       );
 
       await waitFor(() => {
         expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
           "data-mode",
-          "raw",
+          "raw"
         );
         expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
           "data-trace",
-          expect.stringContaining("Draw the diagram"),
+          expect.stringContaining("Draw the diagram")
         );
       });
       expect(
-        screen.queryByTestId("playground-live-trace-pending"),
+        screen.queryByTestId("playground-live-trace-pending")
       ).not.toBeInTheDocument();
     });
   });
@@ -1678,36 +1768,36 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           enableMultiModelChat={true}
           enableTraceViews={true}
-        />,
+        />
       );
 
       const compareShell = screen.getByTestId("playground-compare-shell");
       expect(compareShell).toHaveAttribute("data-thread-theme", "light");
       expect(compareShell).not.toHaveClass("dark");
       expect(
-        screen.getByText("Try one of these to get started"),
+        screen.getByText("Try one of these to get started")
       ).toBeInTheDocument();
       expect(screen.getAllByTestId("multi-model-playground-card")).toHaveLength(
-        3,
+        3
       );
       expect(
-        screen.getByTestId("playground-multi-model-compare-section"),
+        screen.getByTestId("playground-multi-model-compare-section")
       ).toHaveClass("hidden");
       const grid = screen.getByTestId("playground-multi-model-grid");
       expect(grid.className.includes("hidden")).toBe(false);
       expect(grid).toHaveClass("xl:grid-cols-3");
       expect(grid).not.toHaveClass("2xl:grid-cols-3");
       expect(
-        screen.getByTestId("playground-trace-view-tabs"),
+        screen.getByTestId("playground-trace-view-tabs")
       ).toBeInTheDocument();
       expect(screen.getAllByTestId("chat-input")).not.toHaveLength(0);
       expect(
         screen.queryByText(
-          "Send a shared message to start this model’s thread.",
-        ),
+          "Send a shared message to start this model’s thread."
+        )
       ).not.toBeInTheDocument();
       expect(
-        screen.getAllByPlaceholderText(DEFAULT_CHAT_COMPOSER_PLACEHOLDER),
+        screen.getAllByPlaceholderText(DEFAULT_CHAT_COMPOSER_PLACEHOLDER)
       ).not.toHaveLength(0);
     });
 
@@ -1730,7 +1820,7 @@ describe("PlaygroundMain", () => {
       const starterCalls = vi
         .mocked(track)
         .mock.calls.filter(
-          ([event]) => event === "chat_starter_prompt_clicked",
+          ([event]) => event === "chat_starter_prompt_clicked"
         );
       expect(starterCalls).toEqual([
         [
@@ -1762,19 +1852,19 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           enableMultiModelChat={true}
           enableTraceViews={true}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByText("Trace"));
 
       expect(
-        screen.getByTestId("playground-multi-empty-trace-pending"),
+        screen.getByTestId("playground-multi-empty-trace-pending")
       ).toBeInTheDocument();
       expect(
-        screen.getByTestId("playground-multi-model-compare-section"),
+        screen.getByTestId("playground-multi-model-compare-section")
       ).toHaveClass("hidden");
       expect(
-        screen.queryByText("Try one of these to get started"),
+        screen.queryByText("Try one of these to get started")
       ).not.toBeInTheDocument();
     });
   });
@@ -1784,10 +1874,10 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.getByText("Try one of these to get started"),
+        screen.getByText("Try one of these to get started")
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Starter chip" }),
+        screen.getByRole("button", { name: "Starter chip" })
       ).toBeInTheDocument();
     });
 
@@ -1798,7 +1888,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
-          expect.objectContaining({ text: "Starter chip prompt" }),
+          expect.objectContaining({ text: "Starter chip prompt" })
         );
       });
     });
@@ -1813,7 +1903,7 @@ describe("PlaygroundMain", () => {
       const starterCalls = vi
         .mocked(track)
         .mock.calls.filter(
-          ([event]) => event === "chat_starter_prompt_clicked",
+          ([event]) => event === "chat_starter_prompt_clicked"
         );
       expect(starterCalls).toEqual([
         [
@@ -1827,7 +1917,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} hideWelcomeHero />);
 
       expect(
-        screen.queryByText("Try one of these to get started"),
+        screen.queryByText("Try one of these to get started")
       ).not.toBeInTheDocument();
     });
 
@@ -1837,7 +1927,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.queryByText("Try one of these to get started"),
+        screen.queryByText("Try one of these to get started")
       ).not.toBeInTheDocument();
     });
 
@@ -1847,7 +1937,7 @@ describe("PlaygroundMain", () => {
       fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
       expect(screen.getByTestId("chat-input")).toHaveAttribute(
         "data-skill-count",
-        "1",
+        "1"
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
@@ -1858,14 +1948,14 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(screen.getByTestId("chat-input")).toHaveAttribute(
           "data-skill-count",
-          "0",
+          "0"
         );
       });
     });
 
     it("does not replay a single-model send into compare cards mounted later", async () => {
       const { rerender } = render(
-        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
@@ -1883,11 +1973,13 @@ describe("PlaygroundMain", () => {
       ];
       mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
       mockUseChatSession.multiModelEnabled = true;
-      rerender(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+      rerender(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />
+      );
 
       await waitFor(() => {
         expect(
-          screen.getAllByTestId("multi-model-playground-card"),
+          screen.getAllByTestId("multi-model-playground-card")
         ).toHaveLength(2);
       });
 
@@ -1914,7 +2006,7 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input-field")).not.toBeDisabled();
       expect(screen.getByTestId("chat-input")).toHaveAttribute(
         "data-loading",
-        "true",
+        "true"
       );
     });
 
@@ -1931,8 +2023,8 @@ describe("PlaygroundMain", () => {
 
       expect(
         screen.getByPlaceholderText(
-          "Try a prompt that could call your tools...",
-        ),
+          "Try a prompt that could call your tools..."
+        )
       ).toBeInTheDocument();
     });
 
@@ -1951,7 +2043,7 @@ describe("PlaygroundMain", () => {
         <PlaygroundMain
           {...defaultProps}
           ensureServersReady={ensureServersReady}
-        />,
+        />
       );
 
       fireEvent.change(screen.getByTestId("chat-input-field"), {
@@ -1964,7 +2056,7 @@ describe("PlaygroundMain", () => {
       });
       await waitFor(() => {
         expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
-          expect.objectContaining({ text: "Hello from playground" }),
+          expect.objectContaining({ text: "Hello from playground" })
         );
       });
     });
@@ -1995,11 +2087,11 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           showPostConnectGuide={true}
           initialInput="Draw me an MCP architecture diagram"
-        />,
+        />
       );
 
       expect(screen.getByTestId("chat-input-field")).toHaveValue(
-        "Draw me an MCP architecture diagram",
+        "Draw me an MCP architecture diagram"
       );
     });
 
@@ -2013,7 +2105,7 @@ describe("PlaygroundMain", () => {
           showPostConnectGuide={false}
           initialInput={full}
           initialInputTypewriter={true}
-        />,
+        />
       );
 
       const field = screen.getByTestId("chat-input-field");
@@ -2041,12 +2133,12 @@ describe("PlaygroundMain", () => {
           initialInput={full}
           initialInputTypewriter={true}
           pulseSubmit={true}
-        />,
+        />
       );
 
       expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
         "data-pulsing",
-        "true",
+        "true"
       );
 
       fireEvent.change(screen.getByTestId("chat-input-field"), {
@@ -2055,7 +2147,7 @@ describe("PlaygroundMain", () => {
 
       expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
         "data-pulsing",
-        "false",
+        "false"
       );
     });
 
@@ -2070,7 +2162,7 @@ describe("PlaygroundMain", () => {
           initialInput="Draw me an MCP architecture diagram"
           initialInputTypewriter={false}
           blockSubmitUntilServerConnected={true}
-        />,
+        />
       );
 
       expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
@@ -2087,7 +2179,7 @@ describe("PlaygroundMain", () => {
           initialInput="Hello"
           initialInputTypewriter={false}
           blockSubmitUntilServerConnected={true}
-        />,
+        />
       );
 
       expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
@@ -2101,7 +2193,7 @@ describe("PlaygroundMain", () => {
           initialInput="Hello"
           initialInputTypewriter={false}
           blockSubmitUntilServerConnected={true}
-        />,
+        />
       );
 
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
@@ -2118,7 +2210,7 @@ describe("PlaygroundMain", () => {
           initialInput="Draw me an MCP architecture diagram"
           initialInputTypewriter={true}
           blockSubmitUntilServerConnected={true}
-        />,
+        />
       );
 
       const hint = screen.getByTestId("playground-send-nux-hint");
@@ -2127,7 +2219,7 @@ describe("PlaygroundMain", () => {
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
         chatInput.compareDocumentPosition(hint) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
+          Node.DOCUMENT_POSITION_FOLLOWING
       ).toBeTruthy();
       expect(hint.querySelector("svg")).toBeTruthy();
     });
@@ -2143,11 +2235,11 @@ describe("PlaygroundMain", () => {
           initialInput="Draw me an MCP architecture diagram"
           initialInputTypewriter={true}
           blockSubmitUntilServerConnected={true}
-        />,
+        />
       );
 
       expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
-        "Try this prompt with a demo MCP server",
+        "Try this prompt with a demo MCP server"
       );
     });
 
@@ -2166,7 +2258,7 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           showPostConnectGuide={true}
           initialInput="Draw me an MCP architecture diagram"
-        />,
+        />
       );
 
       expect(screen.getByTestId("thread")).toBeInTheDocument();
@@ -2179,7 +2271,7 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           showPostConnectGuide={true}
           initialInput="Draw me an MCP architecture diagram"
-        />,
+        />
       );
 
       act(() => {
@@ -2187,7 +2279,7 @@ describe("PlaygroundMain", () => {
       });
 
       expect(screen.getByTestId("chat-input-field")).toHaveValue(
-        "Draw me an MCP architecture diagram",
+        "Draw me an MCP architecture diagram"
       );
     });
 
@@ -2198,12 +2290,12 @@ describe("PlaygroundMain", () => {
           showPostConnectGuide={true}
           initialInput="Draw me an MCP architecture diagram"
           pulseSubmit={true}
-        />,
+        />
       );
 
       expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
         "data-pulsing",
-        "true",
+        "true"
       );
 
       fireEvent.change(screen.getByTestId("chat-input-field"), {
@@ -2212,7 +2304,7 @@ describe("PlaygroundMain", () => {
 
       expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
         "data-pulsing",
-        "false",
+        "false"
       );
     });
 
@@ -2222,7 +2314,7 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           showPostConnectGuide={true}
           initialInput="Draw me an MCP architecture diagram"
-        />,
+        />
       );
 
       fireEvent.change(screen.getByTestId("chat-input-field"), {
@@ -2242,7 +2334,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.getByPlaceholderText("Sign in to use chat"),
+        screen.getByPlaceholderText("Sign in to use chat")
       ).toBeInTheDocument();
     });
 
@@ -2262,7 +2354,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
 
       expect(
-        screen.getAllByPlaceholderText("Sign in to use free chat").length,
+        screen.getAllByPlaceholderText("Sign in to use free chat").length
       ).toBeGreaterThan(0);
     });
   });
@@ -2278,7 +2370,7 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           isExecuting={true}
           executingToolName="read_file"
-        />,
+        />
       );
 
       expect(screen.getByText("Invoking")).toBeInTheDocument();
@@ -2296,7 +2388,7 @@ describe("PlaygroundMain", () => {
           isExecuting={true}
           executingToolName="read_file"
           invokingMessage="Reading your file..."
-        />,
+        />
       );
 
       expect(screen.getByText("Reading your file...")).toBeInTheDocument();
@@ -2314,7 +2406,7 @@ describe("PlaygroundMain", () => {
 
       expect(screen.getByTestId("error-box")).toBeInTheDocument();
       expect(screen.getByTestId("error-box")).toHaveTextContent(
-        "Something went wrong",
+        "Something went wrong"
       );
     });
   });
@@ -2330,7 +2422,7 @@ describe("PlaygroundMain", () => {
       // Find trash icon button
       const buttons = screen.getAllByRole("button");
       const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null,
+        (btn) => btn.querySelector(".lucide-trash2") !== null
       );
       expect(clearButton).toBeDefined();
     });
@@ -2343,7 +2435,7 @@ describe("PlaygroundMain", () => {
       // Should not have trash button
       const buttons = screen.getAllByRole("button");
       const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null,
+        (btn) => btn.querySelector(".lucide-trash2") !== null
       );
       expect(clearButton).toBeUndefined();
     });
@@ -2390,7 +2482,7 @@ describe("PlaygroundMain", () => {
           {...defaultProps}
           pendingExecution={pendingExecution}
           onExecutionInjected={onExecutionInjected}
-        />,
+        />
       );
 
       await waitFor(() => {
@@ -2421,7 +2513,7 @@ describe("PlaygroundMain", () => {
       window.history.replaceState(
         {},
         "",
-        `/playground?conversation=${RESTORED_SESSION_ID}`,
+        `/playground?conversation=${RESTORED_SESSION_ID}`
       );
       mockGetChatHistoryDetail.mockResolvedValue({
         ok: true,
@@ -2464,12 +2556,12 @@ describe("PlaygroundMain", () => {
       arriveAtRestoredConversation();
 
       const { rerender } = render(
-        <PlaygroundMain {...defaultProps} syncConversationToUrl />,
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />
       );
 
       await waitFor(() => {
         expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
-          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID }),
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
       expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
@@ -2482,7 +2574,7 @@ describe("PlaygroundMain", () => {
       });
 
       expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
-        LATE_MODEL,
+        LATE_MODEL
       );
     });
 
@@ -2490,12 +2582,12 @@ describe("PlaygroundMain", () => {
       arriveAtRestoredConversation();
 
       const { rerender } = render(
-        <PlaygroundMain {...defaultProps} syncConversationToUrl />,
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />
       );
 
       await waitFor(() => {
         expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
-          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID }),
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
 

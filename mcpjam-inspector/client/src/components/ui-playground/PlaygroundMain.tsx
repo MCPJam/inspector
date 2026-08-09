@@ -797,7 +797,9 @@ export function PlaygroundMain({
   );
   // Native built-in tools for the previewed harness (if any) — fed into the Raw
   // tab so a harness host's empty `tools` is annotated rather than confusing.
-  const { tools: harnessBuiltinTools } =
+  // `harnessId` is non-null exactly when this chat executes inside a harness
+  // runtime (Claude Code, Codex), which is what gates the edit affordance below.
+  const { tools: harnessBuiltinTools, harnessId: previewedHarnessId } =
     useHarnessBuiltinTools(previewedHostId);
 
   // COMP-14 gate: composer attachments go into the sandbox only when the
@@ -3480,7 +3482,7 @@ export function PlaygroundMain({
   // never sends would leave an empty orphan thread behind.
   const handleEditUserMessage = useCallback(
     async (message: UIMessage, text: string) => {
-      if (sendBlocked) return;
+      if (sendBlocked) return false;
       // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
       // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
       // try/FINALLY with no catch, so a rejected connect propagates straight
@@ -3495,44 +3497,9 @@ export function PlaygroundMain({
           error
         );
         toast.error("Couldn't prepare the server for that edit. Try again.");
-        return;
+        return false;
       }
-      if (!serverReady) return;
-      // Detach from the resumed thread BEFORE the rewind, not after it returns.
-      // `rewindToMessage` mints the branch and dispatches its turn internally,
-      // and the post-stream conflict check captures its baseline the instant
-      // that turn starts. Still attached, the baseline names the ORIGINAL
-      // thread, the branch's completed stream is compared against it, and the
-      // deliberate branch surfaces as a phantom "this chat changed elsewhere" —
-      // which also re-forks, sending the next message to a third session.
-      //
-      // `cancelPendingHistorySelection` is load-bearing beyond the baseline: it
-      // clears `activeHistorySessionId`, which is what stops the reactive
-      // history effect from reloading the ORIGINAL transcript over the branch.
-      //
-      // These are the same three lines every other deliberate session change
-      // runs (`handleNewChat`, and `detachHistorySession` itself). They are NOT
-      // restored when the rewind is refused: both refusal causes — a turn
-      // started in the gap, or the target message is gone — mean the thread
-      // moved under us, so the resumed baseline is stale either way and
-      // continuing locally is the honest state.
-      resumedThreadSendBaselineRef.current = null;
-      cancelPendingHistorySelection();
-      syncResumedVersion(null);
-      // And the conversation has to leave the URL with it. Clearing
-      // `activeHistorySessionId` above removes one of the two guards holding the
-      // restore effect back (`use-playground-conversation-url.ts:233-234`); the
-      // other — `hasMessages` — falls too whenever the FIRST message is the one
-      // being edited, because the prefix before it is empty. With both down and
-      // `?conversation=` still naming the ORIGINAL, the restore refetched the
-      // original and reloaded it over the branch: the edit looked like it did
-      // nothing but raise a toast.
-      //
-      // `onReset("fork")` deliberately will not do this — an auth-bootstrap
-      // re-mint is the SAME conversation and must keep its id — so a branch says
-      // so here, the way New Chat does through `onReset("reset")`.
-      pendingRestoredModelRef.current = null;
-      clearConversationUrlRef.current();
+      if (!serverReady) return false;
       // Editing revises the prompt text; the original attachments ride along.
       const files = (message.parts ?? []).filter(
         (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
@@ -3550,14 +3517,46 @@ export function PlaygroundMain({
           text,
           files: files.length > 0 ? files : undefined,
           metadata: outgoingSenderMetadata,
+          // Detach from the resumed thread as the branch is minted, not before
+          // the rewind. The teardown has to precede the branch's turn — the
+          // post-stream conflict check captures its baseline the instant that
+          // turn starts, and still attached it would name the ORIGINAL thread,
+          // surfacing the deliberate branch as a phantom "this chat changed
+          // elsewhere" and re-forking into a third session. But running it up
+          // front meant a refusal left the original stripped of its concurrency
+          // guard (next ordinary send overwrote its row blind) and stripped of
+          // its `?conversation=` id for good, since `clearConversation` masks
+          // the param it cleared. `onBeforeBranch` fires only once the rewind is
+          // past every refusal that leaves the thread untouched.
+          //
+          // `cancelPendingHistorySelection` is load-bearing beyond the
+          // baseline: it clears `activeHistorySessionId`, which is what stops
+          // the reactive history effect from reloading the ORIGINAL transcript
+          // over the branch. The conversation has to leave the URL with it —
+          // that clearing removes one of the two guards holding the restore
+          // effect back, and the other (`hasMessages`) falls too whenever the
+          // FIRST message is the one being edited, because the prefix before it
+          // is empty. With both down and `?conversation=` still naming the
+          // ORIGINAL, the restore refetched the original and reloaded it over
+          // the branch. `onReset("fork")` deliberately will not do this — an
+          // auth-bootstrap re-mint is the SAME conversation and must keep its
+          // id — so a branch says so here, the way New Chat does through
+          // `onReset("reset")`.
+          onBeforeBranch: () => {
+            resumedThreadSendBaselineRef.current = null;
+            cancelPendingHistorySelection();
+            syncResumedVersion(null);
+            pendingRestoredModelRef.current = null;
+            clearConversationUrlRef.current();
+          },
         });
       } catch (error) {
         console.error("[PlaygroundMain] Failed to rewind to message", error);
         toast.error("Couldn't apply that edit. Try again.");
-        return;
+        return false;
       }
       // `null` means the rewind was refused — nothing branched, so say nothing.
-      if (!outcome) return;
+      if (!outcome) return false;
       track("edit_message", {
         location: "playground",
         model_id: selectedModel?.id ?? null,
@@ -3569,6 +3568,7 @@ export function PlaygroundMain({
       // — same as Claude Code and Codex, where editing a message just edits it.
       // This used to raise a "New branch created" toast with an "Open original"
       // action; both were removed on the task author's call.
+      return true;
     },
     [
       sendBlocked,
@@ -4079,8 +4079,24 @@ export function PlaygroundMain({
                 // Keyed on auth rather than `HOSTED_MODE` or a project id: a
                 // signed-in desktop user persists through the same API, and a
                 // signed-in user with no project still gets personal history.
+                // Withheld on harness hosts (Claude Code, Codex). Those
+                // runtimes keep the conversation on their own side, filed under
+                // the chat session id, and we send only the newest user message
+                // — `@ai-sdk/harness` exposes resume-this-exact-session and
+                // nothing else: no fork, no rewind, and the resume payload is
+                // opaque so the discarded tail cannot be trimmed out of it. A
+                // branch is a NEW session id, so there is no state to resume
+                // and the harness would answer the edited message with no
+                // memory of the conversation at all, while the persisted
+                // transcript still shows the full history — a stored turn that
+                // misrepresents what the model was given. Until the harness
+                // turn path flattens the copied prefix into the first prompt,
+                // withholding is the honest option.
                 onEditUserMessage={
-                  isCompareMode || hideMessageEdit || !isConvexAuthenticated
+                  isCompareMode ||
+                  hideMessageEdit ||
+                  !isConvexAuthenticated ||
+                  previewedHarnessId
                     ? undefined
                     : handleEditUserMessage
                 }

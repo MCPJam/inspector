@@ -4,6 +4,7 @@ import { MessageCircle } from "lucide-react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { Button } from "@mcpjam/design-system/button";
+import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-action";
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
@@ -91,8 +92,17 @@ interface MessageViewProps {
    * edit as multiple parts — it round-trips as one. That is intentional: the
    * text is what the user actually edited, and the join is reversible enough
    * for the model.
+   *
+   * Resolve `false` when the edit was NOT dispatched — every gate the host
+   * runs after its first await (discard-draft declined, server unreachable,
+   * thread switched, rewind refused). The editor stays open and keeps the
+   * user's text instead of discarding it. Resolving anything else, including
+   * nothing, closes the editor.
    */
-  onEditUserMessage?: (message: UIMessage, text: string) => void;
+  onEditUserMessage?: (
+    message: UIMessage,
+    text: string
+  ) => void | boolean | Promise<void | boolean>;
   /** Blocks the edit affordance while a response is streaming. */
   editDisabled?: boolean;
   /** Tier 3 recorder bundle, forwarded to the assistant tool PartSwitch. */
@@ -225,6 +235,9 @@ function areMessageViewPropsEqual(
  * Parts are joined with a blank line because the bubble renders each text
  * part as its own block (`UserMessageBubble`'s `space-y-3`); a blank line
  * preserves that separation instead of running unrelated parts together.
+ *
+ * Also used by the copy action on both roles — copying wants the same
+ * "everything the user can read" semantics as editing.
  */
 function extractEditableUserMessageText(message: UIMessage): string {
   const parts = (message.parts ?? []) as Array<{
@@ -260,13 +273,17 @@ function UserMessageRow({
   files: React.ReactNode;
   bubble: React.ReactNode;
   actions: React.ReactNode;
-  onEditUserMessage?: (message: UIMessage, text: string) => void;
+  onEditUserMessage?: (
+    message: UIMessage,
+    text: string
+  ) => void | boolean | Promise<void | boolean>;
   editDisabled: boolean;
   senderAvatar?: ProjectThreadOwnerAvatar;
   showSenderAvatar: boolean;
 }) {
   const originalText = extractEditableUserMessageText(message);
   const [editing, setEditing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [draft, setDraft] = useState(originalText);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -292,22 +309,38 @@ function UserMessageRow({
     setDraft(originalText);
   };
 
-  const submitEdit = () => {
+  const submitEdit = async () => {
     // Guard here rather than only on the Send button: Enter reaches this too,
     // and the parent returns early while `sendBlocked`. Closing the editor
     // first would drop the draft with nothing to recover it from — reopening
     // resets to `originalText`. Keep the editor open until sending is allowed.
-    if (editDisabled) return;
+    if (editDisabled || submitting) return;
     const next = draft.trim();
     if (!next || next === originalText.trim()) {
       cancelEditing();
       return;
     }
-    setEditing(false);
-    onEditUserMessage?.(message, next);
+    setSubmitting(true);
+    try {
+      // `editDisabled` is only the FIRST of the host's gates. The rest run
+      // after an await the editor cannot see — a declined discard-draft
+      // dialog, a server that will not connect, a thread the user switched in
+      // the gap, a refused rewind — and each one ends the edit without
+      // sending. Closing the editor before hearing back drops `next` exactly
+      // the way the comment above warns about, so wait for the host's verdict
+      // and keep the editor (and the user's text) open when it refuses.
+      // Hosts that return nothing are treated as accepting, so read-only and
+      // test consumers keep today's behavior.
+      const accepted = await onEditUserMessage?.(message, next);
+      if (accepted === false) return;
+      setEditing(false);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const showActionRow = Boolean(actions) || Boolean(onEditUserMessage);
+  // Copy needs no wiring from the host, so the action row always renders.
+  const showActionRow = true;
 
   return (
     <div className="group/user-message flex w-full min-w-0 flex-col items-end gap-2">
@@ -339,7 +372,7 @@ function UserMessageRow({
               }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                submitEdit();
+                void submitEdit();
               }
             }}
             className="max-h-[50vh] w-full resize-none overflow-y-auto rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground outline-none focus-visible:border-ring"
@@ -356,8 +389,8 @@ function UserMessageRow({
             <Button
               type="button"
               size="sm"
-              onClick={submitEdit}
-              disabled={editDisabled}
+              onClick={() => void submitEdit()}
+              disabled={editDisabled || submitting}
             >
               Send
             </Button>
@@ -369,6 +402,7 @@ function UserMessageRow({
           {bubble}
           {showActionRow ? (
             <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+              <CopyMessageAction getText={() => originalText} />
               {onEditUserMessage ? (
                 <EditMessageAction
                   onClick={startEditing}
@@ -536,12 +570,20 @@ function MessageViewImpl({
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
   const showClaudeFooter = claudeFooterMode !== "none";
+  // Only offer copy when there is text to copy — a tool-call-only turn would
+  // put an empty string on the clipboard.
+  const hasAssistantText = (message.parts ?? []).some(
+    (part) =>
+      part.type === "text" &&
+      typeof part.text === "string" &&
+      part.text.length > 0
+  );
   return (
     <article
       className={
         shouldRenderAssistantAvatar
-          ? "flex w-full min-w-0 gap-4"
-          : "w-full min-w-0"
+          ? "group/assistant-message flex w-full min-w-0 gap-4"
+          : "group/assistant-message w-full min-w-0"
       }
     >
       {shouldRenderMistralAssistantAvatar ? (
@@ -625,6 +667,13 @@ function MessageViewImpl({
             className="pt-4"
           >
             <ClaudeLoadingIndicator mode={claudeFooterMode} />
+          </div>
+        ) : null}
+        {hasAssistantText ? (
+          <div className="flex gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
+            <CopyMessageAction
+              getText={() => extractEditableUserMessageText(message)}
+            />
           </div>
         ) : null}
       </div>

@@ -437,6 +437,13 @@ export interface UseChatSessionReturn {
       url: string;
     }>;
     metadata?: Record<string, unknown>;
+    /**
+     * Runs as the branch is minted, and only then — every refusal above that
+     * point returns without calling it. Callers detach from the resumed thread
+     * here so the teardown and the branch stay atomic: a refusal must not leave
+     * the original session stripped of its optimistic-concurrency guard.
+     */
+    onBeforeBranch?: () => void;
   }) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
@@ -3506,6 +3513,22 @@ export function useChatSession(
         url: string;
       }>;
       metadata?: Record<string, unknown>;
+      /**
+       * Runs immediately before the branch is minted, and ONLY then — every
+       * refusal above this point returns without calling it.
+       *
+       * Callers detach from the resumed thread here (baseline, pending
+       * selection, `resumedVersion`, the conversation URL). That has to happen
+       * before the branch's turn starts, or the post-stream conflict check
+       * captures a baseline naming the ORIGINAL thread. But doing it in the
+       * caller *before* `rewindToMessage` meant a refusal left the session id
+       * unchanged with its optimistic-concurrency guard already torn down: the
+       * next ordinary send then rewrote the original's row carrying no
+       * `expectedVersion`, silently clobbering turns another tab or device had
+       * added. Deferring to this hook keeps the teardown and the branch
+       * atomic — refuse early and the thread is untouched.
+       */
+      onBeforeBranch?: () => void;
     }): Promise<{ previousChatSessionId: string } | null> => {
       // Refuse only mid-flight. A failed turn ("error") is deliberately
       // allowed through — rewinding is the natural way to recover from one,
@@ -3526,6 +3549,9 @@ export function useChatSession(
 
       const previousChatSessionId = chatSessionIdRef.current;
       const prefix = messagesRef.current.slice(0, targetIndex);
+
+      // Past every refusal that leaves the thread untouched — safe to detach.
+      options.onBeforeBranch?.();
 
       const branchSessionId = await startChatWithMessages(prefix, {
         resetReason: "fork",

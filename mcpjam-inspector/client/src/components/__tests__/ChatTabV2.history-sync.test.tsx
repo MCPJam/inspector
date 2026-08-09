@@ -756,7 +756,7 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
     expect(mockToastError).toHaveBeenCalledWith(
       errorToastMessage(
-        "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+        "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
       ),
       { duration: Infinity }
     );
@@ -850,7 +850,7 @@ describe("ChatTabV2 history sync", () => {
 
     expect(screen.getByTestId("chat-input")).toHaveAttribute(
       "data-enable-multi-model",
-      "true",
+      "true"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
@@ -859,17 +859,17 @@ describe("ChatTabV2 history sync", () => {
 
     expect(screen.getByTestId("chat-input")).toHaveAttribute(
       "data-enable-multi-model",
-      "true",
+      "true"
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Share active thread" }),
+      screen.getByRole("button", { name: "Share active thread" })
     );
     await flushMicrotasks();
 
     expect(screen.getByTestId("chat-input")).toHaveAttribute(
       "data-enable-multi-model",
-      "false",
+      "false"
     );
   });
 
@@ -1152,7 +1152,11 @@ describe("ChatTabV2 history sync", () => {
     });
 
     let resumedVersionWhenRewound: number | null | undefined = undefined;
-    mockUseChatSession.rewindToMessage.mockImplementation(async () => {
+    // The real hook fires `onBeforeBranch` as the branch is minted, just
+    // before the turn dispatches; observing after it is what makes this an
+    // ordering assertion rather than a no-op.
+    mockUseChatSession.rewindToMessage.mockImplementation(async (options) => {
+      options?.onBeforeBranch?.();
       resumedVersionWhenRewound = mockUseChatSession.resumedVersion;
       return { previousChatSessionId: "prev-session-1" };
     });

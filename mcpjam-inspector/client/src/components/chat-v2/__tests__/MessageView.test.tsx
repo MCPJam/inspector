@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
@@ -285,7 +285,7 @@ describe("MessageView", () => {
       );
     });
 
-    it("submits the edited text and closes the editor", () => {
+    it("submits the edited text and closes the editor", async () => {
       const onEditUserMessage = vi.fn();
       const message = editableMessage();
       renderMessageView(
@@ -307,7 +307,71 @@ describe("MessageView", () => {
         expect.objectContaining({ id: "msg-edit-test" }),
         "revised prompt"
       );
-      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("user-message-bubble")
+      ).toBeInTheDocument();
+    });
+
+    // The host's gates run after awaits the editor cannot see (discard-draft
+    // declined, server unreachable, thread switched, rewind refused). Closing
+    // on dispatch rather than on click is what keeps the typed text alive:
+    // `startEditing` reseeds from the message, so a closed editor is a lost
+    // edit.
+    it("keeps the editor and the typed text when the host refuses", async () => {
+      const onEditUserMessage = vi.fn().mockResolvedValue(false);
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "a long carefully rewritten prompt" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Send" })).toBeEnabled()
+      );
+      expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+        "a long carefully rewritten prompt"
+      );
+      expect(
+        screen.queryByTestId("user-message-bubble")
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not dispatch twice while the host is still deciding", async () => {
+      let release: (value: boolean) => void = () => {};
+      const onEditUserMessage = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            release = resolve;
+          })
+      );
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "revised prompt" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      release(true);
+      expect(
+        await screen.findByTestId("user-message-bubble")
+      ).toBeInTheDocument();
     });
 
     it("cancels without submitting and restores the bubble", () => {
@@ -350,7 +414,7 @@ describe("MessageView", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("submits on Enter without Shift", () => {
+    it("submits on Enter without Shift", async () => {
       const onEditUserMessage = vi.fn();
       const message = editableMessage();
       renderMessageView(
@@ -371,7 +435,9 @@ describe("MessageView", () => {
         expect.objectContaining({ id: "msg-edit-test" }),
         "revised via enter"
       );
-      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("user-message-bubble")
+      ).toBeInTheDocument();
     });
 
     it("does not submit on Shift+Enter and keeps the editor open", () => {

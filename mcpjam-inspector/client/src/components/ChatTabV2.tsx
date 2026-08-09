@@ -1797,7 +1797,7 @@ export function ChatTabV2({
   // sends would leave an empty orphan thread behind.
   const handleEditUserMessage = useCallback(
     async (message: UIMessage, text: string) => {
-      if (sendBlocked) return;
+      if (sendBlocked) return false;
       // A rewind ends in `onReset("fork")`, which wipes the composer: input,
       // attachments, prompt/skill results, both queues. `handleNewChat` and
       // `handleSelectThread` ask before doing that; editing has to ask too, or
@@ -1809,7 +1809,7 @@ export function ChatTabV2({
       // rewind can still be refused below, and `onReset` only fires when one
       // actually happens — clearing eagerly would wipe the draft for an edit
       // that never sent.
-      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (!(await ensureDiscardDraftConfirmed())) return false;
       // Snapshot what this edit is aimed at. Both awaits above yield — the
       // discard dialog waits on a human, `ensureThreadReadyForSend` on a
       // network round trip — and the user can pick a different history thread
@@ -1825,25 +1825,9 @@ export function ChatTabV2({
       // `cancelPendingHistorySelection`, and so New Chat through it).
       const editSelectionId = historySelectionRequestIdRef.current;
       const threadReady = await ensureThreadReadyForSend();
-      if (!threadReady) return;
-      if (historySelectionRequestIdRef.current !== editSelectionId) return;
-      // Detach from the resumed thread BEFORE the rewind, not after it returns.
-      // `rewindToMessage` mints the branch and dispatches its turn internally,
-      // and the post-stream conflict check captures its baseline the instant
-      // that turn starts. Still attached, the baseline names the ORIGINAL
-      // thread, the branch's completed stream is compared against it, and the
-      // deliberate branch surfaces as a phantom "this chat changed elsewhere" —
-      // which also re-forks, sending the next message to a third session.
-      //
-      // These are the same three lines every other deliberate session change
-      // runs (`handleNewChat`, and `detachHistorySession` itself). They are NOT
-      // restored when the rewind is refused: both refusal causes — a turn
-      // started in the gap, or the target message is gone — mean the thread
-      // moved under us, so the resumed baseline is stale either way and
-      // continuing locally is the honest state.
-      resumedThreadSendBaselineRef.current = null;
-      cancelPendingHistorySelection();
-      syncResumedVersion(null);
+      if (!threadReady) return false;
+      if (historySelectionRequestIdRef.current !== editSelectionId)
+        return false;
       // Editing revises the prompt text; the original attachments ride along.
       const files = (message.parts ?? []).filter(
         (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
@@ -1860,11 +1844,29 @@ export function ChatTabV2({
           text,
           files: files.length > 0 ? files : undefined,
           metadata: outgoingSenderMetadata,
+          // Detach from the resumed thread as the branch is minted, not before
+          // the rewind. The teardown has to precede the branch's turn — the
+          // post-stream conflict check captures its baseline the instant that
+          // turn starts, and still attached it would name the ORIGINAL thread,
+          // surfacing the deliberate branch as a phantom "this chat changed
+          // elsewhere" and re-forking into a third session. But running it up
+          // front meant a refusal left the original session stripped of its
+          // concurrency guard, so the next ordinary send overwrote its row
+          // blind. `onBeforeBranch` fires only once the rewind is past every
+          // refusal that leaves the thread untouched.
+          //
+          // These are the same three lines every other deliberate session
+          // change runs (`handleNewChat`, and `detachHistorySession` itself).
+          onBeforeBranch: () => {
+            resumedThreadSendBaselineRef.current = null;
+            cancelPendingHistorySelection();
+            syncResumedVersion(null);
+          },
         });
       } catch (error) {
         console.error("[ChatTabV2] Failed to rewind to message", error);
         toast.error("Couldn't apply that edit. Try again.");
-        return;
+        return false;
       }
       // `null` means the rewind was refused — a turn started under the editor
       // in the gap after `ensureThreadReadyForSend`'s network round trip, or
@@ -1875,7 +1877,7 @@ export function ChatTabV2({
       // has no server twin to reconcile a phantom count against. Stomping
       // either one here for an edit that never sent would corrupt state for
       // an unrelated later action.
-      if (!outcome) return;
+      if (!outcome) return false;
       track("edit_message", {
         location: "chat_tab",
         model_id: selectedModel?.id ?? null,
@@ -1888,6 +1890,7 @@ export function ChatTabV2({
       // — same as Claude Code and Codex, where editing a message just edits it.
       // This used to raise a "New branch created" toast with an "Open original"
       // action; both were removed on the task author's call.
+      return true;
     },
     [
       sendBlocked,
