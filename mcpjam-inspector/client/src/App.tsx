@@ -3557,14 +3557,16 @@ export default function App() {
       shouldSnapToServersOnActiveProjectChange({
         previousActiveProjectId,
         nextActiveProjectId: activeProjectId,
-        activeTab,
+        // Deliberately not the `activeTab` hook value: the router commits in a
+        // transition, so that still names the page being left while the project
+        // change is already live. `navigateToServers` reads the same source.
+        activeTab: pathnameToActiveTab(window.location.pathname),
       })
     ) {
       navigateToServers();
     }
   }, [
     activeProjectId,
-    activeTab,
     isAuthLoading,
     isLoadingRemoteProjects,
     isWorkOsLoading,
@@ -3911,7 +3913,11 @@ export default function App() {
       await handleSwitchProject(projectId);
 
       const navigationTarget = getProjectSwitchNavigationTarget({
-        activeTab,
+        // Read the tab from the live pathname, not the `activeTab` hook value:
+        // the switcher's per-row gear navigates while this switch is still in
+        // flight, and a closure-captured tab would send the user back to
+        // Servers on top of the settings page they just opened.
+        activeTab: pathnameToActiveTab(window.location.pathname),
         activeOrganizationId,
         nextProjectOrganizationId: nextProject?.organizationId,
       });
@@ -3919,13 +3925,7 @@ export default function App() {
         navigateToTarget(navigationTarget);
       }
     },
-    [
-      activeOrganizationId,
-      activeTab,
-      handleSwitchProject,
-      navigateToTarget,
-      projects,
-    ]
+    [activeOrganizationId, handleSwitchProject, navigateToTarget, projects]
   );
 
   const isBillingEntryHandoff =
