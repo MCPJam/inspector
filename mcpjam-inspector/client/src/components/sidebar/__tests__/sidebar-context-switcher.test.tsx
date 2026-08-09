@@ -133,10 +133,19 @@ vi.mock("@/components/learn-more/LearnMoreHoverCard", () => ({
   LearnMoreHoverCard: ({
     tabId,
     children,
+    suppressed,
   }: {
     tabId: string;
     children: ReactNode;
-  }) => <div data-testid={`learn-more-${tabId}`}>{children}</div>,
+    suppressed?: boolean;
+  }) => (
+    <div
+      data-testid={`learn-more-${tabId}`}
+      data-suppressed={String(!!suppressed)}
+    >
+      {children}
+    </div>
+  ),
 }));
 
 const mockCreateOrgDialog = vi.fn();
@@ -506,14 +515,11 @@ describe("SidebarContextSwitcher", () => {
     });
   });
 
-  it("waits for another project to become active before opening its settings", async () => {
-    let resolveSwitch: () => void = () => {};
-    const onSwitchProject = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveSwitch = resolve;
-        })
-    );
+  it("navigates to settings in the same gesture as the switch, without waiting for it", () => {
+    // Regression: awaiting the switch let the project change land while the
+    // URL was still the page being left, where App's snap-to-Servers effect
+    // read it as a bare project switch and bounced off the settings page.
+    const onSwitchProject = vi.fn(() => new Promise<void>(() => {}));
     const onNavigateToSettings = vi.fn();
     render(
       <SidebarContextSwitcher
@@ -531,12 +537,8 @@ describe("SidebarContextSwitcher", () => {
       screen.getByRole("button", { name: "Open Sandbox settings" })
     );
     expect(onSwitchProject).toHaveBeenCalledWith("p2");
-    expect(onNavigateToSettings).not.toHaveBeenCalled();
-
-    resolveSwitch();
-    await waitFor(() => {
-      expect(onNavigateToSettings).toHaveBeenCalled();
-    });
+    // Never resolves, yet navigation already happened.
+    expect(onNavigateToSettings).toHaveBeenCalled();
   });
 
   it("clicking the per-row gear on the active project navigates without re-switching", () => {
@@ -822,6 +824,30 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.getByTestId("learn-more-projects")).toBeInTheDocument();
     expect(screen.getByTestId("learn-more-projects")).toHaveTextContent(
       "Inspector"
+    );
+  });
+
+  it("suppresses the learn more hover card while the menu is open", () => {
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+        onLearnMoreExpand={vi.fn()}
+      />
+    );
+    // Both open to the right of the same trigger, so they'd otherwise overlap.
+    expect(screen.getByTestId("learn-more-projects")).toHaveAttribute(
+      "data-suppressed",
+      "false"
+    );
+    openMainDropdown();
+    expect(screen.getByTestId("learn-more-projects")).toHaveAttribute(
+      "data-suppressed",
+      "true"
     );
   });
 
