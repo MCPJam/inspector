@@ -126,6 +126,12 @@ const SANDBOX_NOTICE_MODEL_CONTEXT: Record<SandboxNoticeReason, string> = {
     "environment image; a newer build exists but was deliberately not " +
     "swapped in, to preserve your shell state. If a tool or package seems " +
     "to be missing or out of date, that is why.",
+  sandbox_unavailable:
+    "This conversation normally runs bash in a disposable cloud sandbox, " +
+    "but the server handling this turn cannot execute one, so you have NO " +
+    "bash tool this conversation. Do not claim to have run commands or " +
+    "inspected files; if a step needs a shell, say plainly that it can't be " +
+    "done here.",
 };
 
 /**
