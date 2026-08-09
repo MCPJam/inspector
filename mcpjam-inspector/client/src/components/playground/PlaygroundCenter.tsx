@@ -11,10 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PlaygroundSkeleton } from "@/components/playground/PlaygroundSkeleton";
 import { PlaygroundMain } from "@/components/ui-playground/PlaygroundMain";
 import SaveRequestDialog from "@/components/tools/SaveRequestDialog";
-import {
-  PLAYGROUND_FIRST_RUN_PROMPT,
-  usePlaygroundStateContext,
-} from "@/components/ui-playground/hooks/use-playground-state";
+import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -91,23 +88,7 @@ export function PlaygroundCenter({
         deviceType={state.deviceType}
         onDeviceTypeChange={state.setDeviceType}
         playgroundServerSelectorProps={playgroundServerSelectorProps}
-        initialInput={
-          state.firstRunComposerSeed
-            ? PLAYGROUND_FIRST_RUN_PROMPT
-            : undefined
-        }
-        initialInputTypewriter={state.firstRunComposerSeed}
-        blockSubmitUntilServerConnected={state.firstRunComposerSeed}
         ensureServersReady={ensureServersReady}
-        pulseSubmit={state.firstRunComposerSeed}
-        showPostConnectGuide={false}
-        onFirstMessageSent={
-          state.onboarding.isGuidedPostConnect
-            ? () => {
-                state.onboarding.completeOnboarding();
-              }
-            : undefined
-        }
         evalChatHandoff={evalChatHandoff}
         onEvalChatHandoffConsumed={onEvalChatHandoffConsumed}
       />

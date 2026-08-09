@@ -41,7 +41,6 @@
 import { useCallback } from "react";
 import type { UIMessage } from "ai";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
-import { useConvexAuth } from "convex/react";
 import {
   isDynamicTool,
   isToolPart,
@@ -155,7 +154,6 @@ export function EvalLiveChatPanel({
     },
     [onCaptureTurns],
   );
-  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
 
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
@@ -179,13 +177,8 @@ export function EvalLiveChatPanel({
     activeProjectId: projectId,
     serverName: primaryServerName,
     servers: appState.servers,
-    isConvexAuthenticated,
     ensureServersReady,
     selectedServerNames: caseServers.length > 0 ? caseServers : undefined,
-    // Onboarding/telemetry gating — the embedded panel is not the first-run
-    // surface, so treat onboarding as already seen to keep it quiet.
-    hasSeenFirstRunOnboarding: true,
-    isProjectProvisioned: Boolean(projectId),
   });
 
   return (

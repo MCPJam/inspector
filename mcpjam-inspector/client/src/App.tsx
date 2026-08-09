@@ -1,4 +1,4 @@
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import {
   useCallback,
   createContext,
@@ -50,7 +50,14 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
-import { isFirstRunEligible } from "./lib/onboarding-state";
+import {
+  isFirstRunEligible,
+  markOnboardingShown,
+  writeOnboardingState,
+} from "./lib/onboarding-state";
+import { FirstRunConnect } from "./components/first-run/FirstRunConnect";
+import { useFirstRunConnect } from "./hooks/use-first-run-connect";
+import type { ServerFormData } from "@/shared/types.js";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -1621,14 +1628,11 @@ export function PlaygroundRoute() {
     appState,
     ensureServersReady,
     evalChatHandoff,
-    handleConnect,
     handleUpdateHostContext,
-    isAuthenticated,
     isSelectedServerSyncing,
     isWorkOsLoading,
     playgroundServerSelectorProps,
     projectServers,
-    remoteFirstRunOnboardingShown,
     selectedMCPConfig,
     setPlaygroundOnboarding,
     setEvalChatHandoff,
@@ -1644,11 +1648,7 @@ export function PlaygroundRoute() {
       sharedProjectId={activeProject?.sharedProjectId ?? null}
       isSignedInWithWorkOs={!!workOsUser}
       isWorkOsAuthLoading={isWorkOsLoading}
-      isConvexAuthenticated={isAuthenticated}
-      isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
-      hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
       isServerSyncing={isSelectedServerSyncing}
-      onConnect={handleConnect}
       onSaveHostContext={handleUpdateHostContext}
       ensureServersReady={ensureServersReady}
       onOnboardingChange={setPlaygroundOnboarding}
@@ -2487,8 +2487,48 @@ export default function App() {
       remoteFirstRunOnboardingShown,
       isNewSignedInAccount
     );
-  const shouldHoldHostedHomeRouteForFirstRunRedirect =
-    HOSTED_MODE && activeTab === "home" && shouldRouteToFirstRunOnboarding;
+  // First run takes over the whole viewport rather than dropping a new user
+  // into the workspace with nothing connected. It owns the connection, so the
+  // Playground no longer needs to know it is someone's first visit.
+  const markRemoteOnboardingShown = useMutation(
+    "users:markOnboardingShown" as any
+  );
+  const didPersistFirstRunShownRef = useRef(false);
+
+  const firstRun = useFirstRunConnect({
+    saveServer: useCallback(
+      async (formData: ServerFormData) =>
+        (await saveServerConfigWithoutConnecting(formData, {
+          suppressToast: true,
+        })) === true,
+      [saveServerConfigWithoutConnecting]
+    ),
+    connectServer: useCallback(
+      (serverName: string) => connectServerWithResultRef.current(serverName),
+      []
+    ),
+    onConnected: useCallback(() => {
+      // `connectServerWithResult` already selects the server it connected, so
+      // the Playground opens pointed at it.
+      writeOnboardingState({ status: "completed", completedAt: Date.now() });
+      markOnboardingShown();
+      if (isAuthenticated && !didPersistFirstRunShownRef.current) {
+        didPersistFirstRunShownRef.current = true;
+        // Best-effort: the local state above is already authoritative for
+        // re-entry, so a failed write must not strand the user here.
+        Promise.resolve(markRemoteOnboardingShown()).catch(() => {
+          didPersistFirstRunShownRef.current = false;
+        });
+      }
+      navigateApp(routePaths.playground);
+    }, [isAuthenticated, markRemoteOnboardingShown]),
+    onAuthorize: useCallback(
+      (serverName: string) => {
+        void handleReconnect(serverName, { forceOAuthFlow: true });
+      },
+      [handleReconnect]
+    ),
+  });
 
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -3306,11 +3346,6 @@ export default function App() {
     syncAgentStatus,
   ]);
 
-  useLayoutEffect(() => {
-    if (shouldRouteToFirstRunOnboarding) {
-      navigateApp(routePaths.playground);
-    }
-  }, [shouldRouteToFirstRunOnboarding]);
 
   // When the active project changes (org switch, project delete, manual switch),
   // snap to Servers — staying on App Builder/Chat would leave the user pointed
@@ -3841,17 +3876,32 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  // Ahead of the hosted route holds below: those exist to stop the workspace
+  // flashing before auth settles, and first run replaces the workspace outright.
+  // `shouldRouteToFirstRunOnboarding` already requires auth and the hosted shell
+  // gate to have settled, so there is nothing left to hold for.
+  if (shouldRouteToFirstRunOnboarding) {
+    return (
+      <FirstRunConnect
+        phase={firstRun.phase}
+        inputError={firstRun.inputError}
+        onConnectOwnServer={firstRun.connectOwnServer}
+        onConnectDemoServer={firstRun.connectDemoServer}
+        onRetry={firstRun.retry}
+        onAuthorize={firstRun.authorize}
+        onBackToChoosing={firstRun.backToChoosing}
+        onClearInputError={firstRun.clearInputError}
+      />
+    );
+  }
+
   const shouldShowBillingHandoffOverlay =
     !isHostedChatRoute &&
     !isOAuthCallback &&
     billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
-  if (
-    shouldHoldHostedDefaultRouteForAuth ||
-    shouldHoldHostedHomeRouteForAppReady ||
-    shouldHoldHostedHomeRouteForFirstRunRedirect
-  ) {
+  if (shouldHoldHostedDefaultRouteForAuth || shouldHoldHostedHomeRouteForAppReady) {
     return <LoadingScreen />;
   }
 

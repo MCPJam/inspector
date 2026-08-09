@@ -2332,7 +2332,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes a Convex-authenticated hosted guest into Playground onboarding once startup is ready", async () => {
+  it("shows first-run connect to a Convex-authenticated hosted guest once startup is ready", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2346,22 +2346,18 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("first-run-connect")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    // First run takes over the viewport: no workspace, no Playground, and no
+    // route change — the user has not chosen a server yet.
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        isSignedInWithWorkOs: false,
-        isWorkOsAuthLoading: false,
-        isConvexAuthenticated: true,
-        hasSeenFirstRunOnboarding: false,
-      })
-    );
+    expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
   });
 
-  it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
+  it("shows first-run connect to a Convex-authenticated hosted guest on the default route", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2375,10 +2371,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("first-run-connect")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
     expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
   });
 
@@ -2403,7 +2399,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes an unseen guest when the only saved server is the incomplete first-run Excalidraw row", async () => {
+  it("shows first-run connect when the only saved server is the incomplete first-run Excalidraw row", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2433,10 +2429,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("first-run-connect")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
@@ -2641,10 +2637,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("first-run-connect")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 

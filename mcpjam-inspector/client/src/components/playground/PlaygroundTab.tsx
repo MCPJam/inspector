@@ -34,7 +34,6 @@ import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
-import type { ServerFormData } from "@/shared/types.js";
 import type {
   EnsureServersReadyResult,
   ServerWithName,
@@ -60,11 +59,7 @@ interface PlaygroundTabProps {
   servers?: Record<string, ServerWithName>;
   isSignedInWithWorkOs?: boolean;
   isWorkOsAuthLoading?: boolean;
-  isConvexAuthenticated?: boolean;
-  isProjectProvisioned?: boolean;
-  hasSeenFirstRunOnboarding?: boolean;
   isServerSyncing?: boolean;
-  onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
     projectId: string,
     hostContext: ProjectHostContextDraft
@@ -195,13 +190,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     serverConfig: props.serverConfig,
     serverName: props.serverName,
     servers: props.servers,
-    isSignedInWithWorkOs: props.isSignedInWithWorkOs,
-    isWorkOsAuthLoading: props.isWorkOsAuthLoading,
-    isConvexAuthenticated: props.isConvexAuthenticated,
-    isProjectProvisioned: props.isProjectProvisioned,
-    hasSeenFirstRunOnboarding: props.hasSeenFirstRunOnboarding,
     isServerSyncing: props.isServerSyncing,
-    onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
     ensureServersReady: props.ensureServersReady,
     modelVisibleMcpToolResults:

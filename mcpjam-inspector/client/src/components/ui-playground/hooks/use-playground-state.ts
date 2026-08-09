@@ -2,7 +2,7 @@
  * usePlaygroundState
  *
  * Owns the Playground tab's orchestration: tool fetching, form-field sync,
- * saved-requests bridge, execution + result injection waiters, onboarding
+ * saved-requests bridge, execution + result injection waiters,
  * integration, and the inspector command handlers (`selectTool` /
  * `executeTool` / `renderToolResult` / `setAppContext` / `snapshotApp`).
  *
@@ -43,8 +43,6 @@ import type {
 } from "@/lib/client-config-v2";
 import { track } from "@/lib/analytics";
 import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
-import { useOnboarding } from "@/hooks/use-onboarding";
-import type { ServerFormData } from "@/shared/types.js";
 import type {
   EnsureServersReadyResult,
   ServerWithName,
@@ -75,14 +73,11 @@ import { PANEL_SIZES } from "../constants";
 
 const SERVER_SYNC_TIMEOUT_MS = 10000;
 const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
-// Upper bound on the full-screen first-run skeleton. If onboarding connect /
+// Upper bound on the full-screen loading skeleton. If server config sync /
 // remote provisioning never resolves (e.g. a guest whose Convex deployment
 // can't authenticate them, so no project is ever provisioned), fall through to
 // the usable Playground instead of spinning forever. See issue #3352.
 const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
-
-export const PLAYGROUND_FIRST_RUN_PROMPT =
-  "Draw me an MCP architecture diagram";
 
 type ExecutionInjectionWaiter = {
   expectedToolCallId?: string;
@@ -106,13 +101,7 @@ export interface UsePlaygroundStateOptions {
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
-  isSignedInWithWorkOs?: boolean;
-  isWorkOsAuthLoading?: boolean;
-  isConvexAuthenticated?: boolean;
-  isProjectProvisioned?: boolean;
-  hasSeenFirstRunOnboarding?: boolean;
   isServerSyncing?: boolean;
-  onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
     projectId: string,
     hostContext: ProjectHostContextDraft
@@ -177,13 +166,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     serverConfig,
     serverName,
     servers = {},
-    isSignedInWithWorkOs = false,
-    isWorkOsAuthLoading = false,
-    isConvexAuthenticated = false,
-    isProjectProvisioned = true,
-    hasSeenFirstRunOnboarding,
     isServerSyncing = false,
-    onConnect,
     onOnboardingChange,
     selectedServerNames,
   } = options;
@@ -200,21 +183,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
   const prefersReducedMotion = useReducedMotion();
   const serverKey = useServerKey(serverConfig);
-
-  const onboarding = useOnboarding({
-    servers,
-    onConnect: onConnect ?? (() => {}),
-    isSignedInWithWorkOs,
-    isWorkOsAuthLoading,
-    hasRemoteOnboardingState: hasSeenFirstRunOnboarding !== undefined,
-    hasSeenOnboarding: hasSeenFirstRunOnboarding === true,
-    canPersistRemoteOnboarding: isConvexAuthenticated,
-    isProjectProvisioned,
-  });
-
-  const firstRunComposerSeed =
-    onboarding.phase === "connecting_excalidraw" ||
-    onboarding.phase === "connected_guided";
 
   const {
     selectedTool,
@@ -250,19 +218,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, [onOnboardingChange, setMcpSidebarOpen]);
 
   useLayoutEffect(() => {
-    // NUX: collapse the tools sidebar for the whole first-run connect + guided
-    // flow. While the server is still connecting, `isGuidedPostConnect` is
-    // false; checking phase too avoids flashing the sidebar open until
-    // connect completes.
-    const collapseToolsForNux =
-      onboarding.phase === "connecting_excalidraw" ||
-      onboarding.isGuidedPostConnect;
-    if (collapseToolsForNux) {
-      setSidebarVisible(false);
-    } else {
-      setSidebarVisible(true);
-    }
-  }, [onboarding.phase, onboarding.isGuidedPostConnect, setSidebarVisible]);
+    setSidebarVisible(true);
+  }, [setSidebarVisible]);
 
   useLayoutEffect(() => {
     return () => {
@@ -953,28 +910,19 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     return () => clearTimeout(id);
   }, [serverName, isServerSyncing]);
 
-  const isResolvingRemoteCompletion = onboarding.isResolvingRemoteCompletion;
-  const isConnectingFirstRunExcalidraw =
-    onboarding.phase === "connecting_excalidraw" &&
-    !onboarding.isGuidedPostConnect;
-  const isBootstrappingFirstRunConnection =
-    onboarding.isBootstrappingFirstRunConnection && !!onConnect;
+  // First run no longer lands here mid-connect — `FirstRunConnect` owns that
+  // and only routes to the Playground once a server is connected. The skeleton
+  // now covers exactly one case: a saved server whose config is still syncing.
   const isWaitingForServerSync =
     !serverConfig && isServerSyncing && !syncTimedOut;
 
-  // The full-screen first-run skeleton must never be a dead end. Track whether
-  // anything currently wants it, then time-bound it: if the underlying connect
-  // / provisioning never resolves the skeleton falls through to a usable
-  // Playground rather than hanging forever with no escape. See issue #3352.
-  const wantsFirstRunSkeleton =
-    isResolvingRemoteCompletion ||
-    isConnectingFirstRunExcalidraw ||
-    isBootstrappingFirstRunConnection ||
-    isWaitingForServerSync;
+  // The skeleton must never be a dead end. Time-bound it so a sync that never
+  // resolves falls through to a usable Playground rather than hanging forever
+  // with no escape. See issue #3352.
   const [firstRunSkeletonTimedOut, setFirstRunSkeletonTimedOut] =
     useState(false);
   useEffect(() => {
-    if (!wantsFirstRunSkeleton) {
+    if (!isWaitingForServerSync) {
       setFirstRunSkeletonTimedOut(false);
       return;
     }
@@ -983,24 +931,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       FIRST_RUN_SKELETON_TIMEOUT_MS,
     );
     return () => clearTimeout(id);
-  }, [wantsFirstRunSkeleton]);
-
-  const shouldMarkFirstRunNuxShown =
-    firstRunComposerSeed &&
-    onboarding.isGuidedPostConnect &&
-    !isResolvingRemoteCompletion &&
-    !isBootstrappingFirstRunConnection &&
-    !isWaitingForServerSync &&
-    !!serverConfig;
-
-  useEffect(() => {
-    if (shouldMarkFirstRunNuxShown) {
-      onboarding.markOnboardingShown();
-    }
-  }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
+  }, [isWaitingForServerSync]);
 
   const loadingState: PlaygroundLoadingState =
-    wantsFirstRunSkeleton && !firstRunSkeletonTimedOut
+    isWaitingForServerSync && !firstRunSkeletonTimedOut
       ? { kind: "skeleton" }
       : !serverConfig && isServerSyncing && syncTimedOut
       ? { kind: "sync-timed-out" }
@@ -1041,9 +975,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     toggleSidebar,
     centerPanelDefaultSize,
 
-    // onboarding
-    firstRunComposerSeed,
-    onboarding,
 
     // multi-server
     activeServerNames,

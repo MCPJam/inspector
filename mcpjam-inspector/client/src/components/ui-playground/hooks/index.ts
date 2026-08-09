@@ -24,7 +24,6 @@ export type {
   UsePlaygroundStateReturn,
 } from "./use-playground-state";
 export {
-  PLAYGROUND_FIRST_RUN_PROMPT,
   PlaygroundStateProvider,
   usePlaygroundState,
   usePlaygroundStateContext,
