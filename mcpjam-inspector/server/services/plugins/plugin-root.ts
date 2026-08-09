@@ -1,20 +1,26 @@
 /**
  * Root-variable substitution AT SPAWN (INS-6).
  *
- * The SDK parser preserves `${PLUGIN_ROOT}` / `${CODEX_PLUGIN_ROOT}` verbatim
- * on purpose: at parse time there IS no root — the bundle has not been
- * materialized, and a value baked in then would be a local absolute path
- * persisted into an immutable, content-addressed version (rotating its hash and
- * pinning one user's home directory into everyone's pin). Substitution belongs
- * here, at the last possible moment, against a cache directory derived from the
- * bundle hash.
+ * The SDK parser preserves `${PLUGIN_ROOT}` verbatim on purpose: at parse
+ * time there IS no root — the bundle has not been materialized, and a value
+ * baked in then would be a local absolute path persisted into an immutable,
+ * content-addressed version (rotating its hash and pinning one user's home
+ * directory into everyone's pin). Substitution belongs here, at the last
+ * possible moment, against a cache directory derived from the bundle hash.
+ *
+ * `${PLUGIN_DATA}` (the writable per-plugin data directory the Agent Plugins
+ * spec requires) is detected but NOT yet substituted — the data-directory
+ * runtime lands in the runtime-fidelity phase. Until then a component whose
+ * spec references it is still recognized as a plugin component, so it can
+ * never spawn through the ordinary non-plugin path with the placeholder
+ * intact.
  *
  * The placeholder list itself is imported from the SDK rather than restated —
- * one list, one rule, no drift when a third alias appears.
+ * one list, one rule, no drift when the spec evolves.
  */
 import {
   PLUGIN_ROOT_PLACEHOLDERS,
-  containsRootPlaceholder,
+  containsPluginPlaceholder,
 } from "@mcpjam/sdk/plugin-bundle";
 
 /** The stdio fields a plugin component can express a root placeholder in. */
@@ -27,13 +33,10 @@ export interface PluginStdioLaunchSpec {
 
 /**
  * Environment variables every plugin child process gets, pointing at the
- * materialized bundle. Both names are set unconditionally: a bundle authored
- * against Codex reads `CODEX_PLUGIN_ROOT`, ours reads `PLUGIN_ROOT`, and a
- * component that resolves its own assets at runtime (rather than through an
- * argv placeholder) can only work if the alias it was written against exists.
+ * materialized bundle.
  */
 export function pluginRootEnv(root: string): Record<string, string> {
-  return { PLUGIN_ROOT: root, CODEX_PLUGIN_ROOT: root };
+  return { PLUGIN_ROOT: root };
 }
 
 /** Replace every known root placeholder in one value. */
@@ -45,24 +48,29 @@ export function substitutePluginRoot(value: string, root: string): string {
   return out;
 }
 
-/** Does any field still reference a root placeholder? */
+/**
+ * Does any field still reference a plugin placeholder (`${PLUGIN_ROOT}` or
+ * `${PLUGIN_DATA}`)? This is the detection signal that routes a server
+ * config through the plugin materialization path instead of the ordinary
+ * stdio spawn.
+ */
 export function needsPluginRoot(spec: PluginStdioLaunchSpec): boolean {
   return (
-    containsRootPlaceholder(spec.command) ||
-    spec.args.some(containsRootPlaceholder) ||
-    Object.values(spec.env).some(containsRootPlaceholder) ||
+    containsPluginPlaceholder(spec.command) ||
+    spec.args.some(containsPluginPlaceholder) ||
+    Object.values(spec.env).some(containsPluginPlaceholder) ||
     (spec.workingDirectory !== undefined &&
-      containsRootPlaceholder(spec.workingDirectory))
+      containsPluginPlaceholder(spec.workingDirectory))
   );
 }
 
 /**
  * Resolve a plugin stdio component against its materialized bundle.
  *
- * The injected root aliases are applied FIRST and can be overridden by the
- * component's own env only if the bundle explicitly declares those names —
- * substitution runs over the merged map, so a component that sets
- * `PLUGIN_ROOT=${PLUGIN_ROOT}/inner` still gets a real path.
+ * The injected `PLUGIN_ROOT` alias is applied FIRST; the component's own env
+ * entries are substituted over it. (The SDK parser rejects bundles whose env
+ * declares the reserved `PLUGIN_ROOT`/`PLUGIN_DATA` keys, so the spec's env
+ * can never shadow the injected alias.)
  */
 export function resolvePluginStdioLaunch(
   spec: PluginStdioLaunchSpec,

@@ -9,10 +9,12 @@ import {
 const ROOT = "/home/tester/.mcpjam/plugins/p1/pl1/abc123";
 
 describe("plugin root substitution", () => {
-  it("substitutes both SDK-recognised aliases", () => {
+  it("substitutes ${PLUGIN_ROOT} but never ${PLUGIN_DATA}", () => {
     expect(substitutePluginRoot("${PLUGIN_ROOT}/a", ROOT)).toBe(`${ROOT}/a`);
-    expect(substitutePluginRoot("${CODEX_PLUGIN_ROOT}/a", ROOT)).toBe(
-      `${ROOT}/a`
+    // PLUGIN_DATA resolves to the writable data directory, not the bundle
+    // root — until the data-directory runtime lands it stays verbatim.
+    expect(substitutePluginRoot("${PLUGIN_DATA}/a", ROOT)).toBe(
+      "${PLUGIN_DATA}/a"
     );
   });
 
@@ -42,7 +44,12 @@ describe("plugin root substitution", () => {
       true
     );
     expect(
-      needsPluginRoot({ ...base, workingDirectory: "${CODEX_PLUGIN_ROOT}" })
+      needsPluginRoot({ ...base, workingDirectory: "${PLUGIN_ROOT}" })
+    ).toBe(true);
+    // A PLUGIN_DATA-only component is still a plugin component — it must
+    // route through materialization, never the ordinary spawn path.
+    expect(
+      needsPluginRoot({ ...base, args: ["${PLUGIN_DATA}/cache.db"] })
     ).toBe(true);
   });
 
@@ -50,7 +57,7 @@ describe("plugin root substitution", () => {
     const resolved = resolvePluginStdioLaunch(
       {
         command: "${PLUGIN_ROOT}/bin/run",
-        args: ["${PLUGIN_ROOT}/server/index.js", "--data=${CODEX_PLUGIN_ROOT}/d"],
+        args: ["${PLUGIN_ROOT}/server/index.js", "--data=${PLUGIN_ROOT}/d"],
         env: { CONFIG: "${PLUGIN_ROOT}/config.json", API_KEY: "secret" },
         workingDirectory: "${PLUGIN_ROOT}/work",
       },
@@ -62,7 +69,6 @@ describe("plugin root substitution", () => {
       args: [`${ROOT}/server/index.js`, `--data=${ROOT}/d`],
       env: {
         PLUGIN_ROOT: ROOT,
-        CODEX_PLUGIN_ROOT: ROOT,
         CONFIG: `${ROOT}/config.json`,
         API_KEY: "secret",
       },
@@ -70,14 +76,11 @@ describe("plugin root substitution", () => {
     });
   });
 
-  it("lets a bundle derive its own root env from the injected one", () => {
+  it("injects PLUGIN_ROOT for the child process", () => {
     const resolved = resolvePluginStdioLaunch(
-      { command: "node", args: [], env: { PLUGIN_ROOT: "${PLUGIN_ROOT}/inner" } },
+      { command: "node", args: [], env: {} },
       ROOT
     );
-    // The declared value wins, but it is still substituted — no placeholder
-    // ever reaches the child process verbatim.
-    expect(resolved.env.PLUGIN_ROOT).toBe(`${ROOT}/inner`);
-    expect(resolved.env.CODEX_PLUGIN_ROOT).toBe(ROOT);
+    expect(resolved.env).toEqual({ PLUGIN_ROOT: ROOT });
   });
 });
