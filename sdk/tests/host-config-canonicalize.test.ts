@@ -416,16 +416,33 @@ describe("canonicalizeHostConfigV2 — validation", () => {
   });
 });
 
-describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
-  it("derives supportedProtocolVersions for a stateful pin", () => {
+describe("canonicalizeHostConfigV2 — mcpProfile protocol list", () => {
+  it("keeps supportedProtocolVersions absent for a stateful pin", () => {
     const c = canonicalizeHostConfigV2(
       base({
         mcpProfile: { profileVersion: 1, mcpProtocolVersion: "2025-06-18" },
       })
     );
-    expect(c.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
-      "2025-06-18",
-    ]);
+    expect(c.mcpProfile?.initialize).toBeUndefined();
+  });
+
+  it("allows a stateful pin to change after a canonical round trip", () => {
+    const first = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: { profileVersion: 1, mcpProtocolVersion: "2025-11-25" },
+      })
+    );
+    const switched = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          ...first.mcpProfile!,
+          mcpProtocolVersion: "2025-06-18",
+        },
+      })
+    );
+
+    expect(switched.mcpProfile?.mcpProtocolVersion).toBe("2025-06-18");
+    expect(switched.mcpProfile?.initialize).toBeUndefined();
   });
 
   it("does not derive for a stateless pin", () => {

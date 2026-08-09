@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { toast } from "sonner";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import { hostConfigField } from "@/lib/host-config-field-schema";
+import { buildHostCompatProfiles } from "@/lib/host-compat/profiles";
 import {
   Select,
   SelectContent,
@@ -143,12 +145,13 @@ const HOST_PROTOCOL_OPTIONS: Array<{
  *   keeps rendering its selection instead of silently reading as "Automatic".
  *   Same don't-strand-the-user rule as the policy controls further down.
  *
- * A client advertising no list (MCPJam's own) constrains nothing — the backend
- * derives the list from the pin, so the full set stays offered.
+ * A client advertising no list (MCPJam's own) constrains nothing — the
+ * connection layer proposes the selected pin without persisting an allow-list,
+ * so the full set stays offered.
  */
 export function visibleHostProtocolOptions(
   advertised: readonly string[] | undefined,
-  selected: HostProtocolDropdownValue,
+  selected: HostProtocolDropdownValue
 ): typeof HOST_PROTOCOL_OPTIONS {
   if (advertised === undefined || advertised.length === 0) {
     return HOST_PROTOCOL_OPTIONS;
@@ -157,8 +160,37 @@ export function visibleHostProtocolOptions(
     (opt) =>
       opt.value === "auto" ||
       opt.value === selected ||
-      advertised.includes(opt.value),
+      advertised.includes(opt.value)
   );
+}
+
+/**
+ * Old client rows predate `supportedProtocolVersions`, so they stay editable
+ * for backwards compatibility.  Still, the current catalog may tell us that
+ * the real client has not been verified for the version the user just chose.
+ * This is deliberately advisory: old rows must remain saveable.
+ */
+export function legacyProtocolSupportWarning(
+  hostStyle: string,
+  advertised: readonly string[] | undefined,
+  next: McpProtocolVersion | undefined
+): string | undefined {
+  if (
+    next === undefined ||
+    (advertised !== undefined && advertised.length > 0)
+  ) {
+    return undefined;
+  }
+  const profile = buildHostCompatProfiles().find(
+    (item) => item.id === hostStyle
+  );
+  if (
+    profile?.supportedProtocolVersions === undefined ||
+    profile.supportedProtocolVersions.includes(next)
+  ) {
+    return undefined;
+  }
+  return `${profile.label} is not verified to support ${next}.`;
 }
 
 interface ProtocolTabProps {
@@ -644,12 +676,16 @@ export function ProtocolTab({
       : "auto";
 
   // Versions this client advertises — narrows the dropdown so it can't offer a
-  // pin the backend would reject. See `visibleHostProtocolOptions`.
+  // pin the backend would reject. MCPJam deliberately has no capability list;
+  // ignore singleton lists persisted by the old canonicalizer so existing
+  // rows remain able to switch revisions. See `visibleHostProtocolOptions`.
   const advertisedProtocolVersions =
-    draft.mcpProfile?.initialize?.supportedProtocolVersions;
+    draft.hostStyle === "mcpjam"
+      ? undefined
+      : draft.mcpProfile?.initialize?.supportedProtocolVersions;
   const protocolOptions = visibleHostProtocolOptions(
     advertisedProtocolVersions,
-    selectedDropdownValue,
+    selectedDropdownValue
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
@@ -671,12 +707,35 @@ export function ProtocolTab({
   // to `undefined` — preserves canonical-hash stability so the SDK can
   // upgrade its default version without churning every stored host config.
   const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
+    const warning = legacyProtocolSupportWarning(
+      draft.hostStyle,
+      advertisedProtocolVersions,
+      next
+    );
+    if (warning) {
+      toast.warning(warning);
+    }
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
         profileVersion: 1,
       };
+      let initialize = base.initialize;
+      if (
+        prev.hostStyle === "mcpjam" &&
+        initialize?.supportedProtocolVersions !== undefined
+      ) {
+        const {
+          supportedProtocolVersions: _supportedProtocolVersions,
+          ...remainingInitialize
+        } = initialize;
+        initialize =
+          Object.keys(remainingInitialize).length > 0
+            ? remainingInitialize
+            : undefined;
+      }
       const updated: HostConfigMcpProfileV1 = {
         ...base,
+        initialize,
         mcpProtocolVersion: next,
       };
       return {
@@ -697,7 +756,7 @@ export function ProtocolTab({
   // canonical hash.
   const storedMirroring = draft.mcpProfile?.toolParamHeaderMirroring;
   const setToolParamHeaderMirroring = (
-    next: ToolParamHeaderMirroring | undefined,
+    next: ToolParamHeaderMirroring | undefined
   ) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
@@ -721,7 +780,7 @@ export function ProtocolTab({
   const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
   const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
     key: K,
-    next: HostConfigMcpProfileV1[K] | undefined,
+    next: HostConfigMcpProfileV1[K] | undefined
   ) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
@@ -787,7 +846,7 @@ export function ProtocolTab({
     onDraftChange((prev) =>
       next === "default"
         ? clearTasksPolicy(prev)
-        : setTasksPolicy(prev, next === "on"),
+        : setTasksPolicy(prev, next === "on")
     );
   };
 
@@ -827,7 +886,10 @@ export function ProtocolTab({
             {/* The visible label is a plain <span>, not a <label>, so the
                 trigger needs its own accessible name — and there is now more
                 than one Select in this panel. */}
-            <SelectTrigger aria-label="MCP protocol version" className="h-9 text-xs">
+            <SelectTrigger
+              aria-label="MCP protocol version"
+              className="h-9 text-xs"
+            >
               <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
@@ -893,9 +955,7 @@ export function ProtocolTab({
             onValueChange={(next) => {
               // "mirror" writes ABSENCE, not the literal: the conforming
               // default must keep hashing like a host that never opted in.
-              setToolParamHeaderMirroring(
-                next === "omit" ? "omit" : undefined,
-              );
+              setToolParamHeaderMirroring(next === "omit" ? "omit" : undefined);
             }}
             disabled={readOnly}
           >
@@ -931,7 +991,7 @@ export function ProtocolTab({
               // host that never opted in.
               setConformanceKnob(
                 "paginationTraversal",
-                next === "firstPageOnly" ? "firstPageOnly" : undefined,
+                next === "firstPageOnly" ? "firstPageOnly" : undefined
               );
             }}
             disabled={readOnly}
@@ -964,7 +1024,7 @@ export function ProtocolTab({
             onValueChange={(next) => {
               setConformanceKnob(
                 "mrtrSupport",
-                next === "none" ? "none" : undefined,
+                next === "none" ? "none" : undefined
               );
             }}
             disabled={readOnly}
@@ -982,76 +1042,78 @@ export function ProtocolTab({
           </Select>
         </div>
         {showPolicyToggle && (
-        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
-          <div className="min-w-0">
-            <span className="text-[12px] font-medium">
-              Enterprise-managed authorization
-            </span>
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Route every HTTP server connection through your IdP (XAA) by
-              default. A server&apos;s explicit auth method overrides.
-              Servers without an XAA client registration fail to connect.
-              Applies on the next connect.
-            </p>
-            {policyInvalid ? (
-              <p className="text-[11px] leading-snug text-destructive">
-                This host&apos;s stored policy value is unsupported —
-                connections will fail until it is fixed. Toggling on repairs
-                it; toggling off removes it.
+          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+            <div className="min-w-0">
+              <span className="text-[12px] font-medium">
+                Enterprise-managed authorization
+              </span>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Route every HTTP server connection through your IdP (XAA) by
+                default. A server&apos;s explicit auth method overrides. Servers
+                without an XAA client registration fail to connect. Applies on
+                the next connect.
               </p>
-            ) : null}
+              {policyInvalid ? (
+                <p className="text-[11px] leading-snug text-destructive">
+                  This host&apos;s stored policy value is unsupported —
+                  connections will fail until it is fixed. Toggling on repairs
+                  it; toggling off removes it.
+                </p>
+              ) : null}
+            </div>
+            <Switch
+              checked={policyOn}
+              onCheckedChange={setPolicyOn}
+              disabled={readOnly}
+              aria-label="Enterprise-managed authorization"
+            />
           </div>
-          <Switch
-            checked={policyOn}
-            onCheckedChange={setPolicyOn}
-            disabled={readOnly}
-            aria-label="Enterprise-managed authorization"
-          />
-        </div>
         )}
         {showTasksPolicy && (
-        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
-          <div className="min-w-0">
-            <span className="text-[12px] font-medium">
-              {fTasksPolicy.label}
-            </span>
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Whether chat, the agent and evals may run tools as MCP tasks on
-              servers that support them. Use default keeps today&apos;s
-              behavior: the Tools tab&apos;s own per-call controls, and nothing
-              else. Off removes every task affordance.
-            </p>
-            {tasksPolicyInvalid ? (
-              <p className="text-[11px] leading-snug text-destructive">
-                {describeInvalidTasksPolicy(draft) ??
-                  "This host's stored task policy is unsupported."}{" "}
-                Tasks stay disabled until it is fixed; any choice below repairs
-                it.
+          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+            <div className="min-w-0">
+              <span className="text-[12px] font-medium">
+                {fTasksPolicy.label}
+              </span>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Whether chat, the agent and evals may run tools as MCP tasks on
+                servers that support them. Use default keeps today&apos;s
+                behavior: the Tools tab&apos;s own per-call controls, and
+                nothing else. Off removes every task affordance.
               </p>
-            ) : null}
-          </div>
-          <Select
-            value={tasksPolicyInvalid ? undefined : TASKS_POLICY_VALUE[tasksPolicy]}
-            onValueChange={(next) =>
-              setTasksPolicyChoice(next as TasksPolicyChoice)
-            }
-            disabled={readOnly}
-          >
-            <SelectTrigger className="h-9 w-[150px] shrink-0 text-xs">
-              {/* An invalid stored value shows the placeholder rather than
+              {tasksPolicyInvalid ? (
+                <p className="text-[11px] leading-snug text-destructive">
+                  {describeInvalidTasksPolicy(draft) ??
+                    "This host's stored task policy is unsupported."}{" "}
+                  Tasks stay disabled until it is fixed; any choice below
+                  repairs it.
+                </p>
+              ) : null}
+            </div>
+            <Select
+              value={
+                tasksPolicyInvalid ? undefined : TASKS_POLICY_VALUE[tasksPolicy]
+              }
+              onValueChange={(next) =>
+                setTasksPolicyChoice(next as TasksPolicyChoice)
+              }
+              disabled={readOnly}
+            >
+              <SelectTrigger className="h-9 w-[150px] shrink-0 text-xs">
+                {/* An invalid stored value shows the placeholder rather than
                   snapping to "Use default": pretending a broken config is the
                   default would hide the very thing the warning is about. */}
-              <SelectValue placeholder="Unsupported value" />
-            </SelectTrigger>
-            <SelectContent>
-              {TASKS_POLICY_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+                <SelectValue placeholder="Unsupported value" />
+              </SelectTrigger>
+              <SelectContent>
+                {TASKS_POLICY_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="flex items-center justify-between gap-3">
