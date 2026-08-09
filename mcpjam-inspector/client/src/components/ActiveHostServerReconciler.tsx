@@ -83,7 +83,7 @@ export function ActiveHostServerReconciler({
   // Single source of truth: the Playground active server set
   // (`selectedMultipleServers`) mirrors the runtime set that is connected or
   // reconnecting. Keeping "connecting" active prevents the Playground tools
-  // pane from blinking empty during a client-switch reconnect. The Connect tab
+  // pane from blinking empty during a client-switch reconnect. The Servers tab
   // owns connectivity; everything else reflects it. Guarded by set-equality so
   // we never dispatch (and never loop) when the mirror already matches.
   const sharedAppState = useSharedAppState();

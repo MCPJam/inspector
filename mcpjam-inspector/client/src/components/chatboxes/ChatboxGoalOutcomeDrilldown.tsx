@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronRight, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -43,6 +43,10 @@ interface ChatboxGoalOutcomeDrilldownProps {
   filter: UsageFilterState;
   onClose: () => void;
   onOpenSession: (sessionId: string) => void;
+  /** Panel keeps the list itself scrollable when it is a flex sibling. */
+  variant?: "inline" | "panel";
+  /** Optional action/content rendered below the paged session list. */
+  footer?: ReactNode;
 }
 
 /**
@@ -84,7 +88,7 @@ function requestKeyOf(
   if (!selection || selection.themes.length === 0) return null;
   const scopeKey =
     scope.kind === "swarm"
-      ? `swarm:${scope.projectId}`
+      ? `swarm:${scope.projectId}:${(scope.journeyRunIds ?? []).join(",")}`
       : `chatbox:${scope.chatboxId}`;
   // Chip order is not semantically meaningful, so sort for a stable key.
   const chips = filter.chips.map(chipKey).sort().join(",");
@@ -133,6 +137,8 @@ export function ChatboxGoalOutcomeDrilldown({
   filter,
   onClose,
   onOpenSession,
+  variant = "inline",
+  footer,
 }: ChatboxGoalOutcomeDrilldownProps) {
   const open = selection !== null && !isEmptySelection(selection);
   const requestKey = requestKeyOf(scope, open ? selection : null, filter);
@@ -203,7 +209,13 @@ export function ChatboxGoalOutcomeDrilldown({
   const showEmpty = !isLoading && drilldown !== undefined && rows.length === 0;
 
   return (
-    <div className="flex flex-col gap-2 border-b bg-muted/20 px-5 py-4">
+    <div
+      className={
+        variant === "panel"
+          ? "flex h-full min-h-0 flex-col gap-2 px-4 py-3"
+          : "flex flex-col gap-2 border-b bg-muted/20 px-5 py-4"
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-medium">
@@ -241,7 +253,13 @@ export function ChatboxGoalOutcomeDrilldown({
         </div>
       ) : null}
 
-      <ul className="divide-y divide-border/60">
+      <ul
+        className={
+          variant === "panel"
+            ? "min-h-0 flex-1 overflow-y-auto divide-y divide-border/60"
+            : "divide-y divide-border/60"
+        }
+      >
         {rows.map((session) => (
           <li key={session._id}>
             <button
@@ -278,6 +296,8 @@ export function ChatboxGoalOutcomeDrilldown({
           Load {PAGE_SIZE} more
         </Button>
       ) : null}
+
+      {footer}
 
       {showEmpty ? (
         <p className="text-[11px] text-muted-foreground">

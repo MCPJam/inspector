@@ -169,7 +169,7 @@ function baseOpts() {
       role: "tester",
       notes: "",
     },
-    sessionsPerHost: 1,
+    sessionsPerTarget: 1,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
     bearer: "token",

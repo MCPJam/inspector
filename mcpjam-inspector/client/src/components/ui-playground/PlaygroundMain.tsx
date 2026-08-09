@@ -106,6 +106,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
   useHost,
   useHostList,
@@ -114,10 +115,13 @@ import {
   type HostDetail,
 } from "@/hooks/useClients";
 import {
-  DEFAULT_SEEDED_HOST_MODEL_ID,
+  cloneHostTemplateInput,
   emptyHostConfigInputV2,
   gateMcpToolResultImageRenderingByModelVisibility,
+  DEFAULT_SEEDED_HOST_MODEL_ID,
 } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -134,7 +138,15 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
-import { replaceLeadHostId } from "@/lib/selected-host-storage";
+import {
+  loadSelectedHostIds,
+  replaceLeadHostId,
+  saveSelectedHostIds,
+} from "@/lib/selected-host-storage";
+import {
+  loadPreviewedHostId,
+  savePreviewedHostId,
+} from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import { useProjectMembers } from "@/hooks/useProjects";
@@ -219,6 +231,23 @@ import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
 const RESUMED_THREAD_REFRESH_RETRIES = 2;
+
+// Backoff for retrying a failed seed. Deleting the per-project "seeded"
+// marker only PERMITS a retry — nothing in the seed effect's dependency list
+// changes when a create rejects, so without an explicit nudge the effect
+// never runs again and the guest sits on an empty playground for the rest of
+// the session. Bounded: a backend that's down stays down, and three spaced
+// attempts is the difference between "recovers from a blip" and "hammers a
+// struggling server".
+const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
+
+// PUR-11: the 3 catalog templates a first-run guest's Playground compare
+// lineup is seeded from, lead first. See the "Seed backstop" effect below.
+const PLAYGROUND_SEED_TEMPLATE_IDS = [
+  "chatgpt",
+  "claude",
+  "claude-code",
+] as const;
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
@@ -721,10 +750,12 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
   });
   const attachmentUploadInFlightRef = useRef(false);
+  const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
-    organizationId: activeProject?.organizationId ?? null,
+    organizationId: projectOrganizationId,
   });
+  const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -821,6 +852,7 @@ export function PlaygroundMain({
     chatSessionId,
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
@@ -1200,7 +1232,22 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
   });
-  const { createHost: createPlaygroundHost } = useHostMutations();
+  const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
+    useHostMutations();
+  const seedCatalogState = useHostCatalog();
+  const seedThemeMode = usePreferencesStore((s) => s.themeMode);
+  // Mirrors `multiHostProjectId` so the seed effect's async continuation
+  // (below) can detect a navigate-away while its mutations were in flight —
+  // without this, a slow seed could apply project A's freshly-created host
+  // ids/lead to whatever project the user has since switched to. A layout
+  // effect (not a passive one) so the ref is current before any already-
+  // in-flight promise continuation's microtask can observe it — a passive
+  // effect can still be pending when a `.then()` callback runs in the same
+  // tick as the commit that changed `multiHostProjectId`.
+  const activeMultiHostProjectIdRef = useRef(multiHostProjectId);
+  useLayoutEffect(() => {
+    activeMultiHostProjectIdRef.current = multiHostProjectId;
+  }, [multiHostProjectId]);
   const resolveFallbackHostId = useCallback(
     (hosts: HostListItem[]): string | null => {
       const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
@@ -1212,43 +1259,275 @@ export function PlaygroundMain({
     },
     []
   );
-  // Seed backstop: the global host bar (which normally auto-creates the
-  // default "MCPJam" host for empty projects) is hidden on the playground,
-  // so replicate its one-shot seed here. Guarded by `hostList.length === 0`
-  // + a per-project ref so it fires at most once per empty project and never
-  // blocks a different empty project from getting its own default host.
+  // Seed backstop: the global host bar (which normally auto-creates a single
+  // default "MCPJam" host for empty projects) is hidden on the playground, so
+  // this replicates that one-shot seed — but with the immediate client-
+  // comparison value prop (PUR-11): guests land with 3 pre-selected clients
+  // (ChatGPT, Claude, Claude Code) instead of one blank host + a toggle they'd
+  // have to find and flip themselves. Guarded by `hostList.length === 0` + a
+  // per-project ref so it fires at most once per empty project and never
+  // blocks a different empty project from getting its own default hosts.
   const playgroundSeededProjectIdsRef = useRef(new Set<string>());
+  // Retry plumbing for the two failure paths below (single-host create
+  // rejected / 3-host seed rolled back). Both clear the project's "seeded"
+  // marker, which permits a retry but cannot cause one — this tick is what
+  // actually re-runs the effect. Attempts are counted per project so one
+  // project exhausting its budget doesn't spend another's.
+  const seedRetryCountsRef = useRef(new Map<string, number>());
+  const seedRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const [seedRetryTick, setSeedRetryTick] = useState(0);
+  useEffect(() => {
+    const timers = seedRetryTimersRef.current;
+    return () => {
+      // Unmounting drops the retry: a pending timer would setState on a dead
+      // component, and a remount re-runs the seed effect from scratch anyway.
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
+  const schedulePlaygroundSeedRetry = useCallback((projectId: string) => {
+    const attempt = seedRetryCountsRef.current.get(projectId) ?? 0;
+    const delay = PLAYGROUND_SEED_RETRY_DELAYS_MS[attempt];
+    // Budget exhausted — stop retrying. The guest can still recover with a
+    // reload, which re-fetches the catalog and resets this state entirely.
+    if (delay === undefined) return;
+    seedRetryCountsRef.current.set(projectId, attempt + 1);
+    const timer = setTimeout(() => {
+      seedRetryTimersRef.current.delete(timer);
+      setSeedRetryTick((tick) => tick + 1);
+    }, delay);
+    seedRetryTimersRef.current.add(timer);
+  }, []);
   useEffect(() => {
     if (
       !isConvexAuthenticated ||
       hostListLoading ||
       !multiHostProjectId ||
       hostList.length > 0 ||
-      playgroundSeededProjectIdsRef.current.has(multiHostProjectId)
+      playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
+      seedCatalogState.status === "loading"
     ) {
       return;
     }
-    playgroundSeededProjectIdsRef.current.add(multiHostProjectId);
-    createPlaygroundHost({
-      projectId: multiHostProjectId,
-      name: "MCPJam",
-      // Pin a cheap default model — see HostOverlayBar's seed for why a
-      // modelless default host breaks synthetic/swarm runs.
-      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
-    })
-      .then(({ hostId }) => {
-        setPreviewedHostId(hostId);
+    const seedProjectId = multiHostProjectId;
+    // A degraded catalog is NOT a transient gap worth waiting out:
+    // `useHostCatalog` fetches once per page load and memoizes the result for
+    // the rest of the session, so "fallback"/"error" never upgrade to "live"
+    // without a full reload. The playground hides the global host bar, so this
+    // effect is the only thing between a guest and a project with zero
+    // clients — every resolved status therefore has to produce something:
+    //   - "fallback" (the server served its bundled catalog): that catalog
+    //     carries all 3 seed templates, so the full lineup still lands. Treated
+    //     exactly like "live".
+    //   - "error" (no catalog at all), or a catalog somehow missing a seed
+    //     template: nothing to clone from, so fall back to the pre-PUR-11
+    //     backstop — one blank "MCPJam" host, no compare lineup. Worse than the
+    //     3-client default, far better than an empty playground the guest has
+    //     no way to recover from.
+    const catalog =
+      seedCatalogState.status === "error" ? null : seedCatalogState.catalog;
+    const seeds = catalog
+      ? PLAYGROUND_SEED_TEMPLATE_IDS.map((id) => ({
+          id,
+          host: getCatalogHost(catalog, id),
+          template: getCatalogTemplate(catalog, id),
+        }))
+      : [];
+    // Never seed a partial (e.g. 2-client) lineup: it is neither the intended
+    // default nor the known-good single-host backstop.
+    const canSeedFullLineup =
+      seeds.length > 0 && seeds.every(({ host, template }) => host && template);
+    if (!canSeedFullLineup) {
+      // Same mid-seed snapshot discipline as the 3-host path below — see the
+      // long comment there for why the lead and the lineup are tracked
+      // separately, and why the snapshot (not a bare `length > 0` on the
+      // final value) is what distinguishes a real user choice from a stale
+      // array left behind by deleted hosts.
+      const preFallbackSelectedHostIds = loadSelectedHostIds(seedProjectId);
+      const preFallbackPreviewedHostId = loadPreviewedHostId(seedProjectId);
+      playgroundSeededProjectIdsRef.current.add(seedProjectId);
+      createPlaygroundHost({
+        projectId: seedProjectId,
+        name: "MCPJam",
+        // Pin a cheap default model — see HostOverlayBar's seed for why a
+        // modelless default host breaks synthetic/swarm runs.
+        input: emptyHostConfigInputV2({
+          modelId: DEFAULT_SEEDED_HOST_MODEL_ID,
+        }),
       })
-      .catch(() => {
-        playgroundSeededProjectIdsRef.current.delete(multiHostProjectId);
-      });
+        .then(({ hostId }) => {
+          // As in the 3-host path: a lead now pointing at the host THIS
+          // fallback just created is our own "no valid previewed host"
+          // effect auto-picking it once the host list caught up, not a user
+          // choice — it must not veto the lineup write below.
+          const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
+          const leadIsSeededHost = currentPreviewedHostId === hostId;
+          const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
+          const selectionChangedMidSeed =
+            (!leadIsSeededHost &&
+              currentPreviewedHostId !== preFallbackPreviewedHostId) ||
+            currentSelectedHostIds.length !==
+              preFallbackSelectedHostIds.length ||
+            currentSelectedHostIds.some(
+              (id, index) => id !== preFallbackSelectedHostIds[index]
+            );
+          if (selectionChangedMidSeed) return;
+          // Persisted to the project it belongs to (not just React state) for
+          // the same navigate-away reason as the 3-host path below.
+          savePreviewedHostId(seedProjectId, hostId);
+          // The lineup is overwritten, not left alone, because "no compare"
+          // is not the same as "don't touch": a project reseeded after its
+          // hosts were deleted still has those dead ids in storage, and
+          // `usePersistedHost` PRESERVES the stored column count at read time
+          // (it replaces slot 0 with the lead rather than shrinking), so they
+          // would come back as a 3-column compare lineup wrapped around one
+          // real host — `isComparingHosts` reads `selectedHostIds.length > 1`
+          // and would happily switch on. Writing `[hostId]` collapses it.
+          saveSelectedHostIds(seedProjectId, [hostId]);
+          if (activeMultiHostProjectIdRef.current === seedProjectId) {
+            setPreviewedHostId(hostId);
+            setSelectedHostIds([hostId]);
+          }
+        })
+        .catch(() => {
+          playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+          schedulePlaygroundSeedRetry(seedProjectId);
+        });
+      return;
+    }
+    // Snapshot the persisted lineup as it stood the moment we decided to
+    // seed, so the completion below can tell "nothing touched this since
+    // we started" (safe to apply the seed) from "something changed while
+    // we were creating hosts" (respect whatever's there now instead of
+    // overwriting it) — regardless of whether the snapshot itself was
+    // empty (a genuinely fresh project) or already non-empty (e.g. a
+    // reseed after the project's prior hosts were deleted, leaving a
+    // stale-but-present array — a bare `length > 0` check on the FINAL
+    // value alone can't distinguish that from a real manual selection
+    // made mid-seed, and would wrongly skip applying the new lineup).
+    //
+    // The lead is snapshotted separately from the array because it moves
+    // separately: the global host bar switches the previewed client through
+    // `savePreviewedHostId` alone, without touching the compare lineup, so a
+    // guard that watched only the array would still let the seed overwrite a
+    // client the user picked there mid-seed.
+    const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
+    const preSeedPreviewedHostId = loadPreviewedHostId(seedProjectId);
+    playgroundSeededProjectIdsRef.current.add(seedProjectId);
+    Promise.allSettled(
+      seeds.map(({ host, template }) =>
+        createPlaygroundHost({
+          projectId: seedProjectId,
+          name: host!.label,
+          input: cloneHostTemplateInput(template, {
+            themeMode: seedThemeMode,
+          }),
+        })
+      )
+    ).then(async (results) => {
+      const fulfilled = results.filter(
+        (
+          result
+        ): result is PromiseFulfilledResult<
+          Awaited<ReturnType<typeof createPlaygroundHost>>
+        > => result.status === "fulfilled"
+      );
+      if (fulfilled.length < results.length) {
+        // Partial failure: a half-seeded project (1-2 hosts, no compare) is
+        // worse than an empty one that can cleanly retry — roll back
+        // whichever calls DID succeed. Only clear the "seeded" marker (and
+        // schedule the retry that actually re-runs this effect) if every
+        // rollback delete succeeded; if one fails, the partial hosts are
+        // stuck either way, and retrying would just hammer the same
+        // struggling backend with the other two creates too.
+        const rollback = await Promise.allSettled(
+          fulfilled.map((result) =>
+            deletePlaygroundHost({ hostId: result.value.hostId })
+          )
+        );
+        if (rollback.every((result) => result.status === "fulfilled")) {
+          playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+          schedulePlaygroundSeedRetry(seedProjectId);
+        }
+        return;
+      }
+      const hostIds = fulfilled.map((result) => result.value.hostId);
+      // The user may have already picked something for this project since
+      // the seed started — e.g. manually added/selected a host via "Add
+      // client", or switched the previewed client in the global host bar,
+      // while these mutations were still in flight. The seed is a first-run
+      // default, not an authoritative overwrite: if either the lineup or the
+      // lead has changed since the snapshots above (whether those snapshots
+      // were empty or already stale-non-empty), leave both alone rather than
+      // clobbering a choice the user has already made. Both are checked
+      // because the seed writes both, and the two move independently — the
+      // global host bar moves the lead through `savePreviewedHostId` alone
+      // and never touches the lineup.
+      //
+      // One lead move is NOT a user choice, though: the "no valid previewed
+      // host" fallback effect below auto-picks a lead as soon as the host-
+      // list query catches up to the FIRST of these creates, which routinely
+      // lands while the other two are still in flight. That is our own
+      // write, so a lead now pointing at a host THIS seed just created must
+      // not veto the lineup — vetoing would strand the guest with 3 hosts
+      // and no compare lineup, the exact half-seeded state this backstop
+      // exists to prevent. Whichever seed host holds the lead is kept as
+      // lead (so a user who did pick one of them in the host bar keeps it),
+      // and the full 3-way lineup lands either way.
+      const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
+      const leadIsSeededHost =
+        currentPreviewedHostId !== null &&
+        hostIds.includes(currentPreviewedHostId);
+      const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
+      const selectionChangedMidSeed =
+        (!leadIsSeededHost &&
+          currentPreviewedHostId !== preSeedPreviewedHostId) ||
+        currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
+        currentSelectedHostIds.some(
+          (id, index) => id !== preSeedSelectedHostIds[index]
+        );
+      if (selectionChangedMidSeed) return;
+      const leadHostId = leadIsSeededHost ? currentPreviewedHostId : hostIds[0];
+      // Persist directly to `seedProjectId`'s OWN storage — bypassing the
+      // current React state setters, which are scoped to whatever project
+      // is ACTIVE right now — so a seed that resolves after the user has
+      // navigated away still lands correctly for the project it belongs to,
+      // rather than being dropped or misapplied to whatever's open when
+      // this resolves. `usePersistedHost`/`usePreviewedHostId` re-read from
+      // storage whenever their `projectId` changes, so returning to
+      // `seedProjectId` later picks this up. Lead is set explicitly
+      // alongside the array since a bare array write can't promote a lead
+      // when `previewedHostId` is still null (brand-new project).
+      savePreviewedHostId(seedProjectId, leadHostId);
+      saveSelectedHostIds(seedProjectId, hostIds);
+      if (activeMultiHostProjectIdRef.current === seedProjectId) {
+        // Still on the seeded project — also reflect it in live React state
+        // so the lead/lineup update immediately instead of waiting for a
+        // remount. Not touching `multiHostEnabled` here: nothing renders
+        // off it anymore (see `isComparingHosts` above `isMultiHostMode`,
+        // and the multi-model mutual-exclusion check below reads
+        // `selectedHostIds.length` directly for the same reason) — setting
+        // it would just get silently reverted by the "!canEnableMultiHost
+        // -> disable" effect before the host-list query catches up anyway.
+        setPreviewedHostId(leadHostId);
+        setSelectedHostIds(hostIds);
+      }
+    });
   }, [
     isConvexAuthenticated,
     hostListLoading,
     multiHostProjectId,
     hostList.length,
     createPlaygroundHost,
+    deletePlaygroundHost,
     setPreviewedHostId,
+    setSelectedHostIds,
+    seedCatalogState,
+    seedThemeMode,
+    schedulePlaygroundSeedRetry,
+    // Re-runs the effect after a failed attempt cleared the project's marker;
+    // nothing else in this list changes when a create rejects.
+    seedRetryTick,
   ]);
   useEffect(() => {
     if (
@@ -1296,6 +1575,25 @@ export function PlaygroundMain({
   const canEnableMultiHost =
     hostList.length > 1 && !isSharedSession && !isEnvironmentMode;
 
+  // The "is the user actually comparing right now" signal for render-
+  // gating and mutual-exclusion, computed fresh every render from
+  // `selectedHostIds` (reliably persisted — see the seed effect above and
+  // `usePersistedHost`) rather than trusted from the separately-persisted
+  // `multiHostEnabled` flag. Removing the "Multiple clients" toggle
+  // (PUR-11) means there's no longer any legitimate way to have 2+ hosts
+  // checked with comparison intentionally off, so `multiHostEnabled` no
+  // longer needs to be an imperatively-synchronized source of truth for
+  // this — which matters because keeping a stateful flag in sync across
+  // async seeding, Convex host-list catch-up lag, and navigate-away/back
+  // is exactly the kind of thing that's easy to get subtly wrong (an
+  // earlier version of this seed tracked "pending enable" per project in
+  // a ref, which worked for the common case but could still strand a
+  // project in single-pane if the user navigated away and back before its
+  // host list caught up, since the ref doesn't survive a remount).
+  // Deriving this fresh from already-correct persisted data has no state
+  // to fall out of sync in the first place, including across a remount.
+  const isComparingHosts = canEnableMultiHost && selectedHostIds.length > 1;
+
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved
   // list would collapse so `resolvedSelectedHosts[0]` would no longer
@@ -1315,21 +1613,17 @@ export function PlaygroundMain({
   const sharedHostColumnModel = selectedModel ?? null;
 
   // Same gating as multi-model: history mode wins (transcript replay lives
-  // on the single session). When `multiHostEnabled` is true but the lead
+  // on the single session). When `isComparingHosts` is true but the lead
   // host or its model isn't resolved yet (loading, deleted, missing from
   // `availableModels`), fall through to single-pane — don't render a
   // degraded grid where the lead identity is wrong.
   // Multi-host compare requires at least 2 resolved columns. Without
-  // this guard a stale persisted `multiHostEnabled = true` paired with
-  // a single selected host (or only the lead resolving) would render
-  // the compare grid as a one-column variant of single-pane — visually
-  // confusing and routed through the compare submit/stop/state path
-  // unnecessarily. The picker auto-disables `multiHostEnabled` when
-  // selection drops to one, but we still want a defensive gate for
-  // unresolved secondaries and migrated localStorage.
+  // this guard a stale persisted `selectedHostIds` paired with a single
+  // selected host (or only the lead resolving) would render the compare
+  // grid as a one-column variant of single-pane — visually confusing and
+  // routed through the compare submit/stop/state path unnecessarily.
   const isMultiHostMode =
-    canEnableMultiHost &&
-    multiHostEnabled &&
+    isComparingHosts &&
     !viewingHistoryReplay &&
     resolvedSelectedHosts.length > 1 &&
     !!leadHost &&
@@ -1654,6 +1948,17 @@ export function PlaygroundMain({
   }, [canEnableMultiHost, multiHostEnabled, setMultiHostEnabled]);
 
   useEffect(() => {
+    // Mirrors the gate in ChatTabV2's copy of this effect. Both branches below
+    // end in `setSelectedModelIds`, which persists the lead model id
+    // (`use-persisted-model.ts:150-159`) under a key every chat surface reads
+    // back. While the persisted selection has not resolved against
+    // `availableModels` — the window where an org-managed provider config is
+    // still in flight — `selectedModel` is only a derived fallback, and
+    // writing it destroys the user's own-provider pick. See BACK2-628.
+    if (!isSelectedModelResolved) {
+      return;
+    }
+
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
@@ -1679,6 +1984,7 @@ export function PlaygroundMain({
     }
   }, [
     canEnableMultiModel,
+    isSelectedModelResolved,
     multiModelEnabled,
     resolvedSelectedModels,
     selectedModel,
@@ -2984,13 +3290,31 @@ export function PlaygroundMain({
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
+    // Clearing empties the transcript and mints a fresh `chatSessionId`, so the
+    // next turn persists to a NEW history row. Keeping the previously-opened
+    // thread attached would leave the post-stream reconciliation above checking
+    // a baseline this session can never advance — the turn lands elsewhere, the
+    // old row's version never moves, and the user gets a false "This chat
+    // changed elsewhere" detach toast on a chat they just cleared. Same detach
+    // `handleNewChat` does, since a cleared thread IS a new one.
+    resumedThreadSendBaselineRef.current = null;
+    cancelPendingHistorySelection();
+    syncResumedVersion(null);
+    setPendingDirectVisibility("private");
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
     setPreludeTraceExecutions([]);
     resetMultiModelSessions();
     setViewingHistoryReplay(false);
-  }, [clearLogs, composer, resetChat, resetMultiModelSessions]);
+  }, [
+    cancelPendingHistorySelection,
+    clearLogs,
+    composer,
+    resetChat,
+    resetMultiModelSessions,
+    syncResumedVersion,
+  ]);
 
   const handleClearChat = useCallback(() => {
     handleResetAllChats();
@@ -2998,8 +3322,8 @@ export function PlaygroundMain({
   }, [handleResetAllChats]);
 
   const handleSingleModelChange = useCallback(
-    (model: ModelDefinition) => {
-      setSelectedModel(model);
+    (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
+      setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
@@ -3074,7 +3398,8 @@ export function PlaygroundMain({
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
-        setSelectedModel(leadModel);
+        // Straight from the multi-model menu, so the lead counts as a pick.
+        setSelectedModel(leadModel, { userInitiated: true });
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>
@@ -3095,14 +3420,24 @@ export function PlaygroundMain({
       // uncheck/recheck a host to re-enter compare. Falling back to
       // an empty array lets `effectiveSelectedHostIds` in
       // `MultiHostPicker` pick up the live lead from `currentHostId`.
-      if (enabled && multiHostEnabled) {
+      // Checked against `selectedHostIds.length` directly, NOT
+      // `isComparingHosts` (which also requires `canEnableMultiHost`, a
+      // transient signal that lags behind the Convex host-list query) and
+      // NOT the separately-persisted `multiHostEnabled` flag. The lineup
+      // itself is the durable signal of user intent — if `canEnableMultiHost`
+      // happened to be momentarily false when the user enabled multi-model,
+      // gating on `isComparingHosts` would skip clearing the lineup, and
+      // once the host list caught up afterward `isMultiHostMode` would win
+      // over the multi-model the user just turned on, undoing their action
+      // with no visible cause.
+      if (enabled && selectedHostIds.length > 1) {
         setMultiHostEnabled(false);
         setSelectedHostIds([]);
       }
     },
     [
       setMultiModelEnabled,
-      multiHostEnabled,
+      selectedHostIds.length,
       setMultiHostEnabled,
       setSelectedHostIds,
     ]
@@ -3791,7 +4126,6 @@ export function PlaygroundMain({
           cloudProjectId: convexProjectId,
           currentHostId: previewedHostId ?? null,
           selectedHostIds,
-          multiHostEnabled,
           onHostChange: (hostId: string) => setPreviewedHostId(hostId),
           onSelectedHostIdsChange: setSelectedHostIds,
           onMultiHostEnabledChange: handleMultiHostEnabledChange,
@@ -3862,6 +4196,7 @@ export function PlaygroundMain({
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
+    onManageOrgProviders: manageOrgProviders,
   };
 
   // Check if widget should take over the full container

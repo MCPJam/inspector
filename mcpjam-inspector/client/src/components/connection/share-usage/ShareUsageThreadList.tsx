@@ -119,7 +119,7 @@ export function ShareUsageThreadList({
   );
 }
 
-function ThreadCard({
+export function ThreadCard({
   thread,
   isSelected,
   onSelect,
@@ -150,14 +150,17 @@ function ThreadCard({
             {thread.visitorDisplayName ?? "Anonymous"}
           </span>
           {thread.synthetic === true ? (
-            <>
-              <span
-                className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-                aria-label="Synthetic session"
-                role="img"
-              />
-              <SessionReadinessBadge readiness={thread.readiness} />
-            </>
+            <span
+              className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
+              aria-label="Synthetic session"
+              role="img"
+            />
+          ) : null}
+          {/* The dot labels the POPULATION and stays synthetic-only; the
+              readiness badge follows the data, which real User Testing
+              sessions now carry. */}
+          {thread.readiness ? (
+            <SessionReadinessBadge readiness={thread.readiness} />
           ) : null}
         </p>
         <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">

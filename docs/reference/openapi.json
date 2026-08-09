@@ -2419,6 +2419,60 @@
             "$ref": "#/components/responses/ServerUnreachable"
           }
         }
+      },
+      "post": {
+        "operationId": "createProject",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Create a project",
+        "description": "Creates a project in the caller's organization and responds `201` with its detail. Requires organization membership and counts against the plan's `maxProjects` limit. Guest callers are denied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreateRequest"
+              },
+              "example": {
+                "name": "CI evals"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The project was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
       }
     },
     "/projects/{projectId}/servers": {
@@ -2453,6 +2507,71 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createProjectServer",
+        "tags": [
+          "Servers"
+        ],
+        "summary": "Save a server into a project",
+        "description": "Creates a saved MCP server and responds `201` with its detail. This is the provisioning entry point: every eval, host and environment route addresses servers that were created here. Names are unique per workspace, so a clash responds `409` rather than silently returning the existing row. Secret-bearing fields (`env`, `headers`, `clientSecret`) are encrypted at rest and never returned by any read.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectServerCreateRequest"
+              },
+              "example": {
+                "name": "learn",
+                "enabled": true,
+                "transportType": "http",
+                "url": "https://learn.mcpjam.com/mcp"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The server was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectServer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -3458,6 +3577,540 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}": {
+      "patch": {
+        "operationId": "updateProject",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Update project metadata",
+        "description": "Updates name, description, icon or visibility. Requires project admin; a non-member gets `404` rather than `403`, so the response never confirms that a project exists. The project's server map is not updatable here — see the per-server routes.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdateRequest"
+              },
+              "example": {
+                "name": "CI evals (staging)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteProject",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Delete a project and everything scoped to it",
+        "description": "IRREVERSIBLE, and it cascades: project access grants and invites, the mapped workspace and its memberships, every saved server in the project (each soft-deleted asynchronously, which also rotates the host configs that referenced it), and hosted tasks. Requires project admin. The request body must be empty.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}": {
+      "get": {
+        "operationId": "getProjectServer",
+        "tags": [
+          "Servers"
+        ],
+        "summary": "Get one saved server",
+        "description": "The server's detail, projected toward the hosted shape. Secrets are never included — `hasClientSecret` reports presence only. A server id from another project reads as `404`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectServer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateProjectServer",
+        "tags": [
+          "Servers"
+        ],
+        "summary": "Update a saved server",
+        "description": "Sparse update: omitted fields are unchanged. Renaming re-checks per-workspace uniqueness (`409` on a clash). Editing a server shared as an OAuth connection requires project admin. `clientSecret` and `clearClientSecret` are mutually exclusive.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectServerUpdateRequest"
+              },
+              "example": {
+                "enabled": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated server.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectServer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteProjectServer",
+        "tags": [
+          "Servers"
+        ],
+        "summary": "Delete a saved server",
+        "description": "Soft-deletes the server and schedules its cascade: MCP Apps views, hosted OAuth credentials, encrypted secret objects, and a rotation of every host config that referenced it. The cascade is ASYNCHRONOUS, so a read immediately after this call may still observe the row. The request body must be empty.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectServerDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/hosts/{hostId}/servers": {
+      "post": {
+        "operationId": "setHostServers",
+        "tags": [
+          "Hosts"
+        ],
+        "summary": "Replace a host's server attachments",
+        "description": "Sets the host's required and optional server ids without round-tripping its whole config, and responds with the updated host detail. Preserves every other identity field (computer, harness, built-in tools) and trims per-server connection overrides to the kept set. Requires project admin.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/hostId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostServersRequest"
+              },
+              "example": {
+                "serverIds": [
+                  "srv_1"
+                ],
+                "optionalServerIds": []
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/hosts/{hostId}/duplicate": {
+      "post": {
+        "operationId": "duplicateHost",
+        "tags": [
+          "Hosts"
+        ],
+        "summary": "Duplicate a host",
+        "description": "Copies the host and responds `201` with the new host's detail. The copy SHARES the source's content-addressed config row rather than cloning it, so both hosts continue to describe the same configuration. Requires project admin.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/hostId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostDuplicateRequest"
+              },
+              "example": {
+                "name": "Claude (copy)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The duplicated host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/models": {
+      "get": {
+        "operationId": "listModels",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "The MCPJam-provided model catalog",
+        "description": "PUBLIC: this route carries no user or project data and requires no bearer token, matching the upstream catalog it proxies. Mounted before authentication for that reason.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The model catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/trace-exports/otlp": {
+      "get": {
+        "operationId": "exportTracesOtlp",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Export project traces as OTLP/JSON",
+        "description": "Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sourceTypes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated source filter."
+          },
+          {
+            "name": "includeContent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Include message/tool payloads, which may contain sensitive data."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of spans in OTLP/JSON form.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -6733,6 +7386,395 @@
               "null"
             ],
             "description": "The environment revision the run executed against."
+          }
+        }
+      },
+      "ProjectCreateRequest": {
+        "type": "object",
+        "description": "Neither a client config nor a server map is required: the backend seeds both. Requires membership of the target organization, and counts against the plan's project limit.",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string",
+            "description": "Defaults to the caller's default organization when omitted."
+          },
+          "icon": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          }
+        }
+      },
+      "ProjectUpdateRequest": {
+        "type": "object",
+        "description": "Metadata only, and at least one field is required. The project's server map is deliberately NOT updatable here: the underlying mutation treats it as a wholesale replace and deletes every server absent from the payload. Use the per-server routes instead. Requires project admin.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          }
+        }
+      },
+      "ProjectDeleted": {
+        "type": "object",
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "ProjectServerCreateRequest": {
+        "type": "object",
+        "description": "Creates a saved server in the project. Server names are unique per workspace — a clash responds `409`. Scope comes from the path: `projectId`, `serverId` and `workspaceId` are rejected in the body.",
+        "required": [
+          "name",
+          "enabled",
+          "transportType"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "transportType": {
+            "type": "string",
+            "enum": [
+              "stdio",
+              "http"
+            ]
+          },
+          "command": {
+            "type": "string",
+            "description": "stdio transport only."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Stored encrypted; never returned by any read."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "http transport only."
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Stored encrypted; never returned by any read."
+          },
+          "hasBearerToken": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "clientCapabilities": {
+            "description": "Opaque MCP client capabilities bag."
+          },
+          "useOAuth": {
+            "type": "boolean"
+          },
+          "oauthScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clientId": {
+            "type": "string"
+          },
+          "oauthResourceUrl": {
+            "type": "string"
+          },
+          "oauthProtocolMode": {
+            "type": "string"
+          },
+          "oauthProtocolVersion": {
+            "type": "string"
+          },
+          "oauthRegistrationStrategy": {
+            "type": "string"
+          },
+          "xaaAuthzIssuer": {
+            "type": "string"
+          },
+          "xaaAllowPathScopedIssuer": {
+            "type": "boolean"
+          },
+          "oauthAllowPathScopedIssuer": {
+            "type": "boolean"
+          },
+          "useXaa": {
+            "type": "boolean"
+          },
+          "authServerMode": {
+            "type": "string",
+            "enum": [
+              "mcpjam",
+              "own"
+            ]
+          },
+          "xaaSubject": {
+            "type": "string"
+          },
+          "xaaEmail": {
+            "type": "string"
+          },
+          "xaaIdentityAssertionFormat": {
+            "type": "string"
+          },
+          "xaaClientAuth": {
+            "type": "string"
+          },
+          "authMethod": {
+            "type": "string"
+          },
+          "registrationMode": {
+            "type": "string"
+          },
+          "clientSecret": {
+            "type": "string",
+            "description": "Stored encrypted; never returned. Reads expose only `hasClientSecret`."
+          }
+        }
+      },
+      "ProjectServerUpdateRequest": {
+        "type": "object",
+        "description": "Sparse update — omitted fields are unchanged, and at least one field is required. Editing a server that is shared as an OAuth connection requires project admin.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "transportType": {
+            "type": "string",
+            "enum": [
+              "stdio",
+              "http"
+            ]
+          },
+          "command": {
+            "type": "string",
+            "description": "stdio transport only."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Stored encrypted; never returned by any read."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "http transport only."
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Stored encrypted; never returned by any read."
+          },
+          "hasBearerToken": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "clientCapabilities": {
+            "description": "Opaque MCP client capabilities bag."
+          },
+          "useOAuth": {
+            "type": "boolean"
+          },
+          "oauthScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clientId": {
+            "type": "string"
+          },
+          "oauthResourceUrl": {
+            "type": "string"
+          },
+          "oauthProtocolMode": {
+            "type": "string"
+          },
+          "oauthProtocolVersion": {
+            "type": "string"
+          },
+          "oauthRegistrationStrategy": {
+            "type": "string"
+          },
+          "xaaAuthzIssuer": {
+            "type": "string"
+          },
+          "xaaAllowPathScopedIssuer": {
+            "type": "boolean"
+          },
+          "oauthAllowPathScopedIssuer": {
+            "type": "boolean"
+          },
+          "useXaa": {
+            "type": "boolean"
+          },
+          "authServerMode": {
+            "type": "string",
+            "enum": [
+              "mcpjam",
+              "own"
+            ]
+          },
+          "xaaSubject": {
+            "type": "string"
+          },
+          "xaaEmail": {
+            "type": "string"
+          },
+          "xaaIdentityAssertionFormat": {
+            "type": "string"
+          },
+          "xaaClientAuth": {
+            "type": "string"
+          },
+          "authMethod": {
+            "type": "string"
+          },
+          "registrationMode": {
+            "type": "string"
+          },
+          "clientSecret": {
+            "type": "string",
+            "description": "Stored encrypted; never returned. Reads expose only `hasClientSecret`."
+          },
+          "clearClientSecret": {
+            "type": "boolean",
+            "description": "Removes the stored client secret. Mutually exclusive with `clientSecret`."
+          },
+          "clearXaaConfig": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ProjectServerDeleted": {
+        "type": "object",
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "HostServersRequest": {
+        "type": "object",
+        "description": "Replaces the host's server attachments wholesale. Every id must name a live server in the same project.",
+        "required": [
+          "serverIds"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "serverIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "optionalServerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Attached but not required to connect."
+          }
+        }
+      },
+      "HostDuplicateRequest": {
+        "type": "object",
+        "description": "Optional name for the copy; defaults to a derived name.",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

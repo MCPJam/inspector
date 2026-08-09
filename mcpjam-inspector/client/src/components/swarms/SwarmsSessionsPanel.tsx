@@ -21,20 +21,23 @@ import {
 } from "@mcpjam/design-system/select";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
+import {
+  SwarmSessionsGroupedList,
+  SwarmSessionsGroupCount,
+} from "@/components/swarms/SwarmSessionsGroupedList";
 import { SwarmSessionsMetricStrip } from "@/components/swarms/swarm-sessions-metric-strip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
+  groupSwarmSessionsByGoal,
+  groupSwarmSessionsByRun,
   journeySessionRowToThread,
   type JourneySessionRow,
 } from "@/lib/swarm-api";
-import {
-  buildEvalsPath,
-  buildSwarmSessionPath,
-  navigateApp,
-} from "@/lib/app-navigation";
+
+type SessionsGroupBy = "session" | "run" | "goal";
+import { buildSwarmSessionPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
 /**
@@ -51,6 +54,9 @@ export function SwarmsSessionsPanel({
   personaRefId,
   onPersonaRefIdChange,
   initialThreadId,
+  runLabels,
+  goalLabels,
+  journeyRunIds,
 }: {
   projectId: string;
   personas: ReadonlyArray<{ _id: string; name: string; role?: string }>;
@@ -61,6 +67,16 @@ export function SwarmsSessionsPanel({
   onPersonaRefIdChange: (personaRefId: string | null) => void;
   /** Deep-link session (`chatSessions` `_id`) to preselect. */
   initialThreadId?: string | null;
+  /** Run-id → "Persona · Goal" for runs this session launched. */
+  runLabels?: ReadonlyMap<string, string>;
+  /** Goal id (`journeyRefId`) → display name for "By goal" grouping. */
+  goalLabels?: ReadonlyMap<string, string>;
+  /**
+   * When set, keep only sessions whose `journeyRunId` is in this set (Swarm
+   * Run detail). Filtered client-side over loaded pages — same pattern as the
+   * host filter.
+   */
+  journeyRunIds?: ReadonlyArray<string> | ReadonlySet<string>;
 }) {
   const filtered = Boolean(personaRefId);
   const personaName = personas.find((p) => p._id === personaRefId)?.name;
@@ -79,11 +95,29 @@ export function SwarmsSessionsPanel({
     initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 25),
   });
 
-  const allRows = sessions as JourneySessionRow[];
+  const loadedRows = sessions as JourneySessionRow[];
 
-  // Host filter — client-side over the loaded pages (there is no per-host
-  // backend query; the persona filter stays server-side as before). "Load
-  // more" keeps paginating the unfiltered list.
+  const runIdSet = useMemo(() => {
+    if (!journeyRunIds) return null;
+    return journeyRunIds instanceof Set
+      ? journeyRunIds
+      : new Set(journeyRunIds);
+  }, [journeyRunIds]);
+
+  // Host / run-id filters — client-side over the loaded pages (there is no
+  // per-host backend query; the persona filter stays server-side as before).
+  // "Load more" keeps paginating the unfiltered list.
+  const allRows = useMemo(
+    () =>
+      runIdSet
+        ? loadedRows.filter(
+            (r) => r.journeyRunId != null && runIdSet.has(r.journeyRunId)
+          )
+        : loadedRows,
+    [loadedRows, runIdSet]
+  );
+
+  const [groupBy, setGroupBy] = useState<SessionsGroupBy>("run");
   const [hostFilter, setHostFilter] = useState<string | null>(null);
   const hostOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -106,8 +140,6 @@ export function SwarmsSessionsPanel({
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
     initialThreadId ?? null
   );
-  const [sessionToPromote, setSessionToPromote] =
-    useState<JourneySessionRow | null>(null);
 
   // Reset selection when the persona filter changes; re-seed from the deep
   // link when it still applies.
@@ -117,7 +149,6 @@ export function SwarmsSessionsPanel({
     prevPersonaRef.current = personaRefId;
     setHostFilter(null);
     setSelectedThreadId(initialThreadId ?? null);
-    setSessionToPromote(null);
   }, [personaRefId, initialThreadId]);
 
   // Drop a selection the host filter just hid — the detail pane must not show
@@ -126,7 +157,6 @@ export function SwarmsSessionsPanel({
     if (!hostFilter || !selectedThreadId) return;
     if (!rows.some((r) => r.id === selectedThreadId)) {
       setSelectedThreadId(null);
-      setSessionToPromote(null);
     }
   }, [hostFilter, rows, selectedThreadId]);
 
@@ -173,6 +203,14 @@ export function SwarmsSessionsPanel({
     () => rows.map((r) => journeySessionRowToThread(r, personaName)),
     [rows, personaName]
   );
+  const threadsById = useMemo(
+    () => new Map(threads.map((thread) => [thread._id, thread])),
+    [threads]
+  );
+  const runGroups = useMemo(() => groupSwarmSessionsByRun(rows), [rows]);
+  const goalGroups = useMemo(() => groupSwarmSessionsByGoal(rows), [rows]);
+  const canLoadMore = status === "CanLoadMore";
+  const isGrouped = groupBy === "run" || groupBy === "goal";
 
   const selectedRow = useMemo(
     () => rows.find((r) => r.id === selectedThreadId) ?? null,
@@ -196,6 +234,8 @@ export function SwarmsSessionsPanel({
 
   const emptyListCopy = hostFilter
     ? "No loaded sessions for this client"
+    : runIdSet
+    ? "No sessions for this swarm run yet"
     : filtered
     ? "No sessions for this persona yet"
     : "No swarm sessions yet";
@@ -207,13 +247,54 @@ export function SwarmsSessionsPanel({
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-4 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <p className="shrink-0 truncate text-xs text-muted-foreground">
-            {status === "LoadingFirstPage"
-              ? "Loading sessions…"
-              : `${threads.length}${
-                  status === "CanLoadMore" ? "+" : ""
-                } session${threads.length === 1 ? "" : "s"}`}
-          </p>
+          {status === "LoadingFirstPage" ? (
+            <p className="shrink-0 truncate text-xs text-muted-foreground">
+              {groupBy === "run"
+                ? "Loading runs…"
+                : groupBy === "goal"
+                ? "Loading goals…"
+                : "Loading sessions…"}
+            </p>
+          ) : groupBy === "run" ? (
+            <SwarmSessionsGroupCount
+              groups={runGroups}
+              canLoadMore={canLoadMore}
+              unit="run"
+            />
+          ) : groupBy === "goal" ? (
+            <SwarmSessionsGroupCount
+              groups={goalGroups}
+              canLoadMore={canLoadMore}
+              unit="goal"
+            />
+          ) : (
+            <p className="shrink-0 truncate text-xs text-muted-foreground">
+              {`${threads.length}${canLoadMore ? "+" : ""} session${
+                threads.length === 1 ? "" : "s"
+              }`}
+            </p>
+          )}
+          <Select
+            value={groupBy}
+            onValueChange={(value) => {
+              if (value === "run" || value === "goal" || value === "session") {
+                setGroupBy(value);
+              }
+            }}
+          >
+            <SelectTrigger
+              data-testid="swarms-sessions-group-by"
+              className="h-8 w-[min(100%,10rem)] text-xs"
+              aria-label="Group sessions by"
+            >
+              <SelectValue placeholder="Group by sessions" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="session">By session</SelectItem>
+              <SelectItem value="run">By run</SelectItem>
+              <SelectItem value="goal">By goal</SelectItem>
+            </SelectContent>
+          </Select>
           <Select
             value={personaRefId ?? "all"}
             onValueChange={(value) =>
@@ -262,17 +343,6 @@ export function SwarmsSessionsPanel({
           ) : null}
         </div>
         <div className="flex items-center gap-2">
-          {selectedRow ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="rounded-xl"
-              onClick={() => setSessionToPromote(selectedRow)}
-            >
-              Promote to test case
-            </Button>
-          ) : null}
           {status === "CanLoadMore" ? (
             <Button
               type="button"
@@ -300,11 +370,22 @@ export function SwarmsSessionsPanel({
         <ResizablePanelGroup direction="horizontal" className="h-full">
           <ResizablePanel defaultSize={32} minSize={22}>
             <div className="h-full overflow-hidden">
-              <ShareUsageThreadList
-                threads={threads}
-                selectedThreadId={selectedThreadId}
-                onSelectThread={setSelectedThreadId}
-              />
+              {isGrouped ? (
+                <SwarmSessionsGroupedList
+                  groups={groupBy === "goal" ? goalGroups : runGroups}
+                  threadsById={threadsById}
+                  selectedThreadId={selectedThreadId}
+                  onSelectThread={setSelectedThreadId}
+                  runLabels={groupBy === "goal" ? goalLabels : runLabels}
+                  groupUnit={groupBy === "goal" ? "goal" : "run"}
+                />
+              ) : (
+                <ShareUsageThreadList
+                  threads={threads}
+                  selectedThreadId={selectedThreadId}
+                  onSelectThread={setSelectedThreadId}
+                />
+              )}
             </div>
           </ResizablePanel>
           <ResizableHandle withHandle />
@@ -314,6 +395,16 @@ export function SwarmsSessionsPanel({
                 <ShareUsageThreadDetail
                   threadId={selectedThreadId}
                   sessionLink={sessionLink}
+                  promote={
+                    selectedRow?.projectId
+                      ? {
+                          projectId: selectedRow.projectId,
+                          // The Swarms route is gated at project member
+                          // (canViewSwarms), so being here is the check.
+                          canPromote: true,
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center">
@@ -326,7 +417,7 @@ export function SwarmsSessionsPanel({
                     </p>
                     {!filtered && threads.length === 0 ? (
                       <p className="mt-1 text-xs text-muted-foreground/70">
-                        Run a journey to generate sessions, or filter by persona
+                        Run a goal to generate sessions, or filter by persona
                         above.
                       </p>
                     ) : null}
@@ -337,24 +428,6 @@ export function SwarmsSessionsPanel({
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
-
-      <ConvertSwarmSessionDialog
-        open={sessionToPromote !== null}
-        session={sessionToPromote}
-        onOpenChange={(open) => {
-          if (!open) setSessionToPromote(null);
-        }}
-        onImported={({ suiteId, testCaseId }) => {
-          setSessionToPromote(null);
-          navigateApp(
-            buildEvalsPath({
-              type: "test-edit",
-              suiteId,
-              testId: testCaseId,
-            })
-          );
-        }}
-      />
     </div>
   );
 }

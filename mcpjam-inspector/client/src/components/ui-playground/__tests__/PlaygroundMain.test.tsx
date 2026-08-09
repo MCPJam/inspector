@@ -12,6 +12,7 @@ import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 
 vi.mock("framer-motion", async (importOriginal) => {
@@ -236,6 +237,10 @@ const mockUseChatSession = {
     supportsStreaming: true,
   },
   setSelectedModel: vi.fn(),
+  // The steady state: the persisted lead id has matched `availableModels`.
+  // Leaving this undefined would silently disable the selected-model sanitize
+  // effect for every case below. See BACK2-628.
+  isSelectedModelResolved: true,
   selectedModelIds: [],
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
@@ -710,6 +715,7 @@ describe("PlaygroundMain", () => {
       submitBlocked: false,
       isStreaming: false,
       chatSessionId: "chat-session-1",
+      resumedVersion: null,
       availableModels: [],
       selectedModelIds: [],
       multiModelEnabled: false,
@@ -2215,7 +2221,9 @@ describe("PlaygroundMain", () => {
 
       const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
-      expect(hint).toHaveTextContent("Try this prompt with a demo MCP server");
+      expect(hint).toHaveTextContent(
+        "Try this prompt with Excalidraw and compare across clients",
+      );
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
         chatInput.compareDocumentPosition(hint) &
@@ -2239,7 +2247,7 @@ describe("PlaygroundMain", () => {
       );
 
       expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
-        "Try this prompt with a demo MCP server"
+        "Try this prompt with Excalidraw and compare across clients",
       );
     });
 
@@ -2412,6 +2420,10 @@ describe("PlaygroundMain", () => {
   });
 
   describe("clear chat", () => {
+    // Set by the URL test below, which swaps in a `resetChat` that fires the
+    // reset chain. Undone in `afterEach` so it cannot leak into another test.
+    let restoreResetChat: (() => void) | null = null;
+
     it("shows clear button when thread has messages", () => {
       mockUseChatSession.messages = [
         { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
@@ -2438,6 +2450,202 @@ describe("PlaygroundMain", () => {
         (btn) => btn.querySelector(".lucide-trash2") !== null
       );
       expect(clearButton).toBeUndefined();
+    });
+
+    /**
+     * Clearing mints a fresh `chatSessionId`, so the next turn persists to a
+     * NEW history row. Staying attached to the thread the user had open leaves
+     * the post-stream reconciliation checking a baseline this session can never
+     * advance, and it detaches with a false "This chat changed elsewhere"
+     * toast (BUGS-22).
+     */
+    it("detaches the open saved thread when the chat is cleared", async () => {
+      const savedSession = {
+        _id: "history-clear-1",
+        chatSessionId: "chat-session-clear-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: savedSession,
+        widgetSnapshots: [],
+      });
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      // The resume cursor a send-time conflict baseline would be built from.
+      mockUseChatSession.resumedVersion = savedSession.version;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(savedSession));
+      });
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+        ).toBe(savedSession._id);
+      });
+
+      const clearButton = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
+      fireEvent.click(clearButton!);
+      fireEvent.click(
+        within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+          name: "Confirm",
+        }),
+      );
+
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+        ).toBe(null);
+      });
+      expect(mockUseChatSession.resetChat).toHaveBeenCalled();
+      // The next turn must ship no `expectedVersion`, or the fresh row's first
+      // ingest 409s against a version that belongs to the abandoned thread.
+      expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
+    });
+
+    /**
+     * Guards the interaction between the detach above and the conversation URL.
+     *
+     * The restore effect in `use-playground-conversation-url.ts` is held back by
+     * two conditions:
+     *
+     *     if (activeHistorySessionId) return;
+     *     if (hasMessages) return;
+     *
+     * Clearing drops BOTH at once — it detaches the thread and empties the
+     * transcript. If `?conversation=` still named the cleared thread at that
+     * moment, the restore effect would refetch it and put it straight back, so
+     * clearing would appear to do nothing.
+     *
+     * It is safe today only because `resetChat()` fires `onReset("reset")`,
+     * which calls `clearConversationUrlRef`, and the param mask is synchronous
+     * so no render sees the gap. That is an ordering dependency between two
+     * functions with nothing linking them, which is exactly the shape of bug
+     * this pins: reorder the calls in `handleResetAllChats`, or change the reset
+     * reason, and clearing a chat starts reloading it.
+     */
+    it("drops the cleared conversation from the URL so the restore effect cannot bring it back", async () => {
+      const savedSession = {
+        _id: "history-clear-url",
+        chatSessionId: "chat-session-clear-url",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: savedSession,
+        widgetSnapshots: [],
+      });
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      // The live session IS the one the URL names — the hook's own invariant,
+      // "restored <=> chatSessionId === param". Without it the sync effect
+      // overwrites the param on the first render and the setup never reaches
+      // the state under test.
+      mockUseChatSession.chatSessionId = savedSession.chatSessionId;
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${savedSession.chatSessionId}`,
+      );
+
+      // This file mocks the chat hook with a bare `vi.fn()` for `resetChat`, so
+      // none of what the real one does happens. Three of those matter here, and
+      // leaving any out makes the URL behave for reasons unrelated to the code
+      // under test: it empties the transcript, mints a fresh `chatSessionId`,
+      // and fires `onReset("reset")` (`use-chat-session.ts:3379`) — the only
+      // thing that reaches `clearConversationUrlRef`.
+      //
+      // Only the hook's own behaviour is faked. `onReset` is the component's
+      // real implementation, so "a reset drops the conversation param" and "the
+      // sync effect does not put the old id back" are both genuinely tested.
+      const bareResetChat = mockUseChatSession.resetChat;
+      restoreResetChat = () => {
+        mockUseChatSession.resetChat = bareResetChat;
+      };
+      mockUseChatSession.resetChat = vi.fn(() => {
+        mockUseChatSession.messages = [];
+        mockUseChatSession.chatSessionId = "chat-session-minted-after-clear";
+        capturedChatSessionOptions?.onReset?.("reset");
+      });
+
+      render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(savedSession));
+      });
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+        ).toBe(savedSession._id);
+      });
+
+      // Guard against a vacuous pass: the param has to be there to be dropped.
+      expect(window.location.search).toContain(savedSession.chatSessionId);
+
+      const clearButton = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
+      fireEvent.click(clearButton!);
+      fireEvent.click(
+        within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+          name: "Confirm",
+        }),
+      );
+
+      await waitFor(() => {
+        expect(window.location.search).not.toContain(savedSession.chatSessionId);
+      });
+    });
+
+    afterEach(() => {
+      // `window.location` is shared across tests, and the URL test above
+      // navigates.
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+      restoreResetChat?.();
+      restoreResetChat = null;
     });
   });
 
@@ -2488,6 +2696,99 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(onExecutionInjected).toHaveBeenCalled();
       });
+    });
+  });
+
+  // BACK2-628. The selected-model sanitize effect ends in
+  // `setSelectedModelIds`, which persists the lead model id
+  // (`use-persisted-model.ts:150-159`) under a key shared by every chat
+  // surface. Playground is the surface that actually turns compare mode on,
+  // and it renders both the real Playground and the eval live-chat panel, so a
+  // clobber here destroys the selection the hosted chatbox reads back.
+  describe("selected-model persistence", () => {
+    const LEAD_KEY = "mcp-inspector-selected-model";
+    const OWN_PROVIDER_MODEL_ID = "claude-haiku-4-5";
+    const originalSetSelectedModelIds = mockUseChatSession.setSelectedModelIds;
+
+    beforeEach(() => {
+      // Assert on the key that actually gets clobbered rather than on a spy
+      // standing in for it.
+      mockUseChatSession.setSelectedModelIds = vi.fn((modelIds: string[]) => {
+        saveSelectedModelId(modelIds[0] ?? null);
+      });
+    });
+
+    afterEach(() => {
+      mockUseChatSession.setSelectedModelIds = originalSetSelectedModelIds;
+    });
+
+    it("does not persist the derived fallback while the selection is unresolved", () => {
+      localStorage.setItem(LEAD_KEY, OWN_PROVIDER_MODEL_ID);
+      // The org-managed provider config is still in flight: the persisted id
+      // is absent from `availableModels`, so `selectedModel` is only
+      // `getDefaultModel`'s fallback.
+      Object.assign(mockUseChatSession, {
+        isSelectedModelResolved: false,
+        selectedModel: {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          provider: "anthropic",
+        },
+        availableModels: [
+          { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+          { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+        ],
+        selectedModelIds: [OWN_PROVIDER_MODEL_ID],
+        multiModelEnabled: true,
+      });
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      expect(localStorage.getItem(LEAD_KEY)).toBe(OWN_PROVIDER_MODEL_ID);
+      expect(mockUseChatSession.setSelectedModelIds).not.toHaveBeenCalled();
+    });
+
+    // Same window, but with the multi-model gate closed — this is the branch
+    // that fires on a surface which never offers compare, because
+    // `multiModelEnabled` is stored under one global key.
+    it("does not persist the derived fallback when resetting a stale multi-model toggle", () => {
+      localStorage.setItem(LEAD_KEY, OWN_PROVIDER_MODEL_ID);
+      Object.assign(mockUseChatSession, {
+        isSelectedModelResolved: false,
+        selectedModel: {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          provider: "anthropic",
+        },
+        selectedModelIds: [OWN_PROVIDER_MODEL_ID],
+        multiModelEnabled: true,
+      });
+
+      // No `enableMultiModelChat` ⇒ `canEnableMultiModel` is false.
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(localStorage.getItem(LEAD_KEY)).toBe(OWN_PROVIDER_MODEL_ID);
+      expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    });
+
+    it("sanitizes once the selection has resolved", () => {
+      Object.assign(mockUseChatSession, {
+        isSelectedModelResolved: true,
+        selectedModel: {
+          id: OWN_PROVIDER_MODEL_ID,
+          name: "Claude Haiku 4.5",
+          provider: "anthropic",
+        },
+        selectedModelIds: ["stale-model"],
+        multiModelEnabled: false,
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(mockUseChatSession.setSelectedModelIds).toHaveBeenCalledWith([
+        OWN_PROVIDER_MODEL_ID,
+      ]);
+      expect(localStorage.getItem(LEAD_KEY)).toBe(OWN_PROVIDER_MODEL_ID);
     });
   });
 

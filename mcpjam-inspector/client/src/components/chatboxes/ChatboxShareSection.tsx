@@ -15,7 +15,6 @@ import {
   settingsFromChatboxAccessPreset,
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
-import { ChatboxGuestExecutionSection } from "./ChatboxGuestExecutionSection";
 import {
   Avatar,
   AvatarFallback,
@@ -182,7 +181,7 @@ export function ChatboxShareSection({
   if (!isAuthenticated) {
     return (
       <p className="pt-4 text-sm text-muted-foreground">
-        Sign in to manage swarm access.
+        Sign in to manage scenario access.
       </p>
     );
   }
@@ -247,18 +246,8 @@ export function ChatboxShareSection({
                 void handleAccessPresetChange(v as ChatboxAccessPreset)
               }
             >
-              <DropdownMenuRadioItem value="project" className="items-start">
-                <div>
-                  <div className="flex items-center gap-2 font-medium">
-                    <Users className="size-4" />
-                    {projectLabel}
-                  </div>
-                  <p className="text-xs font-normal text-muted-foreground">
-                    Signed-in members of this project can open the swarm with
-                    the link. Guests cannot.
-                  </p>
-                </div>
-              </DropdownMenuRadioItem>
+              {/* Ordered by how a scenario is usually shared: a named tester
+                  first, the open link second, the whole project last. */}
               <DropdownMenuRadioItem
                 value="invited_only"
                 className="items-start"
@@ -269,7 +258,7 @@ export function ChatboxShareSection({
                     Invited users only
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Only people you invite by email can open this swarm.
+                    Only people you invite by email can open this scenario.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
@@ -283,22 +272,37 @@ export function ChatboxShareSection({
                     Anyone with the link (guests included)
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Anyone with the link can open the swarm, including guests
-                    without an account.
+                    Anyone with the link can open the scenario, including
+                    guests without an account.
+                  </p>
+                </div>
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="project" className="items-start">
+                <div>
+                  <div className="flex items-center gap-2 font-medium">
+                    <Users className="size-4" />
+                    {projectLabel}
+                  </div>
+                  <p className="text-xs font-normal text-muted-foreground">
+                    Signed-in members of this project can open the scenario
+                    with the link. Guests cannot.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        {/* Guests run the same environment a member does — computer, skills,
+            harness — on the organization's credits, bounded by the platform
+            daily caps. Say so where the exposure is created rather than
+            burying it in a settings panel. */}
+        {accessPreset === "link_guests" ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Guest usage runs on your organization&apos;s credits. Guests are
+            people who open the link without being invited.
+          </p>
+        ) : null}
       </div>
-
-      {accessPreset === "link_guests" ? (
-        <ChatboxGuestExecutionSection
-          chatbox={settings}
-          onUpdated={updateSettings}
-        />
-      ) : null}
 
       <div className="space-y-2">
         <label className="text-sm font-medium">Has access</label>

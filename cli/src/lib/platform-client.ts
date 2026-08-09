@@ -7,6 +7,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
 import { CliError, cliError, usageError } from "./output.js";
 import {
+  DEFAULT_PLATFORM_ORIGIN,
   resolvePlatformCredential,
   type ResolveCredentialDependencies,
 } from "./platform-auth.js";
@@ -73,7 +74,17 @@ export function resolvePlatformOrigin(
 export function buildPlatformClient(
   options: PlatformClientOptions,
   deps: ResolveCredentialDependencies = {},
-): { client: PlatformApiClient; credentialKind: "api-key" | "oauth" } {
+): {
+  client: PlatformApiClient;
+  credentialKind: "api-key" | "oauth";
+  /**
+   * The API base URL this client actually resolved, including the stored-auth
+   * branch below that `resolvePlatformOrigin` cannot see. Returned so callers
+   * that print a web link build it against the SAME deployment the request
+   * went to — a staging login must not print prod URLs.
+   */
+  baseUrl: string;
+} {
   const env = deps.env ?? process.env;
   const credential = resolvePlatformCredential(options, deps);
 
@@ -86,8 +97,9 @@ export function buildPlatformClient(
     baseUrl = stored?.apiUrl;
   }
 
+  const resolvedBaseUrl = baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL;
   const client = new PlatformApiClient({
-    baseUrl: baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL,
+    baseUrl: resolvedBaseUrl,
     getAuth: credential.getAuth,
     ...(deps.fetchFn ? { fetch: deps.fetchFn } : {}),
     ...(options.timeoutMs !== undefined
@@ -95,7 +107,21 @@ export function buildPlatformClient(
       : {}),
     userAgent: `mcpjam-cli/${packageJson.version}`,
   });
-  return { client, credentialKind: credential.kind };
+  return { client, credentialKind: credential.kind, baseUrl: resolvedBaseUrl };
+}
+
+/**
+ * The app origin matching an API base URL, for printing web deep links.
+ * Falls back to the default origin when the URL is unparseable — a bad link
+ * is worse than a slightly wrong one, but neither should abort a command
+ * whose real work already succeeded.
+ */
+export function webOriginForApiBaseUrl(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).origin;
+  } catch {
+    return DEFAULT_PLATFORM_ORIGIN;
+  }
 }
 
 /**

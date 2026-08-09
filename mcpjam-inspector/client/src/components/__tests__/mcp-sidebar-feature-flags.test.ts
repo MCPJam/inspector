@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
-  getEvalsSubnavItems,
   getHostedNavigationSections,
   navigationSections,
 } from "../mcp-sidebar";
@@ -16,7 +15,7 @@ const makeSections = () => [
       { title: "Always Visible", url: "#always", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
       },
     ],
@@ -114,43 +113,20 @@ describe("filterByFeatureFlags", () => {
     expect(result[0].items[0].title).toBe("Plain");
   });
 
-  it("keeps Evaluate item visible when evaluate-ci is off", () => {
-    const result = filterByFeatureFlags(
-      [
-        {
-          id: "mcp-apps",
-          items: [
-            { title: "Views", url: "#views", icon: FakeIcon },
-            {
-              title: "Evaluate",
-              url: "#evals",
-              icon: FakeIcon,
-              billingFeature: "evals" as const,
-              evalsSubnav: true,
-            },
-          ],
-        },
-      ],
-      { "evaluate-ci": false },
-    );
-    const titles = result[0].items.map((i) => i.title);
-    expect(titles).toEqual(["Views", "Evaluate"]);
-  });
-
-  it("renders no subnav when evaluate-ci is off (Evaluate is a flat link)", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: false }).map(
-        (item) => item.title,
-      ),
-    ).toEqual([]);
-  });
-
-  it("shows Runs as the only subnav item when evaluate-ci is on", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: true }).map(
-        (item) => item.title,
-      ),
-    ).toEqual(["Runs"]);
+  it("ships Evaluate as one flat, unflagged item (Runs is an in-page mode)", () => {
+    // Runs used to be a nested subnav item gated by `evaluate-ci`. Both lenses
+    // now live under one Evaluate entry and switch in the page header, so the
+    // sidebar carries no eval sub-items and no eval flag.
+    const evalsItems = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => item.url.startsWith("/evals"));
+    expect(evalsItems).toHaveLength(1);
+    expect(evalsItems[0]).toMatchObject({
+      title: "Evaluate",
+      url: "/evals",
+      billingFeature: "evals",
+    });
+    expect(evalsItems[0].featureFlag).toBeUndefined();
   });
 
   it("hides Conformance when the feature flag is off", () => {
@@ -248,7 +224,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -273,7 +249,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -306,12 +282,12 @@ describe("getHostedNavigationSections", () => {
         id: "others",
         items: [
           // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
-          // reached through the Connect tab switcher — so it is dropped here.
+          // reached through the Servers tab switcher — so it is dropped here.
           { title: "Skills", url: "#skills", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
             billingFeature: "evals",
           },
@@ -333,7 +309,7 @@ describe("getHostedNavigationSections", () => {
       { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
         billingFeature: "evals",
       },
@@ -363,7 +339,7 @@ describe("getHostedNavigationSections", () => {
         items: [
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
           },
         ],
@@ -377,7 +353,7 @@ describe("getHostedNavigationSections", () => {
     ]);
   });
 
-  it("keeps Evaluate subnav entry with #evals in hosted mode", () => {
+  it("keeps the Evaluate entry in hosted mode", () => {
     const hostedSections = getHostedNavigationSections([
       {
         id: "mcp-apps",
@@ -387,7 +363,6 @@ describe("getHostedNavigationSections", () => {
             url: "#evals",
             icon: FakeIcon,
             billingFeature: "evals",
-            evalsSubnav: true,
           },
         ],
       },
@@ -399,7 +374,6 @@ describe("getHostedNavigationSections", () => {
         url: "#evals",
         icon: FakeIcon,
         billingFeature: "evals",
-        evalsSubnav: true,
       },
     ]);
   });
@@ -460,5 +434,23 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
       "hosts-enabled": false,
     });
     expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
+  });
+
+  it("real navigationSections: exactly one /servers item is visible per flag state, never both", () => {
+    const authed = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": true,
+    });
+    const signedOut = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": false,
+    });
+
+    const serversTitles = (sections: typeof navigationSections) =>
+      sections
+        .flatMap((s) => s.items)
+        .filter((i) => i.url.replace(/^[#/]+/, "") === "servers")
+        .map((i) => i.title);
+
+    expect(serversTitles(authed)).toEqual(["Connect"]);
+    expect(serversTitles(signedOut)).toEqual(["Servers"]);
   });
 });

@@ -21,6 +21,7 @@ import {
   getEvalSuiteOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
+  listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   PlatformApiError,
   runEvalCaseOperation,
@@ -40,7 +41,12 @@ import {
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import { operationalError, usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
+import {
+  buildPlatformClient,
+  toCliError,
+  webOriginForApiBaseUrl,
+} from "../lib/platform-client.js";
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import {
   detectInlineImageProtocol,
@@ -71,12 +77,46 @@ function addPlatformOptions(command: Command): Command {
     );
 }
 
+/**
+ * Print a deep link to a run, after the command's own machine-readable
+ * output.
+ *
+ * HUMAN FORMAT ONLY, and written separately rather than folded into
+ * `writeResult`: that helper is format-generic and its `--format json` bytes
+ * are a contract scripts parse. A trailing prose line would break every one
+ * of them, so the gate lives here at the call site.
+ *
+ * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
+ * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
+ * the run path.
+ */
+function writeRunLink(
+  format: string,
+  webOrigin: string,
+  run: { projectId?: string; suiteId?: string; runId?: string }
+): void {
+  if (format !== "human") return;
+  const suiteId = run.suiteId?.trim();
+  const runId = run.runId?.trim();
+  if (!suiteId || !runId) return;
+  const query = run.projectId?.trim()
+    ? `?project=${encodeURIComponent(run.projectId.trim())}`
+    : "";
+  process.stdout.write(
+    `View: ${webOrigin}/evals/suite/${encodeURIComponent(
+      suiteId
+    )}/runs/${encodeURIComponent(runId)}${query}\n`
+  );
+}
+
 async function runPlatformCommand<TOutput>(
   options: PlatformOptions,
   timeoutMs: number,
   execute: (context: {
     client: ReturnType<typeof buildPlatformClient>["client"];
     signal: AbortSignal;
+    /** App origin matching the API base this call went to. */
+    webOrigin: string;
   }) => Promise<TOutput>
 ): Promise<TOutput> {
   const controller = new AbortController();
@@ -94,8 +134,12 @@ async function runPlatformCommand<TOutput>(
   timeoutHandle.unref?.();
 
   try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
+    const { client, baseUrl } = buildPlatformClient({ ...options, timeoutMs });
+    return await execute({
+      client,
+      signal: controller.signal,
+      webOrigin: webOriginForApiBaseUrl(baseUrl),
+    });
   } catch (error) {
     if (
       controller.signal.aborted &&
@@ -448,6 +492,38 @@ export function registerEvalCommands(program: Command): void {
 
   addPlatformOptions(
     evals
+      .command("runs")
+      .description("List a suite's run history, newest first")
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .option(
+        "--project <id-or-name>",
+        "Project name or ID (defaults to the most recently updated project)"
+      )
+      .option(
+        "--limit <n>",
+        "Maximum number of runs to return (1-100)",
+        (value) => Number.parseInt(value, 10)
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        limit?: number;
+      },
+      command
+    ) => {
+      const input = validateOpInput(listEvalSuiteRunsOperation, {
+        suite: options.suite,
+        ...(options.project === undefined ? {} : { project: options.project }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+      });
+      await executeOp(listEvalSuiteRunsOperation, input, options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
       .command("run")
       .description("Start an eval run of an existing suite (asynchronous)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -474,11 +550,13 @@ export function registerEvalCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const result = await runPlatformCommand(
         options,
         globalOptions.timeout,
-        ({ client, signal }) =>
-          runEvalSuiteOperation.execute(
+        (context) => {
+          webOrigin = context.webOrigin;
+          return runEvalSuiteOperation.execute(
             {
               project: options.project,
               suite: options.suite,
@@ -487,10 +565,16 @@ export function registerEvalCommands(program: Command): void {
                 ? { environment: options.environment }
                 : {}),
             },
-            { client, signal }
-          )
+            { client: context.client, signal: context.signal }
+          );
+        }
       );
       writeResult(result, globalOptions.format);
+      writeRunLink(globalOptions.format, webOrigin, {
+        projectId: result.project.id,
+        suiteId: result.suite.id,
+        runId: result.runId,
+      });
     }
   );
 
@@ -506,16 +590,24 @@ export function registerEvalCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const result = await runPlatformCommand(
         options,
         globalOptions.timeout,
-        ({ client, signal }) =>
-          getEvalRunOperation.execute(
+        (context) => {
+          webOrigin = context.webOrigin;
+          return getEvalRunOperation.execute(
             { project: options.project, runId: options.run },
-            { client, signal }
-          )
+            { client: context.client, signal: context.signal }
+          );
+        }
       );
       writeResult(result, globalOptions.format);
+      writeRunLink(globalOptions.format, webOrigin, {
+        projectId: result.project.id,
+        suiteId: result.run.suiteId,
+        runId: result.run.id,
+      });
     }
   );
 

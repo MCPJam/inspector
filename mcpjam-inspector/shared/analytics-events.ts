@@ -76,6 +76,7 @@ export const ANALYTICS_EVENTS = {
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
+  chat_model_selector_manage_org_models_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
   // Every starter-chip surface fires this one event; props: prompt (chip
   // text), location: chat_tab | playground_single | playground_compare.
@@ -237,6 +238,9 @@ export const ANALYTICS_EVENTS = {
   sidebar_nav_clicked: { source: "client" },
   stateless_protocol_connect: { source: "client" },
   suite_viewed: { source: "client" },
+  swarm_create_generate_completed: { source: "client" },
+  swarm_create_generate_started: { source: "client" },
+  swarm_create_launched: { source: "client" },
   swarm_generate_journeys_completed: { source: "client" },
   swarm_generate_journeys_started: { source: "client" },
   swarm_generate_persona_completed: { source: "client" },

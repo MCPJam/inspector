@@ -458,7 +458,13 @@ Advanced replay override. Most users should not construct this manually.
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-Predicates are authored on the suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor). `EvalResultInput` has no predicate field. The runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+
+<Note>
+  Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
+</Note>
+
+The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors` — read render observations that only a hosted run captures, and they fail closed. `EvalTest` therefore **rejects them at construction** rather than failing every iteration with a confusing reason; move those cases to a hosted suite.
 
 #### Predicate types
 
@@ -545,12 +551,36 @@ type PredicateResult = {
 |----------|------|-------------|
 | `suiteId` | `string` | Created/matched suite ID |
 | `runId` | `string` | Created run ID |
+| `projectId` | `string?` | Project the run landed in, echoed by the ingest response. Absent against a backend that predates the field, and when reporting fails. |
 | `status` | `"completed" \| "failed"` | Run status |
 | `result` | `"passed" \| "failed"` | Pass/fail based on criteria |
 | `summary.total` | `number` | Total iterations |
 | `summary.passed` | `number` | Passed iterations |
 | `summary.failed` | `number` | Failed iterations |
 | `summary.passRate` | `number` | Pass rate (0.0 - 1.0) |
+
+---
+
+### The printed run URL
+
+After a successful upload the SDK prints one line per run:
+
+```text
+[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<projectId>
+```
+
+It is on by default and there is nothing to configure. Details worth knowing:
+
+- **Once per run.** A chunked upload passes through several code paths
+  (start, finalize) and still prints a single line. Each `EvalTest` is its
+  own run, so a file with several tests prints one line each.
+- **`?project=` may be absent.** The param carries whatever the backend
+  echoed, falling back to a `project` you configured explicitly. The
+  zero-config `"default"` sentinel is not a project ID, so it is omitted
+  rather than sent — the app then opens the run in your active project.
+- **Nothing prints when there is no run to link to.** A failed upload, or a
+  non-strict reporter falling back to locally-computed counts, prints
+  nothing.
 
 ---
 

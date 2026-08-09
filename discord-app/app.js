@@ -1,0 +1,311 @@
+// @ts-nocheck
+import "dotenv/config";
+import {
+	createApiClient,
+	createBackendClient,
+	createEventClaims,
+	createTurnTargetResolver,
+	mintConnectUrl,
+	runTurn,
+	textContent,
+} from "@mcpjam/surface-core";
+import {
+	Client,
+	Events,
+	GatewayIntentBits,
+	Partials,
+	REST,
+	Routes,
+	SlashCommandBuilder,
+} from "discord.js";
+import { createDiscordDelivery } from "./delivery.js";
+import { fetchHistory } from "./history.js";
+import { recordPresence } from "./presence.js";
+import { watchDiscordRun } from "./watcher.js";
+
+const token = process.env.DISCORD_BOT_TOKEN;
+if (!token) throw new Error("DISCORD_BOT_TOKEN is required");
+const botEnabled = process.env.POSTHOG_DISCORD_AGENT_ENABLED === "true";
+const client = new Client({
+	intents: [
+		GatewayIntentBits.Guilds,
+		GatewayIntentBits.GuildMessages,
+		GatewayIntentBits.MessageContent,
+	],
+	partials: [Partials.Channel],
+});
+const claimBackend = createBackendClient({
+	surfaceKind: "discord",
+	serviceTokenEnv: "DISCORD_SERVICE_TOKEN",
+	authHeaderName: "x-discord-service-token",
+	routePrefix: "/agent",
+});
+const claims = createEventClaims({
+	backend: claimBackend,
+	surfaceKind: "discord",
+});
+const resolveTurnTarget = createTurnTargetResolver({
+	backend: claimBackend,
+	hasPerUserAuth: () => Boolean(process.env.DISCORD_SERVICE_TOKEN),
+	legacyProjectId: () => process.env.MCPJAM_PROJECT_ID,
+});
+const api = createApiClient({
+	routePrefix: "/agent",
+	conversationField: "conversationId",
+	baseUrl: process.env.MCPJAM_BASE_URL,
+	getConfig: (ctx, overrides = {}) => ({
+		apiKey:
+			overrides.apiKey ||
+			process.env.MCPJAM_DISCORD_SERVICE_TOKEN ||
+			process.env.DISCORD_SERVICE_TOKEN ||
+			process.env.DISCORD_API_TOKEN,
+		projectId: overrides.projectId || ctx.projectId,
+		baseUrl:
+			overrides.baseUrl ||
+			process.env.MCPJAM_BASE_URL ||
+			"https://app.mcpjam.com",
+		appUrl: process.env.MCPJAM_APP_URL || "https://app.mcpjam.com",
+		headers: {
+			"x-mcpjam-surface-tenant-id": ctx.tenantId,
+			"x-mcpjam-surface-actor-id": ctx.actorId,
+		},
+		routePrefix: "/agent",
+	}),
+});
+
+client.once(Events.ClientReady, async (ready) => {
+	for (const guild of ready.guilds.cache.values())
+		await recordPresence({ tenantId: guild.id, status: "installed" });
+});
+client.on(Events.GuildCreate, (guild) =>
+	recordPresence({ tenantId: guild.id, status: "installed" }),
+);
+client.on(Events.GuildDelete, (guild) =>
+	recordPresence({ tenantId: guild.id, status: "removed" }),
+);
+
+client.on(Events.InteractionCreate, async (interaction) => {
+	if (!interaction.isChatInputCommand() || interaction.commandName !== "mcpjam")
+		return;
+	if (!interaction.guildId) {
+		await interaction.reply({
+			content: "MCPJam connect is available in a server, not in DMs.",
+			ephemeral: true,
+			allowedMentions: { parse: [] },
+		});
+		return;
+	}
+	await interaction.reply({
+		content: "Connect your MCPJam account to continue.",
+		ephemeral: true,
+		allowedMentions: { parse: [] },
+	});
+	try {
+		const baseUrl = process.env.MCPJAM_BASE_URL || "https://app.mcpjam.com";
+		const origins = [
+			process.env.MCPJAM_APP_URL,
+			process.env.DISCORD_LINK_PUBLIC_ORIGIN,
+			baseUrl,
+		].filter(Boolean);
+		const url = await mintConnectUrl({
+			surfaceKind: "discord",
+			tenantId: interaction.guildId,
+			actorId: interaction.user.id,
+			token:
+				process.env.DISCORD_SERVICE_TOKEN ||
+				process.env.MCPJAM_DISCORD_SERVICE_TOKEN ||
+				process.env.DISCORD_API_TOKEN,
+			baseUrl,
+			origins,
+		});
+		await interaction.editReply({
+			content: `Connect MCPJam: ${url}`,
+			allowedMentions: { parse: [] },
+		});
+	} catch (error) {
+		await interaction.editReply({
+			content: `Unable to create a connect link: ${error.message}`,
+			allowedMentions: { parse: [] },
+		});
+	}
+});
+
+client.on(Events.MessageCreate, async (message) => {
+	if (
+		!botEnabled ||
+		message.author.bot ||
+		!message.guildId ||
+		!message.mentions.has(client.user)
+	)
+		return;
+	const dedupeKey = `${message.guildId}:${message.id}`;
+	if (claims.hasClaimBackend()) {
+		const claim = await claims.claimEvent(dedupeKey);
+		if (claim.outcome !== "claimed") return;
+	}
+	const ref = {
+		surfaceKind: "discord",
+		tenantId: message.guildId,
+		actorId: message.author.id,
+		projectId: process.env.MCPJAM_PROJECT_ID,
+		conversationId: message.channelId,
+		threadId: message.id,
+	};
+	const delivery = createDiscordDelivery(message.channel);
+	try {
+		const target = await resolveTurnTarget(ref, {
+			conversationId: message.channelId,
+			threadId: message.id,
+		});
+		if (target.mode === "unlinked") {
+			const url = await mintConnectUrl({
+				surfaceKind: "discord",
+				tenantId: message.guildId,
+				actorId: message.author.id,
+				token: process.env.DISCORD_SERVICE_TOKEN,
+				baseUrl: process.env.MCPJAM_BASE_URL || "https://app.mcpjam.com",
+				origins: [
+					process.env.MCPJAM_APP_URL,
+					process.env.DISCORD_LINK_PUBLIC_ORIGIN,
+					process.env.MCPJAM_BASE_URL || "https://app.mcpjam.com",
+				].filter(Boolean),
+			});
+			const content = {
+				severity: "info",
+				parts: [
+					"Connect MCPJam before asking me to act: ",
+					{ link: { url, label: "open the connect link" } },
+				],
+			};
+			await delivery.deliver(ref, content);
+			if (claims.hasClaimBackend())
+				await claims.completeEvent(dedupeKey, content);
+			return;
+		}
+		if (target.mode === "needs_project") {
+			const content = textContent(
+				"Your account is connected, but no default MCPJam project is configured for this organization. Set one in MCPJam settings and mention me again.",
+				"warning",
+			);
+			await delivery.deliver(ref, content);
+			if (claims.hasClaimBackend())
+				await claims.completeEvent(dedupeKey, content);
+			return;
+		}
+		ref.projectId = target.projectId;
+		const result = await runTurn({
+			ref,
+			fetchHistory: (args) =>
+				fetchHistory({
+					...args,
+					channel: message.channel,
+					// The core derives no trigger id from `ref`, so pass the snowflake
+					// explicitly: it is what gives the newer-than-trigger cutoff
+					// sub-millisecond resolution.
+					triggerMessageId: message.id,
+					botUserId: client.user.id,
+				}),
+			deliver: (target, content) => delivery.deliver(target, content),
+			turn: (history) =>
+				api
+					.runAgentTurn(history, ref, {
+						conversationId: message.channelId,
+						idempotencyKey: dedupeKey,
+					})
+					.then((result) => ({
+						...textContent(result.reply || "", "info"),
+						proposedActions: result.proposedActions || [],
+					})),
+			triggerTimestampMs: Number(message.createdTimestamp),
+		});
+		if (claims.hasClaimBackend())
+			await claims.completeEvent(dedupeKey, result.envelope);
+	} catch (error) {
+		await delivery.deliver(
+			ref,
+			error?.structuredContent ||
+				textContent(
+					error?.friendlyMessage ||
+						error?.message ||
+						"The agent could not complete this turn.",
+				),
+		);
+		if (claims.hasClaimBackend())
+			await claims.completeEvent(dedupeKey, { error: error.message });
+	}
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+	if (!interaction.isButton() || !interaction.guildId) return;
+	// Button interactions, unlike Gateway messages, have the three-second ack
+	// deadline. Defer immediately, then execute from the opaque server id.
+	try {
+		await interaction.deferUpdate();
+	} catch {
+		return;
+	}
+	const ref = {
+		surfaceKind: "discord",
+		tenantId: interaction.guildId,
+		actorId: interaction.user.id,
+		projectId: process.env.MCPJAM_PROJECT_ID,
+		conversationId: interaction.channelId,
+	};
+	try {
+		const result = await api.executeProposedAction(interaction.customId, ref);
+		if (result.runId && interaction.channel?.isTextBased?.()) {
+			const surfaceDelivery = createDiscordDelivery(interaction.channel);
+			const status = await surfaceDelivery.deliver(
+				ref,
+				textContent(
+					`Run started${result.runUrl ? ` — ${result.runUrl}` : ""}.`,
+					"info",
+				),
+			);
+			const statusHandle = status.handles.at(-1);
+			if (statusHandle) {
+				void watchDiscordRun({
+					apiClient: api,
+					ctx: ref,
+					runId: result.runId,
+					handle: statusHandle,
+					surfaceDelivery,
+					url: result.runUrl || "",
+					actorId: interaction.user.id,
+				});
+			}
+		}
+		await interaction.followUp({
+			content: `Approved: ${result.operation || "action complete"}`,
+			ephemeral: true,
+			allowedMentions: { parse: [] },
+		});
+	} catch (error) {
+		await interaction.followUp({
+			content: `Unable to approve this action: ${error?.friendlyMessage || error?.message || "try again later"}`,
+			ephemeral: true,
+			allowedMentions: { parse: [] },
+		});
+	}
+});
+
+if (process.env.DISCORD_APPLICATION_ID && process.env.DISCORD_GUILD_ID) {
+	const rest = new REST({ version: "10" }).setToken(token);
+	await rest.put(
+		Routes.applicationGuildCommands(
+			process.env.DISCORD_APPLICATION_ID,
+			process.env.DISCORD_GUILD_ID,
+		),
+		{
+			body: [
+				new SlashCommandBuilder()
+					.setName("mcpjam")
+					.setDescription("MCPJam commands")
+					.addSubcommand((subcommand) =>
+						subcommand.setName("connect").setDescription("Connect MCPJam"),
+					),
+			],
+		},
+	);
+}
+await client.login(token);

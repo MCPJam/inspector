@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -67,19 +67,30 @@ import {
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
-import { SettingsNav } from "@/components/settings/SettingsNav";
+import { SectionTab } from "@/components/settings/SectionTab";
+import { SettingsPageShell } from "@/components/settings/SettingsPageShell";
+import { SettingsStatePanel } from "@/components/settings/SettingsStatePanel";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import {
   getBillingUpsellCtaLabel,
   getBillingUpsellTeaser,
 } from "@/lib/billing-upsell";
-import { cn } from "@/lib/utils";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
-import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
+import {
+  resolveSlackSettingsTab,
+  SlackAgentSettingsSection,
+  type SlackSettingsTabId,
+} from "./organization/slack/SlackAgentSettingsSection";
+import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabled";
+import {
+  useAppNavigate,
+  useCurrentSearchParam,
+  buildOrganizationPath,
+} from "@/lib/app-navigation";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -338,25 +349,29 @@ function OrganizationAccessRestricted({
   const { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave } =
     useLeaveOrganization(organization);
 
+  // A member without admin rights is still ON the Organization section, so the
+  // tab stays and stays current — they just cannot manage what is behind it.
+  // Losing the shell here left them with no route to the other Settings
+  // sections at all.
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8">
-      <div className="text-center space-y-4 max-w-md">
-        <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
-        <h2 className="text-2xl font-bold">Access restricted</h2>
-        <p className="text-muted-foreground">
-          You don't have permission to view organization settings. Contact an
-          admin or owner for access.
-        </p>
-        <div className="flex flex-col items-center gap-3">
-          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
-          <button
-            type="button"
-            onClick={() => setLeaveConfirmOpen(true)}
-            className="text-sm text-muted-foreground transition-colors hover:text-destructive"
-          >
-            Leave organization
-          </button>
-        </div>
+    <OrganizationStateShell organizationId={organization._id}>
+      <Building2 className="size-8 text-muted-foreground/50" aria-hidden />
+      <h2 className="text-lg font-semibold">Access restricted</h2>
+      <p className="max-w-prose text-sm text-muted-foreground">
+        You don't have permission to view organization settings. Contact an
+        admin or owner for access.
+      </p>
+      <div className="flex flex-col items-center gap-3">
+        <Button variant="outline" onClick={() => appNavigate("/servers")}>
+          Go to Servers
+        </Button>
+        <button
+          type="button"
+          onClick={() => setLeaveConfirmOpen(true)}
+          className="rounded-sm text-sm text-muted-foreground outline-none transition-colors hover:text-destructive focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          Leave organization
+        </button>
       </div>
 
       <LeaveOrganizationDialog
@@ -366,7 +381,33 @@ function OrganizationAccessRestricted({
         isLeaving={isLeaving}
         onConfirm={handleLeave}
       />
-    </div>
+    </OrganizationStateShell>
+  );
+}
+
+/**
+ * The org page's pre-content states — still a Settings section, so they keep
+ * the shell. Rendering them bare used to strand the user: signing out and
+ * clicking Organization replaced the whole page, tab strip included, with a
+ * lone sign-in button and no way back to the other sections.
+ *
+ * `organizationId` is what the Organization tab would point at, so it is passed
+ * only when this org is real and reachable — not for a deleted or bogus id.
+ */
+function OrganizationStateShell({
+  organizationId,
+  children,
+}: {
+  organizationId?: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <SettingsPageShell
+      active="organization"
+      activeOrganizationId={organizationId}
+    >
+      <SettingsStatePanel>{children}</SettingsStatePanel>
+    </SettingsPageShell>
   );
 }
 
@@ -394,54 +435,54 @@ export function OrganizationsTab({
 
   if (isAuthLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="flex items-center gap-2 text-muted-foreground">
+      <OrganizationStateShell organizationId={organizationId}>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <RefreshCw className="size-4 animate-spin" />
           Completing sign-in...
         </div>
-      </div>
+      </OrganizationStateShell>
     );
   }
 
   if (!user || !isAuthenticated) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="text-center space-y-4 max-w-md">
-          <h2 className="text-2xl font-bold">
-            Sign in to manage organizations
-          </h2>
-          <Button onClick={() => signIn()} size="lg">
-            Sign In
-          </Button>
-        </div>
-      </div>
+      <OrganizationStateShell organizationId={organizationId}>
+        <h2 className="text-lg font-semibold">
+          Sign in to manage organizations
+        </h2>
+        <p className="max-w-prose text-sm text-muted-foreground">
+          Members, models, and billing live on your organization. Sign in to
+          manage them.
+        </p>
+        <Button onClick={() => signIn()}>Sign in</Button>
+      </OrganizationStateShell>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="flex items-center gap-2 text-muted-foreground">
+      <OrganizationStateShell organizationId={organizationId}>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <RefreshCw className="size-4 animate-spin" />
           Loading organization...
         </div>
-      </div>
+      </OrganizationStateShell>
     );
   }
 
   if (!organization) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="text-center space-y-4 max-w-md">
-          <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
-          <h2 className="text-2xl font-bold">Organization not found</h2>
-          <p className="text-muted-foreground">
-            This organization may have been deleted or you don't have access to
-            it.
-          </p>
-          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
-        </div>
-      </div>
+      <OrganizationStateShell>
+        <Building2 className="size-8 text-muted-foreground/50" aria-hidden />
+        <h2 className="text-lg font-semibold">Organization not found</h2>
+        <p className="max-w-prose text-sm text-muted-foreground">
+          This organization may have been deleted or you don't have access to
+          it.
+        </p>
+        <Button variant="outline" onClick={() => appNavigate("/servers")}>
+          Go to Servers
+        </Button>
+      </OrganizationStateShell>
     );
   }
 
@@ -561,12 +602,24 @@ function OrganizationPage({
     "billing-entitlements-ui"
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
+  const rawSlackTab = useCurrentSearchParam("tab");
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
       : section === "billing"
       ? "billing"
+      : // Flag OFF collapses the Slack section back to the overview rather
+      // than rendering an empty page: a user who kept the URL from a
+      // flagged-in session should land somewhere real.
+      section === "slack" && slackAgentSettingsEnabled
+      ? "slack"
       : "overview";
+  // The sub-tab lives in `?tab=` — three views of one settings section, not
+  // three org routes. Read from the URL rather than component state so a link
+  // to a specific tab works, and through the router's location context so
+  // switching tabs actually re-renders.
+  const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSlackTab);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -759,7 +812,9 @@ function OrganizationPage({
       const result = await finishSeatPayment(seatPaymentIntentId);
       if (result.status === "paid") {
         toast.success(
-          `${email ?? activeSeatPaymentIntent?.email ?? "Member"} added to the organization.`
+          `${
+            email ?? activeSeatPaymentIntent?.email ?? "Member"
+          } added to the organization.`
         );
       }
     } catch (error) {
@@ -876,6 +931,22 @@ function OrganizationPage({
     billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
     appNavigate(buildOrganizationPath(organization._id, nextSection));
+  };
+  const organizationSections: {
+    id: OrganizationRouteSection;
+    label: string;
+  }[] = [
+    { id: "overview", label: "General" },
+    { id: "models", label: "Models" },
+    ...(slackAgentSettingsEnabled
+      ? ([{ id: "slack", label: "Slack" }] as const)
+      : []),
+    { id: "billing", label: "Billing" },
+  ];
+  const navigateToSlackTab = (tab: SlackSettingsTabId) => {
+    appNavigate(
+      `${buildOrganizationPath(organization._id, "slack")}?tab=${tab}`
+    );
   };
   const handleViewBilling = () => navigateToSection("billing");
 
@@ -1111,442 +1182,408 @@ function OrganizationPage({
     ) : null;
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-5">
-        <SettingsNav
-          active="organization"
-          activeOrganizationId={organization._id}
-        />
-        <Card className="overflow-hidden border-border/60">
-          <CardContent className="space-y-5 p-5">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center">
-              <div className="relative shrink-0">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleLogoFileChange}
+    <SettingsPageShell
+      active="organization"
+      activeOrganizationId={organization._id}
+    >
+      <Card className="overflow-hidden border-border/60">
+        <CardContent className="p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center">
+            <div className="relative shrink-0">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleLogoFileChange}
+              />
+              <Avatar
+                className={`h-16 w-16 ${canEdit ? "cursor-pointer" : ""}`}
+                onClick={handleLogoClick}
+              >
+                <AvatarImage
+                  src={organization.logoUrl}
+                  alt={organization.name}
                 />
-                <Avatar
-                  className={`h-24 w-24 ${canEdit ? "cursor-pointer" : ""}`}
+                <AvatarFallback className="bg-muted text-xl">
+                  {initial}
+                </AvatarFallback>
+              </Avatar>
+              {canEdit ? (
+                <button
                   onClick={handleLogoClick}
+                  disabled={isUploadingLogo}
+                  className="absolute -bottom-1 -right-1 rounded-full border bg-background p-1.5 outline-none transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label="Upload organization logo"
                 >
-                  <AvatarImage
-                    src={organization.logoUrl}
-                    alt={organization.name}
-                  />
-                  <AvatarFallback className="bg-muted text-3xl">
-                    {initial}
-                  </AvatarFallback>
-                </Avatar>
-                {canEdit ? (
-                  <button
-                    onClick={handleLogoClick}
-                    disabled={isUploadingLogo}
-                    className="absolute -bottom-1 -right-1 rounded-full border bg-background p-2"
-                    aria-label="Upload organization logo"
-                  >
-                    {isUploadingLogo ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                    ) : (
-                      <Camera className="h-3.5 w-3.5 text-muted-foreground" />
-                    )}
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="flex-1 space-y-1">
-                {canEdit ? (
-                  <EditableText
-                    value={organization.name}
-                    onSave={handleSaveName}
-                    className="text-3xl font-semibold -ml-2"
-                    placeholder="Organization name"
-                  />
-                ) : (
-                  <h1 className="text-3xl font-semibold">
-                    {organization.name}
-                  </h1>
-                )}
-                {billingUiEnabled ? (
-                  <p className="text-sm text-muted-foreground">
-                    Organization settings
-                  </p>
-                ) : null}
-              </div>
+                  {isUploadingLogo ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
+                </button>
+              ) : null}
             </div>
-          </CardContent>
+
+            <div className="min-w-0 flex-1">
+              {canEdit ? (
+                <EditableText
+                  value={organization.name}
+                  onSave={handleSaveName}
+                  className="-ml-2 text-xl font-semibold"
+                  placeholder="Organization name"
+                />
+              ) : (
+                <h2 className="text-xl font-semibold">{organization.name}</h2>
+              )}
+            </div>
+          </div>
+        </CardContent>
+        {/* Scrolls for the same reason the top-level strip does: the tabs do
+            not shrink, and Slack makes four of them on a phone. */}
+        <div className="overflow-x-auto scrollbar-hidden border-t border-border/60 bg-muted/20">
           <nav
-            className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
+            className="flex w-max min-w-full items-end gap-1 px-3 pt-1 sm:px-4"
             aria-label="Organization settings sections"
           >
-            <button
-              type="button"
-              onClick={() => navigateToSection("overview")}
-              aria-current={activeSection === "overview" ? "page" : undefined}
-              className={cn(
-                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                activeSection === "overview"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              General
-            </button>
-            <button
-              type="button"
-              onClick={() => navigateToSection("models")}
-              aria-current={activeSection === "models" ? "page" : undefined}
-              className={cn(
-                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                activeSection === "models"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Models
-            </button>
-            <button
-              type="button"
-              onClick={() => navigateToSection("billing")}
-              aria-current={activeSection === "billing" ? "page" : undefined}
-              className={cn(
-                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                activeSection === "billing"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Billing
-            </button>
+            {organizationSections.map((tab) => (
+              <SectionTab
+                key={tab.id}
+                label={tab.label}
+                isActive={activeSection === tab.id}
+                onSelect={() => navigateToSection(tab.id)}
+              />
+            ))}
           </nav>
-        </Card>
+        </div>
+      </Card>
 
-        {activeSection === "models" ? (
-          <OrganizationModelsSection
+      {activeSection === "models" ? (
+        <OrganizationModelsSection
+          organizationId={organization._id}
+          isAdmin={canEdit}
+        />
+      ) : activeSection === "slack" ? (
+        <SlackAgentSettingsSection
+          organizationId={organization._id}
+          isAdmin={canEdit}
+          tab={slackTab}
+          onTabChange={navigateToSlackTab}
+        />
+      ) : activeSection === "billing" ? (
+        <>
+          {pendingSeatPaymentNotice}
+          <OrganizationBillingSection
             organizationId={organization._id}
-            isAdmin={canEdit}
-          />
-        ) : activeSection === "billing" ? (
-          <>
-            {pendingSeatPaymentNotice}
-            <OrganizationBillingSection
-              organizationId={organization._id}
-              showPlanBilling={billingUiEnabled}
-              showCredits
-              billingStatus={billingStatus}
-              organizationName={organization.name}
-              canManageCredits={canEdit || organization.isCreator === true}
-              planCatalog={planCatalog}
-              isLoadingBilling={isLoadingBilling}
-              isLoadingPlanCatalog={isLoadingPlanCatalog}
-              isStartingPlanChange={isStartingPlanChange}
-              pendingPlanChangeTarget={pendingPlanChangeTarget}
-              isOpeningPortal={isOpeningPortal}
-              onDowngradePlan={handleDowngradePlan}
-              onStartPlanChange={handlePlanChange}
-              onStartAutoPlanChange={handleAutoPlanChange}
-              checkoutIntent={checkoutIntent}
-              onCheckoutIntentConsumed={onCheckoutIntentConsumed}
-              currentPlanPanel={
-                billingUiEnabled ? (
-                  <Card className="border-border/60">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="flex items-center gap-2 text-xl">
-                        <CreditCard className="size-4 text-muted-foreground" />
-                        Billing
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground">
-                        Review your current plan and subscription.
-                      </p>
-                    </CardHeader>
-                    <CardContent className="space-y-3 pt-0">
-                      {isLoadingBilling ? (
-                        <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                          Loading billing details...
-                        </div>
-                      ) : billingStatus && !billingStatus.billingConfigured ? (
-                        <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                          Billing is not configured in this environment.
-                        </div>
-                      ) : billingStatus ? (
-                        <>
-                          <OrganizationCurrentPlanPanel
-                            billingStatus={billingStatus}
-                            planCatalog={planCatalog}
-                            isLoadingPlanCatalog={isLoadingPlanCatalog}
-                            onChangeBillingInterval={
-                              handleChangeBillingInterval
-                            }
-                            onCancelScheduledBillingChange={
-                              scheduledBillingChangeCancellation
-                                ? handleOpenScheduledBillingChangeCancelDialog
-                                : undefined
-                            }
-                            cancelScheduledBillingChangeLabel={
-                              scheduledBillingChangeCancellation?.ctaLabel ??
-                              null
-                            }
-                            onManageBilling={handleManageBilling}
-                            isOpeningPortal={isOpeningPortal}
-                          />
-                          {!billingStatus.canManageBilling ? (
-                            <p className="min-w-0 text-sm font-medium text-primary">
-                              Only organization owners can manage billing.
-                            </p>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </CardContent>
-                  </Card>
-                ) : null
-              }
-            />
-            {billingError ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                {billingError}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Card className="border-border/60">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-xl">
-                  <Users className="size-4 text-muted-foreground" />
-                  Members
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Active members ({activeMembers.length})
-                  {pendingMembers.length > 0
-                    ? ` • Pending invites (${pendingMembers.length})`
-                    : ""}
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-0">
-                {canInvite ? (
-                  <div className="space-y-3">
-                    {pendingSeatPaymentNotice}
-                    <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
-                      <Input
-                        placeholder="Email address"
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && void handleInvite()
-                        }
-                        className="h-9 w-full sm:w-80"
-                      />
-                      <Button
-                        size="sm"
-                        className="h-9"
-                        onClick={handleInvite}
-                        disabled={
-                          !inviteEmail.trim() ||
-                          isInviting ||
-                          isHandlingSeatPayment ||
-                          memberInviteGate.isLoading ||
-                          memberInviteGate.isDenied
-                        }
-                      >
-                        <UserPlus className="mr-2 size-4" />
-                        {isInviting || isHandlingSeatPayment
-                          ? "Working..."
-                          : "Add member"}
-                      </Button>
-                    </div>
-
-                    {billingStatus?.plan &&
-                    planCatalog?.plans[billingStatus.plan]?.billingModel ===
-                      "per_seat" ? (
-                      <p className="text-xs text-muted-foreground">
-                        Pending invites are free. You'll be billed for this seat
-                        once the invite is accepted.
-                      </p>
-                    ) : null}
-
-                    {memberInviteGate.isDenied ? (
-                      <Alert
-                        className="border-primary/20 bg-primary/[0.04]"
-                        data-testid="member-limit-upsell"
-                      >
-                        <CreditCard className="size-4 text-primary" />
-                        <AlertTitle>Need more members?</AlertTitle>
-                        <AlertDescription className="gap-2">
-                          {memberInviteGate.denialMessage ? (
-                            <p>{memberInviteGate.denialMessage}</p>
-                          ) : null}
-                          {memberUpsellTeaser ? (
-                            <p className="text-foreground/80">
-                              {memberUpsellTeaser}
-                            </p>
-                          ) : null}
-                          {billingStatus?.canManageBilling ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="mt-1"
-                              onClick={handleViewBilling}
-                            >
-                              {memberUpsellCtaLabel}
-                            </Button>
-                          ) : (
-                            <p className="font-medium text-foreground/80">
-                              Ask an organization owner to review billing
-                              options.
-                            </p>
-                          )}
-                        </AlertDescription>
-                      </Alert>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {membersLoading ? (
-                  <div className="flex items-center gap-2 py-3 text-muted-foreground">
-                    <RefreshCw className="size-4 animate-spin" />
-                    Loading members...
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {activeMembers.map((member) => {
-                      const memberRole = resolveOrganizationRole(member);
-                      return (
-                        <OrganizationMemberRow
-                          key={member._id}
-                          member={member}
-                          role={memberRole}
-                          currentUserEmail={currentUserEmail}
-                          canEditRole={isOwner && memberRole !== "owner"}
-                          isRoleUpdating={roleUpdatingEmail === member.email}
-                          onRoleChange={
-                            isOwner && memberRole !== "owner"
-                              ? (role) =>
-                                  void handleChangeMemberRole(member, role)
+            showPlanBilling={billingUiEnabled}
+            showCredits
+            billingStatus={billingStatus}
+            organizationName={organization.name}
+            canManageCredits={canEdit || organization.isCreator === true}
+            planCatalog={planCatalog}
+            isLoadingBilling={isLoadingBilling}
+            isLoadingPlanCatalog={isLoadingPlanCatalog}
+            isStartingPlanChange={isStartingPlanChange}
+            pendingPlanChangeTarget={pendingPlanChangeTarget}
+            isOpeningPortal={isOpeningPortal}
+            onDowngradePlan={handleDowngradePlan}
+            onStartPlanChange={handlePlanChange}
+            onStartAutoPlanChange={handleAutoPlanChange}
+            checkoutIntent={checkoutIntent}
+            onCheckoutIntentConsumed={onCheckoutIntentConsumed}
+            currentPlanPanel={
+              billingUiEnabled ? (
+                <Card className="border-border/60">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-xl">
+                      <CreditCard className="size-4 text-muted-foreground" />
+                      Billing
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Review your current plan and subscription.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-0">
+                    {isLoadingBilling ? (
+                      <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                        Loading billing details...
+                      </div>
+                    ) : billingStatus && !billingStatus.billingConfigured ? (
+                      <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                        Billing is not configured in this environment.
+                      </div>
+                    ) : billingStatus ? (
+                      <>
+                        <OrganizationCurrentPlanPanel
+                          billingStatus={billingStatus}
+                          planCatalog={planCatalog}
+                          isLoadingPlanCatalog={isLoadingPlanCatalog}
+                          onChangeBillingInterval={handleChangeBillingInterval}
+                          onCancelScheduledBillingChange={
+                            scheduledBillingChangeCancellation
+                              ? handleOpenScheduledBillingChangeCancelDialog
                               : undefined
                           }
-                          onTransferOwnership={
-                            isOwner && memberRole !== "owner"
-                              ? () => setTransferTargetMember(member)
-                              : undefined
+                          cancelScheduledBillingChangeLabel={
+                            scheduledBillingChangeCancellation?.ctaLabel ?? null
                           }
-                          isTransferringOwnership={
-                            isTransferringOwnership &&
-                            transferTargetMember?.email === member.email
-                          }
-                          onRemove={
-                            canRemoveMember(member)
-                              ? () => handleRemoveMember(member.email)
-                              : undefined
-                          }
+                          onManageBilling={handleManageBilling}
+                          isOpeningPortal={isOpeningPortal}
                         />
-                      );
-                    })}
+                        {!billingStatus.canManageBilling ? (
+                          <p className="min-w-0 text-sm font-medium text-primary">
+                            Only organization owners can manage billing.
+                          </p>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ) : null
+            }
+          />
+          {billingError ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {billingError}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <Card className="border-border/60">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Users className="size-4 text-muted-foreground" />
+                Members
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Active members ({activeMembers.length})
+                {pendingMembers.length > 0
+                  ? ` • Pending invites (${pendingMembers.length})`
+                  : ""}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-0">
+              {canInvite ? (
+                <div className="space-y-3">
+                  {pendingSeatPaymentNotice}
+                  <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+                    <Input
+                      placeholder="Email address"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && void handleInvite()
+                      }
+                      className="h-9 w-full sm:w-80"
+                    />
+                    <Button
+                      size="sm"
+                      className="h-9"
+                      onClick={handleInvite}
+                      disabled={
+                        !inviteEmail.trim() ||
+                        isInviting ||
+                        isHandlingSeatPayment ||
+                        memberInviteGate.isLoading ||
+                        memberInviteGate.isDenied
+                      }
+                    >
+                      <UserPlus className="mr-2 size-4" />
+                      {isInviting || isHandlingSeatPayment
+                        ? "Working..."
+                        : "Add member"}
+                    </Button>
                   </div>
-                )}
 
-                {pendingMembers.length > 0 ? (
-                  <div className="space-y-1 pt-2">
-                    {pendingMembers.map((member) => (
+                  {billingStatus?.plan &&
+                  planCatalog?.plans[billingStatus.plan]?.billingModel ===
+                    "per_seat" ? (
+                    <p className="text-xs text-muted-foreground">
+                      Pending invites are free. You'll be billed for this seat
+                      once the invite is accepted.
+                    </p>
+                  ) : null}
+
+                  {memberInviteGate.isDenied ? (
+                    <Alert
+                      className="border-primary/20 bg-primary/[0.04]"
+                      data-testid="member-limit-upsell"
+                    >
+                      <CreditCard className="size-4 text-primary" />
+                      <AlertTitle>Need more members?</AlertTitle>
+                      <AlertDescription className="gap-2">
+                        {memberInviteGate.denialMessage ? (
+                          <p>{memberInviteGate.denialMessage}</p>
+                        ) : null}
+                        {memberUpsellTeaser ? (
+                          <p className="text-foreground/80">
+                            {memberUpsellTeaser}
+                          </p>
+                        ) : null}
+                        {billingStatus?.canManageBilling ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="mt-1"
+                            onClick={handleViewBilling}
+                          >
+                            {memberUpsellCtaLabel}
+                          </Button>
+                        ) : (
+                          <p className="font-medium text-foreground/80">
+                            Ask an organization owner to review billing options.
+                          </p>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {membersLoading ? (
+                <div className="flex items-center gap-2 py-3 text-muted-foreground">
+                  <RefreshCw className="size-4 animate-spin" />
+                  Loading members...
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {activeMembers.map((member) => {
+                    const memberRole = resolveOrganizationRole(member);
+                    return (
                       <OrganizationMemberRow
                         key={member._id}
                         member={member}
+                        role={memberRole}
                         currentUserEmail={currentUserEmail}
-                        isPending
+                        canEditRole={isOwner && memberRole !== "owner"}
+                        isRoleUpdating={roleUpdatingEmail === member.email}
+                        onRoleChange={
+                          isOwner && memberRole !== "owner"
+                            ? (role) =>
+                                void handleChangeMemberRole(member, role)
+                            : undefined
+                        }
+                        onTransferOwnership={
+                          isOwner && memberRole !== "owner"
+                            ? () => setTransferTargetMember(member)
+                            : undefined
+                        }
+                        isTransferringOwnership={
+                          isTransferringOwnership &&
+                          transferTargetMember?.email === member.email
+                        }
                         onRemove={
-                          canRemovePendingMember()
+                          canRemoveMember(member)
                             ? () => handleRemoveMember(member.email)
                             : undefined
                         }
                       />
-                    ))}
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
+                    );
+                  })}
+                </div>
+              )}
 
-            <Card className="border-border/60">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-xl">
-                  <Building2 className="size-4 text-muted-foreground" />
-                  Audit Log
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Review organization activity and export it as CSV.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3 pt-0">
-                {billingUiEnabled &&
-                (isLoadingEntitlements || isLoadingOrganizationPremiumness) ? (
-                  <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                    Loading audit log access...
-                  </div>
-                ) : auditLogLocked ? (
-                  <div className="rounded-md border border-border/70 p-4">
-                    <div className="space-y-1.5">
-                      <h3 className="text-sm font-medium">
-                        Audit Log requires Enterprise
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        Audit Log is not included on your current plan.
-                        {billingStatus?.canManageBilling
-                          ? " Upgrade this organization to Enterprise to restore access."
-                          : " Ask an organization owner to upgrade to Enterprise."}
-                      </p>
-                    </div>
-                    {billingUiEnabled ? (
-                      <Button className="mt-3" onClick={handleViewBilling}>
-                        View billing options
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : (
-                  <OrganizationAuditLog
-                    organizationId={organization._id}
-                    organizationName={organization.name}
-                    isAuthenticated={isAuthenticated}
-                  />
-                )}
-              </CardContent>
-            </Card>
+              {pendingMembers.length > 0 ? (
+                <div className="space-y-1 pt-2">
+                  {pendingMembers.map((member) => (
+                    <OrganizationMemberRow
+                      key={member._id}
+                      member={member}
+                      currentUserEmail={currentUserEmail}
+                      isPending
+                      onRemove={
+                        canRemovePendingMember()
+                          ? () => handleRemoveMember(member.email)
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
 
-            <Card className="border-destructive/40">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-xl text-destructive">
-                  <AlertTriangle className="size-4" />
-                  Danger Zone
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  These actions are permanent and may remove access for members.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-2.5 pt-0">
-                {!membersLoading && !isOwner ? (
-                  <Button
-                    variant="outline"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setLeaveConfirmOpen(true)}
-                  >
-                    <LogOut className="mr-2 size-4" />
-                    Leave Organization
-                  </Button>
-                ) : null}
-                {!membersLoading && isOwner ? (
-                  <Button
-                    variant="outline"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setDeleteConfirmOpen(true)}
-                  >
-                    <Trash2 className="mr-2 size-4" />
-                    Delete Organization
-                  </Button>
-                ) : null}
-              </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
+          <Card className="border-border/60">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Building2 className="size-4 text-muted-foreground" />
+                Audit Log
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Review organization activity and export it as CSV.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
+              {billingUiEnabled &&
+              (isLoadingEntitlements || isLoadingOrganizationPremiumness) ? (
+                <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                  Loading audit log access...
+                </div>
+              ) : auditLogLocked ? (
+                <div className="rounded-md border border-border/70 p-4">
+                  <div className="space-y-1.5">
+                    <h3 className="text-sm font-medium">
+                      Audit Log requires Enterprise
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Audit Log is not included on your current plan.
+                      {billingStatus?.canManageBilling
+                        ? " Upgrade this organization to Enterprise to restore access."
+                        : " Ask an organization owner to upgrade to Enterprise."}
+                    </p>
+                  </div>
+                  {billingUiEnabled ? (
+                    <Button className="mt-3" onClick={handleViewBilling}>
+                      View billing options
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <OrganizationAuditLog
+                  organizationId={organization._id}
+                  organizationName={organization.name}
+                  isAuthenticated={isAuthenticated}
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-destructive/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-xl text-destructive">
+                <AlertTriangle className="size-4" />
+                Danger Zone
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                These actions are permanent and may remove access for members.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-2.5 pt-0">
+              {!membersLoading && !isOwner ? (
+                <Button
+                  variant="outline"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setLeaveConfirmOpen(true)}
+                >
+                  <LogOut className="mr-2 size-4" />
+                  Leave Organization
+                </Button>
+              ) : null}
+              {!membersLoading && isOwner ? (
+                <Button
+                  variant="outline"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setDeleteConfirmOpen(true)}
+                >
+                  <Trash2 className="mr-2 size-4" />
+                  Delete Organization
+                </Button>
+              ) : null}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       {/* Ownership Transfer Confirmation */}
       <AlertDialog
@@ -1723,7 +1760,7 @@ function OrganizationPage({
         isLeaving={isLeaving}
         onConfirm={handleLeave}
       />
-    </div>
+    </SettingsPageShell>
   );
 }
 const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =
