@@ -1,13 +1,16 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
 import * as Sentry from "@sentry/electron/main";
-import { electronSentryConfig } from "../shared/sentry-config.js";
+import { app } from "electron";
+import { electronMainSentryConfig } from "../shared/sentry-config.js";
 
 Sentry.init({
-  ...electronSentryConfig,
+  // `app.isPackaged`, not NODE_ENV: the packaged app never sets NODE_ENV, so
+  // the shared default would tag every shipped release as "dev".
+  ...electronMainSentryConfig(app.isPackaged),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
 });
 
-import { app, BrowserWindow, shell, Menu, dialog } from "electron";
+import { BrowserWindow, shell, Menu, dialog } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
 import path from "path";
