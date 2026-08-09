@@ -593,6 +593,14 @@ export function captureCurrentReturnPath(): string | null {
   return `${pathname}${search}`;
 }
 
+/**
+ * Where a manual project switch should land, if anywhere.
+ *
+ * As with `shouldSnapToServersOnActiveProjectChange`, callers must resolve
+ * `activeTab` from the live pathname rather than a routing hook: a switch that
+ * resolves after the caller has already navigated would otherwise be judged
+ * against the page the user left.
+ */
 export function getProjectSwitchNavigationTarget({
   activeTab,
   activeOrganizationId,

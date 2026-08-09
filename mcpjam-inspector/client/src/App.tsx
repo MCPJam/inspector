@@ -3563,7 +3563,6 @@ export default function App() {
     }
   }, [
     activeProjectId,
-    activeTab,
     isAuthLoading,
     isLoadingRemoteProjects,
     isWorkOsLoading,
@@ -3910,7 +3909,11 @@ export default function App() {
       await handleSwitchProject(projectId);
 
       const navigationTarget = getProjectSwitchNavigationTarget({
-        activeTab,
+        // Read the tab from the live pathname, not the `activeTab` hook value:
+        // the switcher's per-row gear navigates while this switch is still in
+        // flight, and a closure-captured tab would send the user back to
+        // Servers on top of the settings page they just opened.
+        activeTab: pathnameToActiveTab(window.location.pathname),
         activeOrganizationId,
         nextProjectOrganizationId: nextProject?.organizationId,
       });
@@ -3918,13 +3921,7 @@ export default function App() {
         navigateToTarget(navigationTarget);
       }
     },
-    [
-      activeOrganizationId,
-      activeTab,
-      handleSwitchProject,
-      navigateToTarget,
-      projects,
-    ]
+    [activeOrganizationId, handleSwitchProject, navigateToTarget, projects]
   );
 
   const isBillingEntryHandoff =
