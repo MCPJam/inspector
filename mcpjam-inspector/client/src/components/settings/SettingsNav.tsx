@@ -61,19 +61,26 @@ export function SettingsNav({
       }
     : null;
 
+  // The tabs never shrink, so on a phone they overflow the column rather than
+  // wrapping — four of them need ~380px against the ~343px a 375px viewport
+  // leaves. Scrolling the strip keeps every section reachable. The border stays
+  // on the nav so it scrolls with the tabs, and `w-max min-w-full` lets the nav
+  // grow past the scroller while still spanning it when the tabs fit.
   return (
-    <nav
-      aria-label="Settings sections"
-      className="flex items-end gap-1 border-b border-border/60"
-    >
-      {(organizationTab ? [...tabs, organizationTab] : tabs).map((tab) => (
-        <SectionTab
-          key={tab.id}
-          label={tab.label}
-          isActive={active === tab.id}
-          onSelect={() => appNavigate(tab.path)}
-        />
-      ))}
-    </nav>
+    <div className="overflow-x-auto scrollbar-hidden">
+      <nav
+        aria-label="Settings sections"
+        className="flex w-max min-w-full items-end gap-1 border-b border-border/60"
+      >
+        {(organizationTab ? [...tabs, organizationTab] : tabs).map((tab) => (
+          <SectionTab
+            key={tab.id}
+            label={tab.label}
+            isActive={active === tab.id}
+            onSelect={() => appNavigate(tab.path)}
+          />
+        ))}
+      </nav>
+    </div>
   );
 }

@@ -349,25 +349,29 @@ function OrganizationAccessRestricted({
   const { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave } =
     useLeaveOrganization(organization);
 
+  // A member without admin rights is still ON the Organization section, so the
+  // tab stays and stays current — they just cannot manage what is behind it.
+  // Losing the shell here left them with no route to the other Settings
+  // sections at all.
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8">
-      <div className="text-center space-y-4 max-w-md">
-        <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
-        <h2 className="text-2xl font-bold">Access restricted</h2>
-        <p className="text-muted-foreground">
-          You don't have permission to view organization settings. Contact an
-          admin or owner for access.
-        </p>
-        <div className="flex flex-col items-center gap-3">
-          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
-          <button
-            type="button"
-            onClick={() => setLeaveConfirmOpen(true)}
-            className="text-sm text-muted-foreground transition-colors hover:text-destructive"
-          >
-            Leave organization
-          </button>
-        </div>
+    <OrganizationStateShell organizationId={organization._id}>
+      <Building2 className="size-8 text-muted-foreground/50" aria-hidden />
+      <h2 className="text-lg font-semibold">Access restricted</h2>
+      <p className="max-w-prose text-sm text-muted-foreground">
+        You don't have permission to view organization settings. Contact an
+        admin or owner for access.
+      </p>
+      <div className="flex flex-col items-center gap-3">
+        <Button variant="outline" onClick={() => appNavigate("/servers")}>
+          Go to Servers
+        </Button>
+        <button
+          type="button"
+          onClick={() => setLeaveConfirmOpen(true)}
+          className="rounded-sm text-sm text-muted-foreground outline-none transition-colors hover:text-destructive focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          Leave organization
+        </button>
       </div>
 
       <LeaveOrganizationDialog
@@ -377,7 +381,7 @@ function OrganizationAccessRestricted({
         isLeaving={isLeaving}
         onConfirm={handleLeave}
       />
-    </div>
+    </OrganizationStateShell>
   );
 }
 
@@ -1235,19 +1239,23 @@ function OrganizationPage({
             </div>
           </div>
         </CardContent>
-        <nav
-          className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-3 pt-1 sm:px-4"
-          aria-label="Organization settings sections"
-        >
-          {organizationSections.map((tab) => (
-            <SectionTab
-              key={tab.id}
-              label={tab.label}
-              isActive={activeSection === tab.id}
-              onSelect={() => navigateToSection(tab.id)}
-            />
-          ))}
-        </nav>
+        {/* Scrolls for the same reason the top-level strip does: the tabs do
+            not shrink, and Slack makes four of them on a phone. */}
+        <div className="overflow-x-auto scrollbar-hidden border-t border-border/60 bg-muted/20">
+          <nav
+            className="flex w-max min-w-full items-end gap-1 px-3 pt-1 sm:px-4"
+            aria-label="Organization settings sections"
+          >
+            {organizationSections.map((tab) => (
+              <SectionTab
+                key={tab.id}
+                label={tab.label}
+                isActive={activeSection === tab.id}
+                onSelect={() => navigateToSection(tab.id)}
+              />
+            ))}
+          </nav>
+        </div>
       </Card>
 
       {activeSection === "models" ? (
