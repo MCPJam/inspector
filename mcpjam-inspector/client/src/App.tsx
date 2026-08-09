@@ -3553,7 +3553,10 @@ export default function App() {
       shouldSnapToServersOnActiveProjectChange({
         previousActiveProjectId,
         nextActiveProjectId: activeProjectId,
-        activeTab,
+        // Deliberately not the `activeTab` hook value: the router commits in a
+        // transition, so that still names the page being left while the project
+        // change is already live. `navigateToServers` reads the same source.
+        activeTab: pathnameToActiveTab(window.location.pathname),
       })
     ) {
       navigateToServers();
