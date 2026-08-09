@@ -593,6 +593,14 @@ export function captureCurrentReturnPath(): string | null {
   return `${pathname}${search}`;
 }
 
+/**
+ * Where a manual project switch should land, if anywhere.
+ *
+ * As with `shouldSnapToServersOnActiveProjectChange`, callers must resolve
+ * `activeTab` from the live pathname rather than a routing hook: a switch that
+ * resolves after the caller has already navigated would otherwise be judged
+ * against the page the user left.
+ */
 export function getProjectSwitchNavigationTarget({
   activeTab,
   activeOrganizationId,
@@ -651,6 +659,14 @@ export function getInvalidOrganizationRouteNavigationTarget({
  * org-scoped, not project-scoped, so snapping there would bounce the user right
  * back off the settings they just opened.
  *
+ * Project settings is exempt for the same reason: it renders whichever project
+ * is active, so it is still correct after the switch, and the switcher's
+ * per-row gear reaches it by switching project and navigating as one gesture.
+ *
+ * Callers must resolve `activeTab` from the live pathname, not from a routing
+ * hook — the router commits navigations in a transition, so a hook-derived tab
+ * can still name the page the user is leaving when this runs.
+ *
  * The initial hydration (no previous id) and the local-default `"none"`
  * placeholder are never treated as real switches.
  */
@@ -672,7 +688,7 @@ export function shouldSnapToServersOnActiveProjectChange({
     return false;
   }
 
-  if (activeTab === "organizations") {
+  if (activeTab === "organizations" || activeTab === "project-settings") {
     return false;
   }
 
