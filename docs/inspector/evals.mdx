@@ -194,6 +194,10 @@ The first run of a suite saves the set of MCP servers used as a frozen snapshot;
 
 In suite settings, the **Computer environment** select lets you pin a built Docker environment so every eval iteration boots a fresh sandbox from the same image. This keeps results comparable across runs and edits — each iteration gets an identical starting state.
 
+<Note>
+  Eval computer commands always run in **MCPJam cloud sandboxes** — never on the machine running this inspector. If this inspector cannot reach MCPJam cloud sandboxes, **Run all** is disabled for suites that pin a sandbox image.
+</Note>
+
 - Choose an environment from the list. Environments that have not finished building are labelled **(not built)**; selecting one will cause the run to fail immediately.
 - Choose **None (default image)** to run without a pinned environment.
 - The agent receives a `bash` tool inside the sandbox.
