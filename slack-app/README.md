@@ -37,13 +37,13 @@ billed to the project. Consequences worth knowing:
 | `installations/backend-client.js` | Service-token client for the backend's `/slack/installations/*` routes |
 | `installations/bot-scopes.js` | `BOT_SCOPES` — must mirror `manifest.json` |
 | `installations/event-claims.js` | Durable per-event claims (replay a stored reply instead of re-running) |
-| `agent/turn-target.js` | Whose credentials and which project a turn runs with |
-| `agent/connect-link.js` | Mints a per-user connect URL from the inspector's link bridge |
+| `agent/turn-target.js` | Whose credentials and which project a turn runs with — thin over `@mcpjam/surface-core`'s `createTurnTargetResolver` and channel-binding cache; this file speaks Slack's own `/slack/*` wire shape |
+| `agent/connect-link.js` | Mints a per-user connect URL — thin over `@mcpjam/surface-core`'s `mintConnectUrl`, sending Slack's own `/api/slack/link/session` body |
 | `listeners/actions/account-actions.js` | App Home project picker + disconnect |
 | `listeners/middleware/tenant-guard.js` | Global middleware: resolves the tenant, drops workspaces we have no credentials for |
 | `listeners/events/app-lifecycle.js` | `app_uninstalled` / `tokens_revoked` — revoke + synchronous cache purge |
 | `agent/mcpjam-client.js` | HTTP client for the MCPJam public API — turns, run starts, run polling |
-| `agent/turn-runner.js` | Event dedupe (TTL), per-thread serialization, thread → message-history normalization |
+| `agent/turn-runner.js` | Thin over `@mcpjam/surface-core`'s `runTurnForEvent` — the durable-claim state machine, dedupe and per-thread serialization now live there; this file fetches Slack history and translates Slack's own vocabulary |
 | `listeners/events/run-and-reply.js` | Shared body for DM / mention triggers: run the turn, post the reply |
 | `listeners/actions/run-suite-button.js` | The human-gated **Run it** button + the detached watcher that edits the message with the run outcome |
 | `listeners/views/` | Block Kit builders (App Home, created-suite blocks, feedback) |

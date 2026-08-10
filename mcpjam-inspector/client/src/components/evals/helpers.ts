@@ -1148,3 +1148,30 @@ export function pickLatestCompletedRun(
     r.runNumber > best.runNumber ? r : best,
   );
 }
+
+/**
+ * Does anything about this suite pin a sandbox image for its NEXT run?
+ *
+ * Two sources, both checked: the suite's own
+ * `environment.computerEnvironmentId` (the migration-era override) and any
+ * ATTACHED project environment's pin — env-backed suites resolve their image
+ * server-side at launch, so checking only the suite field would miss exactly
+ * the suites that increasingly carry the pin. Historical runs' frozen
+ * snapshot pins are deliberately NOT consulted here: they gate REPLAY of that
+ * run, not fresh runs (see `RunDetailPlaygroundActions`).
+ */
+export function evalSuitePinsSandboxImage(
+  suite: Pick<EvalSuite, "environment" | "environmentIds">,
+  attachedEnvironments:
+    | Array<{ environmentId: string; computerEnvironmentId?: string | null }>
+    | undefined,
+): boolean {
+  if (suite.environment?.computerEnvironmentId) return true;
+  return (suite.environmentIds ?? []).some((environmentId) =>
+    Boolean(
+      (attachedEnvironments ?? []).find(
+        (environment) => environment.environmentId === environmentId,
+      )?.computerEnvironmentId,
+    ),
+  );
+}

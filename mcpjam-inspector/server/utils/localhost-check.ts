@@ -148,9 +148,19 @@ const TUNNEL_HOST_SUFFIXES = [
  * `isAllowedHost` so a future config that allowlists a tunnel domain cannot
  * silently start leaking the session token through the tunnel.
  *
- * @param hostHeader - The Host header value from the request (the original
- *   tunnel host survives forwarding via the X-Forwarded-Host header the
- *   relay edge injects; callers should check both).
+ * COMMA-SEPARATED VALUES. This is called on `X-Forwarded-Host` as well as
+ * `Host`, and a forwarded header accumulates one entry per hop: an inner proxy
+ * writes `abc123.tunnels.mcpjam.com`, a second appends its own, and the two
+ * arrive as `localhost:6274, abc123.tunnels.mcpjam.com` (or as repeated headers
+ * that the runtime joins the same way). Reading only up to the first colon
+ * would take `localhost` from that and answer "not a tunnel" — which is the
+ * leak this whole check exists to prevent. Every entry is tested, and ANY of
+ * them being a tunnel vetoes: a request that touched a tunnel anywhere on its
+ * path is a tunnel request.
+ *
+ * @param hostHeader - A `Host` or `X-Forwarded-Host` value. The original tunnel
+ *   host survives forwarding via `X-Forwarded-Host`, which the relay edge
+ *   injects; callers should check both headers.
  * @param extraTunnelHosts - Exact additional tunnel hostnames to treat as
  *   tunnels (e.g. the domains of currently active listeners).
  */
@@ -161,11 +171,17 @@ export function isTunnelHost(
   if (!hostHeader) {
     return false;
   }
-  const host = hostHeader.toLowerCase().split(":")[0];
-  if (TUNNEL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
-    return true;
-  }
-  return extraTunnelHosts.some((tunnel) => tunnel.toLowerCase() === host);
+  const extras = extraTunnelHosts.map((tunnel) => tunnel.toLowerCase());
+  return hostHeader
+    .toLowerCase()
+    .split(",")
+    .map((entry) => entry.trim().split(":")[0])
+    .filter((host) => host.length > 0)
+    .some(
+      (host) =>
+        TUNNEL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix)) ||
+        extras.includes(host)
+    );
 }
 
 /**

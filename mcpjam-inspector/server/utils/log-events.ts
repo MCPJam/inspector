@@ -187,6 +187,7 @@ export type SystemEventMap = {
     failureClass?: string;
   };
   "process.unhandled_rejection": { errorCode: string };
+  "process.uncaught_exception": { errorCode: string };
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
