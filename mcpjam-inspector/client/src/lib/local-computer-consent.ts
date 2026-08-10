@@ -160,6 +160,50 @@ export async function grantLocalComputerConsent(): Promise<boolean> {
 }
 
 /**
+ * Mint a single-use nonce for the local terminal WebSocket.
+ *
+ * Lives here (rather than in a terminal module) because it presents the SAME
+ * consent capability, through the same `authFetch` path, to the same
+ * `/api/mcp/computers` router — and because the consent token must never leak
+ * into a URL or a persisted transcript, which the header keeps it out of.
+ *
+ * Throws with a user-presentable message on failure: `ComputerTerminal`'s
+ * connect path renders it in the pane's error overlay, so a 403 (consent gone
+ * stale) or a 503 (node-pty missing) reads as an explanation instead of a
+ * silent dead socket.
+ */
+export async function mintLocalTerminalNonce(args: {
+  projectId: string;
+  consentToken: string | null;
+}): Promise<string> {
+  const response = await authFetch(
+    "/api/mcp/computers/local-terminal-token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(args.consentToken
+          ? { [LOCAL_CONSENT_HEADER]: args.consentToken }
+          : {}),
+      },
+      body: JSON.stringify({ projectId: args.projectId }),
+    },
+  );
+  const json = (await response.json().catch(() => null)) as {
+    nonce?: unknown;
+    error?: unknown;
+  } | null;
+  if (!response.ok || typeof json?.nonce !== "string") {
+    throw new Error(
+      typeof json?.error === "string"
+        ? json.error
+        : "Could not open a terminal on this machine.",
+    );
+  }
+  return json.nonce;
+}
+
+/**
  * SERVER-ONLY revoke: unlink the device's capability. Deliberately does NOT
  * touch local storage — the caller clears storage synchronously up front (the
  * user's explicit forget) and this best-effort network call runs after.

@@ -142,3 +142,70 @@ describe("ComputerTerminal — stale-connection guards", () => {
     expect(h.connections).toHaveLength(0);
   });
 });
+
+describe("ComputerTerminal — wsPath + uploadEnabled", () => {
+  it("threads wsPath through to the connection", async () => {
+    const mintToken = vi.fn(async () => "nonce");
+    render(
+      <ComputerTerminal
+        mintToken={mintToken}
+        themeMode="dark"
+        wsPath="/api/web/computers/local-terminal"
+      />
+    );
+
+    await waitFor(() => expect(h.connections).toHaveLength(1));
+    expect(h.connections[0].opts.path).toBe(
+      "/api/web/computers/local-terminal"
+    );
+  });
+
+  it("omits path entirely by default (cloud terminal)", async () => {
+    const mintToken = vi.fn(async () => "tok");
+    render(<ComputerTerminal mintToken={mintToken} themeMode="dark" />);
+
+    await waitFor(() => expect(h.connections).toHaveLength(1));
+    expect(h.connections[0].opts.path).toBeUndefined();
+  });
+
+  it("uploadEnabled={false} attaches NO drop handlers and shows no overlay", async () => {
+    const mintToken = vi.fn(async () => "nonce");
+    const { container } = render(
+      <ComputerTerminal
+        mintToken={mintToken}
+        themeMode="dark"
+        uploadEnabled={false}
+      />
+    );
+    await waitFor(() => expect(h.connections).toHaveLength(1));
+
+    const surface = container.querySelector(".relative.min-h-0.flex-1");
+    expect(surface).not.toBeNull();
+    // A drag that WOULD open the overlay must do nothing: on the local pane the
+    // upload posts to the cloud box's route and would burn the single-use nonce.
+    fireEvent.dragEnter(surface!, { dataTransfer: { types: ["Files"] } });
+    expect(
+      container.textContent?.includes("Drop files to upload")
+    ).toBe(false);
+
+    // And the mint must not have been called a second time by a drop.
+    fireEvent.drop(surface!, {
+      dataTransfer: { types: ["Files"], files: [new File(["x"], "a.txt")] },
+    });
+    expect(mintToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("uploadEnabled defaults to true — the cloud pane keeps its drop overlay", async () => {
+    const mintToken = vi.fn(async () => "tok");
+    const { container } = render(
+      <ComputerTerminal mintToken={mintToken} themeMode="dark" />
+    );
+    await waitFor(() => expect(h.connections).toHaveLength(1));
+
+    const surface = container.querySelector(".relative.min-h-0.flex-1");
+    fireEvent.dragEnter(surface!, { dataTransfer: { types: ["Files"] } });
+    await waitFor(() =>
+      expect(container.textContent?.includes("Drop files to upload")).toBe(true)
+    );
+  });
+});

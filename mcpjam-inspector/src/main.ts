@@ -81,6 +81,7 @@ if (!app.isDefaultProtocolClient("mcpjam")) {
 let mainWindow: BrowserWindow | null = null;
 let server: any = null;
 let serverPort: number = 0;
+let shutdownLocalTerminals: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
 
@@ -334,7 +335,14 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
-    const { app: honoApp, injectWebSocket } = await createHonoApp();
+    const {
+      app: honoApp,
+      injectWebSocket,
+      shutdownLocalComputerTerminals,
+    } = await createHonoApp();
+    // Held for `before-quit`: killing live local PTYs is the ONLY thing that
+    // stops them — `server.close()` does not tear down established sockets.
+    shutdownLocalTerminals = shutdownLocalComputerTerminals;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -884,6 +892,7 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     return;
   }
+  shutdownLocalTerminals?.();
   if (server) {
     server.close?.();
   }

@@ -1,0 +1,415 @@
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { WebSocket } from "ws";
+import { Hono } from "hono";
+import { createNodeWebSocket } from "@hono/node-ws";
+
+/**
+ * Route-level tests for GET /api/web/computers/local-terminal — the only path
+ * from a browser to an interactive shell on the user's own machine.
+ *
+ * The transport under test is the WS handshake itself (the nonce rides
+ * `Sec-WebSocket-Protocol`), so these run a real http.Server with a real `ws`
+ * client, following computer-terminal.test.ts's recipe. node-pty is replaced by
+ * a fake module — the native addon isn't installable in CI, and a fake lets us
+ * assert the wire protocol and the kill-on-close contract deterministically.
+ *
+ * NOTE on Origin: `startServer()` builds a BARE Hono app, so the global
+ * `originValidationMiddleware` (which 403s a disallowed Origin pre-upgrade in
+ * both production entrypoints) is NOT in play here. What these exercise is the
+ * handler's own in-handler check — including the local tightening that an
+ * ABSENT Origin is rejected, which the HTTP middleware deliberately allows.
+ */
+
+const scratch = mkdtempSync(join(tmpdir(), "mcpjam-local-terminal-ws-"));
+vi.mock("node:os", async () => {
+  const actual = await vi.importActual<typeof import("node:os")>("node:os");
+  return { ...actual, homedir: () => scratch };
+});
+
+import { createLocalComputerTerminalWsHandler } from "../local-computer-terminal.js";
+import {
+  resetLocalPtyCachesForTests,
+  setLocalPtyModuleForTests,
+  type NodePtyModule,
+  type NodePtyProcess,
+} from "../../../utils/computers/local-pty.js";
+import {
+  issueLocalTerminalNonce,
+  resetLocalTerminalNoncesForTests,
+} from "../../../utils/computers/local-terminal-auth.js";
+
+const ALLOWED_ORIGIN = "http://localhost:5173";
+
+afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+interface FakePtyRecord {
+  proc: NodePtyProcess;
+  writes: string[];
+  resizes: Array<{ cols: number; rows: number }>;
+  killed: boolean;
+  emit: (data: string) => void;
+  exit: () => void;
+  spawnOptions: Record<string, unknown>;
+  spawnFile: string;
+}
+
+const spawned: FakePtyRecord[] = [];
+
+function installFakePty(): void {
+  const module: NodePtyModule = {
+    spawn: (file, _args, options) => {
+      const dataListeners: Array<(d: string) => void> = [];
+      const exitListeners: Array<(e: { exitCode: number }) => void> = [];
+      const record: FakePtyRecord = {
+        writes: [],
+        resizes: [],
+        killed: false,
+        spawnFile: file,
+        spawnOptions: options as Record<string, unknown>,
+        emit: (data) => dataListeners.forEach((l) => l(data)),
+        exit: () => exitListeners.forEach((l) => l({ exitCode: 0 })),
+        proc: {
+          pid: 1234,
+          onData: (listener) => {
+            dataListeners.push(listener);
+            return { dispose: () => {} };
+          },
+          onExit: (listener) => {
+            exitListeners.push(listener as never);
+            return { dispose: () => {} };
+          },
+          write: (data) => {
+            record.writes.push(data);
+          },
+          resize: (cols, rows) => {
+            record.resizes.push({ cols, rows });
+          },
+          kill: () => {
+            record.killed = true;
+          },
+        },
+      };
+      spawned.push(record);
+      return record.proc;
+    },
+  };
+  setLocalPtyModuleForTests(module);
+}
+
+async function startServer(): Promise<{
+  port: number;
+  close: () => Promise<void>;
+}> {
+  const app = new Hono();
+  const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+  app.get(
+    "/api/web/computers/local-terminal",
+    createLocalComputerTerminalWsHandler(upgradeWebSocket)
+  );
+  const server = http.createServer();
+  injectWebSocket(server);
+  server.on("request", (_req, res) => {
+    res.statusCode = 404;
+    res.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    port,
+    close: () =>
+      new Promise<void>((resolve) => {
+        // `server.close()` alone does NOT drop established sockets — the same
+        // reason `shutdownLocalComputerTerminals()` has to exist.
+        server.closeAllConnections?.();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+function connect(
+  port: number,
+  nonce: string,
+  opts: { origin?: string | null } = {}
+): WebSocket {
+  const origin = opts.origin === undefined ? ALLOWED_ORIGIN : opts.origin;
+  return new WebSocket(
+    `ws://127.0.0.1:${port}/api/web/computers/local-terminal?cols=100&rows=30`,
+    [nonce],
+    origin === null ? {} : { origin }
+  );
+}
+
+function waitForClose(
+  ws: WebSocket
+): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve) => {
+    ws.on("close", (code, reason) =>
+      resolve({ code, reason: reason.toString() })
+    );
+  });
+}
+
+function waitForJson(
+  ws: WebSocket,
+  type: string
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out waiting for ${type}`)),
+      5_000
+    );
+    ws.on("message", (data, isBinary) => {
+      if (isBinary) return;
+      try {
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (message.type === type) {
+          clearTimeout(timer);
+          resolve(message);
+        }
+      } catch {
+        // non-JSON text frame; ignore
+      }
+    });
+  });
+}
+
+function waitForBinary(ws: WebSocket): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("timed out waiting for binary")),
+      5_000
+    );
+    ws.on("message", (data, isBinary) => {
+      if (!isBinary) return;
+      clearTimeout(timer);
+      resolve(data as Buffer);
+    });
+  });
+}
+
+let server: { port: number; close: () => Promise<void> };
+
+beforeEach(async () => {
+  vi.stubEnv("ALLOWED_ORIGINS", ALLOWED_ORIGIN);
+  spawned.length = 0;
+  resetLocalTerminalNoncesForTests();
+  resetLocalPtyCachesForTests();
+  installFakePty();
+  server = await startServer();
+});
+
+afterEach(async () => {
+  await server.close();
+  vi.unstubAllEnvs();
+  resetLocalPtyCachesForTests();
+  resetLocalTerminalNoncesForTests();
+});
+
+describe("local terminal WS — auth", () => {
+  it("opens a PTY for a valid nonce and announces ready", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    const ready = await waitForJson(ws, "ready");
+
+    expect(typeof ready.sessionId).toBe("string");
+    expect(spawned).toHaveLength(1);
+    ws.close();
+  });
+
+  it("4401s an unknown nonce — and never spawns", async () => {
+    const ws = connect(server.port, "not-a-real-nonce");
+    const { code } = await waitForClose(ws);
+
+    expect(code).toBe(4401);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("4401s an EMPTY nonce", async () => {
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${server.port}/api/web/computers/local-terminal`,
+      { origin: ALLOWED_ORIGIN }
+    );
+    const { code } = await waitForClose(ws);
+
+    expect(code).toBe(4401);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("4401s a REUSED nonce — single use survives a replayed handshake", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const first = connect(server.port, nonce);
+    await waitForJson(first, "ready");
+    first.close();
+
+    const replay = connect(server.port, nonce);
+    const { code } = await waitForClose(replay);
+
+    expect(code).toBe(4401);
+    expect(spawned).toHaveLength(1);
+  });
+
+  it("4401s a DISALLOWED Origin", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce, {
+      origin: "https://evil.example.com",
+    });
+    const { code } = await waitForClose(ws);
+
+    expect(code).toBe(4401);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("4401s an ABSENT Origin — the local tightening over the HTTP middleware", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce, { origin: null });
+    const { code } = await waitForClose(ws);
+
+    expect(code).toBe(4401);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("does NOT consume the nonce when the Origin is rejected", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const rejected = connect(server.port, nonce, { origin: null });
+    await waitForClose(rejected);
+
+    // The origin check runs first, so a blocked probe can't burn a legitimate
+    // user's nonce out from under them.
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+    expect(spawned).toHaveLength(1);
+    ws.close();
+  });
+});
+
+describe("local terminal WS — degrade", () => {
+  it("4503s with an explanatory message when node-pty can't load", async () => {
+    setLocalPtyModuleForTests(null);
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    const error = await waitForJson(ws, "error");
+    const { code } = await waitForClose(ws);
+
+    expect(code).toBe(4503);
+    expect(String(error.message)).toMatch(/unavailable/i);
+    expect(spawned).toHaveLength(0);
+  });
+});
+
+describe("local terminal WS — wire protocol", () => {
+  it("spawns in the project workspace dir with the allowlisted env", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    const options = spawned[0]!.spawnOptions;
+    expect(String(options.cwd)).toBe(
+      join(scratch, ".mcpjam", "computer", "proj_1")
+    );
+    const env = options.env as NodeJS.ProcessEnv;
+    // The allowlist, not process.env: cloud credentials must never reach a PTY.
+    expect(env).not.toHaveProperty("E2B_API_KEY");
+    expect(env).not.toHaveProperty("INSPECTOR_SERVICE_TOKEN");
+    expect(options.cols).toBe(100);
+    expect(options.rows).toBe(30);
+    ws.close();
+  });
+
+  it("streams PTY output to the client as binary frames", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    const received = waitForBinary(ws);
+    spawned[0]!.emit("hello from the pty");
+
+    expect((await received).toString("utf8")).toBe("hello from the pty");
+    ws.close();
+  });
+
+  it("forwards binary client frames to PTY stdin", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    ws.send(Buffer.from("ls -la\n", "utf8"));
+    await vi.waitFor(() => expect(spawned[0]!.writes).toContain("ls -la\n"));
+    ws.close();
+  });
+
+  it("answers ping with pong", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    ws.send(JSON.stringify({ type: "ping" }));
+    await waitForJson(ws, "pong");
+    ws.close();
+  });
+
+  it("applies resize, CLAMPED to sane geometry", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+    ws.send(JSON.stringify({ type: "resize", cols: 99_999, rows: 99_999 }));
+    ws.send(JSON.stringify({ type: "resize", cols: -5, rows: 0 }));
+
+    await vi.waitFor(() => expect(spawned[0]!.resizes).toHaveLength(3));
+    expect(spawned[0]!.resizes[0]).toEqual({ cols: 120, rows: 40 });
+    expect(spawned[0]!.resizes[1]).toEqual({ cols: 500, rows: 300 });
+    // Out-of-range low values fall back to the defaults rather than 0/negative.
+    expect(spawned[0]!.resizes[2]).toEqual({ cols: 80, rows: 24 });
+    ws.close();
+  });
+
+  it("ignores malformed text frames instead of dying", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    ws.send("{not json");
+    ws.send(JSON.stringify({ type: "ping" }));
+    await waitForJson(ws, "pong");
+    ws.close();
+  });
+});
+
+describe("local terminal WS — lifecycle", () => {
+  it("KILLS the PTY when the socket closes (no orphaned shells)", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+    expect(spawned[0]!.killed).toBe(false);
+
+    ws.close();
+    await vi.waitFor(() => expect(spawned[0]!.killed).toBe(true));
+  });
+
+  it("closes the socket cleanly when the PTY exits", async () => {
+    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    const exited = waitForJson(ws, "exit");
+    const closed = waitForClose(ws);
+    spawned[0]!.exit();
+
+    await exited;
+    expect((await closed).code).toBe(1000);
+  });
+});

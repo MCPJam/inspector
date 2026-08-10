@@ -1,7 +1,13 @@
+import { useCallback, useEffect, useRef } from "react";
 import { Laptop, FolderTree } from "lucide-react";
+import { track } from "@/lib/analytics";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import type { ComputerEngineState } from "@/hooks/useComputerEngine";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
+import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
+import { ComputerTerminal } from "./ComputerTerminal";
 import { LocalComputerConsentGate } from "./LocalComputerConsentGate";
 import { PaneMessage } from "./PaneMessage";
 
@@ -11,9 +17,12 @@ import { PaneMessage } from "./PaneMessage";
  * ready — no sleep/wake/image/billing. Shown only for a signed-in member on a
  * non-hosted inspector when the local engine is SELECTED (see `ComputerTabView`).
  *
- * The interactive terminal lands in a later PR (node-pty); until
- * `engine.localTerminalAvailable` flips true this shows a terminal-unavailable
- * note — bash from chat already works.
+ * The interactive terminal is a real PTY on this machine (node-pty), reached
+ * over `/api/web/computers/local-terminal` with a single-use nonce minted
+ * against the consent capability. When node-pty isn't installable (no build
+ * toolchain, or the packaged Electron app, which carries no node_modules)
+ * `engine.localTerminalAvailable` stays false and this degrades to a note —
+ * bash from chat still works.
  */
 export function LocalComputerView({
   projectId,
@@ -45,6 +54,33 @@ export function LocalComputerView({
       workspaceDir,
     }),
   });
+
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+
+  // A fresh nonce per (re)connect — it is single-use by construction, so the
+  // reconnect button in `ComputerTerminal` must mint again rather than replay.
+  const consentToken = consent.token;
+  const mintToken = useCallback(
+    () => mintLocalTerminalNonce({ projectId, consentToken }),
+    [projectId, consentToken],
+  );
+
+  // One `computer_terminal_opened` per mounted local pane (not per reconnect),
+  // and one `local_terminal_unavailable` per degraded mount — content-free
+  // either way.
+  const showTerminal = consent.granted && localTerminalAvailable;
+  const showDegraded = consent.granted && !localTerminalAvailable;
+  const lastReportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = showTerminal ? "open" : showDegraded ? "degraded" : null;
+    if (key === null || lastReportedRef.current === key) return;
+    lastReportedRef.current = key;
+    if (key === "open") {
+      track("computer_terminal_opened", { location: "computer_tab_local" });
+    } else {
+      track("local_terminal_unavailable", { reason: "terminal_unavailable" });
+    }
+  }, [showTerminal, showDegraded]);
 
   const onAllow = async (): Promise<boolean> => {
     const ok = await consent.grant();
@@ -92,9 +128,18 @@ export function LocalComputerView({
               : {})}
           />
         ) : localTerminalAvailable ? (
-          // The node-pty terminal PR wires the real pane here; until then this
-          // branch is unreachable (terminalAvailable is false).
-          <PaneMessage>Terminal ready.</PaneMessage>
+          // `uploadEnabled={false}`: the pane's drag-and-drop upload posts to
+          // the CLOUD box's upload route, which would burn this pane's
+          // single-use nonce against the wrong endpoint and toast a failure.
+          // Writing dropped files onto the user's real filesystem is a separate
+          // consent question, deliberately out of scope here.
+          <ComputerTerminal
+            mintToken={mintToken}
+            themeMode={themeMode === "dark" ? "dark" : "light"}
+            wsPath={LOCAL_TERMINAL_WS_PATH}
+            uploadEnabled={false}
+            className="h-full"
+          />
         ) : (
           <PaneMessage dashed>
             The terminal for this machine isn&apos;t available yet. Agents can
@@ -115,7 +160,12 @@ export function LocalComputerView({
             type="button"
             data-testid="local-computer-reauthorize"
             className="font-medium text-primary hover:underline"
-            onClick={() => void consent.revoke()}
+            onClick={() => {
+              track("local_computer_consent_reauthorized", {
+                location: "computer_tab_local",
+              });
+              void consent.revoke();
+            }}
           >
             Forget &amp; re-authorize
           </button>

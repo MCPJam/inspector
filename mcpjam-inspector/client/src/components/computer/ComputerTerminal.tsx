@@ -124,6 +124,8 @@ export function ComputerTerminal({
   className,
   baseUrl,
   cwd,
+  wsPath,
+  uploadEnabled = true,
 }: {
   mintToken: () => Promise<string>;
   themeMode: "light" | "dark";
@@ -140,6 +142,20 @@ export function ComputerTerminal({
    * To re-target an already-open terminal, remount with a new `key`.
    */
   cwd?: string;
+  /**
+   * WebSocket route. Defaults to the cloud terminal; the local ("This machine")
+   * pane passes `LOCAL_TERMINAL_WS_PATH`.
+   */
+  wsPath?: string;
+  /**
+   * Whether drag-and-drop upload is offered. The upload targets the CLOUD box's
+   * upload route, so the LOCAL pane must pass `false`: there it would burn its
+   * single-use nonce against the wrong route and toast "Upload failed". When
+   * false the drop handlers are not attached at all and the overlay copy is
+   * suppressed, so there is no affordance suggesting a capability that isn't
+   * there.
+   */
+  uploadEnabled?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -209,6 +225,7 @@ export function ComputerTerminal({
       rows: term.rows,
       ...(baseUrl ? { baseUrl } : {}),
       ...(cwd ? { cwd } : {}),
+      ...(wsPath ? { path: wsPath } : {}),
       onOutput: (bytes) => {
         if (isStale()) return;
         term.write(bytes);
@@ -239,7 +256,7 @@ export function ComputerTerminal({
       if (isStale()) return;
       conn.ping();
     }, PING_INTERVAL_MS);
-  }, [mintToken, teardownConnection, baseUrl, cwd]);
+  }, [mintToken, teardownConnection, baseUrl, cwd, wsPath]);
 
   const handleCopy = useCallback(() => {
     const sel = termRef.current?.getSelection();
@@ -462,13 +479,17 @@ export function ComputerTerminal({
         {/* Terminal canvas + overlay */}
         <div
           className="relative min-h-0 flex-1"
-          onDragEnter={handleDragEnter}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+          {...(uploadEnabled
+            ? {
+                onDragEnter: handleDragEnter,
+                onDragOver: handleDragOver,
+                onDragLeave: handleDragLeave,
+                onDrop: handleDrop,
+              }
+            : {})}
         >
           <div ref={containerRef} className="absolute inset-0 p-1" onClick={() => termRef.current?.focus()} />
-          {dragActive || uploading ? (
+          {uploadEnabled && (dragActive || uploading) ? (
             <div className="pointer-events-none absolute inset-2 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary/60 bg-background/85 text-sm">
               {uploading ? (
                 <span className="inline-flex items-center gap-2 text-muted-foreground">
