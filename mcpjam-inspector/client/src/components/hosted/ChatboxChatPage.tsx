@@ -511,7 +511,6 @@ export function ChatboxChatPage({
     servers: oauthServers,
     projectId: session?.payload.projectId ?? null,
     chatboxId: session?.chatboxId,
-    accessVersion: session?.accessVersion,
     isAuthenticated,
   });
 
