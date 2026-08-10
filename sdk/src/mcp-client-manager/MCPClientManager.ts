@@ -2315,13 +2315,45 @@ export class MCPClientManager {
       // other would be ambiguous and the override is the more specific signal.
       // Auto deliberately ignores both lists so its legacy fallback negotiates
       // against every version supported by the upstream SDK.
-      const supportedProtocolVersions = wantsAutoNegotiation
+      const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
         : config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
             : undefined);
+      // Send the version that was actually PINNED, not whatever happens to
+      // sit at index 0 of the accept-list.
+      //
+      // The two fields answer different questions: the list is what this
+      // client can speak, the pin is which of those it proposes. Upstream
+      // `Client` reads only `supportedProtocolVersions[0]` as
+      // `initialize.params.protocolVersion`, so honoring the pin means
+      // hoisting it — previously an explicit list silently discarded the pin
+      // and connected as its first entry, i.e. a user could pin 2025-06-18
+      // and watch 2025-11-25 go out on the wire.
+      //
+      // Hoisting rather than collapsing to `[pin]` keeps the remaining
+      // entries as fallbacks, so a client advertising several versions still
+      // accepts the server's counter-offer. Relative order of the rest is
+      // preserved — it is semantic.
+      //
+      // A pin absent from the list is left alone: it would put a version on
+      // the wire the client never claimed to speak. `canonicalizeMcpProfile`
+      // rejects that combination for stateful pins anyway, so this only
+      // guards hand-built configs.
+      const supportedProtocolVersions =
+        !wantsStateless &&
+        resolvedProtocolVersion !== undefined &&
+        resolvedSupportedProtocolVersions !== undefined &&
+        resolvedSupportedProtocolVersions.includes(resolvedProtocolVersion)
+          ? [
+              resolvedProtocolVersion,
+              ...resolvedSupportedProtocolVersions.filter(
+                (version) => version !== resolvedProtocolVersion
+              ),
+            ]
+          : resolvedSupportedProtocolVersions;
       // Automatic era negotiation is always on and transport-agnostic: an
       // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
       // and stdio (on stdio the `server/discover` probe runs on a sibling

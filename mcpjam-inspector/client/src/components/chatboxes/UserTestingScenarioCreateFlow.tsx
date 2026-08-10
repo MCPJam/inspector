@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, Layers, Loader2, Plus } from "lucide-react";
+import { ArrowLeft, ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -10,7 +10,14 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  emptyComposerState,
+  isComposeMode,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
+import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
@@ -34,9 +41,18 @@ import { cn } from "@/lib/utils";
  * asked for a server and a client template and quietly minted a host, which is
  * why every project accumulated "scenarios" nobody made.
  *
- * **It never CREATES an environment.** Scenario surfaces select one; Swarms is
- * the only surface that materializes them. "New environment" hands off to the
- * Environments editor with the typed name seeded, and the user comes back.
+ * **It never creates a NAMED environment.** Picking a saved one is the ordinary
+ * path, and "New environment" hands off to the Environments editor with the
+ * typed name seeded. What it also does is compose one on the spot: pick a client
+ * and the shared slots, and Save resolves that into an unnamed,
+ * content-addressed row. That is what makes "publish this same setup but on a
+ * different client" a one-click change instead of a trip to /environments to
+ * curate a second row.
+ *
+ * The strip is always offered — it renders behind `project-environments-enabled`
+ * like the rest of this surface. Only RESOLVING a composed setup needs the
+ * ad-hoc backend, and that is checked when Save uses it: hiding the control
+ * instead would be indistinguishable from the feature not existing.
  *
  * **Nothing is written until Save.** Every choice is local state; the single
  * write is `onCreateScenario`, injected by the parent — the same inversion
@@ -67,8 +83,13 @@ export function UserTestingScenarioCreateFlow({
   onCreateEnvironment,
   onCreateScenario,
 }: UserTestingScenarioCreateFlowProps) {
+  const computersEnabled = useComputersEnabled();
   const environments = useProjectEnvironments(projectId);
-  const [environmentId, setEnvironmentId] = useState<string | null>(null);
+  const resolveComposerTargets = useComposerResolver(projectId);
+  const [target, setTarget] = useState<EnvironmentComposerState>(
+    emptyComposerState
+  );
+  const environmentId = target.environmentIds[0] ?? null;
   const [name, setName] = useState("");
   // Default to the least-exposed option: a scenario that reaches further than
   // its author expected is the failure that costs something.
@@ -88,14 +109,31 @@ export function UserTestingScenarioCreateFlow({
   const selected = liveEnvironments.find(
     (env) => env.environmentId === environmentId,
   );
+  const composing = isComposeMode(target);
   const effectiveName = name.trim();
+  // A composed setup has no row yet — the client pick IS the target.
+  const hasTarget = composing
+    ? target.stack.hostIds.length > 0
+    : Boolean(environmentId);
+  // Gated on the environment list having SETTLED: the resolver reuses a
+  // matching NAMED environment, and against an empty live list it would find
+  // none and mint an unnamed twin of one that already exists.
+  //
+  // `undefined` also covers a query that is skipped or failed, not just one in
+  // flight, so the reason is stated below rather than leaving a dead button.
+  const environmentsSettled = environments !== undefined;
   const canSave =
-    Boolean(environmentId) && effectiveName.length > 0 && !isSaving;
+    environmentsSettled && hasTarget && effectiveName.length > 0 && !isSaving;
 
-  const handlePickEnvironment = (next: string | null) => {
-    setEnvironmentId(next);
+  const handleTargetChange = (next: EnvironmentComposerState) => {
+    setTarget(next);
     if (userEditedNameRef.current) return;
-    const picked = liveEnvironments.find((env) => env.environmentId === next);
+    // Follow the saved environment's label while the name is untouched. A
+    // composed setup has nothing to label yet, so the placeholder takes over.
+    const pickedId = next.environmentIds[0] ?? null;
+    const picked = isComposeMode(next)
+      ? undefined
+      : liveEnvironments.find((env) => env.environmentId === pickedId);
     setName(picked ? environmentLabel(picked) : "");
   };
 
@@ -112,23 +150,41 @@ export function UserTestingScenarioCreateFlow({
   };
 
   const handleSave = async () => {
-    if (!environmentId || !effectiveName || savingRef.current) return;
+    if (!hasTarget || !effectiveName || savingRef.current) return;
     savingRef.current = true;
     setIsSaving(true);
     try {
+      // A composed setup becomes a real row first — publish takes an id, and a
+      // scenario has to keep resolving long after this screen is gone.
+      const resolved = composing
+        ? (
+            await resolveComposerTargets({
+              state: target,
+              liveEnvironments,
+              max: 1,
+            })
+          ).environmentIds[0]
+        : environmentId;
+      if (!resolved) throw new Error("Could not resolve this setup.");
+
       const { created } = await onCreateScenario({
-        environmentId,
+        environmentId: resolved,
         name: effectiveName,
         mode: settingsFromChatboxAccessPreset(accessPreset).mode,
       });
       toast.success(
         created
           ? "Scenario created"
-          : "That environment is already published — opening its scenario",
+          : // Publishing is idempotent per environment, and composing makes a
+            // collision likelier: an identical setup resolves to the SAME row,
+            // whose scenario keeps its own name and access.
+            "This setup is already published — opening its scenario, with the name and access it already has",
       );
     } catch (err) {
       // Surface the backend's copy verbatim: publishing is project-admin
       // gated, and "you need admin" is a different problem than "it failed".
+      // `ComposerResolveError` is an Error too, and its message already tells a
+      // user on an older backend to pick a saved environment instead.
       toast.error(
         err instanceof Error ? err.message : "Failed to create the scenario",
       );
@@ -166,39 +222,19 @@ export function UserTestingScenarioCreateFlow({
         <div className="mt-6 space-y-5">
           <div className="space-y-2">
             <Label>Environment</Label>
-            {environments !== undefined && liveEnvironments.length === 0 ? (
-              <div
-                data-testid="user-testing-create-no-environments"
-                className="rounded-md border border-dashed border-border/70 px-4 py-5 text-center"
-              >
-                <Layers className="mx-auto size-6 text-muted-foreground/70" />
-                <p className="mt-2 text-sm font-medium">No environments yet</p>
-                <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-                  An environment is the client, servers and skills a tester will
-                  meet. Build one, then come back and publish it.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  onClick={handleCreateEnvironment}
-                  data-testid="user-testing-create-new-environment"
-                >
-                  <Plus className="mr-1.5 size-4" />
-                  New environment
-                </Button>
-              </div>
-            ) : (
+            {/* No empty state any more: a project with zero environments is not
+                a dead end, because the strip can build the one this scenario
+                needs. The handoff below still covers curating a named one. */}
+            {
               <>
-                <EnvironmentPicker
+                <EnvironmentComposer
                   projectId={projectId}
-                  value={environmentId}
-                  onChange={handlePickEnvironment}
-                  multi={false}
+                  environments={liveEnvironments}
+                  value={target}
+                  onChange={handleTargetChange}
+                  maxTargets={1}
                   disabled={isSaving}
-                  emptyLabel="Select an environment"
-                  triggerTestId="user-testing-create-environment"
-                  triggerAriaLabel="Environment to publish"
+                  testIdPrefix="user-testing-create"
                 />
                 <button
                   type="button"
@@ -209,7 +245,24 @@ export function UserTestingScenarioCreateFlow({
                   None of these fit — build a new environment
                 </button>
               </>
-            )}
+            }
+            {!environmentsSettled ? (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid="user-testing-create-environments-loading"
+              >
+                Loading this project&apos;s environments…
+              </p>
+            ) : null}
+            {computersEnabled ? (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid="user-testing-create-cloud-note"
+              >
+                Tester-session computer commands run in MCPJam cloud sandboxes —
+                never on the machine serving this inspector.
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-2">

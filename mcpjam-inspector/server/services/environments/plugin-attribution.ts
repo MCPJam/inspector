@@ -8,31 +8,25 @@
  * materialized name. Two pinned plugins therefore look identical at the point
  * where a tool call or a skill load has to say where it came from.
  *
- * The edge exists backend-side (`pluginServerComponents` /
- * `pluginSkillComponents` both key on `pluginVersionId`), and
- * `lib/pluginRuntimeResolution.resolvePluginVersionsRuntime` returns it — but
- * the INS-facing probe `plugins.resolvePluginRuntimePreview` FLATTENS it into
- * `effectiveServerIds` / `pluginSkills` across every version it was asked
- * about. So we recover the edge the only way the deployed API allows: ask the
- * probe about ONE version at a time. Each response is then unambiguously that
- * version's components.
+ * The edge lives backend-side (`pluginServerComponents` /
+ * `pluginSkillComponents` both key on `pluginVersionId`), and the probe
+ * `plugins.resolvePluginRuntimePreview` now returns it directly: full
+ * `serverComponents` rows and per-skill `pluginVersionId`. So attribution is
+ * ONE call for the whole pin set — the historical per-version fan-out (which
+ * recovered the edge by asking about one version at a time) is gone.
  *
- * That is deliberately a consumption trick, not a reimplementation: every
- * lifecycle rule (ready + installed + enabled + same-project, never a fallback
- * to `activeVersionId`) still runs backend-side inside the probe, and the
- * `modelRef` we read is the one `pluginSkillComponents` stored at
- * materialization — never a `<name>/<name>` string we assembled here.
- *
- * FOLLOW-UP: a probe that returned component rows (pluginVersionId +
- * componentKey per server) would collapse this to one call. Worth doing when
- * pin counts grow; today a pinned set is a handful of versions read in
- * parallel.
+ * This is consumption, not reimplementation: every lifecycle rule (ready +
+ * installed + enabled + same-project, never a fallback to `activeVersionId`)
+ * still runs backend-side inside the probe, and the `modelRef` we read is the
+ * one `pluginSkillComponents` stored at materialization — never a
+ * `<name>/<name>` string we assembled here.
  *
  * ATTRIBUTION IS PROVENANCE, NEVER A GATE. Every failure mode returns `null`
  * (tri-state — never a half-filled map, which would label some plugin servers
  * as ordinary ones), and every caller must degrade to "origin unknown" rather
  * than dropping a capability. The environment resolution already decided what
- * runs; this only decides what we can honestly say about it.
+ * runs; this only decides what we can honestly say about it. A deployed
+ * backend old enough to omit `serverComponents` lands in the same `null`.
  */
 import type { ConvexHttpClient } from "convex/browser";
 import { logger } from "../../utils/logger.js";
@@ -43,7 +37,7 @@ const PREVIEW_FUNCTION_REF = "plugins:resolvePluginRuntimePreview" as const;
 export interface AttributedPluginVersion {
   pluginId: string;
   pluginVersionId: string;
-  /** Normalized kebab-case plugin name — the `modelRef` namespace. */
+  /** Normalized plugin name — the `modelRef` namespace. */
   name: string;
   /** Absent only under deploy skew; never synthesized. */
   bundleHash: string | null;
@@ -74,7 +68,7 @@ export interface PluginRuntimeAttribution {
 }
 
 /**
- * How long the whole attribution fan-out may take before we give up.
+ * How long the attribution read may take before we give up.
  *
  * `ConvexHttpClient.query` has no per-call deadline, so without this a Convex
  * read that never settles blocks the chat route BEFORE the turn starts — the
@@ -83,11 +77,11 @@ export interface PluginRuntimeAttribution {
  * through; on expiry we return `null` and the turn runs with origin unreported,
  * the same as every other failure here.
  *
- * The timed-out queries are left to settle on their own rather than aborted via
+ * The timed-out query is left to settle on its own rather than aborted via
  * `setFetchOptions`: that setter mutates the SHARED client the route also uses
  * for the environment resolution, so an attribution deadline would silently
- * become that read's deadline too. Dangling reads are harmless — they are pure
- * queries whose results we drop.
+ * become that read's deadline too. A dangling read is harmless — it is a pure
+ * query whose result we drop.
  */
 const ATTRIBUTION_TIMEOUT_MS = 5_000;
 
@@ -100,66 +94,8 @@ function readString(value: unknown): string | null {
 }
 
 /**
- * One probe call, scoped to a single pinned version.
- *
- * Returns `null` when the probe reports the version as unavailable or answers
- * in a shape we cannot read. That is NOT an error: the environment resolution
- * and this probe are separate reads, so a plugin disabled between them is a
- * torn view, and the environment's answer is the one the turn already
- * committed to. Reporting no origin is honest; inventing one is not.
- */
-async function probeOneVersion(
-  client: ConvexHttpClient,
-  projectId: string,
-  pluginVersionId: string
-): Promise<{
-  plugin: AttributedPluginVersion;
-  serverIds: string[];
-  skills: Array<{ skillId: string; modelRef: string }>;
-} | null> {
-  const raw: unknown = await client.query(PREVIEW_FUNCTION_REF as any, {
-    projectId,
-    pluginVersionIds: [pluginVersionId],
-  } as any);
-  if (!isRecord(raw)) return null;
-
-  const versions = Array.isArray(raw.pluginVersions) ? raw.pluginVersions : [];
-  const version = versions.find(
-    (entry) =>
-      isRecord(entry) && readString(entry.pluginVersionId) === pluginVersionId
-  );
-  // Absent ⇒ the probe put it in `unavailableComponents`. Nothing to attribute.
-  if (!isRecord(version)) return null;
-  const pluginId = readString(version.pluginId);
-  const name = readString(version.name);
-  if (!pluginId || !name) return null;
-
-  const plugin: AttributedPluginVersion = {
-    pluginId,
-    pluginVersionId,
-    name,
-    bundleHash: readString(version.bundleHash),
-  };
-
-  const serverIds = (
-    Array.isArray(raw.effectiveServerIds) ? raw.effectiveServerIds : []
-  )
-    .map(readString)
-    .filter((id): id is string => id !== null);
-
-  const skills: Array<{ skillId: string; modelRef: string }> = [];
-  for (const entry of Array.isArray(raw.pluginSkills) ? raw.pluginSkills : []) {
-    if (!isRecord(entry)) continue;
-    const skillId = readString(entry.materializedSkillId);
-    const modelRef = readString(entry.modelRef);
-    if (skillId && modelRef) skills.push({ skillId, modelRef });
-  }
-
-  return { plugin, serverIds, skills };
-}
-
-/**
- * Build the server/skill → pinned-version edges for a turn.
+ * Build the server/skill → pinned-version edges for a turn, from ONE probe
+ * call covering the whole pin set.
  *
  * `null` means "no attribution available" and MUST be treated as such by
  * callers — see the module note. An empty pin list short-circuits to empty maps
@@ -178,14 +114,13 @@ export async function fetchPluginRuntimeAttribution(
       unattributedVersionIds: [],
     };
   }
-  let probed: Array<Awaited<ReturnType<typeof probeOneVersion>>>;
+  let raw: unknown;
   try {
-    probed = await Promise.race([
-      Promise.all(
-        args.pluginVersionIds.map((id) =>
-          probeOneVersion(client, args.projectId, id)
-        )
-      ),
+    raw = await Promise.race([
+      client.query(PREVIEW_FUNCTION_REF as any, {
+        projectId: args.projectId,
+        pluginVersionIds: args.pluginVersionIds,
+      } as any),
       // Rejects on expiry, landing in the same catch as any other failure.
       new Promise<never>((_resolve, reject) => {
         const timer = setTimeout(
@@ -197,8 +132,7 @@ export async function fetchPluginRuntimeAttribution(
     ]);
   } catch (error) {
     // Includes the deploy-skew case (`Could not find public function`) and the
-    // deadline above. One failed probe poisons the whole map: a partial map
-    // would silently present an unattributed plugin server as an ordinary one.
+    // deadline above.
     logger.warn(
       "[plugin-attribution] probe failed; running without plugin origin",
       { error: error instanceof Error ? error.message : String(error) }
@@ -206,33 +140,71 @@ export async function fetchPluginRuntimeAttribution(
     return null;
   }
 
+  if (!isRecord(raw) || !Array.isArray(raw.serverComponents)) {
+    // A backend old enough to omit the component rows cannot supply the
+    // version edge. Reporting no origin is honest; guessing from the flat
+    // `effectiveServerIds` list is not.
+    logger.warn(
+      "[plugin-attribution] probe response has no serverComponents; running without plugin origin"
+    );
+    return null;
+  }
+
+  const versionsById = new Map<string, AttributedPluginVersion>();
+  for (const entry of Array.isArray(raw.pluginVersions)
+    ? raw.pluginVersions
+    : []) {
+    if (!isRecord(entry)) continue;
+    const pluginVersionId = readString(entry.pluginVersionId);
+    const pluginId = readString(entry.pluginId);
+    const name = readString(entry.name);
+    if (!pluginVersionId || !pluginId || !name) continue;
+    versionsById.set(pluginVersionId, {
+      pluginId,
+      pluginVersionId,
+      name,
+      bundleHash: readString(entry.bundleHash),
+    });
+  }
+
   const serverOrigins = new Map<string, AttributedPluginVersion>();
-  const skillOrigins = new Map<string, AttributedPluginSkill>();
-  const unattributedVersionIds: string[] = [];
-  for (const [index, result] of probed.entries()) {
-    if (!result) {
-      // The version resolved for the environment but not for this probe — a
-      // torn read. Its components still run; we just cannot name their origin.
-      unattributedVersionIds.push(args.pluginVersionIds[index]);
-      continue;
-    }
-    for (const serverId of result.serverIds) {
-      // First pin wins, matching the backend's dedupe of `effectiveServerIds`
-      // in pin order. Two versions of the same plugin can materialize the same
-      // component only across a re-import, which the environment's own dedupe
-      // already collapsed.
-      if (!serverOrigins.has(serverId)) {
-        serverOrigins.set(serverId, result.plugin);
-      }
-    }
-    for (const skill of result.skills) {
-      if (!skillOrigins.has(skill.skillId)) {
-        skillOrigins.set(skill.skillId, {
-          modelRef: skill.modelRef,
-          plugin: result.plugin,
-        });
-      }
+  for (const component of raw.serverComponents) {
+    if (!isRecord(component)) continue;
+    const serverId = readString(component.materializedServerId);
+    const pluginVersionId = readString(component.pluginVersionId);
+    if (!serverId || !pluginVersionId) continue;
+    const plugin = versionsById.get(pluginVersionId);
+    if (!plugin) continue;
+    // First pin wins, matching the backend's dedupe of `effectiveServerIds`
+    // in pin order. Two versions of the same plugin can materialize the same
+    // component only across a re-import, which the environment's own dedupe
+    // already collapsed.
+    if (!serverOrigins.has(serverId)) {
+      serverOrigins.set(serverId, plugin);
     }
   }
+
+  const skillOrigins = new Map<string, AttributedPluginSkill>();
+  for (const entry of Array.isArray(raw.pluginSkills) ? raw.pluginSkills : []) {
+    if (!isRecord(entry)) continue;
+    const skillId = readString(entry.materializedSkillId);
+    const modelRef = readString(entry.modelRef);
+    const pluginVersionId = readString(entry.pluginVersionId);
+    if (!skillId || !modelRef || !pluginVersionId) continue;
+    const plugin = versionsById.get(pluginVersionId);
+    if (!plugin) continue;
+    if (!skillOrigins.has(skillId)) {
+      skillOrigins.set(skillId, { modelRef, plugin });
+    }
+  }
+
+  // A pinned version absent from the resolved list is a torn read: it
+  // resolved for the environment but not for this probe (disabled or
+  // uninstalled in between). Its components still run; we just cannot name
+  // their origin — and the short map must announce itself.
+  const unattributedVersionIds = args.pluginVersionIds.filter(
+    (id) => !versionsById.has(id)
+  );
+
   return { serverOrigins, skillOrigins, unattributedVersionIds };
 }

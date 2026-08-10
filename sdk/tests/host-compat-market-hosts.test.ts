@@ -71,8 +71,13 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("codex")?.supportedProtocolVersions).toEqual([
       "2025-06-18",
     ]);
-    // Templates that don't pin a version → undefined (protocol check skipped).
-    expect(profileFor("claude")?.supportedProtocolVersions).toBeUndefined();
+    expect(profileFor("claude")?.supportedProtocolVersions).toEqual([
+      "2025-11-25",
+    ]);
+    // MCPJam is the one template that deliberately advertises nothing: it is
+    // the inspector itself rather than an emulated third-party client, so it
+    // stays able to speak every revision (and its protocol check is skipped).
+    expect(profileFor("mcpjam")?.supportedProtocolVersions).toBeUndefined();
   });
 
   it("inlined protocol pins stay in sync with the host templates", () => {
