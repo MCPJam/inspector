@@ -46,16 +46,17 @@ describe("ChatboxOutcomeCalibration", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("explains the absence rather than showing an empty table when nobody rated", () => {
-    render(
+  it("renders nothing when rows exist but nobody rated", () => {
+    // Empty calibration used to own a whole Insights band; it now stays out
+    // of the fill-viewport chrome until there is something to compare.
+    const { container } = render(
       <ChatboxOutcomeCalibration
         breakdown={breakdown({
           outcomeFeedbackCalibration: [row({ sessions: 10 })],
         })}
-      />
+      />,
     );
-    expect(screen.getByText(/nothing to compare/i)).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders a percentage once the ratings are thick enough", () => {

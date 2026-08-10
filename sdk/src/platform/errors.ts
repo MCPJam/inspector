@@ -50,11 +50,7 @@ export class PlatformApiError extends SdkError {
   public readonly retryAfter?: number;
   public readonly endpoint?: string;
 
-  constructor(
-    message: string,
-    code: string,
-    options: PlatformApiErrorOptions
-  ) {
+  constructor(message: string, code: string, options: PlatformApiErrorOptions) {
     super(message, code, options);
     this.name = "PlatformApiError";
     this.status = options.status;

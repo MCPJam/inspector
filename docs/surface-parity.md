@@ -1,8 +1,14 @@
 # Agent surface parity
 
-This is the acceptance checklist for adapters. The shared core owns semantic
-copy, targeting, claims, history ordering, and delivery handles; each adapter
-owns native rendering.
+This is the acceptance checklist for adapters. The shared core
+(`@mcpjam/surface-core`) owns targeting (`createTurnTargetResolver`), the
+durable-claim state machine (`runTurnForEvent`), and normalizing already-
+fetched history into the API contract exactly once (`normalizeEnvelope`) —
+verified in `surface-core/tests/`. Each adapter still owns: fetching its own
+raw history (Slack's thread-vs-DM endpoint split, Discord's
+`messages.fetch`), the semantic copy shown to users (Slack's mrkdwn strings
+and Discord's plain text are deliberately NOT shared — see
+`slack-app/tests/characterization.test.js`), and native rendering/delivery.
 
 | Feature | Slack | Discord (MVP) | Teams (spike) |
 | --- | --- | --- | --- |

@@ -262,6 +262,8 @@ export function TranscriptThread({
   lastRenderableMessageId = null,
   getMessageWrapperProps,
   renderUserMessageActions,
+  onEditUserMessage,
+  editDisabled,
   showSenderAvatars = false,
   resolveSenderAvatar,
   recorder,
@@ -575,6 +577,8 @@ export function TranscriptThread({
               claudeFooterMode={claudeFooterMode}
               mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}
+              onEditUserMessage={onEditUserMessage}
+              editDisabled={editDisabled}
               senderAvatar={senderAvatar}
               showSenderAvatar={showSenderAvatarForMessage}
               recorder={recorder}

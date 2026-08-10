@@ -153,9 +153,9 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     // unbounded string would bloat the log line. 500 chars keeps the cause.
     const errorMessage = rawErrorMessage?.slice(0, 500);
 
-    // Sentry capture is owned by the route's error handler / Sentry middleware;
-    // we deliberately don't forward here (default is sentry: false) to avoid
-    // double-capture for the same exception.
+    // Sentry capture is owned by `Hono.onError` -> `logger.error` (there is no
+    // Sentry middleware). We deliberately don't forward here (default is
+    // sentry: false) to avoid double-capture for the same exception.
     reqLogger.event(
       "http.request.failed",
       {

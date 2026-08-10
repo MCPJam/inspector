@@ -34,6 +34,9 @@ export default defineConfig({
     mainFields: ["module", "jsnext:main", "jsnext"],
   },
   build: {
+    // Main-process traces need the same symbolication as the renderer;
+    // uploaded to `inspector-electron` by the release workflows.
+    sourcemap: true,
     lib: {
       entry: "src/main.ts",
       fileName: () => "[name].cjs", // need to use .cjs(other than .js), because the package.json type is set to module

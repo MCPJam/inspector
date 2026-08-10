@@ -11,6 +11,20 @@ const mocks = vi.hoisted(() => ({
   runOverview: vi.fn(),
 }));
 
+const cloudState = vi.hoisted(() => ({
+  ephemeralAvailable: true as boolean | undefined,
+  environments: [] as Array<{
+    environmentId: string;
+    computerEnvironmentId?: string;
+  }>,
+}));
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
+}));
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: () => cloudState.environments,
+}));
+
 vi.mock("convex/react", () => ({
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
@@ -375,6 +389,92 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       expect.objectContaining({
         canDeleteSuite: true,
       }),
+    );
+  });
+});
+
+describe("SuiteIterationsView cloud-sandbox gate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cloudState.ephemeralAvailable = true;
+    cloudState.environments = [];
+    mocks.useMutation.mockReturnValue(vi.fn());
+    mocks.useQuery.mockReturnValue(undefined);
+  });
+
+  function renderView(suite: EvalSuite, projectId?: string) {
+    render(
+      <SuiteIterationsView
+        suite={suite}
+        {...(projectId ? { projectId } : {})}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
+        navigation={noopNav}
+      />,
+    );
+  }
+
+  it("folds the preflight into the reason handed to EVERY run control", () => {
+    // The parent derives the gate exactly once; the header (and the per-case
+    // dashboards, which read the same shadowed variable) receive it as the
+    // ordinary disabled-reason prop.
+    cloudState.ephemeralAvailable = false;
+    renderView({
+      ...baseSuite,
+      environment: { servers: [], computerEnvironmentId: "img-1" },
+    });
+    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evalRunsDisabledReason: expect.stringMatching(
+          /can't run MCPJam cloud sandboxes/,
+        ),
+      }),
+    );
+  });
+
+  it("catches a pin carried by an ATTACHED environment", () => {
+    cloudState.ephemeralAvailable = false;
+    cloudState.environments = [
+      { environmentId: "env-9", computerEnvironmentId: "img-9" },
+    ];
+    renderView({ ...baseSuite, environmentIds: ["env-9"] }, "proj-1");
+    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evalRunsDisabledReason: expect.stringMatching(
+          /can't run MCPJam cloud sandboxes/,
+        ),
+      }),
+    );
+  });
+
+  it("passes no reason when the pinned suite CAN reach cloud sandboxes", () => {
+    renderView({
+      ...baseSuite,
+      environment: { servers: [], computerEnvironmentId: "img-1" },
+    });
+    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+      expect.objectContaining({ evalRunsDisabledReason: null }),
     );
   });
 });
