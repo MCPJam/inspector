@@ -11,6 +11,14 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  emptyComposerState,
+  isComposeMode,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
+import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useAdhocEnvironmentsEnabled } from "@/hooks/useAdhocEnvironmentsEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
@@ -34,9 +42,13 @@ import { cn } from "@/lib/utils";
  * asked for a server and a client template and quietly minted a host, which is
  * why every project accumulated "scenarios" nobody made.
  *
- * **It never CREATES an environment.** Scenario surfaces select one; Swarms is
- * the only surface that materializes them. "New environment" hands off to the
- * Environments editor with the typed name seeded, and the user comes back.
+ * **It never creates a NAMED environment.** Picking a saved one is the ordinary
+ * path, and "New environment" hands off to the Environments editor with the
+ * typed name seeded. What it may do — when ad-hoc environments are available —
+ * is compose one on the spot: pick a client and the shared slots, and Save
+ * resolves that into an unnamed, content-addressed row. That is what makes
+ * "publish this same setup but on a different client" a one-click change instead
+ * of a trip to /environments to curate a second row.
  *
  * **Nothing is written until Save.** Every choice is local state; the single
  * write is `onCreateScenario`, injected by the parent — the same inversion
@@ -68,7 +80,12 @@ export function UserTestingScenarioCreateFlow({
   onCreateScenario,
 }: UserTestingScenarioCreateFlowProps) {
   const environments = useProjectEnvironments(projectId);
-  const [environmentId, setEnvironmentId] = useState<string | null>(null);
+  const composeEnabled = useAdhocEnvironmentsEnabled();
+  const resolveComposerTargets = useComposerResolver(projectId);
+  const [target, setTarget] = useState<EnvironmentComposerState>(
+    emptyComposerState
+  );
+  const environmentId = target.environmentIds[0] ?? null;
   const [name, setName] = useState("");
   // Default to the least-exposed option: a scenario that reaches further than
   // its author expected is the failure that costs something.
@@ -88,15 +105,31 @@ export function UserTestingScenarioCreateFlow({
   const selected = liveEnvironments.find(
     (env) => env.environmentId === environmentId,
   );
+  const composing = composeEnabled && isComposeMode(target);
   const effectiveName = name.trim();
-  const canSave =
-    Boolean(environmentId) && effectiveName.length > 0 && !isSaving;
+  // A composed setup has no row yet — the client pick IS the target.
+  const hasTarget = composing
+    ? target.stack.hostIds.length > 0
+    : Boolean(environmentId);
+  const canSave = hasTarget && effectiveName.length > 0 && !isSaving;
+
+  const handleTargetChange = (next: EnvironmentComposerState) => {
+    setTarget(next);
+    if (userEditedNameRef.current) return;
+    // Follow the saved environment's label while the name is untouched. A
+    // composed setup has nothing to label yet, so the placeholder takes over.
+    const pickedId = next.environmentIds[0] ?? null;
+    const picked = isComposeMode(next)
+      ? undefined
+      : liveEnvironments.find((env) => env.environmentId === pickedId);
+    setName(picked ? environmentLabel(picked) : "");
+  };
 
   const handlePickEnvironment = (next: string | null) => {
-    setEnvironmentId(next);
-    if (userEditedNameRef.current) return;
-    const picked = liveEnvironments.find((env) => env.environmentId === next);
-    setName(picked ? environmentLabel(picked) : "");
+    handleTargetChange({
+      ...emptyComposerState(),
+      environmentIds: next ? [next] : [],
+    });
   };
 
   const handleCreateEnvironment = () => {
@@ -112,23 +145,41 @@ export function UserTestingScenarioCreateFlow({
   };
 
   const handleSave = async () => {
-    if (!environmentId || !effectiveName || savingRef.current) return;
+    if (!hasTarget || !effectiveName || savingRef.current) return;
     savingRef.current = true;
     setIsSaving(true);
     try {
+      // A composed setup becomes a real row first — publish takes an id, and a
+      // scenario has to keep resolving long after this screen is gone.
+      const resolved = composing
+        ? (
+            await resolveComposerTargets({
+              state: target,
+              liveEnvironments,
+              max: 1,
+            })
+          ).environmentIds[0]
+        : environmentId;
+      if (!resolved) throw new Error("Could not resolve this setup.");
+
       const { created } = await onCreateScenario({
-        environmentId,
+        environmentId: resolved,
         name: effectiveName,
         mode: settingsFromChatboxAccessPreset(accessPreset).mode,
       });
       toast.success(
         created
           ? "Scenario created"
-          : "That environment is already published — opening its scenario",
+          : // Publishing is idempotent per environment, and composing makes a
+            // collision likelier: an identical setup resolves to the SAME row,
+            // whose scenario keeps its own name and access.
+            "This setup is already published — opening its scenario, with the name and access it already has",
       );
     } catch (err) {
       // Surface the backend's copy verbatim: publishing is project-admin
       // gated, and "you need admin" is a different problem than "it failed".
+      // `ComposerResolveError` is an Error too, and its message already tells a
+      // user on an older backend to pick a saved environment instead.
       toast.error(
         err instanceof Error ? err.message : "Failed to create the scenario",
       );
@@ -166,7 +217,12 @@ export function UserTestingScenarioCreateFlow({
         <div className="mt-6 space-y-5">
           <div className="space-y-2">
             <Label>Environment</Label>
-            {environments !== undefined && liveEnvironments.length === 0 ? (
+            {/* The empty state only blocks when there is genuinely nothing to
+                publish. With compose available, a project with no environments
+                can still pick a client and go. */}
+            {environments !== undefined &&
+            liveEnvironments.length === 0 &&
+            !composeEnabled ? (
               <div
                 data-testid="user-testing-create-no-environments"
                 className="rounded-md border border-dashed border-border/70 px-4 py-5 text-center"
@@ -190,16 +246,28 @@ export function UserTestingScenarioCreateFlow({
               </div>
             ) : (
               <>
-                <EnvironmentPicker
-                  projectId={projectId}
-                  value={environmentId}
-                  onChange={handlePickEnvironment}
-                  multi={false}
-                  disabled={isSaving}
-                  emptyLabel="Select an environment"
-                  triggerTestId="user-testing-create-environment"
-                  triggerAriaLabel="Environment to publish"
-                />
+                {composeEnabled ? (
+                  <EnvironmentComposer
+                    projectId={projectId}
+                    environments={liveEnvironments}
+                    value={target}
+                    onChange={handleTargetChange}
+                    maxTargets={1}
+                    disabled={isSaving}
+                    testIdPrefix="user-testing-create"
+                  />
+                ) : (
+                  <EnvironmentPicker
+                    projectId={projectId}
+                    value={environmentId}
+                    onChange={handlePickEnvironment}
+                    multi={false}
+                    disabled={isSaving}
+                    emptyLabel="Select an environment"
+                    triggerTestId="user-testing-create-environment"
+                    triggerAriaLabel="Environment to publish"
+                  />
+                )}
                 <button
                   type="button"
                   onClick={handleCreateEnvironment}
