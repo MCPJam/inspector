@@ -36,6 +36,10 @@ import {
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
+import {
+  resolvePluginStdioHttpTarget,
+  type PluginStdioHttpTarget,
+} from "../../services/plugins/hosted-stdio-connect.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -802,15 +806,64 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
-  }
+  },
+  /**
+   * A plugin stdio component that IS reachable: a live shim, recorded in
+   * `pluginRuntimeSessions`, running the child inside the caller's own
+   * computer. Present only when the session row exists, so it — not this
+   * function — is the reachability gate.
+   */
+  pluginRuntime?: PluginStdioHttpTarget
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
+    if (pluginRuntime) {
+      // Built from the runtime alone, never merged with the stdio row: that row
+      // carries `env` (a child's secrets) and no headers, and the only
+      // credential this connection may present is the shim's own bearer.
+      return {
+        url: pluginRuntime.url,
+        capabilities: clientCapabilities,
+        clientCapabilities: clientCapabilities,
+        requestInit: {
+          headers: { Authorization: `Bearer ${pluginRuntime.token}` },
+        },
+        timeout: timeoutMs,
+        // The shim answers `405` on `GET /mcp` and speaks Streamable HTTP only.
+        // Pinning both rules out the SDK's `/sse` URL-path heuristic and the
+        // silent SSE downgrade, neither of which this endpoint implements.
+        preferSSE: false,
+        disableSseFallback: true,
+        ...(initializePins?.clientInfo
+          ? { clientInfo: initializePins.clientInfo }
+          : {}),
+        ...(initializePins?.supportedProtocolVersions &&
+        initializePins.supportedProtocolVersions.length > 0
+          ? {
+              supportedProtocolVersions:
+                initializePins.supportedProtocolVersions,
+            }
+          : {}),
+        ...(initializePins?.mcpProtocolVersion
+          ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
+          : {}),
+        ...(initializePins?.mirrorToolParamHeaders === false
+          ? { mirrorToolParamHeaders: false }
+          : {}),
+        ...(initializePins?.firstPageOnly === true
+          ? { firstPageOnly: true }
+          : {}),
+        ...(initializePins?.supportsMrtr === false
+          ? { supportsMrtr: false }
+          : {}),
+      };
+    }
     // Hosted web has no local process to spawn into, so a stdio server — an
-    // ordinary one or a plugin's local component — is reported with the
-    // backend's own readiness vocabulary (`getPluginSetupStatus` marks
-    // `placement: "local"` components `local_runtime_required`) rather than
-    // attempted. Same word on both surfaces means a client can render one
-    // "open the desktop app" affordance without guessing from prose.
+    // ordinary one, or a plugin component with no live in-computer runtime —
+    // is reported with the backend's own readiness vocabulary
+    // (`getPluginSetupStatus` marks `placement: "local"` components
+    // `local_runtime_required`) rather than attempted. Same word on both
+    // surfaces means a client can render one "open the desktop app" affordance
+    // without guessing from prose.
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
@@ -1357,6 +1410,36 @@ export async function createAuthorizedManager(
         return [serverId, config] as const;
       }
 
+      // HOSTED stdio divert. There is still no process here to spawn into, so
+      // a plugin's local component runs inside the caller's OWN computer behind
+      // the in-VM shim and this connection reaches it as an ordinary remote
+      // Streamable-HTTP server. `null` covers every reason that cannot happen
+      // (not a data plane, no box, an ordinary non-plugin stdio row, a bundle
+      // that will not verify, a session record that did not land) and leaves
+      // the `toHttpConfig` refusal below exactly as it was.
+      let pluginRuntime: PluginStdioHttpTarget | undefined;
+      if (auth.serverConfig.transportType !== "http") {
+        pluginRuntime =
+          (await resolvePluginStdioHttpTarget({
+            bearerToken,
+            projectId,
+            serverId,
+            serverDisplayName: displayServerName,
+            accessScope: options?.accessScope,
+            chatboxId: options?.chatboxId,
+            accessVersion: options?.accessVersion,
+            workosApiKeyActingAs:
+              caller.authMethod === "workos_api_key" &&
+              caller.workosUserId &&
+              caller.mcpjamOrganizationId
+                ? {
+                    workosUserId: caller.workosUserId,
+                    mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                  }
+                : undefined,
+          })) ?? undefined;
+      }
+
       const usesOAuthFlow = effectiveAuth === "oauth";
       // "discover" (non-XAA auto) rides the OAuth rails only when a stored
       // token exists; tokenless discover connects unauthenticated instead of
@@ -1564,7 +1647,8 @@ export async function createAuthorizedManager(
           connectToken,
           perServerCapabilities,
           connectOnUnauthorized,
-          effectiveInitializePins
+          effectiveInitializePins,
+          pluginRuntime
         ),
       ] as const;
     })

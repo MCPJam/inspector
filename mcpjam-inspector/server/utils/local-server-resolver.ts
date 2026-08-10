@@ -59,6 +59,7 @@ import {
   materializePluginStdioForConnect,
   releasePluginLease,
 } from "../services/plugins/local-stdio.js";
+import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -960,6 +961,74 @@ async function applyLocalRuntimeResolution<
 }
 
 /**
+ * The stdio launch spec exactly as CONFIGURED — full command/args/env with
+ * runtime secrets applied, placeholders still verbatim.
+ *
+ * Same re-read and same trust model as {@link resolveLocalStdioServerConfig}
+ * (`/web/authorize-batch-local` with the caller's own bearer, so authorization
+ * is re-checked rather than assumed), stopping one step earlier: no plugin
+ * materialization and no SDK config. Hosted plugin execution needs precisely
+ * this, because it substitutes the placeholders for paths inside a SANDBOX and
+ * never builds a local spawn config at all.
+ *
+ * Refuses an http row for the same reason the local resolver does: a transport
+ * mismatch between the two authorize reads means the row changed mid-request.
+ */
+export async function readAuthorizedStdioLaunchSpec(args: {
+  bearerToken: string;
+  projectId: string;
+  serverId: string;
+  serverDisplayName?: string;
+  accessScope?: "project_member" | "chat_v2";
+  chatboxId?: string;
+  accessVersion?: number;
+  workosApiKeyActingAs?: WorkosApiKeyActingAs;
+}): Promise<PluginStdioLaunchSpec> {
+  const result = await authorizeServerLocal(
+    null,
+    args.bearerToken,
+    args.projectId,
+    args.serverId,
+    args.workosApiKeyActingAs
+  );
+  if (result.serverConfig.transportType !== "stdio") {
+    throw new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      `Server "${
+        args.serverDisplayName ?? args.serverId
+      }" changed transport while the request was in flight. Retry the request.`,
+      { serverId: args.serverId }
+    );
+  }
+  const config = result.serverConfig;
+  // Same redaction rule the local path applies: the authorize read returns
+  // `hasEnv` with no values when the env is secret-backed, and the reveal is
+  // what fills it in.
+  const env =
+    config.hasEnv === true && !hasNonEmptyStringRecord(config.env)
+      ? (
+          await fetchRuntimeServerSecrets({
+            bearerToken: args.bearerToken,
+            projectId: args.projectId,
+            serverId: args.serverId,
+            accessScope: args.accessScope,
+            chatboxId: args.chatboxId,
+            accessVersion: args.accessVersion,
+            workosApiKeyActingAs: args.workosApiKeyActingAs,
+          })
+        ).env ?? config.env ?? {}
+      : config.env ?? {};
+
+  return {
+    command: config.command,
+    args: config.args ?? [],
+    env,
+    ...(config.cwd !== undefined ? { workingDirectory: config.cwd } : {}),
+  };
+}
+
+/**
  * Resolve ONE stdio server to a connectable SDK config for a web-route
  * surface running as the LOCAL binary (`createAuthorizedManager`'s stdio
  * divert). The hosted authorize batch strips `command`/`args`/`env` by
@@ -1688,7 +1757,9 @@ export async function executeLocalServerConnect(
  * attribution). Same bearer the authorize call used — plugin reads are
  * project-scoped and re-authorized backend-side on every query.
  */
-function createPluginRuntimeConvexClient(bearerToken: string): ConvexHttpClient {
+export function createPluginRuntimeConvexClient(
+  bearerToken: string
+): ConvexHttpClient {
   const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl) {
     throw new WebRouteError(
