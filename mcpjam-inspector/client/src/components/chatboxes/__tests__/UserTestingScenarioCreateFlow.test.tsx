@@ -22,7 +22,6 @@ const {
   toastSuccess,
   toastError,
   ensureAdhocMock,
-  composeFlag,
 } = vi.hoisted(() => ({
   environmentsState: {
     value: undefined as ProjectEnvironmentView[] | undefined,
@@ -31,18 +30,11 @@ const {
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   ensureAdhocMock: vi.fn(),
-  /** `environments-adhoc-enabled` — off by default, so the saved-environment
-   * path stays the one every existing case exercises. */
-  composeFlag: { current: false },
 }));
 
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => environmentsState.value,
   useEnsureAdhocEnvironments: () => ensureAdhocMock,
-}));
-
-vi.mock("@/hooks/useAdhocEnvironmentsEnabled", () => ({
-  useAdhocEnvironmentsEnabled: () => composeFlag.current,
 }));
 
 // The composer's own slots. `project-environments-enabled` on so its saved-env
@@ -140,7 +132,6 @@ function renderFlow(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  composeFlag.current = false;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
       args.stacks.map((stack) => ({
@@ -274,13 +265,19 @@ describe("UserTestingScenarioCreateFlow", () => {
     expect(onCreateEnvironment).toHaveBeenCalled();
   });
 
-  it("offers the handoff, not a dead end, when the project has no environments", () => {
+  it("is not a dead end when the project has no environments", () => {
     environmentsState.value = [];
     renderFlow();
 
+    // The old blocking "no environments yet" card is gone: an empty project can
+    // compose the environment it needs right here.
     expect(
-      screen.getByTestId("user-testing-create-no-environments"),
+      screen.queryByTestId("user-testing-create-no-environments"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-create-clients-picker"),
     ).toBeInTheDocument();
+    // Curating a named one is still one click away.
     expect(
       screen.getByTestId("user-testing-create-new-environment"),
     ).toBeInTheDocument();
@@ -292,10 +289,6 @@ describe("UserTestingScenarioCreateFlow", () => {
  * which is what makes "publish this same setup on another client" one click.
  */
 describe("UserTestingScenarioCreateFlow — composing a setup", () => {
-  beforeEach(() => {
-    composeFlag.current = true;
-  });
-
   it("resolves the composed client into a row, then publishes THAT", async () => {
     const { onCreateScenario } = renderFlow();
 
