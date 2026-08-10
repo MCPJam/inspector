@@ -135,6 +135,21 @@ export function UserTestingScenarioDetail({
   // Blocks the reseed below while a commit is in flight, so the rebind's own
   // reactive echo doesn't clobber the state the user is mid-editing against.
   const committingRef = useRef(false);
+  // The environment the backend ACTUALLY points at, as far as this client
+  // knows — advanced synchronously when a rebind succeeds, because the
+  // reactive `chatbox.environmentId` echo lags the mutation. Comparing
+  // against the prop instead let an immediate "change it back" edit read as
+  // a no-op and get silently swallowed while the backend stayed on the FIRST
+  // target.
+  const committedEnvironmentIdRef = useRef<string | null>(
+    chatbox.environmentId ?? null,
+  );
+  useEffect(() => {
+    // Adopt remote rebinds (another member, or our own echo) — but never
+    // mid-commit, when the ref is ahead of the subscription on purpose.
+    if (committingRef.current) return;
+    committedEnvironmentIdRef.current = chatbox.environmentId ?? null;
+  }, [chatbox.environmentId]);
   useEffect(() => {
     if (!environment || committingRef.current) return;
     setComposer(composerStateFromEnvironments([environment]));
@@ -145,8 +160,16 @@ export function UserTestingScenarioDetail({
   const composerActive = Boolean(
     environmentsEnabled && chatbox.environmentId && environment,
   );
+  // Held closed until the NAMED list settles, like the create flow: the
+  // resolver reuses a matching named environment, and resolving against an
+  // empty not-yet-loaded list would mint an unnamed twin of one that exists.
+  const composerReady = namedEnvironments !== undefined;
 
   const handleComposerChange = (next: EnvironmentComposerState) => {
+    // One commit at a time: a second edit mid-flight would clear
+    // `committingRef` out from under the first one's rollback. The strip is
+    // disabled while committing, so this guard only closes the setState gap.
+    if (committingRef.current) return;
     const previous = composer;
     setComposer(next);
     // No target (cleared clients / detached selection) commits nothing — the
@@ -162,11 +185,20 @@ export function UserTestingScenarioDetail({
           max: 1,
         });
         const nextEnvironmentId = resolved.environmentIds[0];
-        if (nextEnvironmentId && nextEnvironmentId !== chatbox.environmentId) {
+        if (!nextEnvironmentId) {
+          // Should be unreachable (a target implies one resolved id), but a
+          // silent skip here would leave the strip showing a setup the
+          // scenario does not run.
+          setComposer(previous);
+          toast.error("Could not resolve this setup to an environment.");
+          return;
+        }
+        if (nextEnvironmentId !== committedEnvironmentIdRef.current) {
           await rebindEnvironmentChatbox({
             chatboxId: chatbox.chatboxId,
             environmentId: nextEnvironmentId,
           } as any);
+          committedEnvironmentIdRef.current = nextEnvironmentId;
         }
       } catch (err) {
         // Roll back to what the scenario actually runs, then say why —
@@ -326,7 +358,7 @@ export function UserTestingScenarioDetail({
                   value={composer}
                   onChange={handleComposerChange}
                   maxTargets={1}
-                  disabled={isRebinding}
+                  disabled={isRebinding || !composerReady}
                   testIdPrefix="user-testing-detail"
                 />
                 <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
