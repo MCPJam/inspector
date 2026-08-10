@@ -374,6 +374,11 @@ chatV2.post("/", async (c) => {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
         bearer: bearerToken,
+        // Opt this turn into backend version enforcement. A caller whose
+        // cached version is behind the row's is running against a config
+        // that has since moved (rebind, mode change, republish); it must
+        // re-redeem rather than have its stale view honored.
+        accessVersion,
       });
       if (runtime.ok) {
         // Environment-backed chatbox (live-follow): the backend resolved the
@@ -425,17 +430,25 @@ chatV2.post("/", async (c) => {
           status: runtime.status,
           error: runtime.error,
         });
-        // A 403 here is an ACCESS verdict, not an internal fault: the backend
-        // refused to serve this chatbox's config to this caller. Give it a
-        // dedicated code so the browser can tell "re-redeem and retry" from
-        // "the server broke" — everything else keeps the generic
-        // classification (>=500 collapses to a 502 upstream failure).
+        // Two ACCESS verdicts, neither an internal fault, each with its own
+        // recovery: STALE means "re-redeem and replay" (the client does it
+        // transparently), DENIED means "you cannot run this turn".
+        // Everything else keeps the generic classification (>=500 collapses
+        // to a 502 upstream failure).
+        const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+        if (runtime.code === "CHATBOX_ACCESS_STALE") {
+          throw new WebRouteError(
+            409,
+            ErrorCode.CHATBOX_ACCESS_STALE,
+            failClosedMessage
+          );
+        }
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           runtime.status === 403
             ? ErrorCode.CHATBOX_ACCESS_DENIED
             : ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
+          failClosedMessage
         );
       }
     } else if (executionTarget.kind === "host") {
