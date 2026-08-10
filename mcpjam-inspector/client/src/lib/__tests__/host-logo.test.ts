@@ -31,12 +31,4 @@ describe("resolveHostLogoByName", () => {
     expect(resolveHostLogoByName("Claude")).toContain("claude");
   });
 
-  it("resolves the same mark for the same name regardless of caller", () => {
-    // The property the two pickers depend on: one name, one answer.
-    for (const name of ["MCPJam", "Cursor (staging)", "Acme Internal Bot"]) {
-      expect(resolveHostLogoByName(name, "light")).toBe(
-        resolveHostLogoByName(name, "light")
-      );
-    }
-  });
 });

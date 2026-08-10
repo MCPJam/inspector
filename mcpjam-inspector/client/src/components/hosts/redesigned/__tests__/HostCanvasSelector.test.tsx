@@ -141,6 +141,26 @@ describe("HostCanvasSelector", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("falls back to the same generic MCP mark as the header picker", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...oneHost[0], name: "Acme Internal Bot" }],
+      isLoading: false,
+    });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    await user.click(screen.getByTestId("host-canvas-current"));
+
+    // Deliberately asserts the same concrete value as the matching case in
+    // HostOverlayBar.test.tsx. The two pickers used to disagree here — one drew
+    // an empty circle — so pinning it from both sides is what catches a picker
+    // going back to its own resolver.
+    const row = await screen.findByRole("menuitemradio", {
+      name: /Acme Internal Bot/,
+    });
+    expect(row.querySelector("img")).toHaveAttribute("src", "/mcp.svg");
+  });
+
   it("marks the active client with a single primary-colored dot", async () => {
     const user = userEvent.setup();
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
