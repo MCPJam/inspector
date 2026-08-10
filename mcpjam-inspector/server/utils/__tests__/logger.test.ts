@@ -53,14 +53,20 @@ describe("logger", () => {
   });
 
   describe("axiom ingestion", () => {
-    it("initializes Axiom client when AXIOM_TOKEN and AXIOM_DATASET are set", async () => {
+    it("initializes the Axiom client on first ingest, not at import", async () => {
       vi.stubEnv("AXIOM_TOKEN", "test-token");
       vi.stubEnv("AXIOM_DATASET", "test-dataset");
       vi.stubEnv("NODE_ENV", "production");
 
       const { Axiom } = await import("@axiomhq/js");
-      await import("../logger.js");
+      const { logger: freshLogger } = await import("../logger.js");
 
+      // Lazy on purpose: server/index.ts statically imports this module, so a
+      // module-load construction would read AXIOM_* / DO_NOT_TRACK before
+      // loadInspectorEnv() has populated them from .env.
+      expect(Axiom).not.toHaveBeenCalled();
+
+      freshLogger.info("first log");
       expect(Axiom).toHaveBeenCalledWith({ token: "test-token" });
     });
 
@@ -138,6 +144,45 @@ describe("logger", () => {
             userId: "123",
           },
         ]);
+      });
+
+      it("does not ship to Axiom when DO_NOT_TRACK is set", () => {
+        // Read at INGEST time, not module load: server/index.ts statically
+        // imports the logger, so a module-load read would run before
+        // loadInspectorEnv() and miss a DO_NOT_TRACK coming from .env.
+        vi.stubEnv("DO_NOT_TRACK", "1");
+        mockIngest.mockClear();
+
+        logger.error("fail", new Error("x"));
+        logger.warn("watch out");
+        logger.info("started");
+        logger.debug("dbg");
+
+        expect(mockIngest).not.toHaveBeenCalled();
+      });
+
+      it("does NOT send warnings to Sentry", async () => {
+        // Every logger.warn in the tree used to become a Sentry event. Across
+        // self-hosted installs that is the largest quota-spike vector we have,
+        // and a warning is by definition something we chose not to fail on.
+        const Sentry = await import("@sentry/node");
+        logger.warn("watch out", { userId: "123" });
+
+        expect(Sentry.captureMessage).not.toHaveBeenCalled();
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+      });
+
+      it("still sends errors to Sentry", async () => {
+        const Sentry = await import("@sentry/node");
+        const error = new Error("boom");
+        logger.error("fail", error, { userId: "123" });
+
+        expect(Sentry.captureException).toHaveBeenCalledWith(
+          error,
+          expect.objectContaining({
+            extra: expect.objectContaining({ message: "fail", userId: "123" }),
+          }),
+        );
       });
 
       it("ingests info logs to Axiom", () => {

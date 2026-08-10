@@ -19,7 +19,19 @@ logger.info("Server started");
 logger.debug("Processing request", requestData);
 ```
 
-**Why?** The logger sends errors/warnings to Sentry and respects the `--verbose` flag (silent in production by default).
+**Why?** The logger routes diagnostics to the right sink and respects the
+`--verbose` flag (silent in production by default).
+
+- `logger.error` → Sentry **and** Axiom. This is the server's single Sentry
+  capture path for free-form errors.
+- `logger.warn` / `logger.info` / `logger.debug` → Axiom only. Warnings
+  deliberately do **not** create Sentry issues: a warning is by definition
+  something we chose not to treat as a failure, and capturing every one across
+  thousands of self-hosted installs was our largest quota-spike vector.
+- Need an issue for a non-error condition? Use the typed-event opt-in:
+  `logger.event(name, base, payload, { error, sentry: true })`.
+
+See `docs/server-error-reporting.md`.
 
 ### CLI script (`bin/start.js`)
 

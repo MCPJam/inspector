@@ -1,4 +1,5 @@
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
+import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
   ApiKeysSettingsRoute,
   GithubChecksSettingsRoute,
@@ -165,6 +166,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/billing": { element: <OrganizationsRoute /> },
   "organizations/:orgId/models": { element: <OrganizationsRoute /> },
   "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },
@@ -246,6 +248,10 @@ export function createAppRouter(): AppRouter {
       : []),
     {
       element: <App />,
+      // The data router catches route render errors itself and renders the
+      // nearest errorElement — the throw never reaches a React boundary above
+      // <RouterProvider>. Without this a crashing route just blanks the app.
+      errorElement: <RouteErrorScreen />,
       children: buildRouteChildren(),
     },
   ]);
