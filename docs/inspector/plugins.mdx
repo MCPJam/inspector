@@ -103,6 +103,12 @@ Some component types found in OpenAI plugin bundles are not executed by MCPJam. 
 
 These components appear in the preview and in the expanded card under **Unsupported components**, always described as preserved rather than executable.
 
+## Running plugins on a different machine
+
+When a plugin has a local stdio component and you open the project on a machine where the bundle has not been imported before, MCPJam automatically attempts to download the stored bundle from the cloud before spawning the process. If the download succeeds and the bundle's content matches the pinned hash, the plugin starts normally with no action required on your part.
+
+If the download fails for any reason — for example, because you are offline or the bundle is no longer available — MCPJam shows an error asking you to re-import the plugin from its original folder on a device that has it. Re-importing stores the bundle in the cloud so future machines can download it automatically.
+
 ## Credential setup
 
 After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
