@@ -234,6 +234,23 @@ function messageSlug(message: string): string | undefined {
   if (/\bsocket\s+hang\s+up\b/i.test(message)) {
     return "transport/socket_hang_up";
   }
+  // An errno spelled out in the text beats every generic phrase below. undici
+  // reports connection failures as `TypeError: fetch failed` and appends the
+  // real reason ("... : connect ECONNREFUSED 127.0.0.1:9999"), so matching
+  // `fetch failed` first threw away the only actionable half of the message —
+  // "we couldn't reach it" instead of "nothing is listening on that port".
+  // Every candidate token is checked, not just the first. These messages are
+  // concatenations — a combined transport failure quotes both attempts, and
+  // words like `ERROR` tokenize the same way — so stopping at the first
+  // unmapped match would step over the `ECONNREFUSED` further along.
+  for (const match of message.matchAll(
+    /\b(E[A-Z]{2,}(?:_[A-Z]+)*|UND_ERR_[A-Z_]+)\b/g,
+  )) {
+    const errnoSlug = nodeErrnoToSlug(match[1]);
+    if (errnoSlug) {
+      return errnoSlug;
+    }
+  }
   if (/\bfetch\s+failed\b/i.test(message)) {
     return "transport/fetch_failed";
   }
