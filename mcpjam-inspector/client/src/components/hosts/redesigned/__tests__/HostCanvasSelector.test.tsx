@@ -141,6 +141,41 @@ describe("HostCanvasSelector", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("marks the active client with a single primary-colored dot", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    await user.click(screen.getByTestId("host-canvas-current"));
+
+    // Only the active host gets a dot, so the design-system's built-in
+    // left-gutter indicator must be gone — two dots would read as two
+    // selections, and it would also collide with the row logo.
+    const dots = await screen.findAllByTestId(/^host-canvas-selected-dot-/);
+    expect(dots).toHaveLength(1);
+    expect(dots[0]).toHaveAttribute(
+      "data-testid",
+      "host-canvas-selected-dot-host-a"
+    );
+    expect(dots[0]).toHaveClass("bg-primary");
+
+    const row = screen.getByRole("menuitemradio", { name: /MCPJam/ });
+    expect(row.querySelector("span.absolute")).toBeNull();
+  });
+
+  it("places the active dot after the client name so the logo owns the left edge", async () => {
+    const user = userEvent.setup();
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    await user.click(screen.getByTestId("host-canvas-current"));
+
+    const label = await screen.findByTestId("host-canvas-label-host-a");
+    const dot = screen.getByTestId("host-canvas-selected-dot-host-a");
+    expect(
+      label.compareDocumentPosition(dot) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
   it("navigates to the picked host and updates the preview pointer", async () => {
     const user = userEvent.setup();
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });

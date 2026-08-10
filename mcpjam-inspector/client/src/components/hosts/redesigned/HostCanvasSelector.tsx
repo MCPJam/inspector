@@ -313,6 +313,7 @@ export function HostCanvasSelector({
                 <DropdownMenuRadioItem
                   key={host.hostId}
                   value={host.hostId}
+                  hideIndicator
                   className="group gap-2.5 py-2 pr-1.5"
                 >
                   <img
@@ -320,7 +321,12 @@ export function HostCanvasSelector({
                     alt=""
                     className="size-4 shrink-0 object-contain"
                   />
-                  <span className="flex-1 truncate">{host.name}</span>
+                  <span
+                    className="flex-1 truncate"
+                    data-testid={`host-canvas-label-${host.hostId}`}
+                  >
+                    {host.name}
+                  </span>
                   <span className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
                     <button
                       type="button"
@@ -339,6 +345,13 @@ export function HostCanvasSelector({
                       <Trash2 className="size-3.5" />
                     </button>
                   </span>
+                  {host.hostId === activeHostId ? (
+                    <span
+                      aria-hidden
+                      data-testid={`host-canvas-selected-dot-${host.hostId}`}
+                      className="size-1.5 shrink-0 rounded-full bg-primary"
+                    />
+                  ) : null}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
