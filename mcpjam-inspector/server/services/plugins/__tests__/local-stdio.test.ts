@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
-import { appendFile } from "node:fs/promises";
+import { appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PluginBundleCache } from "../bundle-cache.js";
 import {
@@ -194,11 +194,12 @@ describe("plugin stdio origin resolution", () => {
     prepared.release();
   });
 
-  it("fails closed on a ${PLUGIN_DATA} placeholder, reporting only the token", async () => {
+  it("substitutes ${PLUGIN_DATA} against a created per-plugin data directory", async () => {
     await cache.materialize(
       { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
       { source: await fixtureBundleSource() }
     );
+    const dataRoot = join(cacheRoot, "plugin-data");
 
     const prepared = await preparePluginStdioLaunch({
       client: stubClient({ bundleHash }),
@@ -213,17 +214,112 @@ describe("plugin stdio origin resolution", () => {
         ],
       },
       leaseId: SERVER_ID,
+      dataRoot,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    // Keyed by pluginId, NOT bundleHash: the directory survives version
+    // activations, which is the spec's whole point for PLUGIN_DATA.
+    const expectedDataDir = join(dataRoot, PROJECT_ID, PLUGIN_ID);
+    expect(prepared.launch.args[1]).toBe(`--cache=${expectedDataDir}/cache.db`);
+    expect(prepared.launch.env.PLUGIN_DATA).toBe(expectedDataDir);
+    const dirStat = await stat(expectedDataDir);
+    if (process.platform !== "win32") {
+      // Owner-only regardless of umask: persisted plugin state must not be
+      // readable by other local users.
+      expect(dirStat.mode & 0o777).toBe(0o700);
+    }
+    prepared.release();
+  });
+
+  it("reports a filesystem problem as plugin_data_unavailable, never a bundle problem", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    // A FILE where the data root must be a directory: mkdir fails.
+    const blockedRoot = join(cacheRoot, "blocked-data-root");
+    await appendFile(blockedRoot, "not a directory");
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: PLACEHOLDER_SPEC,
+      leaseId: SERVER_ID,
+      dataRoot: blockedRoot,
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "plugin_data_unavailable",
+    });
+    expect(cache.activeEntries()).toEqual([]);
+  });
+
+  it("fails closed on a placeholder this build does not implement", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        // A future spec placeholder: the generic guard must refuse the
+        // spawn and report only the bare token.
+        args: ["${PLUGIN_ROOT}/server/index.js", "--x=${PLUGIN_CACHE}/db"],
+      },
+      leaseId: SERVER_ID,
+      dataRoot: join(cacheRoot, "plugin-data"),
     });
 
     expect(prepared).toMatchObject({
       ok: false,
       reason: "unsupported_placeholder",
-      // The bare token only — never the containing argv value, which can
-      // embed expanded paths or adjacent secrets.
-      placeholder: "${PLUGIN_DATA}",
+      placeholder: "${PLUGIN_CACHE}",
     });
-    // Nothing spawned, nothing leased.
     expect(cache.activeEntries()).toEqual([]);
+  });
+
+  it("tolerates placeholder-shaped text in the machine's own paths", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    // The guard scans the SPEC, never the resolved launch: a data root that
+    // happens to contain a placeholder-shaped segment is the machine's own
+    // path, not an unresolved bundle input, and must not refuse the spawn.
+    const weirdDataRoot = join(cacheRoot, "${PLUGIN_DATA}-lookalike");
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        args: [
+          "${PLUGIN_ROOT}/server/index.js",
+          "--cache=${PLUGIN_DATA}/cache.db",
+        ],
+      },
+      leaseId: SERVER_ID,
+      dataRoot: weirdDataRoot,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.launch.args[1]).toBe(
+      `--cache=${join(weirdDataRoot, PROJECT_ID, PLUGIN_ID)}/cache.db`
+    );
+    prepared.release();
   });
 
   it.each([
@@ -373,6 +469,7 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     });
 
     expect(result?.args[0]).toBe(`${result?.pluginRoot}/server/index.js`);
@@ -387,6 +484,7 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     });
     expect(cache.activeEntries()).toEqual([result?.pluginRoot]);
     releasePluginLease(SERVER_ID);
@@ -407,6 +505,7 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     }).catch((err) => err);
 
     expect(error).toBeInstanceOf(WebRouteError);

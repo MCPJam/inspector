@@ -8,12 +8,11 @@
  * directory into everyone's pin). Substitution belongs here, at the last
  * possible moment, against a cache directory derived from the bundle hash.
  *
- * `${PLUGIN_DATA}` (the writable per-plugin data directory the Agent Plugins
- * spec requires) is detected but NOT yet substituted — the data-directory
- * runtime lands in the runtime-fidelity phase. Until then a component whose
- * spec references it is still recognized as a plugin component, so it can
- * never spawn through the ordinary non-plugin path with the placeholder
- * intact.
+ * `${PLUGIN_DATA}` substitutes to the writable per-plugin data directory
+ * (`plugin-data.ts`) when the caller supplies one; without it the
+ * placeholder stays verbatim and the leftover guard in
+ * `preparePluginStdioLaunch` refuses the spawn — a child process never sees
+ * a placeholder either way.
  *
  * The placeholder list itself is imported from the SDK rather than restated —
  * one list, one rule, no drift when the spec evolves.
@@ -65,29 +64,60 @@ export function needsPluginRoot(spec: PluginStdioLaunchSpec): boolean {
 }
 
 /**
- * Resolve a plugin stdio component against its materialized bundle.
+ * Substitute both runtime placeholders in one value. `${PLUGIN_ROOT}` maps to
+ * the immutable materialized bundle; `${PLUGIN_DATA}` maps to the writable
+ * per-plugin data directory (spec: created before launch, preserved across
+ * updates). When no data directory is supplied, `${PLUGIN_DATA}` is left
+ * verbatim — the caller's leftover-placeholder guard then refuses the spawn,
+ * so the literal can never reach a child process.
+ */
+export function substitutePluginPlaceholders(
+  value: string,
+  roots: { root: string; dataDir?: string }
+): string {
+  // Single pass over the ORIGINAL value: sequential per-token replacement
+  // would re-scan earlier substitutions, so a substituted path that happened
+  // to contain a literal placeholder token would be substituted again.
+  return value.replace(/\$\{PLUGIN_ROOT\}|\$\{PLUGIN_DATA\}/g, (token) =>
+    token === "${PLUGIN_ROOT}" ? roots.root : (roots.dataDir ?? token)
+  );
+}
+
+/**
+ * Resolve a plugin stdio component against its materialized bundle and its
+ * writable data directory.
  *
- * The injected `PLUGIN_ROOT` alias is applied FIRST; the component's own env
- * entries are substituted over it. (The SDK parser rejects bundles whose env
- * declares the reserved `PLUGIN_ROOT`/`PLUGIN_DATA` keys, so the spec's env
- * can never shadow the injected alias.)
+ * The injected `PLUGIN_ROOT`/`PLUGIN_DATA` aliases are applied FIRST; the
+ * component's own env entries are substituted over them. (The SDK parser
+ * rejects bundles whose env declares the reserved `PLUGIN_ROOT`/`PLUGIN_DATA`
+ * keys, so the spec's env can never shadow the injected aliases.)
  */
 export function resolvePluginStdioLaunch(
   spec: PluginStdioLaunchSpec,
-  root: string
+  root: string,
+  options?: { dataDir?: string }
 ): Required<Pick<PluginStdioLaunchSpec, "command" | "args" | "env">> & {
   workingDirectory?: string;
 } {
-  const env: Record<string, string> = { ...pluginRootEnv(root) };
+  const roots = { root, dataDir: options?.dataDir };
+  const env: Record<string, string> = {
+    ...pluginRootEnv(root),
+    ...(roots.dataDir !== undefined ? { PLUGIN_DATA: roots.dataDir } : {}),
+  };
   for (const [key, value] of Object.entries(spec.env)) {
-    env[key] = substitutePluginRoot(value, root);
+    env[key] = substitutePluginPlaceholders(value, roots);
   }
   return {
-    command: substitutePluginRoot(spec.command, root),
-    args: spec.args.map((arg) => substitutePluginRoot(arg, root)),
+    command: substitutePluginPlaceholders(spec.command, roots),
+    args: spec.args.map((arg) => substitutePluginPlaceholders(arg, roots)),
     env,
     ...(spec.workingDirectory !== undefined
-      ? { workingDirectory: substitutePluginRoot(spec.workingDirectory, root) }
+      ? {
+          workingDirectory: substitutePluginPlaceholders(
+            spec.workingDirectory,
+            roots
+          ),
+        }
       : {}),
   };
 }

@@ -30,9 +30,9 @@ import {
   resolvePluginStdioLaunch,
   type PluginStdioLaunchSpec,
 } from "./plugin-root.js";
+import { ensurePluginDataDir } from "./plugin-data.js";
 import {
   containsPluginPlaceholder,
-  PLUGIN_PLACEHOLDERS,
   type PluginFileSource,
 } from "@mcpjam/sdk/plugin-bundle";
 import { createZipPluginFileSource } from "./bundle-file-sources.js";
@@ -155,15 +155,25 @@ export type PluginStdioPreparationFailure =
     }
   | {
       /**
-       * A placeholder survived substitution — today that means
-       * `${PLUGIN_DATA}`, whose writable-directory runtime is not built yet.
-       * Fail closed: a child process must never see a placeholder verbatim.
-       * `placeholder` is the bare token only — never the containing value,
-       * which may embed expanded paths or adjacent secrets.
+       * A placeholder-shaped token survived substitution — a future spec
+       * placeholder this build does not implement. Fail closed: a child
+       * process must never see a placeholder verbatim. `placeholder` is the
+       * bare token only — never the containing value, which may embed
+       * expanded paths or adjacent secrets.
        */
       reason: "unsupported_placeholder";
       origin: PluginServerOrigin;
       placeholder: string;
+    }
+  | {
+      /**
+       * The writable `${PLUGIN_DATA}` directory could not be created — a
+       * LOCAL filesystem problem (unwritable `~/.mcpjam`, full disk,
+       * permissions), never a bundle problem: re-importing cannot fix it.
+       */
+      reason: "plugin_data_unavailable";
+      origin: PluginServerOrigin;
+      message: string;
     };
 
 export type PluginStdioPreparation =
@@ -197,6 +207,8 @@ export async function preparePluginStdioLaunch(args: {
   leaseId: string;
   /** Just-imported bundle content, when the caller has it (desktop import). */
   source?: PluginFileSource;
+  /** Test seam for the `${PLUGIN_DATA}` root; defaults to `~/.mcpjam/plugin-data`. */
+  dataRoot?: string;
 }): Promise<PluginStdioPreparation> {
   const origin = await resolvePluginOriginForServer(args.client, {
     projectId: args.projectId,
@@ -205,6 +217,62 @@ export async function preparePluginStdioLaunch(args: {
   if (!origin) return { ok: false, reason: "no_plugin_origin" };
   if (!origin.bundleHash) {
     return { ok: false, reason: "missing_bundle_hash", origin };
+  }
+
+  // A placeholder the bundle declared that this build does not implement
+  // must not spawn — the literal would reach the child as an argv/env/cwd
+  // value. The scan runs on the ORIGINAL spec, never the resolved launch:
+  // the machine's own root/data paths may legitimately contain
+  // placeholder-shaped text, and substitution deliberately never re-scans
+  // inserted values — re-checking resolved output would refuse exactly the
+  // paths the single-pass substitution promises to preserve. The GENERIC
+  // token shape (minus the implemented set) is what makes this
+  // future-proof: `${PLUGIN_CACHE}` from a spec revision we haven't
+  // shipped trips it today. Only the bare token is reported — the
+  // containing value may embed an adjacent secret.
+  const implementedTokens = new Set(["${PLUGIN_ROOT}", "${PLUGIN_DATA}"]);
+  const specValues = [
+    args.spec.command,
+    ...args.spec.args,
+    ...Object.values(args.spec.env),
+    ...(args.spec.workingDirectory !== undefined
+      ? [args.spec.workingDirectory]
+      : []),
+  ];
+  for (const value of specValues) {
+    for (const match of value.matchAll(/\$\{PLUGIN_[A-Z0-9_]+\}/g)) {
+      if (!implementedTokens.has(match[0])) {
+        return {
+          ok: false,
+          reason: "unsupported_placeholder",
+          origin,
+          placeholder: match[0],
+        };
+      }
+    }
+  }
+
+  // The writable per-plugin data directory (spec: created before launch,
+  // preserved across updates — keyed by pluginId, NOT bundleHash, so a
+  // version activation keeps the component's state). Created BEFORE the
+  // bundle materializes: this await must not sit between materialization
+  // and the lease acquisition below, where a concurrent GC sweep could
+  // reclaim the just-verified entry. Creation failure is a launch failure
+  // with its own reason — a filesystem problem, not a bundle problem.
+  let dataDir: string;
+  try {
+    dataDir = await ensurePluginDataDir({
+      projectId: args.projectId,
+      pluginId: origin.pluginId,
+      ...(args.dataRoot !== undefined ? { rootDir: args.dataRoot } : {}),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "plugin_data_unavailable",
+      origin,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const identity: PluginBundleIdentity = {
@@ -266,31 +334,7 @@ export async function preparePluginStdioLaunch(args: {
     }
   }
 
-  const launch = resolvePluginStdioLaunch(args.spec, root);
-
-  // Substitution expands only ${PLUGIN_ROOT}; anything still carrying a
-  // placeholder (today: ${PLUGIN_DATA}, pending its runtime) must not spawn —
-  // the literal string would reach the child as an argv/env/cwd value. Only
-  // the placeholder TOKEN is reported: the containing string may embed an
-  // expanded cache path or an adjacent secret, and this reason surfaces in
-  // an error response.
-  const launchValues = [
-    launch.command,
-    ...launch.args,
-    ...Object.values(launch.env),
-    ...(launch.workingDirectory !== undefined ? [launch.workingDirectory] : []),
-  ];
-  const leftoverToken = PLUGIN_PLACEHOLDERS.find((placeholder) =>
-    launchValues.some((value) => value.includes(placeholder))
-  );
-  if (leftoverToken !== undefined) {
-    return {
-      ok: false,
-      reason: "unsupported_placeholder",
-      origin,
-      placeholder: leftoverToken,
-    };
-  }
+  const launch = resolvePluginStdioLaunch(args.spec, root, { dataDir });
 
   // Unique per call, not just per server: a reconnect acquires the new lease
   // BEFORE releasing the old one, and two holders sharing an id would make
@@ -348,6 +392,8 @@ export async function materializePluginStdioForConnect(args: {
   serverName: string;
   spec: PluginStdioLaunchSpec;
   cache?: PluginBundleCache;
+  /** Test seam for the `${PLUGIN_DATA}` root. */
+  dataRoot?: string;
 }): Promise<{
   command: string;
   args: string[];
@@ -366,6 +412,7 @@ export async function materializePluginStdioForConnect(args: {
     serverId: args.serverId,
     spec: args.spec,
     leaseId: args.serverName,
+    ...(args.dataRoot !== undefined ? { dataRoot: args.dataRoot } : {}),
   });
 
   if (!prepared.ok) {
@@ -439,12 +486,24 @@ function pluginStdioFailureToRouteError(
       return new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        `Plugin "${failure.origin.name}" uses \${PLUGIN_DATA}, which this MCPJam version cannot provide yet, so the component will not be launched.`,
+        `Plugin "${failure.origin.name}" uses ${failure.placeholder}, which this MCPJam version does not provide, so the component will not be launched. Update MCPJam to run it.`,
         {
           reason: failure.reason,
           serverName,
           pluginId: failure.origin.pluginId,
           placeholder: failure.placeholder,
+        }
+      );
+    case "plugin_data_unavailable":
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        `Plugin "${failure.origin.name}" needs its data directory, but it could not be created on this machine. Check that ~/.mcpjam is writable and has free space.`,
+        {
+          reason: failure.reason,
+          serverName,
+          pluginId: failure.origin.pluginId,
+          details: failure.message,
         }
       );
   }
