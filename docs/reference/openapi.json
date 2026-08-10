@@ -30,6 +30,10 @@
       "description": "Project environments: named, live-editable execution bundles (one host, an optional standalone server group, optionally pinned skills and plugin versions) that eval suites and journeys run against. Distinct from Sandbox images, which are Computer base images. Reads require project membership; every write requires project admin."
     },
     {
+      "name": "Plugins",
+      "description": "Agent Plugins imported into a project — read-only inventory and version detail."
+    },
+    {
       "name": "Sandbox images",
       "description": "Custom Computer images: a digest-pinned Dockerfile built into an immutable image your project's computers boot from."
     },
@@ -2257,6 +2261,70 @@
         }
       }
     },
+    "/projects/{projectId}/eval-suites/{suiteId}/schedule": {
+      "patch": {
+        "operationId": "updateEvalSuiteSchedule",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Enable, repoint, or disable a suite's schedule",
+        "description": "A schedule fires exactly ONE run per interval, so an environment-based suite must pin exactly one of its attached environments. Omitting `environmentId` on a single-environment suite means that environment; omitting it on a multi-environment suite is a VALIDATION_ERROR. Disabling preserves the existing pin. Responds with the full updated suite.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalSuiteScheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated suite.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/servers/{serverId}/oauth/import-tokens": {
       "post": {
         "operationId": "importOAuthTokens",
@@ -2703,6 +2771,558 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}": {
+      "get": {
+        "operationId": "getEvalSuite",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one eval suite's configuration",
+        "description": "The suite's full settings — attached environments, hosts, execution config, judge, schedule. The list route returns run rollups instead; this is the shape the edit routes read and write.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The suite.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateEvalSuite",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Update an eval suite's settings",
+        "description": "Partial update — omitted fields are left as they are. `environmentIds` is tri-state: a non-empty array sets/replaces, `null` clears (reverting the suite to legacy config), and `[]` is rejected rather than silently treated as a clear. Responds with the full updated suite.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalSuiteUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated suite.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteEvalSuite",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Delete an eval suite",
+        "description": "Deletes the suite and its cases. Past runs are not deleted.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The suite was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/cases": {
+      "get": {
+        "operationId": "listEvalCases",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "List a suite's eval cases",
+        "description": "Every case in the suite, in the public steps-first shape.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The suite's cases.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCasePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createEvalCase",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Create an eval case",
+        "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required — `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCaseCreateRequest"
+              },
+              "example": {
+                "title": "lists files",
+                "steps": [
+                  {
+                    "id": "s1",
+                    "kind": "prompt",
+                    "prompt": "List the files in the project root."
+                  },
+                  {
+                    "id": "s2",
+                    "kind": "assert",
+                    "assertion": {
+                      "type": "toolCalledWith",
+                      "toolName": "list_files",
+                      "args": {
+                        "args": {}
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created case.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCase"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/cases/generate": {
+      "post": {
+        "operationId": "generateEvalCases",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Generate eval cases from the suite's tools",
+        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them — the only edit route that connects to a server, and the only one that SPENDS ORG CREDITS. Synchronous: connect, generate, persist, disconnect, respond.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded backend-side BEFORE any case is persisted, so a replay reuses them instead of spending credits again, and each case is persisted under a derived per-item key so the loop is resumable.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "x-mcpjam-idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Makes a retry replay the recorded drafts instead of spending credits again."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCaseGenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The generated cases.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseGenerated"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}": {
+      "get": {
+        "operationId": "getEvalCase",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one eval case",
+        "description": "A case that belongs to this suite and project. A case in another suite is a 404, not a 403.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "caseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Eval case id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The case.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCase"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateEvalCase",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Update an eval case",
+        "description": "Partial update — omitted fields are left as they are. Supplying `steps` REPLACES the case's definition rather than merging into it. `matchOptions` and `checks` accept `null` to clear the case-level override and fall back to the suite's.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "caseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Eval case id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCaseUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated case.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCase"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteEvalCase",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Delete an eval case",
+        "description": "Removes the case from the suite. Past runs that executed it are not affected.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "caseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Eval case id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The case was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -3425,6 +4045,437 @@
         }
       }
     },
+    "/projects/{projectId}/plugins": {
+      "get": {
+        "operationId": "listProjectPlugins",
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "List a project's plugins",
+        "description": "The live (installed, non-uninstalled) Agent Plugins in the project, disabled ones included (marked `enabled: false`). Read-only: import, activation, enable/disable and uninstall are app flows, not API operations.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project's plugins.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/plugin-versions/{pluginVersionId}": {
+      "get": {
+        "operationId": "getPluginVersion",
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "Get a plugin version",
+        "description": "One imported plugin version with its component projections: declared MCP servers (placement, auth timing, materialized server id) and declared skills (namespaced model refs). Addressed by the version id alone — access is membership of the version's own project, and historical versions of uninstalled plugins stay readable because eval snapshots and stale environment pins reference them.",
+        "parameters": [
+          {
+            "name": "pluginVersionId",
+            "in": "path",
+            "required": true,
+            "description": "A plugin's `activeVersionId` from the list endpoint, or a pinned id from an environment's `pluginVersionIds`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plugin version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginVersion"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-ingest/artifacts/upload-url": {
+      "post": {
+        "operationId": "createEvalIngestUploadUrl",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get an upload URL for a run artifact",
+        "description": "Mints a short-lived URL for uploading a widget blob or other artifact referenced by an ingested run.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalIngestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-ingest/report": {
+      "post": {
+        "operationId": "reportEvalRun",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Ingest a completed eval run in one call",
+        "description": "The whole-run variant: submit a finished run and its iterations in a single request. This is what the SDK reporter uses by default.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalIngestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-ingest/runs/finalize": {
+      "post": {
+        "operationId": "finalizeEvalIngestRun",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Close an open ingestion run",
+        "description": "Marks the run complete and computes its rollups. Until this is called the run stays open in the dashboard.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalIngestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-ingest/runs/iterations": {
+      "post": {
+        "operationId": "ingestEvalRunIterations",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Append iterations to an open run",
+        "description": "Appends one batch of iteration results to a run opened by `runs/start`.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalIngestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-ingest/runs/start": {
+      "post": {
+        "operationId": "startEvalIngestRun",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Open a run for incremental ingestion",
+        "description": "Opens a run that iterations are appended to, for a long CI job that reports as it goes. Pair with `runs/iterations` and `runs/finalize`.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalIngestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/images/validate": {
       "post": {
         "operationId": "validateSandboxImageBlueprint",
@@ -3647,7 +4698,7 @@
           "Projects"
         ],
         "summary": "Delete a project and everything scoped to it",
-        "description": "IRREVERSIBLE, and it cascades: project access grants and invites, the mapped workspace and its memberships, every saved server in the project (each soft-deleted asynchronously, which also rotates the host configs that referenced it), hosted tasks, and Slack integrations. Requires project admin. The request body must be empty.",
+        "description": "IRREVERSIBLE, and it cascades: project access grants and invites, the mapped workspace and its memberships, every saved server in the project (each soft-deleted asynchronously, which also rotates the host configs that referenced it), and hosted tasks. Requires project admin. The request body must be empty.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -4275,6 +5326,434 @@
             "additionalProperties": true
           }
         }
+      },
+      "EvalCase": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "steps",
+          "iterations",
+          "isNegative",
+          "models"
+        ],
+        "description": "A persisted eval case, in the public steps-first shape. Note this is NOT `EvalTestCase`, which is the INLINE authoring shape accepted by suite creation.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/EvalTestStep"
+            },
+            "description": "Ordered test steps. A `prompt` step is a model turn; a single model-free `toolCall` step is a render-check; `assert` steps hold the expectations."
+          },
+          "expectedOutput": {
+            "type": "string"
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "isNegative": {
+            "type": "boolean",
+            "description": "When true, the case passes if NO tools are called."
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "model"
+              ],
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "matchOptions": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "checks": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "EvalCaseCreateRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "steps"
+        ],
+        "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/EvalTestStep"
+            },
+            "description": "REPLACES the case's test definition wholesale when provided."
+          },
+          "expectedOutput": {
+            "type": "string"
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "isNegative": {
+            "type": "boolean"
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "model"
+              ],
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "Derived from a `provider/model` id when omitted."
+                }
+              }
+            }
+          },
+          "matchOptions": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`null` clears the case override and inherits the suite's."
+          },
+          "checks": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`null` clears the case override.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "EvalCaseGenerateRequest": {
+        "type": "object",
+        "description": "AI-generate cases from the suite's server tools and persist them. SPENDS ORG CREDITS.",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "negative"
+            ],
+            "description": "Superseded by `caseMix` when that is present."
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Server ids or names to discover tools from. Ignored when the suite is environment-based."
+          },
+          "environmentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Discover tools from this attached environment's closed server set, so generated cases are written against the tools the suite's runs will actually see."
+          },
+          "caseModels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "model"
+              ],
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "caseMix": {
+            "type": "object",
+            "description": "Per-bucket case counts. Omitted buckets inherit the default mix; the backend bounds each bucket and the total.",
+            "properties": {
+              "simple": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "multiTool": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "multiTurn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "complex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "negative": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              }
+            }
+          },
+          "varyUserStyles": {
+            "type": "boolean",
+            "description": "Condition generated cases on a range of user styles so the queries read like different users wrote them."
+          }
+        }
+      },
+      "EvalCaseGenerated": {
+        "type": "object",
+        "required": [
+          "generationModel",
+          "created",
+          "counts"
+        ],
+        "properties": {
+          "generationModel": {
+            "type": "string"
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCase"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "normal": {
+                "type": "integer"
+              },
+              "negative": {
+                "type": "integer"
+              }
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "description": "Drafts that were generated but failed to persist. Surfaced rather than silently dropped.",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "EvalCasePage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCase"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "EvalCaseUpdateRequest": {
+        "type": "object",
+        "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/EvalTestStep"
+            },
+            "description": "REPLACES the case's test definition wholesale when provided."
+          },
+          "expectedOutput": {
+            "type": "string"
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "isNegative": {
+            "type": "boolean"
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "model"
+              ],
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "Derived from a `provider/model` id when omitted."
+                }
+              }
+            }
+          },
+          "matchOptions": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`null` clears the case override and inherits the suite's."
+          },
+          "checks": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`null` clears the case override.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "EvalDeleted": {
+        "type": "object",
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "EvalIngestRequest": {
+        "type": "object",
+        "description": "Forwarded VERBATIM to the backend's eval-ingestion surface, which owns the schema. The `projectId` path segment always wins: it overwrites any `projectId` in the body, and the literal `default` omits it so the key's org Default project is used. Bodies are capped at ~6 MiB here and 5 MiB by the backend.",
+        "additionalProperties": true
+      },
+      "EvalIngestResponse": {
+        "type": "object",
+        "description": "The backend's response, passed through verbatim along with its status code. Success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses — deliberately NOT the v1 resource envelope. Errors are canonical v1 `{ code, message }`.",
+        "additionalProperties": true
       },
       "ValidateResult": {
         "type": "object",
@@ -5017,6 +6496,156 @@
                 }
               }
             }
+          }
+        }
+      },
+      "EvalSuiteDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "environment",
+          "hosts",
+          "environmentIds",
+          "settings",
+          "schedule"
+        ],
+        "description": "One eval suite's full configuration. Distinct from the `EvalSuite` summary returned by the list route, which carries run rollups instead of settings.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "type": "object",
+            "description": "LEGACY server bag, kept as rollback data. Unrelated to `environmentIds`.",
+            "properties": {
+              "servers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "executionConfig": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "systemPrompt": {
+                "type": "string"
+              },
+              "temperature": {
+                "type": "number"
+              }
+            }
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "servers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "environmentIds": {
+            "type": "array",
+            "description": "Attached project environments, in attach order.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "settings": {
+            "type": "object",
+            "properties": {
+              "minimumAccuracy": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Minimum pass rate for the suite to count as passing."
+              },
+              "matchOptions": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "judge": {
+                "type": "object",
+                "description": "Goal-completion judge. Absent config reads as enabled.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "model": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/EvalSuiteSchedule"
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
           }
         }
       },
@@ -5791,6 +7420,115 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/EvalSuite"
+            }
+          }
+        }
+      },
+      "EvalSuiteSchedule": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "description": "Recurring-run schedule. A schedule fires exactly ONE run, so an environment-based suite pins the environment it runs against.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "intervalMinutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 5,
+            "maximum": 10080,
+            "description": "Minutes between runs. 5 minutes to 7 days."
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The single attached environment scheduled runs use. Null on a legacy (non-environment) suite."
+          }
+        }
+      },
+      "EvalSuiteScheduleRequest": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "description": "Enable, repoint, or disable a suite's recurring runs. Disabling PRESERVES the existing environment pin — send `enabled: true` with a new `environmentId` to repoint it.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 10080
+          },
+          "environmentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Which attached environment scheduled runs use. Only meaningful when enabling. Omitted on a single-environment suite means that environment; omitted on a multi-environment suite is a VALIDATION_ERROR."
+          }
+        }
+      },
+      "EvalSuiteUpdateRequest": {
+        "type": "object",
+        "description": "Partial update of a suite's settings. Omitted fields are left as they are.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "object",
+            "description": "LEGACY server bag. Unrelated to `environmentIds`.",
+            "properties": {
+              "servers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "environmentIds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Tri-state: a non-empty array sets/replaces the attachments, `null` CLEARS them (reverting the suite to legacy config), and `[]` is REJECTED rather than silently read as a clear."
+          },
+          "executionConfig": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "systemPrompt": {
+                "type": "string"
+              },
+              "temperature": {
+                "type": "number"
+              }
+            }
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "object"
             }
           }
         }
@@ -6861,6 +8599,216 @@
             "items": {
               "$ref": "#/components/schemas/ProjectEnvironment"
             }
+          }
+        }
+      },
+      "Plugin": {
+        "type": "object",
+        "description": "An Agent Plugin (agent-plugins.org bundle) imported into a project. Versions materialize MCP servers and skills; environments pin version ids to run them.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "enabled",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Normalized plugin name — the namespace its skills load under."
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Disabled plugins keep their versions but resolve for no run."
+          },
+          "activeVersionId": {
+            "type": "string",
+            "description": "The version environment pins default to. Absent before the first activation."
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "PluginPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Plugin"
+            }
+          }
+        }
+      },
+      "PluginVersion": {
+        "type": "object",
+        "description": "One immutable imported plugin version with its component projections.",
+        "required": [
+          "id",
+          "pluginId",
+          "bundleHash",
+          "status",
+          "componentCounts",
+          "servers",
+          "skills",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "pluginId": {
+            "type": "string"
+          },
+          "declaredVersion": {
+            "type": "string",
+            "description": "`manifest.version` — metadata only; `bundleHash` is the identity."
+          },
+          "bundleHash": {
+            "type": "string"
+          },
+          "manifestHash": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "staging",
+              "ready",
+              "invalid"
+            ],
+            "description": "Only `ready` versions resolve at runtime."
+          },
+          "componentCounts": {
+            "type": "object",
+            "description": "Per-component tallies. `apps` counts preserved `.app.json` metadata entries only (no runtime effect).",
+            "required": [
+              "skills",
+              "servers",
+              "apps",
+              "assets",
+              "unsupported"
+            ],
+            "properties": {
+              "skills": {
+                "type": "number"
+              },
+              "servers": {
+                "type": "number"
+              },
+              "apps": {
+                "type": "number"
+              },
+              "assets": {
+                "type": "number"
+              },
+              "unsupported": {
+                "type": "number"
+              }
+            }
+          },
+          "servers": {
+            "type": "array",
+            "description": "Declared MCP server components, with the project server row each one materialized as.",
+            "items": {
+              "type": "object",
+              "required": [
+                "componentId",
+                "componentKey",
+                "declaredName",
+                "placement",
+                "authenticationPolicy",
+                "materializedServerId"
+              ],
+              "properties": {
+                "componentId": {
+                  "type": "string"
+                },
+                "componentKey": {
+                  "type": "string"
+                },
+                "declaredName": {
+                  "type": "string"
+                },
+                "placement": {
+                  "type": "string",
+                  "enum": [
+                    "remote",
+                    "local",
+                    "computer"
+                  ],
+                  "description": "Where the component can execute; `local`/`computer` components never run on MCPJam hosted servers."
+                },
+                "authenticationPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "on_install",
+                    "on_use"
+                  ]
+                },
+                "materializedServerId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "skills": {
+            "type": "array",
+            "description": "Declared skill components, with the project skill row each one materialized as.",
+            "items": {
+              "type": "object",
+              "required": [
+                "componentId",
+                "componentKey",
+                "declaredName",
+                "modelRef",
+                "materializedSkillId"
+              ],
+              "properties": {
+                "componentId": {
+                  "type": "string"
+                },
+                "componentKey": {
+                  "type": "string"
+                },
+                "declaredName": {
+                  "type": "string"
+                },
+                "modelRef": {
+                  "type": "string",
+                  "description": "Namespaced model-facing reference: `<plugin-name>/<skill-name>`."
+                },
+                "materializedSkillId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "readyAt": {
+            "type": "number"
           }
         }
       },

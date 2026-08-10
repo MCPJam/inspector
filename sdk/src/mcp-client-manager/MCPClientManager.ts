@@ -574,11 +574,25 @@ export class MCPClientManager {
     if (this.isStdioConfig(config)) {
       transportType = "stdio";
     } else {
-      const url = new URL(config.url);
-      transportType =
-        config.preferSSE || url.pathname.endsWith("/sse")
+      // Report the transport that ACTUALLY connected, not the one the config
+      // asked for. Deriving this from `config` is wrong in both directions:
+      // a declared streamable-http server at a `/sse` path reads as "sse"
+      // though it ran over Streamable HTTP, and a connection that fell back
+      // to SSE reads as "streamable-http" — the transport that failed. This
+      // value feeds snapshots, conformance output and hosted trace metadata,
+      // so it has to describe the live connection. The config heuristic
+      // stays only as the pre-connect fallback.
+      const activeTransport = liveState?.transport;
+      if (activeTransport instanceof SSEClientTransport) {
+        transportType = "sse";
+      } else if (activeTransport instanceof StreamableHTTPClientTransport) {
+        transportType = "streamable-http";
+      } else {
+        const url = new URL(config.url);
+        transportType = (config.preferSSE ?? url.pathname.endsWith("/sse"))
           ? "sse"
           : "streamable-http";
+      }
     }
 
     // Public negotiated-version accessor (upstream
@@ -2315,13 +2329,45 @@ export class MCPClientManager {
       // other would be ambiguous and the override is the more specific signal.
       // Auto deliberately ignores both lists so its legacy fallback negotiates
       // against every version supported by the upstream SDK.
-      const supportedProtocolVersions = wantsAutoNegotiation
+      const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
         : config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
             : undefined);
+      // Send the version that was actually PINNED, not whatever happens to
+      // sit at index 0 of the accept-list.
+      //
+      // The two fields answer different questions: the list is what this
+      // client can speak, the pin is which of those it proposes. Upstream
+      // `Client` reads only `supportedProtocolVersions[0]` as
+      // `initialize.params.protocolVersion`, so honoring the pin means
+      // hoisting it — previously an explicit list silently discarded the pin
+      // and connected as its first entry, i.e. a user could pin 2025-06-18
+      // and watch 2025-11-25 go out on the wire.
+      //
+      // Hoisting rather than collapsing to `[pin]` keeps the remaining
+      // entries as fallbacks, so a client advertising several versions still
+      // accepts the server's counter-offer. Relative order of the rest is
+      // preserved — it is semantic.
+      //
+      // A pin absent from the list is left alone: it would put a version on
+      // the wire the client never claimed to speak. `canonicalizeMcpProfile`
+      // rejects that combination for stateful pins anyway, so this only
+      // guards hand-built configs.
+      const supportedProtocolVersions =
+        !wantsStateless &&
+        resolvedProtocolVersion !== undefined &&
+        resolvedSupportedProtocolVersions !== undefined &&
+        resolvedSupportedProtocolVersions.includes(resolvedProtocolVersion)
+          ? [
+              resolvedProtocolVersion,
+              ...resolvedSupportedProtocolVersions.filter(
+                (version) => version !== resolvedProtocolVersion
+              ),
+            ]
+          : resolvedSupportedProtocolVersions;
       // Automatic era negotiation is always on and transport-agnostic: an
       // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
       // and stdio (on stdio the `server/discover` probe runs on a sibling
@@ -2633,6 +2679,16 @@ export class MCPClientManager {
         onInsufficientScope: "throw",
       });
 
+      // The upstream Client closes a failed transport during `connect`, and
+      // that close fires `onclose` → `clearClosedPendingConnectionState`,
+      // discarding the pending live state the SSE fallback below still
+      // needs — the fallback then completed only to be thrown away as
+      // "cancelled". A FIRST-attempt failure is a fallback trigger, not a
+      // client close, so the handler is detached for this attempt and
+      // restored on every exit (mid-handshake closes on the attempt that
+      // ends up owning the connection keep their cancel semantics).
+      const pendingOnClose = client.onclose;
+      client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
         const wrapped = this.applyFirstPageOnly(
@@ -2646,10 +2702,12 @@ export class MCPClientManager {
         await client.connect(wrapped, {
           timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
         });
+        client.onclose = pendingOnClose;
         return streamableTransport;
       } catch (error) {
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
+        client.onclose = pendingOnClose;
         // SEP-2350: a connect-time `403 insufficient_scope` surfaces here as a
         // clean `InsufficientScopeError` (transport built
         // `onInsufficientScope: "throw"` above). Rethrow it immediately —
@@ -2661,6 +2719,27 @@ export class MCPClientManager {
         // serialize the challenge and drive the union-scope re-authorization.
         if (isInsufficientScopeError(error)) {
           throw error;
+        }
+        // Declared-transport servers (`disableSseFallback`) never downgrade
+        // to SSE: surface the Streamable HTTP failure, keeping the auth
+        // classification the combined path below would have produced so
+        // hosts still see an MCPAuthError where OAuth escalation hooks in.
+        if (config.disableSseFallback) {
+          const authCheck = isAuthError(error);
+          if (authCheck.isAuth) {
+            throw new MCPAuthError(
+              `Authentication failed for MCP server "${serverId}": Streamable HTTP error: ${formatError(
+                error
+              )}`,
+              authCheck.statusCode,
+              { cause: error }
+            );
+          }
+          throw new Error(
+            `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
+              error
+            )}`
+          );
         }
       }
     }

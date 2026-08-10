@@ -189,3 +189,77 @@ describe("createManualHostedConnection — xaaPolicy survives schema stripping",
     expect(thrown?.details?.reason).toBe("xaa_policy_invalid");
   });
 });
+
+// Declared plugin transports (`httpVariant` on the authorize serverConfig,
+// once the backend serves it): `sse` skips the Streamable HTTP attempt,
+// `streamable-http` rules out the silent SSE downgrade, absence — every row
+// today — leaves the config byte-identical.
+describe("toHttpConfig — declared httpVariant mapping", () => {
+  it("maps a declared sse transport to preferSSE", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://sse.example.com/mcp",
+          httpVariant: "sse",
+        },
+      },
+      1000
+    );
+    expect(config.preferSSE).toBe(true);
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+
+  it("maps a declared streamable-http transport to disableSseFallback", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://streamable.example.com/mcp",
+          httpVariant: "streamable-http",
+        },
+      },
+      1000
+    );
+    expect(config.disableSseFallback).toBe(true);
+    // Explicitly false, not merely absent — see below.
+    expect(config.preferSSE).toBe(false);
+  });
+
+  it("pins preferSSE false so a /sse URL cannot override the declaration", async () => {
+    // The SDK resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`,
+    // so an undefined preferSSE would let URL shape beat the declaration and
+    // route a declared streamable-http server to SSE without ever attempting
+    // Streamable HTTP.
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://plugin.example.com/sse",
+          httpVariant: "streamable-http",
+        },
+      },
+      1000
+    );
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
+  });
+
+  it("sets neither flag when no transport was declared", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://plain.example.com/mcp",
+        },
+      },
+      1000
+    );
+    expect(config.preferSSE).toBeUndefined();
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+});

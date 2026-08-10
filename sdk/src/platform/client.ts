@@ -18,6 +18,13 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
+  PlatformJourney,
+  PlatformJourneyRun,
+  PlatformJourneyRunSession,
+  PlatformJourneyRunCanceled,
+  PlatformJourneyRunLaunched,
+  PlatformScenario,
+  PlatformScenarioDeleted,
   PlatformEnvironmentCreateBody,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
@@ -32,6 +39,8 @@ import type {
   PlatformMe,
   PlatformModel,
   PlatformPage,
+  PlatformPlugin,
+  PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
   PlatformTunnelClosed,
@@ -60,6 +69,14 @@ export interface PlatformApiClientOptions {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 type QueryParams = Record<string, string | number | undefined>;
+
+/**
+ * The cursor-pagination query the v1 read routes take. `undefined` entries are
+ * dropped by `request`, so a first page sends neither param.
+ */
+function pageQuery(params: { cursor?: string; limit?: number }): QueryParams {
+  return { cursor: params.cursor, limit: params.limit };
+}
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -539,6 +556,41 @@ export class PlatformApiClient {
         params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/restore`,
       { body: { expectedRevision: params.expectedRevision } },
+      options
+    );
+  }
+
+  // ── Agent Plugins ────────────────────────────────────────────────────
+  //
+  // Read-only: the live plugins installed in a project, and one imported
+  // version's detail. Import/enable/disable/uninstall stay in the app.
+
+  listProjectPlugins(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformPlugin>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/plugins`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * One imported plugin version with its component projections. Addressed by
+   * the version id alone — access is the version's own project membership,
+   * and historical versions of uninstalled plugins stay readable (eval
+   * snapshots and stale environment pins reference them).
+   */
+  getPluginVersion(
+    params: { pluginVersionId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPluginVersion> {
+    return this.request(
+      "GET",
+      `/plugin-versions/${encodeURIComponent(params.pluginVersionId)}`,
+      {},
       options
     );
   }
@@ -1117,6 +1169,185 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Journeys (the Swarms product's API surface) ─────────────────────────
+  //
+  // Reads need project membership. LAUNCH and AUTHORING writes are behind the
+  // `sandboxes-enabled` beta flag, enforced server-side per organization — an
+  // unflagged caller gets FEATURE_UNAVAILABLE from those.
+  //
+  // `cancelJourneyRun` is NOT gated, deliberately: cancelling reduces exposure
+  // and spend, so it has to keep working for an organization that has just lost
+  // the flag with a run already in flight. Do not have callers pre-suppress it
+  // on a flag check — losing access to the feature is exactly when stopping it
+  // matters most.
+  //
+  // Every route is project-scoped in the PATH and re-checked server-side, so a
+  // journey or run id belonging to another of your projects reads as 404
+  // rather than crossing over.
+
+  listJourneys(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformJourney>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/journeys`,
+      {},
+      options
+    );
+  }
+
+  listJourneyRuns(
+    params: {
+      projectId: string;
+      journeyId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformJourneyRun>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getJourneyRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformJourneyRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options
+    );
+  }
+
+  listJourneyRunSessions(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformJourneyRunSession>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-runs/${encodeURIComponent(params.runId)}/sessions`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * Launch a journey. Returns as soon as the run exists — **202**, not a
+   * finished run: a fan-out can take hours, so poll `getJourneyRun` or watch
+   * `listJourneyRunSessions`.
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, and you want to pass one. A launch
+   * spends model credits, so a retry after a dropped response must not run the
+   * journey twice; replaying a key returns the ORIGINAL run with
+   * `deduped: true`. Omit it and every call starts a new run — the server has
+   * nothing to match a retry against, so it treats each as a new launch.
+   *
+   * Behind the `sandboxes-enabled` beta flag — launching creates exposure and
+   * spend, so an unflagged organization gets a 403 here.
+   */
+  launchJourneyRun(
+    params: {
+      projectId: string;
+      journeyId: string;
+      waveId?: string;
+      environmentIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformJourneyRunLaunched> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
+      {
+        body: {
+          ...(params.waveId ? { waveId: params.waveId } : {}),
+          ...(params.environmentIds?.length
+            ? { environmentIds: params.environmentIds }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * Stop a running journey run.
+   *
+   * Idempotent: cancelling an already-cancelled run succeeds with
+   * `alreadyCanceled: true` rather than conflicting. A run that finished on
+   * its own is a 409 — reporting success there would tell you that you stopped
+   * something that had already completed.
+   *
+   * NOT behind the beta flag, unlike launching: stopping a run must keep
+   * working for an organization that has lost it.
+   */
+  cancelJourneyRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformJourneyRunCanceled> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  // ── Scenarios (user testing) ────────────────────────────────────────────
+  //
+  // Both require project ADMIN. Publishing is additionally behind the
+  // `sandboxes-enabled` beta flag; UNPUBLISHING deliberately is not, so an org
+  // that loses the flag can still take a live scenario down.
+
+  publishScenario(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformScenario> {
+    return this.request(
+      "PUT",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
+      {},
+      options
+    );
+  }
+
+  unpublishScenario(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformScenarioDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
+      {},
+      options
+    );
+  }
+
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,
@@ -1129,7 +1360,11 @@ export class PlatformApiClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST" | "PATCH" | "DELETE",
+    // PUT is here for idempotent creates — `publishScenario` is the first:
+    // publishing an environment that is already published returns the existing
+    // scenario rather than minting a second, which is PUT's semantics and not
+    // POST's.
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions

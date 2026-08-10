@@ -157,9 +157,11 @@ export function assertRunPluginResolutionUsable(
   ];
   if (problems.length > 0) {
     throw new RunPluginServersUnavailableError(
-      `This ${copy.surfaceNoun} pins plugins that can't be used right now: ${problems.join(
-        "; "
-      )}. ${copy.remedy}`
+      `This ${
+        copy.surfaceNoun
+      } pins plugins that can't be used right now: ${problems.join("; ")}. ${
+        copy.remedy
+      }`
     );
   }
 }
@@ -188,13 +190,19 @@ export function readRunPluginServerIds(
  * guessing about a capability we are about to hand an agent.
  */
 export async function queryRunPluginResolution(
-  getConvexClient: () => ConvexHttpClient,
+  // Union, not `Promise<...>`: the swarm caller now resolves a fresh bearer
+  // per session (a client built at launch carries a token that expires
+  // mid-run), while the suite caller has no such problem and keeps its sync
+  // thunk. `await` accepts both.
+  getConvexClient: () => ConvexHttpClient | Promise<ConvexHttpClient>,
   functionRef: string,
   args: Record<string, unknown>,
   deploySkewMessage: string
 ): Promise<unknown> {
   try {
-    return await getConvexClient().query(
+    return await (
+      await getConvexClient()
+    ).query(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- string
       // function refs are the established inspector→Convex pattern (see
       // services/environments/resolve.ts); there is no codegen here.

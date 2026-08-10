@@ -61,12 +61,28 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({
-  useChatbox: (args: { isAuthenticated: boolean; chatboxId: string | null }) => {
+  useChatbox: (args: {
+    isAuthenticated: boolean;
+    chatboxId: string | null;
+  }) => {
     chatboxQuerySpy(args);
     return chatboxState;
   },
   useChatboxList: () => listState,
   useChatboxMutations: () => ({ deleteChatbox: vi.fn() }),
+  useEnvironmentChatboxMutations: () => ({
+    publishEnvironmentChatbox: vi.fn(),
+  }),
+}));
+
+// The surface reads environments for the agent's publish tool and its
+// snapshot; these suites don't exercise either.
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: () => [],
+}));
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
@@ -126,7 +142,11 @@ function rowFixture(overrides: Partial<ChatboxListItem>): ChatboxListItem {
 
 function renderScenario(scenarioId: string = SCENARIO_HOST_ID) {
   return render(
-    <UserTestingTab projectId="proj-1" isAuthenticated scenarioId={scenarioId} />
+    <UserTestingTab
+      projectId="proj-1"
+      isAuthenticated
+      scenarioId={scenarioId}
+    />,
   );
 }
 
@@ -154,7 +174,7 @@ describe("UserTestingTab — scenario resolution", () => {
 
     expect(await screen.findByText(/Managed by Swarms/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Go to Swarms/i })
+      screen.getByRole("button", { name: /Go to Swarms/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(ensureMock).not.toHaveBeenCalled();
@@ -219,7 +239,7 @@ describe("UserTestingTab — scenario resolution", () => {
 
     expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Back to User Testing/i })
+      screen.getByRole("button", { name: /Back to User Testing/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(ensureMock).not.toHaveBeenCalled();

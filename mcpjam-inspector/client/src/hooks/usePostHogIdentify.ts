@@ -3,6 +3,7 @@ import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
+import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
 
 /**
@@ -38,12 +39,28 @@ export function usePostHogIdentify() {
         environment: import.meta.env.MODE,
         platform: detectPlatform(),
         version: __APP_VERSION__,
+        deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+        source: "client",
+      });
+      // `reset()` clears flag person properties too — restore them, or every
+      // flag evaluated between the reset and the next page load would target
+      // an unknown deployment.
+      posthog.setPersonPropertiesForFlags?.({
+        deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+        platform: detectPlatform(),
       });
     }
 
-    let personProperties: Record<string, string | null | undefined> = {};
+    // `deployment` is a PERSON property here, not just a super property: the
+    // super prop rides events, while `/flags` targeting reads person
+    // properties. Set for every actor (guest included) so a cohort rule like
+    // "self_hosted signed-in users" evaluates correctly.
+    let personProperties: Record<string, string | null | undefined> = {
+      deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+    };
     if (isAuthedActor && user) {
       personProperties = {
+        ...personProperties,
         email: user.email,
         name:
           user.firstName && user.lastName

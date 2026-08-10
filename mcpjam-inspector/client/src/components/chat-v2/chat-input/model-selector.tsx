@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
-import { Check, X } from "lucide-react";
+import { ArrowUpRight, Check, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -76,6 +76,13 @@ interface ModelSelectorProps {
    * on the configured tab. Only the chat-input instance opts in.
    */
   respondToProviderTabIntent?: boolean;
+  /**
+   * Navigates to the org's model providers page. Rendered as a footer under the
+   * "Your providers" list so adding another BYOK key doesn't mean hunting
+   * through Settings. Callers pass it only when the viewer may actually open
+   * org settings; omitted, the footer is absent rather than disabled.
+   */
+  onManageOrgProviders?: () => void;
 }
 
 type GroupKey = string;
@@ -127,15 +134,51 @@ const modelSearchValue = (model: ModelDefinition, groupTitle: string): string =>
   `${model.name} ${groupTitle} ${String(model.id)}`.trim();
 
 /**
+ * cmdk's `defaultFilter` accepts any subsequence, so o-p-u-s scattered across
+ * "Claude Sonnet 4.5 Anthropic anthropic/claude-sonnet-4.5" scores above zero
+ * and renders under a search for "opus". Real matches score ~0.89+ against the
+ * hosted catalog while that incidental noise tops out near 0.17, so anything
+ * below this is treated as no match.
+ */
+const MIN_MODEL_SEARCH_SCORE = 0.3;
+
+/**
+ * The threshold is applied per word rather than to the whole query, because
+ * cmdk scores a multi-word search as one gapped subsequence and the gaps drag
+ * even an exact hit under it — "gemini 3 pro" scores 0.168 against Gemini 3.1
+ * Pro Preview, while its words score 0.99 each. Single-character words are
+ * exempt: they only clear the threshold when they start a word, so gating on
+ * them would drop every Qwen3 Coder row from a search for "qwen 3 coder".
+ * cmdk's own score is returned untouched so ranking is unchanged.
+ */
+export const modelFilter = (
+  value: string,
+  search: string,
+  keywords?: string[]
+): number => {
+  const score = defaultFilter(value, search, keywords);
+  if (score <= 0) {
+    return 0;
+  }
+
+  const words = search.split(/\s+/).filter((word) => word.length > 1);
+  const everyWordMatches = words.every(
+    (word) => defaultFilter(value, word, keywords) >= MIN_MODEL_SEARCH_SCORE
+  );
+
+  return everyWordMatches ? score : 0;
+};
+
+/**
  * Provider headings are plain rows, not `CommandGroup`s, so cmdk's own
  * empty-group hiding never applies to them: without this, a search shows a
- * heading for every provider even when it has no matching model. Scoring with
- * cmdk's `defaultFilter` keeps the heading's visibility in lockstep with the
- * rows cmdk itself keeps.
+ * heading for every provider even when it has no matching model. This must
+ * score with the same `modelFilter` the `Command` below is given — the two
+ * drifting apart is what left headings stranded over no rows once already.
  */
 const groupHasMatch = (group: ModelGroup, search: string): boolean =>
   group.models.some(
-    (model) => defaultFilter(modelSearchValue(model, group.title), search) > 0
+    (model) => modelFilter(modelSearchValue(model, group.title), search) > 0
   );
 
 function sameModelOrder(
@@ -169,6 +212,7 @@ export function ModelSelector({
   align = "start",
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
+  onManageOrgProviders,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -265,6 +309,16 @@ export function ModelSelector({
     if (!nextOpen) {
       setHoveredLockedModelId(null);
     }
+  };
+
+  const handleManageOrgProviders = () => {
+    track("chat_model_selector_manage_org_models_clicked", {
+      location: analyticsLocation,
+    });
+    // Navigating away from a chat while the popover is mounted leaves it
+    // orphaned over the next screen, so close it before handing off.
+    setIsOpen(false);
+    onManageOrgProviders?.();
   };
 
   const selectedModelsData =
@@ -677,7 +731,7 @@ export function ModelSelector({
           sideOffset={8}
           collisionPadding={8}
         >
-          <Command shouldFilter={true}>
+          <Command shouldFilter={true} filter={modelFilter}>
             <CommandInput
               placeholder="Search models"
               value={search}
@@ -752,19 +806,27 @@ export function ModelSelector({
             ) : null}
 
             {(() => {
-              const hasBothSections =
-                modelSections.provided.length > 0 &&
-                modelSections.configured.length > 0;
               const isSearching = search.trim().length > 0;
-              const showTabs = hasBothSections && !isSearching;
+              // An org admin with no keys yet is exactly who the footer below is
+              // for, so the tab stays reachable while their list is empty —
+              // gating it on a non-empty list hid the offer to add a key from
+              // everyone who had none.
+              const offerEmptyConfigured =
+                !!onManageOrgProviders && modelSections.configured.length === 0;
+              const showTabs =
+                !isSearching &&
+                modelSections.provided.length > 0 &&
+                (modelSections.configured.length > 0 || offerEmptyConfigured);
               const showProvided =
                 visibleSections.provided.length > 0 &&
-                (isSearching || !hasBothSections || providerTab === "provided");
+                (isSearching || !showTabs || providerTab === "provided");
               const showConfigured =
                 visibleSections.configured.length > 0 &&
-                (isSearching ||
-                  !hasBothSections ||
-                  providerTab === "configured");
+                (isSearching || !showTabs || providerTab === "configured");
+              const showConfiguredEmpty =
+                showTabs &&
+                providerTab === "configured" &&
+                visibleSections.configured.length === 0;
 
               return (
                 <>
@@ -791,7 +853,18 @@ export function ModelSelector({
                   ) : null}
 
                   <CommandList className="max-h-[min(320px,45vh)]">
-                    <CommandEmpty>No matching models.</CommandEmpty>
+                    {/* cmdk renders Empty whenever no rows are mounted, which
+                        the empty providers tab below would otherwise inherit —
+                        and "No matching models" reads as a failed search. */}
+                    {showConfiguredEmpty ? null : (
+                      <CommandEmpty>No matching models.</CommandEmpty>
+                    )}
+
+                    {showConfiguredEmpty ? (
+                      <p className="px-2.5 py-3 text-[11px] text-muted-foreground">
+                        No provider keys yet.
+                      </p>
+                    ) : null}
 
                     {showProvided ? (
                       <CommandGroup
@@ -827,6 +900,23 @@ export function ModelSelector({
                       </CommandGroup>
                     ) : null}
                   </CommandList>
+
+                  {/* Only under the user's own providers — while searching the
+                      rows are a transient mix of both sections. */}
+                  {onManageOrgProviders &&
+                  !isSearching &&
+                  (showConfigured || showConfiguredEmpty) ? (
+                    <div className="border-t px-2 py-1.5">
+                      <button
+                        type="button"
+                        onClick={handleManageOrgProviders}
+                        className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        Manage organization models
+                        <ArrowUpRight className="size-3 shrink-0" />
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               );
             })()}

@@ -7,7 +7,11 @@ import {
 
 describe("sandbox notice data part", () => {
   it("accepts each known reason", () => {
-    for (const reason of ["sandbox_reset", "stale_image"]) {
+    for (const reason of [
+      "sandbox_reset",
+      "stale_image",
+      "sandbox_unavailable",
+    ]) {
       expect(
         isSandboxNoticeDataPart({
           type: SANDBOX_NOTICE_DATA_PART_TYPE,

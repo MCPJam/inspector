@@ -1,17 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, Inbox, Loader2, Plus } from "lucide-react";
-import { useConvexAuth, useMutation } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { UserTestingOverviewPanel } from "@/components/chatboxes/UserTestingOverviewPanel";
 import { UserTestingScenarioDetail } from "@/components/chatboxes/UserTestingScenarioDetail";
 import { UserTestingCreateFlow } from "@/components/chatboxes/UserTestingCreateFlow";
+import { UserTestingScenarioCreateFlow } from "@/components/chatboxes/UserTestingScenarioCreateFlow";
 import {
   useChatbox,
   useChatboxList,
   useChatboxMutations,
+  useEnvironmentChatboxMutations,
 } from "@/hooks/useChatboxes";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { environmentLabel } from "@/lib/environment-label";
+import { settingsFromChatboxAccessPreset } from "@/lib/chatbox-access-presets";
+import { isDeliberateScenario } from "@/lib/user-testing-scenarios";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
@@ -35,8 +42,7 @@ import type {
  * "what happened when real people used this?".
  *
  *   - `/user-testing`               — the project's scenarios
- *   - `/user-testing/:scenarioId`   — one scenario: share band, then
- *                                     Sessions | Clusters
+ *   - `/user-testing/:scenarioId`   — one scenario: Edit | Sessions | Insights
  *
  * `:scenarioId` is the scenario's CHATBOX id. It used to be the host id, back
  * when every scenario was a client and the two were 1:1. Environment-backed
@@ -93,27 +99,53 @@ export function UserTestingTab({
     projectId,
   });
   const listLoading = queryable && listQueryLoading;
-  // Still needed for the agent's host-addressed publish tool (re-pointed at
-  // scenario identity in a follow-up) and for the Swarms dead-end below.
+  // Only for the Swarms dead-end below: a standalone Journeys host has no
+  // chatbox, so an old link to one resolves to nothing and deserves a better
+  // answer than "not found".
   const { hosts, isLoading: hostsQueryLoading } = useHostList({
     isAuthenticated: effectiveAuth,
     projectId,
   });
   const hostsLoading = queryable && hostsQueryLoading;
+  // What the agent's publish tool addresses, and what the snapshot advertises.
+  const environments = useProjectEnvironments(queryable ? projectId : null);
+  const liveEnvironments = useMemo(
+    () => (environments ?? []).filter((env) => !env.archivedAt),
+    [environments],
+  );
+
+  // Which rows are SCENARIOS. Every client mints a chatbox row whether or not
+  // anyone meant to test with it (three of them are seeded into an empty
+  // project before it is ever opened), so the list filters to rows that show
+  // deliberate intent — see `isDeliberateScenario`.
+  //
+  // Filtered CLIENT-side on purpose: the same query feeds the public API v1
+  // list and the Environments page's consumer counts, and neither should
+  // inherit this surface's editorial rule.
+  //
+  // The filter is scoped to the environments flag. A project without
+  // environments has no other kind of scenario, so hiding its client rows
+  // would leave it with a surface it cannot use.
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const rows = useMemo(() => {
+    const all = chatboxes ?? [];
+    return environmentsEnabled ? all.filter(isDeliberateScenario) : all;
+  }, [chatboxes, environmentsEnabled]);
 
   // Resolution ladder. The param is a chatbox id; a param that matches a HOST
   // is a link minted under the old scheme and gets redirected rather than
-  // 404'd.
-  const rows = chatboxes ?? [];
+  // 404'd. Deliberately searches the UNFILTERED rows: a direct link to a
+  // scenario the list chooses not to advertise must still open.
+  const allRows = chatboxes ?? [];
   const scenarioRow = scenarioId
-    ? rows.find((c) => c.chatboxId === scenarioId) ?? null
+    ? allRows.find((c) => c.chatboxId === scenarioId) ?? null
     : null;
   // `!environmentId` mirrors the backend's `getHostPublishChatbox`: an
   // environment-backed row displays a host it does not belong to, and must
   // never absorb that host's legacy links.
   const legacyHostRow =
     scenarioId && !scenarioRow
-      ? rows.find((c) => c.namedHostId === scenarioId && !c.environmentId) ??
+      ? allRows.find((c) => c.namedHostId === scenarioId && !c.environmentId) ??
         null
       : null;
   // A Journeys-owned host is standalone — it has no chatbox at all, so an old
@@ -148,13 +180,8 @@ export function UserTestingTab({
   // intentional deletes, and a stuck-timer). All of it is gone: a scenario is
   // now addressed by the chatbox that already exists, so there is nothing to
   // back-mint on the way in. A host without a chatbox simply has no scenario.
-  //
-  // The mutation itself survives for ONE caller — the agent's host-addressed
-  // publish tool below, where provisioning is the explicit request rather than
-  // a side effect of looking at a URL.
-  const ensureChatboxForHost = useMutation(
-    "chatboxes:ensureChatboxForHost" as any,
-  );
+  // `chatboxes:ensureChatboxForHost` has no caller on this surface any more —
+  // the agent's publish tool publishes an environment, like the create flow.
 
   // Legacy deep links: `/chatboxes?host=X&session=Y` redirects here with its
   // query intact, so translate it into the scenario path. Every session link
@@ -187,6 +214,7 @@ export function UserTestingTab({
   // agent would get an empty snapshot and failing commands.
   const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
   const { deleteChatbox } = useChatboxMutations();
+  const { publishEnvironmentChatbox } = useEnvironmentChatboxMutations();
   const { createHost } = useHostMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
@@ -206,30 +234,45 @@ export function UserTestingTab({
     }
   };
 
-  // Exact resolution against the loaded host list — unknown or ambiguous →
-  // invalid_request, never a fuzzy guess.
-  const resolveAgentHost = (raw: unknown) => {
+  /**
+   * Exact resolution by id or by the name shown on screen — unknown or
+   * ambiguous is `invalid_request`, never a fuzzy guess. Both commands act on
+   * the wrong thing silently if resolution guesses, so it refuses instead and
+   * says how to disambiguate.
+   */
+  const resolveAgentTarget = <T,>(
+    raw: unknown,
+    args: {
+      field: string;
+      noun: string;
+      rows: T[];
+      idOf: (row: T) => string;
+      nameOf: (row: T) => string;
+    },
+  ): T => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'host' string (a client name or id).",
+        `Missing required '${args.field}' string (a ${args.noun} name or id).`,
       );
     }
     const wanted = raw.trim();
     const wantedLower = wanted.toLowerCase();
-    const matches = hosts.filter(
-      (h) => h.hostId === wanted || h.name.toLowerCase() === wantedLower,
+    const matches = args.rows.filter(
+      (row) =>
+        args.idOf(row) === wanted ||
+        args.nameOf(row).toLowerCase() === wantedLower,
     );
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No client matches "${wanted}". Use a client name or id from this screen (list them with ui_snapshot_app).`,
+        `No ${args.noun} matches "${wanted}". Use a ${args.noun} name or id from this screen (list them with ui_snapshot_app).`,
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} clients match "${wanted}" — pass the client id instead (ids are in ui_snapshot_app).`,
+      `${matches.length} ${args.noun}s match "${wanted}" — pass the ${args.noun} id instead (ids are in ui_snapshot_app).`,
     );
   };
 
@@ -241,33 +284,47 @@ export function UserTestingTab({
       publishChatbox: async (command) => {
         requireAgentOperable();
         const { payload } = command as PublishChatboxInspectorCommand;
-        const target = resolveAgentHost(payload?.host);
-        // Swarms-owned dead-end: a standalone Journeys host has NO share
-        // surface and must never be back-minted one — the same reason the
-        // "Managed by Swarms" notice shows.
-        if (target.ownerScope?.type === "journeys") {
+        // The tool publishes an environment, so a project without the
+        // environments surface has nothing it can act on. Refusing beats
+        // falling back to minting a client, which is the thing the scenario
+        // list stopped showing.
+        if (!environmentsEnabled) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            `"${target.name}" belongs to the Swarms surface and has no share surface. Manage its journeys and runs on the Swarms screen, or publish a different client.`,
+            "Publishing a scenario needs Environments, which isn't enabled for this project. Create the scenario from the New scenario screen instead.",
           );
         }
+        const target = resolveAgentTarget(payload?.environment, {
+          field: "environment",
+          noun: "environment",
+          rows: liveEnvironments,
+          idOf: (env) => env.environmentId,
+          nameOf: (env) => environmentLabel(env),
+        });
         try {
-          // The mutation is idempotent and returns the chatbox either way, so
-          // its id is what we navigate with — no round trip through the
-          // legacy host-id redirect.
-          const settings = (await ensureChatboxForHost({
-            hostId: target.hostId,
-          } as any)) as { chatboxId: string } | null;
-          if (!settings?.chatboxId) {
-            throw new Error("Publishing returned no scenario.");
-          }
-          navigate(buildUserTestingScenarioPath(settings.chatboxId));
+          const result = await publishEnvironmentChatbox({
+            environmentId: target.environmentId,
+            ...(payload?.name ? { name: payload.name } : {}),
+            ...(payload?.access
+              ? {
+                  mode: settingsFromChatboxAccessPreset(payload.access).mode,
+                }
+              : {}),
+          });
+          navigate(buildUserTestingScenarioPath(result.chatboxId));
           return {
             status: "chatbox_published",
-            scenarioId: settings.chatboxId,
-            hostId: target.hostId,
-            name: target.name,
-            note: "The client's scenario is provisioned and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists.",
+            scenarioId: result.chatboxId,
+            environmentId: target.environmentId,
+            name: result.name,
+            mode: result.mode,
+            // Says which happened: re-publishing keeps the existing scenario's
+            // name and access, so reporting "created" either way would be a
+            // lie the model then repeats to the user.
+            created: result.created,
+            note: result.created
+              ? "The scenario is published and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists."
+              : "That environment was already published; its existing scenario is open, with the name and access it already had.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(
@@ -279,27 +336,30 @@ export function UserTestingTab({
       deleteChatbox: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteChatboxInspectorCommand;
-        const target = resolveAgentHost(payload?.host);
-        // Host-addressed, so it deletes the host's OWN publish surface — never
-        // an environment-backed row that merely displays this host (same rule
-        // as the backend's `getHostPublishChatbox`).
-        const match = rows.find(
-          (c) => c.namedHostId === target.hostId && !c.environmentId,
-        );
-        if (!match) {
-          throw createInspectorCommandClientError(
-            "invalid_request",
-            `"${target.name}" has no scenario to delete.`,
-          );
-        }
+        // Resolved against the SAME rows the snapshot advertises, so the agent
+        // can only delete something it (and the user) can see. A row the list
+        // filters out is not addressable here.
+        const target = resolveAgentTarget(payload?.scenario, {
+          field: "scenario",
+          noun: "scenario",
+          rows,
+          idOf: (row) => row.chatboxId,
+          nameOf: (row) => row.name,
+        });
         try {
-          await deleteChatbox({ chatboxId: match.chatboxId } as any);
+          await deleteChatbox({ chatboxId: target.chatboxId } as any);
           return {
             status: "chatbox_deleted",
-            scenarioId: match.chatboxId,
-            hostId: target.hostId,
-            chatboxId: match.chatboxId,
+            scenarioId: target.chatboxId,
+            chatboxId: target.chatboxId,
             name: target.name,
+            // Deleting a published scenario never touches the environment it
+            // was published from; saying so keeps the model from reporting
+            // more damage than was done.
+            environmentId: target.environmentId ?? null,
+            note: target.environmentId
+              ? "The scenario and its history are gone. The environment it was published from is unchanged."
+              : "The scenario and its history are gone.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(
@@ -341,6 +401,14 @@ export function UserTestingTab({
         activeView,
         scenarioCount: scenarios.length,
         scenarios,
+        // What `ui_publish_chatbox` addresses. Without this the agent would
+        // have to guess an environment name, and exact resolution would refuse
+        // it — the tool's own input is only discoverable here.
+        environments: liveEnvironments.map((env) => ({
+          environmentId: env.environmentId,
+          name: environmentLabel(env),
+          published: rows.some((r) => r.environmentId === env.environmentId),
+        })),
       };
       if (activeView !== "detail") return base;
       const sessions = (agentSessionThreads ?? [])
@@ -392,6 +460,30 @@ export function UserTestingTab({
           title="Select a project first"
           body="Scenarios belong to a project — pick one, then create a scenario in it."
           onBack={goOverview}
+        />
+      );
+    }
+    if (environmentsEnabled) {
+      return (
+        <UserTestingScenarioCreateFlow
+          projectId={projectId}
+          onCancel={goOverview}
+          onCreateEnvironment={() => navigate(routePaths.environments)}
+          onCreateScenario={async ({ environmentId, name, mode }) => {
+            // The one write. Publishing applies the name and the access mode
+            // in the same mutation, so the scenario is never briefly live in a
+            // mode nobody asked for. Idempotent: re-publishing an environment
+            // returns its existing scenario UNCHANGED rather than re-moding it.
+            const result = await publishEnvironmentChatbox({
+              environmentId,
+              name,
+              mode,
+            });
+            navigate(buildUserTestingScenarioPath(result.chatboxId), {
+              replace: true,
+            });
+            return { scenarioId: result.chatboxId, created: result.created };
+          }}
         />
       );
     }
@@ -493,6 +585,7 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         chatbox={chatbox}
+        isAuthenticated={effectiveAuth}
         onBack={goOverview}
         onDeleted={goOverview}
       />
@@ -522,7 +615,9 @@ export function UserTestingTab({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8">
         <UserTestingOverviewPanel
-          chatboxes={chatboxes}
+          // The filtered rows — `undefined` while the query is still loading,
+          // so the panel can tell "nothing yet" from "nothing to show".
+          chatboxes={chatboxes === undefined ? undefined : rows}
           isLoading={listLoading}
           onOpenScenario={(id) => navigate(buildUserTestingScenarioPath(id))}
           onCreateScenario={goCreate}
