@@ -316,6 +316,13 @@ export function useChatboxMutations() {
   const setChatboxGuestExecution = useMutation(
     "chatboxes:setChatboxGuestExecution" as any,
   );
+  // Environment-backed scenarios only: re-point the chatbox at a different
+  // environment (admin-gated; refuses a target that already backs another
+  // scenario). The setup editor on the scenario detail header commits
+  // through this.
+  const rebindEnvironmentChatbox = useMutation(
+    "chatboxes:rebindEnvironmentChatbox" as any,
+  );
 
   return {
     updateChatbox,
@@ -325,5 +332,6 @@ export function useChatboxMutations() {
     upsertChatboxMember,
     removeChatboxMember,
     setChatboxGuestExecution,
+    rebindEnvironmentChatbox,
   };
 }

@@ -97,6 +97,10 @@ export default defineConfig(({ mode }) => {
         project: "inspector-client",
         authToken: env.SENTRY_AUTH_TOKEN,
         telemetry: false,
+        // Must match the `release` the SDK inits with (`__APP_VERSION__`).
+        // Without this the plugin invents its own release name from git and
+        // the uploaded source maps never resolve against runtime events.
+        release: { name: appVersion },
         sourcemaps: {
           assets: ["../dist/client/assets/**"],
           filesToDeleteAfterUpload: ["../dist/client/assets/**/*.map"],
@@ -183,6 +187,13 @@ export default defineConfig(({ mode }) => {
         // client origin is Vite, not the Hono server, so /relay must be
         // proxied or analytics/flags silently break in dev only.
         "/relay": {
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
+          changeOrigin: true,
+          secure: false,
+        },
+        // /tlm is the same relay on its edge-safe alias prefix (see
+        // RELAY_MOUNT_PREFIXES in server/routes/relay.ts).
+        "/tlm": {
           target: env.VITE_API_BASE_URL || "http://localhost:6274",
           changeOrigin: true,
           secure: false,
