@@ -246,6 +246,35 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
   });
 });
 
+describe("toMCPServerConfig — declared httpVariant mapping", () => {
+  it("maps a declared sse transport to preferSSE", () => {
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: { ...httpHeaderOnlyAuth.serverConfig, httpVariant: "sse" },
+    });
+    expect(config.preferSSE).toBe(true);
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+
+  it("maps a declared streamable-http transport to disableSseFallback", () => {
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: {
+        ...httpHeaderOnlyAuth.serverConfig,
+        httpVariant: "streamable-http" as const,
+      },
+    });
+    expect(config.disableSseFallback).toBe(true);
+    expect(config.preferSSE).toBeUndefined();
+  });
+
+  it("sets neither flag when no transport was declared", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth);
+    expect(config.preferSSE).toBeUndefined();
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+});
+
 describe("resolveLocalServerForConnect — refresh on missing access token", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";

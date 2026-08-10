@@ -2665,6 +2665,16 @@ export class MCPClientManager {
         onInsufficientScope: "throw",
       });
 
+      // The upstream Client closes a failed transport during `connect`, and
+      // that close fires `onclose` → `clearClosedPendingConnectionState`,
+      // discarding the pending live state the SSE fallback below still
+      // needs — the fallback then completed only to be thrown away as
+      // "cancelled". A FIRST-attempt failure is a fallback trigger, not a
+      // client close, so the handler is detached for this attempt and
+      // restored on every exit (mid-handshake closes on the attempt that
+      // ends up owning the connection keep their cancel semantics).
+      const pendingOnClose = client.onclose;
+      client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
         const wrapped = this.applyFirstPageOnly(
@@ -2678,10 +2688,12 @@ export class MCPClientManager {
         await client.connect(wrapped, {
           timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
         });
+        client.onclose = pendingOnClose;
         return streamableTransport;
       } catch (error) {
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
+        client.onclose = pendingOnClose;
         // SEP-2350: a connect-time `403 insufficient_scope` surfaces here as a
         // clean `InsufficientScopeError` (transport built
         // `onInsufficientScope: "throw"` above). Rethrow it immediately —
@@ -2693,6 +2705,27 @@ export class MCPClientManager {
         // serialize the challenge and drive the union-scope re-authorization.
         if (isInsufficientScopeError(error)) {
           throw error;
+        }
+        // Declared-transport servers (`disableSseFallback`) never downgrade
+        // to SSE: surface the Streamable HTTP failure, keeping the auth
+        // classification the combined path below would have produced so
+        // hosts still see an MCPAuthError where OAuth escalation hooks in.
+        if (config.disableSseFallback) {
+          const authCheck = isAuthError(error);
+          if (authCheck.isAuth) {
+            throw new MCPAuthError(
+              `Authentication failed for MCP server "${serverId}": Streamable HTTP error: ${formatError(
+                error
+              )}`,
+              authCheck.statusCode,
+              { cause: error }
+            );
+          }
+          throw new Error(
+            `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
+              error
+            )}`
+          );
         }
       }
     }

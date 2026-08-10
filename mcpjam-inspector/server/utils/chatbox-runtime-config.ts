@@ -65,6 +65,20 @@ export type ChatboxEnvironmentRuntime = {
     channels?: RuntimeSkillChannel[];
     files?: Array<{ path: string; size: number; url: string | null }>;
   }>;
+  /**
+   * Phase 6.1: the environment's pinned plugin versions, mirrored from the
+   * resolution the backend already performed for this payload. Same shape as
+   * `ResolvedEnvironmentRuntime.pluginVersions`, so the chatbox branch can
+   * feed the attribution probe the environment target uses. ABSENT on every
+   * backend that predates the field — absence degrades to "no plugin origin
+   * reported", never to a guess from `connectable[].source`.
+   */
+  pluginVersions?: Array<{
+    pluginId: string;
+    pluginVersionId: string;
+    name: string;
+    bundleHash?: string;
+  }>;
 };
 
 export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
@@ -437,6 +451,31 @@ export function readChatboxEnvironment(
       })
     : undefined;
 
+  // Additive like `connectable`/`skills`: a malformed entry (or a torn id)
+  // drops to nothing — losing a provenance LABEL, never a capability.
+  const pluginVersions = Array.isArray(raw.pluginVersions)
+    ? raw.pluginVersions.flatMap((entry) => {
+        if (
+          !isRecord(entry) ||
+          typeof entry.pluginId !== "string" ||
+          typeof entry.pluginVersionId !== "string" ||
+          typeof entry.name !== "string"
+        ) {
+          return [];
+        }
+        return [
+          {
+            pluginId: entry.pluginId,
+            pluginVersionId: entry.pluginVersionId,
+            name: entry.name,
+            ...(typeof entry.bundleHash === "string"
+              ? { bundleHash: entry.bundleHash }
+              : {}),
+          },
+        ];
+      })
+    : undefined;
+
   return {
     kind: "present",
     environment: {
@@ -450,6 +489,7 @@ export function readChatboxEnvironment(
         ...(connectable ? { connectable } : {}),
       },
       ...(skills ? { skills } : {}),
+      ...(pluginVersions ? { pluginVersions } : {}),
     },
   };
 }

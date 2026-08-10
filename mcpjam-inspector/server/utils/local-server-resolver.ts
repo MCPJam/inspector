@@ -64,6 +64,11 @@ type LocalAuthorizeServerConfig =
   | {
       transportType: "http";
       url: string;
+      // Declared wire transport from a plugin manifest (parser
+      // `httpVariant`), once the backend persists + serves it. Absent on
+      // every ordinary row and on older backends — absence means "no
+      // declaration", never a default.
+      httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
       timeout?: number;
@@ -724,6 +729,14 @@ export function toMCPServerConfig(
     url,
     requestInit: { headers },
   };
+  // Plugin-declared transports are authoritative: `sse` skips the Streamable
+  // HTTP attempt, `streamable-http` rules out the silent SSE downgrade. Rows
+  // without a declaration keep the SDK's URL-heuristic + fallback behavior.
+  if (serverConfig.httpVariant === "sse") {
+    http.preferSSE = true;
+  } else if (serverConfig.httpVariant === "streamable-http") {
+    http.disableSseFallback = true;
+  }
   if (typeof timeout === "number") http.timeout = timeout;
   if (clientCapabilities) {
     http.capabilities = clientCapabilities;

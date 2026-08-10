@@ -74,6 +74,11 @@ export type {
   PlatformMe,
   PlatformModel,
   PlatformPage,
+  PlatformPlugin,
+  PlatformPluginComponentCounts,
+  PlatformPluginServerComponent,
+  PlatformPluginSkillComponent,
+  PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
   PlatformTunnelClosed,
@@ -170,6 +175,8 @@ export {
   updateEnvironmentOperation,
   archiveEnvironmentOperation,
   restoreEnvironmentOperation,
+  listProjectPluginsOperation,
+  getPluginVersionOperation,
   listProjectsOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
@@ -226,6 +233,9 @@ export {
   type UpdateHostInput,
   type ListEnvironmentsInput,
   type ListEnvironmentsResult,
+  type ListProjectPluginsInput,
+  type ListProjectPluginsResult,
+  type GetPluginVersionInput,
   // Journeys (Swarms) and scenarios (user testing). The operations above are
   // useless from outside without these — a caller cannot type the value an
   // operation returns, and reaching into `operations.js` for it would depend on
