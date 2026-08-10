@@ -83,12 +83,27 @@ function inferLogoId(name: string): string | null {
 
 interface HostCanvasSelectorProps {
   projectId: string;
-  activeHostId: string;
+  /**
+   * `null` where the caller has no client of its own to point at — Connect's
+   * Servers/Computer/Skills views read the previewed client from
+   * localStorage, which is unset on a fresh project. Falls back to the first
+   * client rather than rendering nothing: the fallback IS the control a user
+   * would otherwise have no way to reach.
+   */
+  activeHostId: string | null;
+  /**
+   * Push `/hosts/:id` when the client changes. True on the host canvas, where
+   * the URL is what decides which client renders. False everywhere else in
+   * Connect — there, navigating would yank the user off the view they are on
+   * (Servers, Computer, Skills) and onto the canvas.
+   */
+  syncCanvasRoute?: boolean;
 }
 
 export function HostCanvasSelector({
   projectId,
   activeHostId,
+  syncCanvasRoute = true,
 }: HostCanvasSelectorProps) {
   const navigate = useNavigate();
   const { isAuthenticated } = useConvexAuth();
@@ -116,25 +131,34 @@ export function HostCanvasSelector({
     });
   }, [hosts]);
 
-  const activeIndex = useMemo(
-    () => sortedHosts.findIndex((h) => h.hostId === activeHostId),
+  // An unresolvable id (null, or one whose host is gone) falls back to the
+  // first client so the pill always has something to show and switch from.
+  const requestedIndex = useMemo(
+    () =>
+      activeHostId
+        ? sortedHosts.findIndex((h) => h.hostId === activeHostId)
+        : -1,
     [sortedHosts, activeHostId]
   );
+  const activeIndex =
+    requestedIndex >= 0 ? requestedIndex : sortedHosts.length > 0 ? 0 : -1;
   const active = activeIndex >= 0 ? sortedHosts[activeIndex] : null;
 
   const switchTo = (hostId: string) => {
-    if (hostId === activeHostId) return;
+    if (hostId === active?.hostId) return;
     track("connect_host_overlay_swapped", {
       location: ANALYTICS_LOCATION,
-      from: activeHostId,
+      from: active?.hostId ?? null,
       to: hostId,
       host_count: hosts.length,
     });
     setPreviewedHostId(hostId);
-    // The URL is the source of truth for which host the canvas renders
-    // (see App's hosts-route sync) — replace so switching doesn't pile
-    // history entries.
-    navigate(buildHostsPath(hostId), { replace: true });
+    // The URL is the source of truth for which host the CANVAS renders (see
+    // App's hosts-route sync) — replace so switching doesn't pile history
+    // entries. Off-canvas callers skip it and stay put.
+    if (syncCanvasRoute) {
+      navigate(buildHostsPath(hostId), { replace: true });
+    }
   };
 
   const openCreateWithTemplate = (templateId?: string) => {
@@ -161,7 +185,7 @@ export function HostCanvasSelector({
       // Deleting the host the canvas is rendering would leave it pointing
       // at a dead id until HostsTab's reconcile kicks the user back to the
       // browse view — jump to a surviving host instead.
-      if (hostId === activeHostId) {
+      if (hostId === active?.hostId) {
         const survivor = sortedHosts.find((h) => h.hostId !== hostId);
         if (survivor) switchTo(survivor.hostId);
       }
@@ -306,7 +330,7 @@ export function HostCanvasSelector({
             className="min-w-[15rem]"
           >
             <DropdownMenuRadioGroup
-              value={activeHostId}
+              value={active.hostId}
               onValueChange={switchTo}
             >
               {sortedHosts.map((host) => (

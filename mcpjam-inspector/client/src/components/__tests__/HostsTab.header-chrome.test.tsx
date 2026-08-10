@@ -10,6 +10,15 @@ vi.mock("react-router", () => ({
   useNavigate: () => vi.fn(),
 }));
 
+// The chrome's left column now mounts `HostCanvasSelector` (PUR-21 moved the
+// client selector out of the global nav bar and into the Connect nav row), and
+// it reads auth straight from Convex — which throws without a provider
+// ancestor. This assertion is about the wrapper's own classes, so stub the
+// hook rather than standing up a Convex tree around it.
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+}));
+
 vi.mock("@/hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: vi.fn(() => [null as string | null, vi.fn()]),
 }));
