@@ -66,8 +66,15 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
 
-const { createEnvironmentMock, environmentsRef, setInsightsTuningMock, insightsTuningRef } = vi.hoisted(() => ({
+const {
+  createEnvironmentMock,
+  ensureAdhocEnvironmentsMock,
+  environmentsRef,
+  setInsightsTuningMock,
+  insightsTuningRef,
+} = vi.hoisted(() => ({
   createEnvironmentMock: vi.fn(),
+  ensureAdhocEnvironmentsMock: vi.fn(),
   setInsightsTuningMock: vi.fn().mockResolvedValue(undefined),
   /** What `getSwarmInsightsTuning` returns; a ref so a case can re-point it. */
   insightsTuningRef: {
@@ -93,6 +100,7 @@ vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
   return {
     ...actual,
     useCreateProjectEnvironment: () => createEnvironmentMock,
+    useEnsureAdhocEnvironments: () => ensureAdhocEnvironmentsMock,
     useProjectEnvironments: () => environmentsRef.current,
   };
 });
@@ -308,6 +316,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   existingPersonas = [];
   personaJourneys = [];
+  // Ad-hoc rows carry NO name — the shape the flag-on path has to cope with.
+  ensureAdhocEnvironmentsMock.mockImplementation(
+    async (args: { stacks: Array<{ hostId: string }> }) =>
+      args.stacks.map((stack) => ({
+        environment: {
+          environmentId: `adhoc-${stack.hostId}`,
+          projectId: "proj-1",
+          hostId: stack.hostId,
+          origin: "adhoc",
+          revision: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        created: true,
+      }))
+  );
   createEnvironmentMock.mockImplementation(async (args: {
     hostId: string;
     name: string;
@@ -1375,8 +1399,49 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-running-step");
   });
 
-  it("materializes composed clients into environments before generate + launch", async () => {
-    // Empty project: compose from clients instead of picking environments.
+  it("resolves composed clients into ad-hoc environments", async () => {
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    openDescribe();
+
+    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+      target: { value: "Support agents answering refunds" },
+    });
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await waitFor(() =>
+      expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledTimes(1)
+    );
+    // One batch call for both clients, and no NAMED row is minted — the whole
+    // point of the change is that Describe text never becomes an environment.
+    expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "host-1" }, { hostId: "host-2" }],
+    });
+    expect(createEnvironmentMock).not.toHaveBeenCalled();
+
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(createJourneyMock).toHaveBeenCalled());
+    expect(createJourneyMock.mock.calls[0][0].environmentIds).toEqual([
+      "adhoc-host-1",
+      "adhoc-host-2",
+    ]);
+  });
+
+  it("falls back to NAMING rows on a backend with no ad-hoc mutation", async () => {
+    // A desktop build can meet an arbitrarily old self-hosted backend, and this
+    // is the only signal Convex gives for a missing function. The launch must
+    // still complete, by the path it used before ad-hoc rows existed.
+    ensureAdhocEnvironmentsMock.mockRejectedValue(
+      Object.assign(new Error("Could not find public function"), {
+        data: "Could not find public function for 'projectEnvironments:ensureAdhocEnvironments'",
+      })
+    );
     environmentsRef.current = [];
     environments = environmentsRef.current;
     openDescribe();
