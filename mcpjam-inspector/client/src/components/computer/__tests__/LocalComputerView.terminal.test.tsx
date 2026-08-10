@@ -191,6 +191,44 @@ describe("LocalComputerView — terminal branch", () => {
     ).toHaveLength(1);
   });
 
+  it("re-reports after Forget & re-authorize in the same project", () => {
+    const granted = () => engineState();
+    const ungranted = () =>
+      engineState({ consent: { granted: false, token: null, status: "absent" } });
+
+    const { rerender } = render(
+      <LocalComputerView projectId="proj_1" engine={granted()} />,
+    );
+    // Revoke clears storage synchronously, so the view drops to the consent gate.
+    rerender(<LocalComputerView projectId="proj_1" engine={ungranted()} />);
+    // Re-granting opens a genuinely new session: fresh nonce, fresh PTY. Tracking
+    // only the last REPORTED state would swallow this as a repeat.
+    rerender(<LocalComputerView projectId="proj_1" engine={granted()} />);
+
+    expect(
+      trackSpy.mock.calls.filter((c) => c[0] === "computer_terminal_opened"),
+    ).toHaveLength(2);
+  });
+
+  it("re-reports degradation after leaving and re-entering that state", () => {
+    const degraded = () => engineState({ localTerminalAvailable: false });
+    const ungranted = () =>
+      engineState({
+        localTerminalAvailable: false,
+        consent: { granted: false, token: null, status: "absent" },
+      });
+
+    const { rerender } = render(
+      <LocalComputerView projectId="proj_1" engine={degraded()} />,
+    );
+    rerender(<LocalComputerView projectId="proj_1" engine={ungranted()} />);
+    rerender(<LocalComputerView projectId="proj_1" engine={degraded()} />);
+
+    expect(
+      trackSpy.mock.calls.filter((c) => c[0] === "local_terminal_unavailable"),
+    ).toHaveLength(2);
+  });
+
   it("never mounts the pane before consent, whatever the probe says", () => {
     render(
       <LocalComputerView

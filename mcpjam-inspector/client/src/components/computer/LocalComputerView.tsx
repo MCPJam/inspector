@@ -66,7 +66,13 @@ export function LocalComputerView({
   );
 
   // One `computer_terminal_opened` per opened SESSION (not per reconnect), and
-  // one `local_terminal_unavailable` per degraded state.
+  // one `local_terminal_unavailable` per entry into the degraded state.
+  //
+  // The dedupe key is the CURRENT state, and `null` ("no pane") is tracked as a
+  // state like any other. That matters: leaving and re-entering a state is a
+  // genuinely new event, so "Forget & re-authorize" (which drops to `null` and
+  // back to `open` in the same project) reports the new shell instead of being
+  // swallowed as a repeat.
   //
   // Only the `open` key carries `projectId`: the pane is keyed by project, so a
   // switch remounts `ComputerTerminal` and starts a REAL new shell that must be
@@ -77,11 +83,17 @@ export function LocalComputerView({
   const showDegraded = consent.granted && !localTerminalAvailable;
   const lastReportedRef = useRef<string | null>(null);
   useEffect(() => {
-    const state = showTerminal ? "open" : showDegraded ? "degraded" : null;
-    const key = state === "open" ? `open:${projectId}` : state;
-    if (key === null || lastReportedRef.current === key) return;
+    const key = showTerminal
+      ? `open:${projectId}`
+      : showDegraded
+        ? "degraded"
+        : null;
+    if (lastReportedRef.current === key) return;
+    // Record every transition, including into `null`, so the next entry into a
+    // reportable state is not mistaken for a repeat of the last one.
     lastReportedRef.current = key;
-    if (state === "open") {
+    if (key === null) return;
+    if (showTerminal) {
       track("computer_terminal_opened", { location: "computer_tab_local" });
     } else {
       track("local_terminal_unavailable", { reason: "terminal_unavailable" });
