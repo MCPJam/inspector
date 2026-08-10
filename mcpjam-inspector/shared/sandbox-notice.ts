@@ -24,7 +24,16 @@ export type SandboxNoticeReason =
    * deliberately KEPT (swapping mid-conversation would destroy the user's shell
    * state), so this conversation is one revision behind.
    */
-  | "stale_image";
+  | "stale_image"
+  /**
+   * The conversation's bash needs a disposable cloud sandbox, but the server
+   * handling this turn cannot execute one (it is not a computers data plane),
+   * so no box was provisioned and bash is not advertised this turn.
+   *
+   * Unlike the two reasons above, this one is minted by the INSPECTOR, not the
+   * control plane — there is no backing Convex notice row and nothing to ack.
+   */
+  | "sandbox_unavailable";
 
 export interface SandboxNoticeInfo {
   reason: SandboxNoticeReason;
@@ -40,6 +49,7 @@ export const SANDBOX_NOTICE_DATA_PART_TYPE = "data-sandbox-notice" as const;
 const SANDBOX_NOTICE_REASONS: ReadonlySet<SandboxNoticeReason> = new Set([
   "sandbox_reset",
   "stale_image",
+  "sandbox_unavailable",
 ]);
 
 export function isSandboxNoticeReason(

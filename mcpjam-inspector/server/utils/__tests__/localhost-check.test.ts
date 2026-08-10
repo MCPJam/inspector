@@ -219,6 +219,43 @@ describe("isTunnelHost", () => {
     expect(isTunnelHost("evilngrok.app")).toBe(false);
     expect(isTunnelHost("ngrok.app.evil.com")).toBe(false);
   });
+
+  /**
+   * `X-Forwarded-Host` accumulates one entry per proxy hop, and repeated
+   * headers are joined with ", " by the runtime. Reading only up to the first
+   * colon took `localhost` out of `localhost:6274, abc.tunnels.mcpjam.com` and
+   * answered "not a tunnel" — which then let `isAllowedHost("localhost")` serve
+   * the session token to a tunnel request. Any entry being a tunnel vetoes.
+   */
+  describe("comma-separated forwarded values", () => {
+    it("matches a tunnel in ANY position, not just the first", () => {
+      expect(
+        isTunnelHost("localhost:6274, x7d9j2m1p9k3.tunnels.mcpjam.com")
+      ).toBe(true);
+      expect(
+        isTunnelHost("x7d9j2m1p9k3.tunnels.mcpjam.com, localhost:6274")
+      ).toBe(true);
+      expect(isTunnelHost("a.example.com,b.example.com, foo.ngrok.app")).toBe(
+        true
+      );
+    });
+
+    it("matches a registered active tunnel domain in a later position", () => {
+      expect(
+        isTunnelHost("localhost:6274, tunnel.example.com", [
+          "tunnel.example.com",
+        ])
+      ).toBe(true);
+    });
+
+    it("still answers false when NO entry is a tunnel", () => {
+      expect(isTunnelHost("localhost:6274, app.mcpjam.com")).toBe(false);
+      // Empty entries (a trailing comma, a doubled separator) are skipped
+      // rather than compared as "", which would match nothing anyway but would
+      // put an empty string through the suffix test on every request.
+      expect(isTunnelHost("localhost:6274,, ")).toBe(false);
+    });
+  });
 });
 
 describe("mayServeSessionToken", () => {

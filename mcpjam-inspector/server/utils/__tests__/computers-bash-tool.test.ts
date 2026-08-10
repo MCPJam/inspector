@@ -105,7 +105,14 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
     const tool = buildBashTool(toolOpts, runner);
 
     const result = await execTool(tool, { command: "echo hello" });
-    expect(result).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+    // `engine: "cloud"` is the non-hosted run-location stamp (e2b and
+    // delegated both read "cloud"); hosted turns omit it entirely.
+    expect(result).toEqual({
+      stdout: "hello\n",
+      stderr: "",
+      exitCode: 0,
+      engine: "cloud",
+    });
 
     expect(runner).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -210,8 +217,41 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
     const result = await execTool(tool, { command: "ls" });
     expect(result).toEqual({
       error: "Computers are not configured on this server.",
+      engine: "cloud",
     });
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("names the LOCAL engine in the error when the turn explicitly asked for it", async () => {
+    const tool = buildBashTool(
+      {
+        ...toolOpts,
+        engine: "unavailable",
+        localEngineRequested: true,
+      },
+      vi.fn()
+    );
+    const result = await execTool(tool, { command: "ls" });
+    expect(result.error).toMatch(/local computer engine/i);
+  });
+
+  it("approval: cloud honors the host policy; local is ALWAYS on", () => {
+    const cloudOff = buildBashTool(
+      { ...toolOpts, engine: "e2b", requireToolApproval: false },
+      vi.fn()
+    ) as any;
+    const cloudOn = buildBashTool(
+      { ...toolOpts, engine: "e2b", requireToolApproval: true },
+      vi.fn()
+    ) as any;
+    const localOff = buildBashTool(
+      { ...toolOpts, engine: "local", requireToolApproval: false },
+      vi.fn()
+    ) as any;
+    expect(cloudOff.needsApproval).toBe(false);
+    expect(cloudOn.needsApproval).toBe(true);
+    // v1: no auto-approve for a model-driven shell on the user's machine.
+    expect(localOff.needsApproval).toBe(true);
   });
 
   it("surfaces reserve denials (e.g. non-member) as tool errors", async () => {
