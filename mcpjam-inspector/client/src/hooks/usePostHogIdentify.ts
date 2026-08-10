@@ -42,11 +42,25 @@ export function usePostHogIdentify() {
         deployment: HOSTED_MODE ? "hosted" : "self_hosted",
         source: "client",
       });
+      // `reset()` clears flag person properties too — restore them, or every
+      // flag evaluated between the reset and the next page load would target
+      // an unknown deployment.
+      posthog.setPersonPropertiesForFlags?.({
+        deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+        platform: detectPlatform(),
+      });
     }
 
-    let personProperties: Record<string, string | null | undefined> = {};
+    // `deployment` is a PERSON property here, not just a super property: the
+    // super prop rides events, while `/flags` targeting reads person
+    // properties. Set for every actor (guest included) so a cohort rule like
+    // "self_hosted signed-in users" evaluates correctly.
+    let personProperties: Record<string, string | null | undefined> = {
+      deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+    };
     if (isAuthedActor && user) {
       personProperties = {
+        ...personProperties,
         email: user.email,
         name:
           user.firstName && user.lastName

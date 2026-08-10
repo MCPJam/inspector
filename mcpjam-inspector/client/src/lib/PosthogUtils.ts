@@ -288,6 +288,19 @@ export const options = {
       // previously carried no `source` at all.
       source: "client",
     });
+    // Super properties ride EVENTS; `/flags` evaluates PERSON properties, so a
+    // registered `deployment` is invisible to flag targeting. This makes the
+    // same discriminator usable in a flag rule (e.g. rolling the local computer
+    // engine out to the self-hosted signed-in cohort) from the first request of
+    // the session, before any identify has run.
+    // Guarded: `loaded` also runs against partial posthog stand-ins (tests, and
+    // any host that pins an older posthog-js without this method). Flag
+    // targeting degrading to "no person properties" is acceptable; throwing
+    // inside `loaded` would take out the whole analytics init.
+    posthog.setPersonPropertiesForFlags?.({
+      deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+      platform: detectPlatform(),
+    });
   },
 };
 
