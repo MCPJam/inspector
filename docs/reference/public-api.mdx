@@ -243,6 +243,18 @@ Archive and restore are explicit sub-actions rather than a `DELETE` because the
 row is kept and restore has real semantics: it re-checks the name and drops
 plugin pins whose version no longer exists.
 
+**Agent Plugins** — read-only inventory. Import, activation, enable/disable, and
+uninstall are app flows and are not available over the API.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /projects/{projectId}/plugins` | List the live (installed, non-uninstalled) Agent Plugins in a project — name, display name, enabled state, and active version id. Disabled plugins are included, marked `enabled: false` |
+| `GET /plugin-versions/{pluginVersionId}` | One imported plugin version: status (`staging` / `ready` / `invalid`), component counts, and per-component summaries — declared MCP servers (placement, auth timing, materialized server id) and declared skills (namespaced `modelRef`). Addressed by version id alone; access is membership of the version's own project |
+
+Both endpoints require project membership. Guests are denied. `NOT_FOUND` and
+`FORBIDDEN` both return `404` so the route is never an existence oracle for
+version ids outside your projects.
+
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 
 | Endpoint | What it does |
