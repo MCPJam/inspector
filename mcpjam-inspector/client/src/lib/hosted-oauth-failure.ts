@@ -27,9 +27,61 @@ export interface HostedOAuthFailureCopy {
 const METADATA_FAILURE =
   /HTTP (\d{3}) trying to load (?:OAuth|OpenID provider) metadata from (\S+?)(?:\s+\(([^)]*)\))?\s*$/i;
 
-/** The token endpoint answered, and the answer was "no". */
+/**
+ * The token endpoint answered, and the answer was "no". The invalid_client
+ * family belongs here: a registration the server has disowned can never
+ * refresh, and re-running authorize (which re-registers) is the fix, same as
+ * for a dead refresh token.
+ */
 const DECLINED =
-  /invalid[_\s-]?grant|InvalidGrantError|refresh[_\s-]?token[_\s-]?not[_\s-]?found|token is not active|expired (?:access\/)?refresh token/i;
+  /invalid[_\s-]?grant|InvalidGrantError|refresh[_\s-]?token[_\s-]?not[_\s-]?found|token is not active|expired (?:access\/)?refresh token|invalid[_\s-]?client|InvalidClientError|unknown client|client authentication failed/i;
+
+/**
+ * What the backend recorded off the authorization server's failing response.
+ * Travels as `details.failure` on the 503 the hosted refresh path returns
+ * (`authorization_server_unreachable`); every field is the other server's, so
+ * rendering it verbatim keeps the no-fabrication invariant.
+ */
+interface AuthorizationServerFailure {
+  url: string;
+  status: number;
+  body: string;
+}
+
+function structuredPartsOf(error: unknown): {
+  code: string | null;
+  details: Record<string, unknown> | null;
+} {
+  if (!error || typeof error !== "object") {
+    return { code: null, details: null };
+  }
+  const record = error as { code?: unknown; details?: unknown };
+  return {
+    code: typeof record.code === "string" ? record.code : null,
+    details:
+      record.details && typeof record.details === "object"
+        ? (record.details as Record<string, unknown>)
+        : null,
+  };
+}
+
+function failureOf(
+  details: Record<string, unknown> | null
+): AuthorizationServerFailure | null {
+  const failure = details?.failure;
+  if (!failure || typeof failure !== "object") {
+    return null;
+  }
+  const record = failure as Record<string, unknown>;
+  if (typeof record.url !== "string" || typeof record.status !== "number") {
+    return null;
+  }
+  return {
+    url: record.url,
+    status: record.status,
+    body: typeof record.body === "string" ? record.body : "",
+  };
+}
 
 function toMessage(error: unknown): string {
   const raw =
@@ -77,6 +129,50 @@ export function describeHostedOAuthFailure(
   const message = toMessage(error);
   if (!message) {
     return null;
+  }
+
+  // Structured shapes first: once the backend classifies a refresh failure it
+  // answers with a code and a generic message ("Hosted OAuth refresh token is
+  // invalid. Please reconnect.") that no provider-message regex below can
+  // match — the regexes only ever see errors the backend did NOT classify.
+  const { code, details } = structuredPartsOf(error);
+
+  if (
+    code === "authorization_server_unreachable" ||
+    details?.authorizationServerUnreachable === true
+  ) {
+    const failure = failureOf(details);
+    if (failure) {
+      return {
+        kind: "unreachable",
+        title: `Could not reach ${hostOf(failure.url) ?? failure.url}`,
+        detail: [
+          failure.url,
+          failure.body
+            ? `HTTP ${failure.status}, ${failure.body}`
+            : `HTTP ${failure.status}`,
+        ],
+        action: "retry",
+      };
+    }
+    return {
+      kind: "unreachable",
+      title: "Could not reach the authorization server",
+      detail: [message],
+      action: "retry",
+    };
+  }
+
+  if (
+    code === "refresh_token_invalid" ||
+    details?.refreshTokenInvalid === true
+  ) {
+    return {
+      kind: "declined",
+      title: `Refresh token declined for ${serverName}`,
+      detail: [message],
+      action: "reconnect",
+    };
   }
 
   const metadata = message.match(METADATA_FAILURE);
