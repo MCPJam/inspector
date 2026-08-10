@@ -183,6 +183,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "openai-mcp",
           "version": "1.0.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
@@ -297,6 +300,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "openai-mcp",
           "version": "1.0.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
@@ -677,6 +683,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "claude-ai",
           "version": "0.1.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
@@ -971,6 +980,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "claude-ai",
           "version": "0.1.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
@@ -1235,6 +1247,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "ms-copilot",
           "version": "1.0.1",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
@@ -1349,6 +1364,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "ms-copilot",
           "version": "1.0.1",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
@@ -1437,6 +1455,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "cursor-vscode",
           "version": "1.0.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
@@ -1525,6 +1546,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "name": "cursor-vscode",
           "version": "1.0.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
       },
       "profileVersion": 1,
     },
