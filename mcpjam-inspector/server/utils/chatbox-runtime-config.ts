@@ -231,7 +231,11 @@ export function planChatboxSandbox(args: {
 
 export type ChatboxRuntimeConfigResult =
   | { ok: true; config: ChatboxRuntimeConfig }
-  | { ok: false; status: number; error: string };
+  // `code` carries the backend's machine-readable denial reason —
+  // CHATBOX_ACCESS_STALE above all, which is the difference between "this
+  // caller must re-redeem and retry" and "this caller is out". Callers that
+  // only render the message can keep ignoring it.
+  | { ok: false; status: number; error: string; code?: string };
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -244,6 +248,13 @@ function getConvexHttpUrl(): string {
 export async function fetchChatboxRuntimeConfig(args: {
   chatboxId: string;
   bearer: string;
+  /**
+   * The caller's cached access version. Sending it opts this request into
+   * backend version enforcement: a value behind the chatbox's current one
+   * comes back 409 CHATBOX_ACCESS_STALE instead of being silently served a
+   * config the caller no longer has a current view of. Omitted ⇒ unchecked.
+   */
+  accessVersion?: number;
   signal?: AbortSignal;
 }): Promise<ChatboxRuntimeConfigResult> {
   const url = new URL(
@@ -262,7 +273,12 @@ export async function fetchChatboxRuntimeConfig(args: {
         "content-type": "application/json",
         authorization,
       },
-      body: JSON.stringify({ chatboxId: args.chatboxId }),
+      body: JSON.stringify({
+        chatboxId: args.chatboxId,
+        ...(typeof args.accessVersion === "number"
+          ? { accessVersion: args.accessVersion }
+          : {}),
+      }),
       signal: args.signal,
     });
   } catch (err) {
@@ -293,6 +309,7 @@ export async function fetchChatboxRuntimeConfig(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Chatbox runtime-config failed (${response.status})`,
+      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
 

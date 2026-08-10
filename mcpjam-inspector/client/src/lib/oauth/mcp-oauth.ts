@@ -1994,11 +1994,6 @@ async function createHostedOAuthSessionIfNeeded(input: {
       ...(pendingMarker.chatboxId
         ? { chatboxId: pendingMarker.chatboxId }
         : {}),
-      ...(pendingMarker.chatboxId &&
-      typeof pendingMarker.accessVersion === "number" &&
-      Number.isFinite(pendingMarker.accessVersion)
-        ? { accessVersion: pendingMarker.accessVersion }
-        : {}),
     }),
   });
   const result = (await response
@@ -2059,11 +2054,6 @@ async function readHostedOAuthSessionProgress(input: {
           : {}),
         ...(input.context.chatboxId
           ? { chatboxId: input.context.chatboxId }
-          : {}),
-        ...(input.context.chatboxId &&
-        typeof input.context.accessVersion === "number" &&
-        Number.isFinite(input.context.accessVersion)
-          ? { accessVersion: input.context.accessVersion }
           : {}),
       }),
     }
@@ -3350,11 +3340,6 @@ export async function completeHostedOAuthCallback(
               }),
           ...(context.accessScope ? { accessScope: context.accessScope } : {}),
           ...(context.chatboxId ? { chatboxId: context.chatboxId } : {}),
-          ...(context.chatboxId &&
-          typeof context.accessVersion === "number" &&
-          Number.isFinite(context.accessVersion)
-            ? { accessVersion: context.accessVersion }
-            : {}),
         }),
       });
 
