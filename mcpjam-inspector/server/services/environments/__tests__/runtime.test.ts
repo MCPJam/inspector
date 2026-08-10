@@ -112,6 +112,21 @@ describe("resolveEnvironmentForRuntime", () => {
     expect(calls[1]).toMatchObject({ serverOverrideIds: [] });
   });
 
+  it("declares the LOCAL venue on the wire (this suite runs un-hosted)", async () => {
+    // The venue is decided HERE, once, for every caller of this service.
+    // Local binaries declare "local" so the backend admits local-placement
+    // plugin components (which this process spawns via the stdio divert);
+    // hosted deployments send NOTHING — absent already means hosted
+    // fail-closed, and omitting keeps hosted requests byte-identical.
+    const calls: unknown[] = [];
+    const client = fakeConvexClient(SPEC, (args) => calls.push(args));
+    await resolveEnvironmentForRuntime(client, {
+      projectId: "p_1",
+      environmentId: "env_1",
+    });
+    expect(calls[0]).toMatchObject({ runtimeVenue: "local" });
+  });
+
   it("TOLERATES a backend that omits additive fields", async () => {
     // Older/newer deploy: no skills, no plugin versions, no connectable
     // projection, no specVersion. None of those is an invariant.

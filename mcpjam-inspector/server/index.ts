@@ -18,6 +18,7 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env";
+import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
@@ -85,6 +86,18 @@ process.on("unhandledRejection", (reason, _promise) => {
       error: reason,
       sentry: true,
     }
+  );
+});
+
+// Sentry's OnUncaughtException integration owns CAPTURE (and the exit) for
+// these; this handler exists only so the crash also lands in Axiom with the
+// same shape as every other system event. Deliberately NOT `sentry: true` —
+// that would double-count against the integration.
+process.on("uncaughtException", (error) => {
+  sysLogger.event(
+    "process.uncaught_exception",
+    { errorCode: error instanceof Error ? error.name : "unknown" },
+    { error }
   );
 });
 
@@ -259,6 +272,12 @@ try {
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
 
+// Immediately after the env load and before anything that can throw: the init
+// reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
+// once `loadInspectorEnv` has run. Deliberately a call, not an import side
+// effect — an import would be hoisted above the env load.
+initServerSentry();
+
 // Generate session token for API authentication
 generateSessionToken();
 setXaaIdpLogger(appLogger);
@@ -278,7 +297,13 @@ startLocalBrowserRenderingSetupInBackground();
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
-  appLogger.error("Unhandled error:", err);
+  // The logger owns Sentry capture for the server (logger.error ->
+  // captureException). Path + method are what make the issue actionable;
+  // without them every unhandled route error groups into one blob.
+  appLogger.error("Unhandled error", err, {
+    path: c.req.path,
+    method: c.req.method,
+  });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
   // observes the throw — it just sees a 500 response. Record the cause here so
@@ -483,8 +508,13 @@ app.route("/api/cli/auth", cliAuthRoutes);
 // whose catch-all only skips /api/* and would otherwise swallow /relay GETs
 // with index.html. Mirror of the mount in server/app.ts::createHonoApp —
 // both production entries must wire this up.
+// Mounted on BOTH prefixes — see RELAY_MOUNT_PREFIXES in routes/relay.ts:
+// /tlm is the alias new clients use because Railway's edge 403s GETs under
+// /relay/static and /relay/array on hosted; /relay stays for old builds.
 app.use("/relay/*", relayBodyLimit());
 app.route("/relay", relayRoutes);
+app.use("/tlm/*", relayBodyLimit());
+app.route("/tlm", relayRoutes);
 
 // XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
 // target authorization server fetches it anonymously) and mounted before
@@ -492,20 +522,6 @@ app.route("/relay", relayRoutes);
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
-
-// Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
-// We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
-// CORS preflight
-app.options("/sse/message", (c) => {
-  return c.body(null, 204, {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Authorization, Content-Type, Accept, Accept-Language",
-    "Access-Control-Max-Age": "86400",
-    Vary: "Origin, Access-Control-Request-Headers",
-  });
-});
 
 // Health check
 app.get("/health", (c) => {

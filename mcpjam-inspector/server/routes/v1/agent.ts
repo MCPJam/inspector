@@ -80,6 +80,7 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
   deriveOperationIdempotencyKey,
   IDEMPOTENCY_KEY_HEADER,
@@ -822,6 +823,11 @@ const agent = new Hono();
  * allowlist) because the only consumer is an org admin's settings page, and
  * default-deny is the cheaper mistake.
  */
+// This route never calls Convex, so nothing downstream re-checks the bearer —
+// see middleware/require-verified-auth.ts. Mounted as `.use` rather than as an
+// inline handler argument so Hono keeps inferring the route's path params.
+agent.use("/agent-ops", requireVerifiedAuth());
+
 agent.get("/agent-ops", async (c) => {
   return v1Resource(c, { operations: listAgentOpCatalog() });
 });

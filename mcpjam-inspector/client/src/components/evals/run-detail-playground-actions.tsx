@@ -6,6 +6,8 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { Loader2, RotateCw, X } from "lucide-react";
+import { EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE } from "@/components/computer/CloudUnreachableNotice";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import type { EvalSuite, EvalSuiteRun } from "./types";
 
 /** Replay / rerun / cancel controls for a run detail view (SuiteHeader row or CI sidebar). */
@@ -23,6 +25,7 @@ export function RunDetailPlaygroundActions({
   missingServers,
   showCloseButton = false,
   onBackToOverview,
+  runsDisabledReason = null,
   className,
 }: {
   suite: EvalSuite;
@@ -38,6 +41,12 @@ export function RunDetailPlaygroundActions({
   missingServers: string[];
   showCloseButton?: boolean;
   onBackToOverview?: () => void;
+  /**
+   * Externally-derived reason no run may start (billing gate, unreachable
+   * cloud sandboxes for a pinned-image suite). Blocks BOTH rerun and replay —
+   * a replay provisions from the run's frozen image pin just like a rerun.
+   */
+  runsDisabledReason?: string | null;
   className?: string;
 }) {
   const isCancelling = cancellingRunId === selectedRun._id;
@@ -53,9 +62,24 @@ export function RunDetailPlaygroundActions({
   const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
   const isReplayAction = Boolean(replayableSelectedRun);
   const canUseLiveRun = hasServersConfigured;
-  const runActionDisabled = isReplayAction
-    ? showAsRunning || !onReplayRun
-    : !canUseLiveRun || showAsRunning;
+  // A replay provisions from the RUN's frozen snapshot pin — the live suite
+  // pin may have been cleared or changed since, so the externally-derived
+  // reason (live suite/environment state) can't cover this case.
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  const replaySnapshotBlockedReason =
+    isReplayAction &&
+    ephemeralCloudAvailable === false &&
+    Boolean(selectedRun.configSnapshot?.environment?.computerEnvironmentId)
+      ? EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE
+      : null;
+  const effectiveDisabledReason =
+    runsDisabledReason ?? replaySnapshotBlockedReason;
+  const runActionDisabled = Boolean(
+    effectiveDisabledReason ||
+      (isReplayAction
+        ? showAsRunning || !onReplayRun
+        : !canUseLiveRun || showAsRunning)
+  );
   const runActionLabel = showAsRunning
     ? isReplayAction
       ? "Replaying..."
@@ -63,13 +87,15 @@ export function RunDetailPlaygroundActions({
     : isReplayAction
       ? "Replay this run"
       : "Rerun";
-  const runActionTooltip = isReplayAction
-    ? "Replay this CI run in the playground"
-    : !hasServersConfigured
-      ? "No MCP servers are configured for this suite"
-      : missingServers.length > 0
-        ? "Connect and run."
-        : "Run all cases";
+  const runActionTooltip = effectiveDisabledReason
+    ? effectiveDisabledReason
+    : isReplayAction
+      ? "Replay this CI run in the playground"
+      : !hasServersConfigured
+        ? "No MCP servers are configured for this suite"
+        : missingServers.length > 0
+          ? "Connect and run."
+          : "Run all cases";
 
   return (
     <div

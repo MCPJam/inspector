@@ -1,15 +1,18 @@
 /**
  * Shared plugin-bundle contract — pure DTOs and the abstract file source.
  *
- * This module is the SDK-owned wire/persistence contract for OpenAI plugin
- * imports (see docs/plans/openai-plugin-import-cross-repo.md, PR SDK-1). The
- * parser never touches the filesystem or archive libraries: backend and
- * inspector adapters implement `PluginFileSource` over their own extraction
- * paths and get byte-identical normalization and hashing.
+ * This module is the SDK-owned wire/persistence contract for Agent Plugins
+ * 1.0 imports (agent-plugins.org). The parser never touches the filesystem
+ * or archive libraries: backend and inspector adapters implement
+ * `PluginFileSource` over their own extraction paths and get byte-identical
+ * normalization and hashing.
  */
 
 import type { NormalizedPluginManifest } from "./manifest.js";
-import type { ParsedPluginServer } from "./mcp-config.js";
+import type {
+  ParsedPluginServer,
+  PluginSkippedComponent,
+} from "./mcp-config.js";
 import type { ParsedPluginSkill } from "./skill.js";
 import type { ParsedPluginApp } from "./app-config.js";
 import type { PluginValidationIssue } from "./validation.js";
@@ -52,9 +55,9 @@ export interface PluginBundleLimits {
   maxPathBytes: number;
   /** Maximum path nesting depth (segments). */
   maxPathDepth: number;
-  /** Maximum skills per plugin (V1). */
+  /** Maximum skills per plugin. */
   maxSkills: number;
-  /** Maximum MCP server entries per plugin (V1). */
+  /** Maximum MCP server entries per plugin. */
   maxMcpServers: number;
 }
 
@@ -82,26 +85,11 @@ export interface ParsedPluginAsset {
   contentType: string;
 }
 
-export type PluginUnsupportedComponentKind =
-  | "hooks"
-  | "browser-extension"
-  | "scheduled-task"
-  | "manifest-field"
-  | "other";
-
-/** A component MCPJam preserves in the source bundle but does not execute. */
-export interface ParsedUnsupportedComponent {
-  kind: PluginUnsupportedComponentKind;
-  /** Stable key: top-level directory name or manifest field name. */
-  key: string;
-  /** Bundle paths belonging to this component (empty for manifest fields). */
-  paths: string[];
-  reason: string;
-}
-
 /**
  * Setup the user must complete before a component is runnable. Derived from
- * requirement NAMES only — the bundle never supplies credential values.
+ * requirement NAMES only — screened non-secret literals are stored on the
+ * normalized config instead and never become requirements; secret-looking
+ * values are dropped and DO become requirements.
  */
 export type PluginSetupRequirement =
   | {
@@ -127,15 +115,27 @@ export type PluginSetupRequirement =
 
 export interface ParsedPluginBundle {
   manifest: NormalizedPluginManifest;
+  /**
+   * Agent Plugins version both documents target (resolved locally from
+   * `$schema`). Mirrors `manifest.schemaVersion` for consumers that never
+   * look inside the manifest.
+   */
+  schemaVersion: string;
   /** Deterministic content hash over every file (canonical path + bytes). */
   bundleHash: string;
-  /** SHA-256 hex of the raw `.codex-plugin/plugin.json` bytes. */
+  /** SHA-256 hex of the raw `plugin.json` bytes. */
   manifestHash: string;
   skills: ParsedPluginSkill[];
   mcpServers: ParsedPluginServer[];
   apps: ParsedPluginApp[];
   assets: ParsedPluginAsset[];
-  unsupported: ParsedUnsupportedComponent[];
+  /**
+   * Components skipped under the spec's failure-isolation boundaries (one
+   * bad server entry / skill / the whole mcp.json document). Import surfaces
+   * MUST render these loudly — a silently absent server reads as a runtime
+   * bug, not a bundle problem.
+   */
+  skipped: PluginSkippedComponent[];
   setupRequirements: PluginSetupRequirement[];
   /** Warning-severity issues only; error-severity issues throw instead. */
   warnings: PluginValidationIssue[];
