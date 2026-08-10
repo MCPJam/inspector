@@ -9,6 +9,31 @@ vi.mock("node:os", async () => {
   return { ...actual, homedir: () => scratch };
 });
 
+// Passthrough fs with a one-shot gate on unlink, so a test can hold a revoke
+// open exactly inside its verify→unlink window and prove a concurrent grant
+// cannot interleave there (the module's mutation lock).
+const unlinkGate = vi.hoisted(() => ({
+  armed: false,
+  release: null as (() => void) | null,
+}));
+vi.mock("node:fs/promises", async () => {
+  const actual = await vi.importActual<typeof import("node:fs/promises")>(
+    "node:fs/promises"
+  );
+  return {
+    ...actual,
+    unlink: async (path: Parameters<typeof actual.unlink>[0]) => {
+      if (unlinkGate.armed) {
+        unlinkGate.armed = false;
+        await new Promise<void>((resolve) => {
+          unlinkGate.release = resolve;
+        });
+      }
+      return actual.unlink(path);
+    },
+  };
+});
+
 import {
   grantLocalComputerConsent,
   revokeLocalComputerConsent,
@@ -55,6 +80,26 @@ describe("local computer consent capability", () => {
     // Scoped to the live token it does revoke.
     await revokeLocalComputerConsent(current.token);
     expect(await verifyLocalComputerConsent(current.token)).toBe(false);
+  });
+
+  it("a grant overlapping a scoped revoke's verify→unlink window survives it", async () => {
+    // Deterministic interleave: the revoke verifies its (still-current) token,
+    // then parks INSIDE the window before its unlink. Without the mutation
+    // lock, the concurrent grant would write the new capability during that
+    // window and the resumed unlink would delete it. With the lock, the grant
+    // queues until the revoke finishes, so the fresh capability survives.
+    const stale = await grantLocalComputerConsent();
+    unlinkGate.armed = true;
+    const revoking = revokeLocalComputerConsent(stale.token);
+    const granting = grantLocalComputerConsent();
+    await vi.waitFor(() => {
+      if (!unlinkGate.release) throw new Error("revoke not at unlink yet");
+    });
+    unlinkGate.release!();
+    unlinkGate.release = null;
+    await revoking;
+    const fresh = await granting;
+    expect(await verifyLocalComputerConsent(fresh.token)).toBe(true);
   });
 
   it("an unscoped revoke (no token) unlinks unconditionally", async () => {
