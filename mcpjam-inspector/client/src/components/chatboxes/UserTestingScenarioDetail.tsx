@@ -156,6 +156,17 @@ export function UserTestingScenarioDetail({
   const committedEnvironmentIdRef = useRef<string | null>(
     chatbox.environmentId ?? null,
   );
+  // Always the CURRENT reactive values, for the post-commit reconciliation
+  // below: a subscription update that lands mid-commit is deliberately
+  // skipped by both sync effects, and their deps have already settled by the
+  // time the commit ends — clearing the guard alone never replays it. The
+  // closure's own props are frozen at edit time, so it reads these instead.
+  const latestEnvironmentIdRef = useRef<string | null>(
+    chatbox.environmentId ?? null,
+  );
+  latestEnvironmentIdRef.current = chatbox.environmentId ?? null;
+  const latestEnvironmentRowRef = useRef(environment);
+  latestEnvironmentRowRef.current = environment;
   useEffect(() => {
     // Adopt remote rebinds (another member, or our own echo) — but never
     // mid-commit, when the ref is ahead of the subscription on purpose.
@@ -190,6 +201,9 @@ export function UserTestingScenarioDetail({
     void (async () => {
       committingRef.current = true;
       setIsRebinding(true);
+      // What this commit is moving AWAY from — needed to tell a collaborator's
+      // mid-flight rebind (a third id) apart from our own not-yet-echoed one.
+      const startedFromId = committedEnvironmentIdRef.current;
       try {
         const resolved = await resolveComposerTargets({
           state: next,
@@ -225,6 +239,25 @@ export function UserTestingScenarioDetail({
       } finally {
         committingRef.current = false;
         setIsRebinding(false);
+        // Replay what the guard skipped. A subscription value that is neither
+        // what this commit started from (our own echo still pending) nor what
+        // it committed is a collaborator's rebind that landed mid-flight —
+        // without this, a FAILED commit rolls back to a setup the backend no
+        // longer points at, and the stale ref then swallows follow-up edits
+        // as no-ops.
+        const latest = latestEnvironmentIdRef.current;
+        if (
+          latest !== committedEnvironmentIdRef.current &&
+          latest !== startedFromId
+        ) {
+          committedEnvironmentIdRef.current = latest;
+          const row = latestEnvironmentRowRef.current;
+          if (row && row.environmentId === latest) {
+            setComposer(composerStateFromEnvironments([row]));
+          }
+          // If the row for `latest` hasn't loaded yet, the reseed effect
+          // fires when it does — `committingRef` is already false.
+        }
       }
     })();
   };

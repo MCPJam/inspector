@@ -612,6 +612,40 @@ describe("UserTestingScenarioDetail", () => {
       expect(rebindChatboxMock).toHaveBeenCalledTimes(2);
     });
 
+    it("adopts a collaborator's rebind that landed mid-commit", async () => {
+      environmentState.row = namedRow;
+      let rejectResolve!: (err: unknown) => void;
+      resolveTargetsMock.mockImplementation(
+        () => new Promise((_res, rej) => (rejectResolve = rej)),
+      );
+      const { rerender } = renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() => lastComposerProps().onChange(composeState));
+
+      // A collaborator rebinds the scenario to env-9 while our resolve is in
+      // flight — both sync effects deliberately skip the update.
+      environmentState.row = {
+        ...namedRow,
+        environmentId: "env-9",
+        name: "Remote setup",
+      };
+      rerender(detail({ environmentId: "env-9", environmentName: "Remote" }));
+
+      // Our commit then FAILS. Without reconciliation the rollback restores
+      // the pre-commit setup (env-1) and the stale committed ref swallows
+      // follow-up edits — while the backend points at env-9.
+      await act(async () => {
+        rejectResolve(new Error("boom"));
+      });
+
+      await waitFor(() =>
+        expect(lastComposerProps().value.environmentIds).toEqual(["env-9"]),
+      );
+    });
+
     it("a refused rebind rolls the strip back and shows the backend's sentence", async () => {
       environmentState.row = namedRow;
       resolveTargetsMock.mockResolvedValue({
