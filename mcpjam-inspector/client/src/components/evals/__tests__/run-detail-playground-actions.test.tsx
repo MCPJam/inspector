@@ -1,6 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+
+const cloudState = vi.hoisted(() => ({
+  ephemeralAvailable: true as boolean | undefined,
+}));
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
+}));
+
 import { RunDetailPlaygroundActions } from "../run-detail-playground-actions";
 import type { EvalSuite, EvalSuiteRun } from "../types";
 
@@ -35,6 +43,10 @@ const baseRun = {
 } satisfies EvalSuiteRun;
 
 describe("RunDetailPlaygroundActions", () => {
+  beforeEach(() => {
+    cloudState.ephemeralAvailable = true;
+  });
+
   it("calls onReplayRun when replay is available", async () => {
     const user = userEvent.setup();
     const onReplayRun = vi.fn();
@@ -74,6 +86,40 @@ describe("RunDetailPlaygroundActions", () => {
         hasServersConfigured
         missingServers={[]}
         runsDisabledReason="This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /replay this run/i }),
+    ).toBeDisabled();
+  });
+
+  it("blocks replay from the RUN's frozen snapshot pin, even when the live suite no longer pins", () => {
+    // The externally-derived reason reflects live suite/environment state; a
+    // historical run's snapshot pin outlives clearing the live pin, and its
+    // replay still provisions from that frozen image.
+    cloudState.ephemeralAvailable = false;
+    render(
+      <RunDetailPlaygroundActions
+        suite={suite}
+        selectedRun={{
+          ...baseRun,
+          configSnapshot: {
+            tests: [],
+            environment: {
+              servers: ["srv"],
+              computerEnvironmentId: "img-frozen",
+            },
+          },
+        }}
+        readOnlyConfig
+        onReplayRun={vi.fn()}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        rerunningSuiteId={null}
+        replayingRunId={null}
+        cancellingRunId={null}
+        hasServersConfigured
+        missingServers={[]}
       />,
     );
     expect(

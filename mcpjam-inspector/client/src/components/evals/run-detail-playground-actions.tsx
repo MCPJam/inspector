@@ -6,6 +6,8 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { Loader2, RotateCw, X } from "lucide-react";
+import { EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE } from "@/components/computer/CloudUnreachableNotice";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import type { EvalSuite, EvalSuiteRun } from "./types";
 
 /** Replay / rerun / cancel controls for a run detail view (SuiteHeader row or CI sidebar). */
@@ -60,8 +62,20 @@ export function RunDetailPlaygroundActions({
   const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
   const isReplayAction = Boolean(replayableSelectedRun);
   const canUseLiveRun = hasServersConfigured;
+  // A replay provisions from the RUN's frozen snapshot pin — the live suite
+  // pin may have been cleared or changed since, so the externally-derived
+  // reason (live suite/environment state) can't cover this case.
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  const replaySnapshotBlockedReason =
+    isReplayAction &&
+    ephemeralCloudAvailable === false &&
+    Boolean(selectedRun.configSnapshot?.environment?.computerEnvironmentId)
+      ? EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE
+      : null;
+  const effectiveDisabledReason =
+    runsDisabledReason ?? replaySnapshotBlockedReason;
   const runActionDisabled = Boolean(
-    runsDisabledReason ||
+    effectiveDisabledReason ||
       (isReplayAction
         ? showAsRunning || !onReplayRun
         : !canUseLiveRun || showAsRunning)
@@ -73,8 +87,8 @@ export function RunDetailPlaygroundActions({
     : isReplayAction
       ? "Replay this run"
       : "Rerun";
-  const runActionTooltip = runsDisabledReason
-    ? runsDisabledReason
+  const runActionTooltip = effectiveDisabledReason
+    ? effectiveDisabledReason
     : isReplayAction
       ? "Replay this CI run in the playground"
       : !hasServersConfigured

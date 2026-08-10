@@ -44,9 +44,6 @@ import {
   SuiteAggregate,
 } from "./types";
 import { useMutation } from "convex/react";
-import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
-import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE } from "@/components/computer/CloudUnreachableNotice";
 import { toast } from "sonner";
 
 import { CiMetadataDisplay } from "./ci-metadata-display";
@@ -71,11 +68,6 @@ import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
-  /**
-   * Needed only to resolve ATTACHED project environments' sandbox-image pins
-   * for the cloud preflight; absent ⇒ only the suite's own pin is checked.
-   */
-  projectId?: string | null;
   viewMode: "overview" | "run-detail" | "test-detail" | "test-edit";
   selectedRunDetails: EvalSuiteRun | null;
   isEditMode: boolean;
@@ -161,7 +153,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     iterationOverride,
     onIterationOverrideChange,
     connectedServerNames,
-    projectId,
     rerunningSuiteId,
     replayingRunId = null,
     cancellingRunId,
@@ -177,7 +168,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onGenerateTestCases,
     canGenerateTestCases = false,
     generateTestCasesDisabledReason,
-    evalRunsDisabledReason: evalRunsDisabledReasonProp = null,
+    // Effective reason, derived by the PARENT (suite-iterations-view) — it
+    // owns every run control, so the cloud-sandbox preflight is folded in
+    // there, not here (deriving here left the per-case buttons ungated).
+    evalRunsDisabledReason = null,
     isGeneratingTestCases = false,
     onCreateTestCase,
     blockTestCaseRuns: _blockTestCaseRuns = false,
@@ -188,35 +182,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
   } = props;
-
-  // A suite that pins a sandbox image provisions a disposable MCPJam cloud
-  // box per iteration — from an inspector that can't execute in those boxes,
-  // every run would fail its computer setup. Fold that preflight into the
-  // same disabled-reason channel billing uses, so every run control (Run all,
-  // per-case, rerun, run-detail rerun/replay) blocks with one consistent
-  // tooltip. The pin can come from TWO places: the suite's own
-  // `environment.computerEnvironmentId` (migration-era override) or any
-  // ATTACHED project environment's pin, which the backend resolves fresh at
-  // launch — checking only the suite field would let env-backed suites launch
-  // into the exact failure this preflight exists to prevent.
-  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
-  const attachedEnvironments = useProjectEnvironments(
-    (suite.environmentIds?.length ?? 0) > 0 ? (projectId ?? null) : null
-  );
-  const suitePinsSandboxImage =
-    Boolean(suite.environment?.computerEnvironmentId) ||
-    (suite.environmentIds ?? []).some((environmentId) =>
-      Boolean(
-        (attachedEnvironments ?? []).find(
-          (environment) => environment.environmentId === environmentId
-        )?.computerEnvironmentId
-      )
-    );
-  const evalRunsDisabledReason =
-    evalRunsDisabledReasonProp ??
-    (suitePinsSandboxImage && ephemeralCloudAvailable === false
-      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
-      : null);
 
   const showTestCaseCtas =
     runsViewMode === "test-cases" ||

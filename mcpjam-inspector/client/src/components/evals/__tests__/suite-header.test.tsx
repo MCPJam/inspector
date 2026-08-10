@@ -20,18 +20,14 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
+// Consumed by the RunDetailPlaygroundActions child (replay snapshot gate);
+// pinned `true` so header tests never see a cloud-gated state they didn't ask
+// for. The derivation itself lives in suite-iterations-view, not here.
 const cloudState = vi.hoisted(() => ({
   ephemeralAvailable: true as boolean | undefined,
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
-}));
-
-const envState = vi.hoisted(() => ({
-  rows: [] as Array<{ environmentId: string; computerEnvironmentId?: string }>,
-}));
-vi.mock("@/hooks/useProjectEnvironments", () => ({
-  useProjectEnvironments: () => envState.rows,
 }));
 
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
@@ -92,7 +88,6 @@ describe("SuiteHeader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cloudState.ephemeralAvailable = true;
-    envState.rows = [];
     mockIsHostedMode.mockReturnValue(false);
   });
 
@@ -365,18 +360,14 @@ describe("SuiteHeader", () => {
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
   });
 
-  it("blocks every run action when the suite pins a sandbox image this inspector can't run", () => {
-    // A pinned image provisions a disposable MCPJam cloud box per iteration;
-    // from a non-data-plane inspector every run would fail its computer
-    // setup, so launch is disabled up front instead of inviting the failure.
-    cloudState.ephemeralAvailable = false;
+  it("blocks Run all when the parent-derived evalRunsDisabledReason is set", () => {
+    // The cloud-sandbox preflight is derived in suite-iterations-view (the
+    // owner of every run control) and arrives here as a plain prop — this
+    // pins that the header honors it.
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
-        suite={{
-          ...baseSuite,
-          environment: { servers: ["asana"], computerEnvironmentId: "img-1" },
-        }}
+        evalRunsDisabledReason="This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
         viewMode="overview"
         selectedRunDetails={null}
         runsViewMode="runs"
@@ -398,76 +389,6 @@ describe("SuiteHeader", () => {
     expect(
       screen.getByRole("button", { name: /Run all cases in this suite/i })
     ).toBeDisabled();
-  });
-
-  it("catches a pin carried by an ATTACHED environment, not just the suite field", () => {
-    // Env-backed suites resolve their image server-side at launch — checking
-    // only `suite.environment.computerEnvironmentId` would let exactly those
-    // suites launch into the failure the preflight exists to prevent.
-    cloudState.ephemeralAvailable = false;
-    envState.rows = [
-      { environmentId: "env-9", computerEnvironmentId: "img-9" },
-    ];
-    renderWithProviders(
-      <SuiteHeader
-        {...baseProps}
-        suite={{
-          ...baseSuite,
-          environmentIds: ["env-9"],
-        }}
-        projectId="proj-1"
-        viewMode="overview"
-        selectedRunDetails={null}
-        runsViewMode="runs"
-        hideRunActions
-        unifiedSuiteDashboard
-        onCreateTestCase={vi.fn()}
-        onGenerateTestCases={vi.fn()}
-        canGenerateTestCases
-        testCases={[
-          {
-            _id: "c1",
-            models: [{ provider: "openai", model: "gpt-4" }],
-          } as any,
-        ]}
-        connectedServerNames={new Set(["asana"])}
-      />
-    );
-
-    expect(
-      screen.getByRole("button", { name: /Run all cases in this suite/i })
-    ).toBeDisabled();
-  });
-
-  it("leaves runs alone when the pinned-image suite CAN reach cloud sandboxes", () => {
-    renderWithProviders(
-      <SuiteHeader
-        {...baseProps}
-        suite={{
-          ...baseSuite,
-          environment: { servers: ["asana"], computerEnvironmentId: "img-1" },
-        }}
-        viewMode="overview"
-        selectedRunDetails={null}
-        runsViewMode="runs"
-        hideRunActions
-        unifiedSuiteDashboard
-        onCreateTestCase={vi.fn()}
-        onGenerateTestCases={vi.fn()}
-        canGenerateTestCases
-        testCases={[
-          {
-            _id: "c1",
-            models: [{ provider: "openai", model: "gpt-4" }],
-          } as any,
-        ]}
-        connectedServerNames={new Set(["asana"])}
-      />
-    );
-
-    expect(
-      screen.getByRole("button", { name: /Run all cases in this suite/i })
-    ).toBeEnabled();
   });
 
   it("keeps Run all disabled while the latest suite run is still running", async () => {
