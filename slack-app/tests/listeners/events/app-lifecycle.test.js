@@ -1,10 +1,6 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
-import {
-  clearChannelBindingCache,
-  getCachedChannelBinding,
-  setCachedChannelBinding,
-} from '../../../agent/binding-cache.js';
+import { getCachedChannelBinding, purgeChannelBindings, setCachedChannelBinding } from '../../../agent/turn-target.js';
 import { clearInstallationCache, installationCacheSize, resolveInstallation } from '../../../installations/store.js';
 import { handleAppUninstalled, handleTokensRevoked } from '../../../listeners/events/app-lifecycle.js';
 import { sessionStore } from '../../../thread-context/index.js';
@@ -46,7 +42,8 @@ describe('installation lifecycle', () => {
 
   beforeEach(() => {
     clearInstallationCache();
-    clearChannelBindingCache();
+    purgeChannelBindings('T1');
+    purgeChannelBindings('T2');
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
     process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     realFetch = globalThis.fetch;

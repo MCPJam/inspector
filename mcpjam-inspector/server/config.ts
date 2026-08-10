@@ -18,6 +18,18 @@ export const LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
 // Uses VITE_ prefix so the same variable works for both server and client build
 export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 
+/**
+ * Local computer engine (agents running bash on the machine that runs this
+ * inspector) — server-side kill switch, enforced independently of any client
+ * flag: the engine resolver, the consent routes, and the local terminal all
+ * check it. FORCED off in hosted mode regardless of env — a hosted server
+ * must never execute model-driven commands on itself. `MCPJAM_LOCAL_COMPUTER_ENABLED=false`
+ * is the emergency/managed-install off switch; default is on for local
+ * inspectors (the per-user gate is the consent capability, not this flag).
+ */
+export const LOCAL_COMPUTER_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
+
 export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
 
 /**

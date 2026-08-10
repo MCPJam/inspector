@@ -188,6 +188,12 @@ function EvalsTabContent({
     name: string;
     serverIds: string[];
   }) => Promise<{ _id: string }>;
+  const setSuiteEnvironments = useMutation(
+    "testSuites:setSuiteEnvironments" as any
+  ) as unknown as (args: {
+    suiteId: string;
+    environmentIds: string[] | null;
+  }) => Promise<unknown>;
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -467,6 +473,27 @@ function EvalsTabContent({
           throw new Error("Suite was created without an id");
         }
 
+        // `createTestSuite` cannot take environments, so a suite born in
+        // environment mode needs a second call. The dialog already resolved
+        // these ids and sent the matching clients as legacy rollback data, so a
+        // failure here leaves a runnable legacy suite the header can convert —
+        // worth a toast, not worth discarding the suite.
+        if (payload.environmentIds && payload.environmentIds.length > 0) {
+          try {
+            await setSuiteEnvironments({
+              suiteId: createdSuite._id,
+              environmentIds: payload.environmentIds,
+            });
+          } catch (error) {
+            toast.error(
+              getBillingErrorMessage(
+                error,
+                "Suite created, but attaching its environments failed"
+              )
+            );
+          }
+        }
+
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
           type: "suite-overview",
@@ -477,7 +504,7 @@ function EvalsTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId]
+    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments]
   );
 
   const handleSelectSuite = useCallback((suiteId: string) => {

@@ -332,7 +332,10 @@ function entryFromDoctorError(
   error: unknown
 ): ServerEntry {
   if (isPlatformApiError(error)) {
-    if (error.code === "OAUTH_REQUIRED" || error.details?.oauthRequired === true) {
+    if (
+      error.code === "OAUTH_REQUIRED" ||
+      error.details?.oauthRequired === true
+    ) {
       return baseEntry(server, "reachable", `OAuth required. ${error.message}`);
     }
 
