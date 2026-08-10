@@ -151,8 +151,13 @@ export function UpdateHostToLatestButton({
   const handleClickRef = useRef(handleClick);
   handleClickRef.current = handleClick;
   const offeredUpdateKeyRef = useRef<string | null>(null);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (dismissTimerRef.current !== null) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
     if (!updateAvailable || updateKey === undefined) {
       toast.dismiss(UPDATE_TOAST_ID);
       return;
@@ -171,7 +176,12 @@ export function UpdateHostToLatestButton({
     });
 
     return () => {
-      toast.dismiss(UPDATE_TOAST_ID);
+      // Defer cleanup so React Strict Mode's setup/cleanup/setup replay can
+      // cancel it instead of immediately hiding the toast in development.
+      dismissTimerRef.current = setTimeout(() => {
+        toast.dismiss(UPDATE_TOAST_ID);
+        dismissTimerRef.current = null;
+      }, 0);
     };
   }, [latestDisplayName, updateAvailable, updateKey]);
 

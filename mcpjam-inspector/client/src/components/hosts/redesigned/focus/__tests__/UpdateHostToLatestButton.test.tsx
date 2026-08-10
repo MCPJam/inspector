@@ -1,4 +1,4 @@
-import { act, useState } from "react";
+import { act, StrictMode, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -59,6 +59,7 @@ function renderButton(args: {
   initialName?: string;
   savedDraft?: HostConfigInputV2;
   savedName?: string;
+  strictMode?: boolean;
 }) {
   const draftRef: { current: HostConfigInputV2 } = {
     current: args.initialDraft,
@@ -99,7 +100,15 @@ function renderButton(args: {
     );
   }
 
-  const utils = render(<Harness />);
+  const utils = render(
+    args.strictMode ? (
+      <StrictMode>
+        <Harness />
+      </StrictMode>
+    ) : (
+      <Harness />
+    )
+  );
   return {
     draftRef,
     nameRef,
@@ -129,6 +138,21 @@ describe("UpdateHostToLatestButton", () => {
     expect(draftRef.current).toEqual(catalogDraftFor("mistral"));
     expect(nameRef.current).toBe(catalogLabelFor("mistral"));
     expect(toast.success).toHaveBeenCalledWith("Updated to latest");
+  });
+
+  it("keeps the update toast visible during Strict Mode effect replay", async () => {
+    renderButton({
+      initialDraft: emptyHostConfigInputV2({
+        hostStyle: "mistral",
+        modelId: "old-model",
+      }),
+      initialName: "Old Mistral",
+      strictMode: true,
+    });
+
+    await waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(toast.dismiss).not.toHaveBeenCalled();
   });
 
   it("does not treat unsaved local edits as a new client update", () => {
