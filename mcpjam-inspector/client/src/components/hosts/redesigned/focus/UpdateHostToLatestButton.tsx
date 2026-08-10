@@ -101,6 +101,9 @@ export function UpdateHostToLatestButton({
     hostConfigInputsEqual(savedDraft, latestSavedDraft);
   const updateAvailable =
     catalogState.status === "live" &&
+    draft.hostStyle === savedDraft.hostStyle &&
+    catalogTemplate !== undefined &&
+    latestDisplayName !== undefined &&
     latestSavedDraft !== undefined &&
     latestSavedDisplayName !== undefined &&
     !savedAlreadyCurrent &&
@@ -159,7 +162,7 @@ export function UpdateHostToLatestButton({
 
     toast.info("Client update available", {
       id: UPDATE_TOAST_ID,
-      description: `${latestSavedDisplayName} has a newer configuration.`,
+      description: `${latestDisplayName} has a newer configuration.`,
       duration: 10_000,
       action: {
         label: "Update to latest",
@@ -170,7 +173,7 @@ export function UpdateHostToLatestButton({
     return () => {
       toast.dismiss(UPDATE_TOAST_ID);
     };
-  }, [latestSavedDisplayName, updateAvailable, updateKey]);
+  }, [latestDisplayName, updateAvailable, updateKey]);
 
   return (
     <Button

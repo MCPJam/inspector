@@ -155,6 +155,21 @@ describe("UpdateHostToLatestButton", () => {
     expect(toast.info).not.toHaveBeenCalled();
   });
 
+  it("does not offer an update while the host style has an unsaved change", () => {
+    const savedDraft = emptyHostConfigInputV2({
+      hostStyle: "mistral",
+      modelId: "old-model",
+    });
+    renderButton({
+      initialDraft: { ...savedDraft, hostStyle: "claude" },
+      savedDraft,
+      initialName: "Old Mistral",
+      savedName: "Old Mistral",
+    });
+
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
   it("does not offer the same catalog update again after local edits", async () => {
     const savedDraft = emptyHostConfigInputV2({
       hostStyle: "mistral",
