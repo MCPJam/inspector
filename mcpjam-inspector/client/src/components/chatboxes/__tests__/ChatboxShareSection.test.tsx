@@ -65,6 +65,8 @@ describe("ChatboxShareSection", () => {
       <ChatboxShareSection chatbox={createChatbox()} projectName="Acme" />,
     );
 
+    expect(screen.getByText("Tester link")).toBeInTheDocument();
+    expect(screen.getByTestId("chatbox-copy-tester-link")).toBeInTheDocument();
     expect(screen.getByText("Invite with email")).toBeInTheDocument();
     expect(screen.getByText("Access settings")).toBeInTheDocument();
     expect(screen.getByText("Has access")).toBeInTheDocument();

@@ -1,11 +1,11 @@
 /**
- * The environment composer: two rows that let a surface say where a run
+ * The environment composer: one strip that lets a surface say where a run
  * executes, either by picking saved environments or by composing a loose stack.
  *
- *  Row 1 — saved environments. Picking one SEEDS row 2 from it, which is what
- *          makes "same setup, different client" a one-click edit.
- *  Row 2 — the stack: clients (the fan-out axis) plus the shared slots a client
- *          runs under (server group, pinned skills, sandbox image).
+ *  Environments — picking one SEEDS the stack from it, which is what makes
+ *                 "same setup, different client" a one-click edit.
+ *  Stack — clients (the fan-out axis) plus the shared slots a client runs under
+ *          (server group, pinned skills, sandbox image).
  *
  * PURE PRESENTATION, like the {@link EnvironmentPicker} it sits on top of: it
  * owns no persistence and no resolution. The caller holds the state and decides
@@ -20,7 +20,7 @@
  * just created (Swarms does, while the live query catches up) and so tests don't
  * need a Convex provider.
  */
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
@@ -31,7 +31,6 @@ import {
   emptyEnvironmentStack,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
-  isComposeMode,
   type EnvironmentComposerState,
   type EnvironmentStack,
 } from "@/components/environment-composer/environment-stack";
@@ -50,6 +49,7 @@ export function EnvironmentComposer({
   disabled = false,
   testIdPrefix,
   inModal = false,
+  environmentPickerFooter,
   className,
 }: {
   projectId: string;
@@ -73,6 +73,8 @@ export function EnvironmentComposer({
    * hatch, same name, as `EnvironmentPicker` and `ServerGroupPicker`.
    */
   inModal?: boolean;
+  /** Forwarded into the environment picker's popover footer. */
+  environmentPickerFooter?: ReactNode;
   className?: string;
 }) {
   const skillsEnabled = useSkillsEnabled();
@@ -83,7 +85,6 @@ export function EnvironmentComposer({
     () => environments.filter((e) => !e.archivedAt),
     [environments]
   );
-  const composeMode = isComposeMode(value);
   /**
    * The selection cannot be round-tripped through a stack, so slot edits are
    * blocked — the user can still change the SELECTION, which is the way out.
@@ -218,11 +219,18 @@ export function EnvironmentComposer({
 
   return (
     <div className={cn("space-y-3", className)}>
-      {environmentsEnabled ? (
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div
+        className="flex min-w-0 flex-wrap items-center gap-2"
+        data-testid={testId("lego-strip")}
+      >
+        {environmentsEnabled ? (
           <EnvironmentPicker
             projectId={projectId}
-            value={maxTargets === 1 ? (value.environmentIds[0] ?? null) : value.environmentIds}
+            value={
+              maxTargets === 1
+                ? (value.environmentIds[0] ?? null)
+                : value.environmentIds
+            }
             onChange={(next: string | string[] | null) =>
               handleEnvironmentsChange(
                 Array.isArray(next) ? next : next ? [next] : []
@@ -239,22 +247,9 @@ export function EnvironmentComposer({
             triggerTestId={testId("environments-picker")}
             triggerAriaLabel="Environments"
             inModal={inModal}
+            footerSlot={environmentPickerFooter}
           />
-          {composeMode ? (
-            <span
-              className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-              data-testid={testId("target-custom-badge")}
-            >
-              Custom
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div
-        className="flex min-w-0 flex-wrap items-center gap-2"
-        data-testid={testId("lego-strip")}
-      >
+        ) : null}
         <ClientsPill
           projectId={projectId}
           value={value.stack.hostIds}
@@ -297,9 +292,9 @@ export function EnvironmentComposer({
         ) : null}
       </div>
 
-      {/* Only when the picker above is actually usable: the surrounding surface
-          may already be disabling everything and saying its own version of
-          this, and "change the selection above" would then name a control the
+      {/* Only when the environment picker is actually usable: the surrounding
+          surface may already be disabling everything and saying its own version
+          of this, and naming that control would then point at something the
           user cannot reach. */}
       {stackEditBlock && !disabled ? (
         <p
@@ -307,8 +302,8 @@ export function EnvironmentComposer({
           data-testid={testId("collapse-hint")}
         >
           {stackEditBlock === "pins"
-            ? "This selection pins plugin versions, which this strip can't carry — editing below would run without them. Change the selection above instead."
-            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing below would change what some of them run. Change the selection above instead."}
+            ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
+            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
     </div>

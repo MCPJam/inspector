@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ExternalLink, Layers, Loader2 } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
@@ -61,6 +61,7 @@ export function EnvironmentPicker({
   triggerTestId,
   triggerAriaLabel,
   inModal = false,
+  footerSlot,
 }: {
   projectId: string;
   /** Selected id(s). Single-select accepts `string | null`. */
@@ -85,6 +86,11 @@ export function EnvironmentPicker({
    * click. Same escape hatch, same name, as `ServerGroupPicker`.
    */
   inModal?: boolean;
+  /**
+   * Optional actions above "Manage environments" in the popover footer
+   * (e.g. promote an ad-hoc setup). Caller owns the content and click handlers.
+   */
+  footerSlot?: ReactNode;
 }) {
   // Include archived AND ad-hoc so a still-attached row of either kind can be
   // labeled and detached (see the doc block above). Both are filtered out of
@@ -332,6 +338,17 @@ export function EnvironmentPicker({
           </p>
         ) : null}
         <div className="mt-0.5 border-t pt-0.5">
+          {footerSlot ? (
+            <div
+              className="contents"
+              onClick={() => setOpen(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") setOpen(false);
+              }}
+            >
+              {footerSlot}
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={() => {

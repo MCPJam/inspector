@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Clock, Globe, Lock, Users } from "lucide-react";
+import { ChevronDown, Clock, Globe, Link2, Lock, Users } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -9,6 +9,8 @@ import {
   type ChatboxSettings,
   useChatboxMutations,
 } from "@/hooks/useChatboxes";
+import { buildChatboxLink } from "@/lib/chatbox-session";
+import { copyToClipboard } from "@/lib/clipboard";
 import { getInitials } from "@/lib/utils";
 import {
   chatboxAccessPresetFromSettings,
@@ -178,6 +180,18 @@ export function ChatboxShareSection({
         ? Globe
         : Lock;
 
+  const shareLink = settings.link?.token
+    ? buildChatboxLink(settings.link.token, settings.name)
+    : null;
+  const displayLink = shareLink?.replace(/^https?:\/\//, "") ?? null;
+
+  const handleCopyLink = async () => {
+    if (!shareLink) return;
+    const ok = await copyToClipboard(shareLink);
+    if (ok) toast.success("Link copied");
+    else toast.error("Failed to copy share link");
+  };
+
   if (!isAuthenticated) {
     return (
       <p className="pt-4 text-sm text-muted-foreground">
@@ -188,6 +202,33 @@ export function ChatboxShareSection({
 
   return (
     <div className="space-y-6">
+      <div className="space-y-2">
+        <label className="text-sm font-medium" htmlFor="chatbox-tester-link">
+          Tester link
+        </label>
+        <div className="flex gap-2">
+          <div
+            id="chatbox-tester-link"
+            className="flex min-w-0 flex-1 items-center rounded-md border border-input bg-muted/30 px-3 py-2"
+            title={shareLink ?? undefined}
+          >
+            <p className="truncate text-sm text-muted-foreground">
+              {displayLink ?? "No share link yet."}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!shareLink}
+            onClick={() => void handleCopyLink()}
+            data-testid="chatbox-copy-tester-link"
+          >
+            <Link2 className="mr-1.5 size-4" />
+            Copy link
+          </Button>
+        </div>
+      </div>
+
       <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor="chatbox-share-email">
           Invite with email

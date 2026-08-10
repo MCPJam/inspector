@@ -1452,7 +1452,6 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
     fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
-    expect(screen.getByTestId("new-swarm-target-custom-badge")).toBeVisible();
 
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 

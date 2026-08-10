@@ -239,4 +239,23 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
     expect(screen.getByLabelText("Staging")).toBeInTheDocument();
     expect(screen.queryByLabelText("Automatic environment")).toBeNull();
   });
+
+  it("renders a caller footer slot above Manage environments", () => {
+    render(
+      <EnvironmentPicker
+        projectId="p_1"
+        value={[]}
+        onChange={vi.fn()}
+        multi
+        footerSlot={
+          <button type="button" data-testid="picker-footer-action">
+            Save as environment
+          </button>
+        }
+      />
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByTestId("picker-footer-action")).toBeInTheDocument();
+    expect(screen.getByText("Manage environments →")).toBeInTheDocument();
+  });
 });

@@ -118,7 +118,7 @@ export function NameEnvironmentDialog({
       >
         <DialogHeader className="gap-2 text-left">
           <DialogTitle className="text-foreground">
-            Name this environment
+            Save as environment
           </DialogTitle>
           <DialogDescription>
             This environment was created automatically from a setup, so it
@@ -201,10 +201,10 @@ export function NameEnvironmentDialog({
             {isSaving ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-                Naming…
+                Saving…
               </>
             ) : (
-              "Name environment"
+              "Save as environment"
             )}
           </Button>
         </DialogFooter>

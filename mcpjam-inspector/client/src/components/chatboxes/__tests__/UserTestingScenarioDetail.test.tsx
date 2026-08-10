@@ -95,9 +95,16 @@ vi.mock("@/components/environment-composer/use-composer-resolver", () => ({
 }));
 
 vi.mock("@/components/environment-composer/environment-composer", () => ({
-  EnvironmentComposer: (props: Record<string, unknown>) => {
+  EnvironmentComposer: (props: {
+    environmentPickerFooter?: unknown;
+    [key: string]: unknown;
+  }) => {
     composerMock(props);
-    return <div data-testid="stub-environment-composer" />;
+    return (
+      <div data-testid="stub-environment-composer">
+        {props.environmentPickerFooter as never}
+      </div>
+    );
   },
 }));
 
@@ -134,6 +141,18 @@ vi.mock("@/components/chatboxes/ChatboxPreviewPane", () => ({
     previewPaneMock(props);
     return <div data-testid="stub-preview" />;
   },
+}));
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({
+    children,
+  }: {
+    children?: unknown;
+  }) => <div data-testid="stub-resizable-group">{children as never}</div>,
+  ResizablePanel: ({ children }: { children?: unknown }) => (
+    <div>{children as never}</div>
+  ),
+  ResizableHandle: () => null,
 }));
 
 vi.mock("@/hooks/useClients", () => ({
@@ -173,6 +192,11 @@ const detail = (over: Partial<ChatboxSettings> = {}) => (
 const renderDetail = (over: Partial<ChatboxSettings> = {}) =>
   render(detail(over));
 
+/** Composer lives in the setup dialog — open it before asserting strip props. */
+const openSetup = () => {
+  fireEvent.click(screen.getByTestId("user-testing-edit-setup"));
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   // `clearAllMocks` clears calls but NOT implementations — reinstate the
@@ -195,11 +219,20 @@ beforeEach(() => {
 });
 
 describe("UserTestingScenarioDetail", () => {
-  it("lands on Sessions and shows the scenario's share link", () => {
+  it("lands on Sessions by default", () => {
     renderDetail();
 
     expect(screen.getByTestId("stub-usage-sessions")).toBeInTheDocument();
-    expect(screen.getByText("mcpjam.link/t/tok")).toBeInTheDocument();
+    expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
+  });
+
+  it("shows setup and share controls on the Edit tab", () => {
+    locationState.search = "?tab=edit";
+    renderDetail();
+
+    expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-share")).toBeInTheDocument();
+    expect(screen.queryByText(/Share this with testers/i)).not.toBeInTheDocument();
   });
 
   it("scopes Clusters to this scenario's chatbox", () => {
@@ -228,13 +261,28 @@ describe("UserTestingScenarioDetail", () => {
     );
   });
 
-  it("names the ENVIRONMENT on an environment-backed scenario", () => {
+  it("offers Edit setup next to Delete when the composer can run", () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      origin: "named",
+      name: "Checkout flow",
+      hostId: "host-1",
+      revision: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    locationState.search = "?tab=edit";
     renderDetail({ environmentId: "env-1", environmentName: "Checkout flow" });
 
-    expect(screen.getByText("Checkout flow")).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-edit-setup")).toHaveTextContent(
+      "Edit",
+    );
+    expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
   });
 
-  it("warns when the environment can't resolve, and keeps the sessions", () => {
+  it("warns on Edit when the environment can't resolve, and keeps Sessions readable", () => {
+    locationState.search = "?tab=edit";
     renderDetail({
       environmentId: "env-1",
       environmentName: "Checkout flow",
@@ -247,17 +295,25 @@ describe("UserTestingScenarioDetail", () => {
     expect(
       screen.getByTestId("user-testing-detail-environment-error"),
     ).toHaveTextContent(/archived/i);
+
     // History is exactly what someone opens an archived scenario to read.
-    expect(screen.getByTestId("stub-usage-sessions")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1", {
+      replace: true,
+    });
   });
 
-  it("shows the client, not an environment, on a host-backed scenario", () => {
+  it("hides Edit setup on a host-backed scenario (composer can't run)", () => {
+    locationState.search = "?tab=edit";
     renderDetail();
 
     expect(
       screen.queryByTestId("user-testing-detail-environment-error"),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Cursor")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("user-testing-edit-setup"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
   });
 
   it("seeds the session pane from a deep-linked session", () => {
@@ -273,15 +329,16 @@ describe("UserTestingScenarioDetail", () => {
   });
 
   it("asks for confirmation before deleting rather than deleting outright", () => {
+    locationState.search = "?tab=edit";
     renderDetail();
 
-    fireEvent.click(screen.getByRole("button", { name: /Delete/i }));
+    fireEvent.click(screen.getByTestId("user-testing-delete"));
 
     expect(screen.getByTestId("stub-delete-dialog")).toBeInTheDocument();
     expect(deleteChatboxMock).not.toHaveBeenCalled();
   });
 
-  describe("naming the backing ad-hoc environment", () => {
+  describe("saving the backing ad-hoc environment", () => {
     const adhocRow = {
       environmentId: "env-1",
       projectId: "p1",
@@ -296,9 +353,11 @@ describe("UserTestingScenarioDetail", () => {
       environmentState.row = adhocRow;
       // The label is synthesized from the client for ad-hoc rows — its
       // presence must NOT read as "named".
+      locationState.search = "?tab=edit";
       renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
 
-      const button = screen.getByTestId("user-testing-name-environment");
+      openSetup();
+      const button = screen.getByTestId("user-testing-save-as-environment");
       fireEvent.click(button);
 
       expect(
@@ -308,20 +367,22 @@ describe("UserTestingScenarioDetail", () => {
 
     it("hides it while the environment row is still loading (fail closed)", () => {
       environmentState.row = undefined;
+      locationState.search = "?tab=edit";
       renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
 
       expect(
-        screen.queryByTestId("user-testing-name-environment"),
+        screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
     });
 
     it("hides it for a row this member cannot see (null, fail closed)", () => {
       // Distinct from loading: the backend answered, and the answer was no.
       environmentState.row = null;
+      locationState.search = "?tab=edit";
       renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
 
       expect(
-        screen.queryByTestId("user-testing-name-environment"),
+        screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
     });
 
@@ -331,10 +392,11 @@ describe("UserTestingScenarioDetail", () => {
       // has no page to see.
       flagState.environmentsEnabled = false;
       environmentState.row = adhocRow;
+      locationState.search = "?tab=edit";
       renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
 
       expect(
-        screen.queryByTestId("user-testing-name-environment"),
+        screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
     });
 
@@ -344,21 +406,24 @@ describe("UserTestingScenarioDetail", () => {
         origin: "named",
         name: "Checkout flow",
       };
+      locationState.search = "?tab=edit";
       renderDetail({
         environmentId: "env-1",
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       expect(
-        screen.queryByTestId("user-testing-name-environment"),
+        screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
     });
 
     it("hides it for a host-backed scenario (no environment at all)", () => {
+      locationState.search = "?tab=edit";
       renderDetail();
 
       expect(
-        screen.queryByTestId("user-testing-name-environment"),
+        screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
     });
   });
@@ -430,6 +495,10 @@ describe("UserTestingScenarioDetail", () => {
         onChange: (next: unknown) => void;
       };
 
+    beforeEach(() => {
+      locationState.search = "?tab=edit";
+    });
+
     it("renders the composer seeded from the backing environment", () => {
       environmentState.row = namedRow;
       renderDetail({
@@ -437,6 +506,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       expect(
         screen.getByTestId("stub-environment-composer"),
       ).toBeInTheDocument();
@@ -478,6 +548,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>
@@ -504,6 +575,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() => expect(resolveTargetsMock).toHaveBeenCalled());
@@ -517,6 +589,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       act(() =>
         lastComposerProps().onChange({
           ...composeState,
@@ -536,6 +609,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       // The resolver reuses matching NAMED rows; resolving against a list
       // that hasn't loaded would mint an unnamed twin of one that exists.
       expect(lastComposerProps()).toEqual(
@@ -554,6 +628,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       // A second edit before the first settles: its rollback would clear the
       // in-flight guard out from under the first commit.
@@ -584,6 +659,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       await waitFor(() =>
         expect(rebindChatboxMock).toHaveBeenCalledWith({
@@ -623,6 +699,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       // A collaborator rebinds the scenario to env-9 while our resolve is in
@@ -666,6 +743,7 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
+      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>
@@ -680,35 +758,48 @@ describe("UserTestingScenarioDetail", () => {
 });
 
 /**
- * Preview embeds the live share link, which bootstraps a real guest session.
- * When it mounts is therefore a behaviour, not an implementation detail: too
- * eager and every visit to a scenario pollutes its own Sessions list.
+ * Preview docks beside Edit and embeds the live share link, which bootstraps
+ * a real guest session. When it mounts is therefore a behaviour, not an
+ * implementation detail: too eager and every visit to a scenario pollutes its
+ * own Sessions list.
  */
 describe("UserTestingScenarioDetail — preview", () => {
-  it("does not embed anything until the Preview tab is opened", () => {
+  it("does not embed anything until Edit is opened", () => {
     renderDetail();
 
     expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Preview" }),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1?tab=preview", {
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1?tab=edit", {
       replace: true,
     });
   });
 
-  it("embeds this scenario's share link when opened", () => {
-    locationState.search = "?tab=preview";
+  it("embeds this scenario's share link when Edit is opened", () => {
+    locationState.search = "?tab=edit";
     renderDetail();
 
+    expect(screen.getByTestId("user-testing-edit-preview")).toBeInTheDocument();
     expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
     expect(previewPaneMock).toHaveBeenCalledWith(
       expect.objectContaining({ publishLink: "https://mcpjam.link/t/tok" }),
     );
   });
 
-  it("hides the preview instead of unmounting it when you switch away", () => {
+  it("maps legacy ?tab=preview to Edit with the docked preview", () => {
     locationState.search = "?tab=preview";
+    renderDetail();
+
+    expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
+  });
+
+  it("hides the Edit split (keeping Preview mounted) when you switch away", () => {
+    locationState.search = "?tab=edit";
     const { rerender } = renderDetail();
 
     locationState.search = "";
@@ -717,16 +808,15 @@ describe("UserTestingScenarioDetail — preview", () => {
     // Still mounted — remounting would abandon the running tester session and
     // start a second one on the way back.
     expect(screen.getByTestId("stub-usage-sessions")).toBeInTheDocument();
-    expect(screen.getByTestId("stub-preview").parentElement).toHaveClass(
-      "hidden",
-    );
+    expect(screen.getByTestId("user-testing-edit-tab")).toHaveClass("hidden");
+    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
     expect(previewPaneMock.mock.calls.length).toBeGreaterThan(0);
   });
 
   it("passes the host's mcp profile through for the iframe permissions", () => {
     const mcpProfile = { apps: { sandbox: { permissions: { mode: "deny-all" } } } };
     hostState.host = { config: { mcpProfile } };
-    locationState.search = "?tab=preview";
+    locationState.search = "?tab=edit";
     renderDetail();
 
     expect(previewPaneMock).toHaveBeenCalledWith(
@@ -737,7 +827,7 @@ describe("UserTestingScenarioDetail — preview", () => {
   it("waits for the host config rather than embedding with default permissions", () => {
     hostState.isLoading = true;
     hostState.host = null;
-    locationState.search = "?tab=preview";
+    locationState.search = "?tab=edit";
     renderDetail();
 
     // `allow` only applies at mount, and its no-config default is permissive.
@@ -746,7 +836,7 @@ describe("UserTestingScenarioDetail — preview", () => {
   });
 
   it("refuses to embed a scenario whose environment can't resolve", () => {
-    locationState.search = "?tab=preview";
+    locationState.search = "?tab=edit";
     renderDetail({
       environmentId: "env-1",
       environmentName: "Checkout flow",
