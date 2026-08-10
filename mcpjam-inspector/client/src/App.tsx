@@ -4376,7 +4376,13 @@ export default function App() {
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
-          hidden={playgroundOnboarding || activeTab === "home"}
+          // "make nux clean" (#2868) hid this on Home for everyone, but that
+          // also hid guests' only Sign in / Create account affordance there
+          // (PUR-35). Keep Home clean for signed-in users; show the header
+          // for guests so they still get sign-in/sign-up.
+          hidden={
+            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
+          }
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
