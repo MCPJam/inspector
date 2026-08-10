@@ -1189,4 +1189,261 @@ describe("ChatboxChatPage", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  describe("access recovery", () => {
+    function bootstrapPayload(overrides: Record<string, unknown> = {}) {
+      return {
+        projectId: "ws_1",
+        chatboxId: "sbx_recover",
+        name: "Recoverable Chatbox",
+        description: "Hosted chatbox",
+        hostStyle: "claude",
+        mode: "anyone_with_link",
+        allowGuestAccess: true,
+        viewerIsProjectMember: false,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: false,
+        servers: [],
+        ...overrides,
+      };
+    }
+
+    function latestHostedContext() {
+      const calls = mockChatTabV2.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | { hostedContext?: Record<string, unknown> }
+        | undefined;
+      return last?.hostedContext;
+    }
+
+    /**
+     * Mounts with the share token in the path, lets the mount redeem settle,
+     * then re-renders with no `pathToken` — which is exactly what the real App
+     * does once `syncChatboxBootstrapHash` has stripped the token out of the
+     * URL. Everything after this point has ONLY the persisted session's
+     * `shareToken` to recover from.
+     */
+    async function renderPostStrip() {
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          chatboxId: "sbx_recover",
+          accessVersion: 1,
+          bootstrap: bootstrapPayload(),
+        })
+      );
+
+      const view = render(<ChatboxChatPage pathToken="tok_recover" />);
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+
+      view.rerender(<ChatboxChatPage />);
+      await waitFor(() =>
+        expect(latestHostedContext()?.accessVersion).toBe(1)
+      );
+      mockAuthFetch.mockClear();
+      return view;
+    }
+
+    it("re-redeems with the persisted share token after the URL strip", async () => {
+      // The regression this whole path exists for: the old helper keyed off
+      // the URL token, which is gone by now, so it early-returned forever and
+      // no session could ever recover.
+      await renderPostStrip();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          chatboxId: "sbx_recover",
+          accessVersion: 9,
+          bootstrap: bootstrapPayload(),
+        })
+      );
+
+      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        accessVersion?: number;
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result).toEqual({ ok: true, accessVersion: 9 });
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/web/chatboxes/redeem",
+        expect.objectContaining({
+          body: JSON.stringify({ chatboxToken: "tok_recover" }),
+        })
+      );
+      expect(readChatboxSession()?.accessVersion).toBe(9);
+      await waitFor(() =>
+        expect(latestHostedContext()?.accessVersion).toBe(9)
+      );
+    });
+
+    it("coalesces concurrent refreshes onto one redeem round trip", async () => {
+      // N chat lanes plus the widget-capture backoff must not each mint a
+      // grant and race to write the session.
+      await renderPostStrip();
+
+      let releaseRedeem: (() => void) | undefined;
+      mockAuthFetch.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseRedeem = resolve;
+        });
+        return createFetchResponse({
+          chatboxId: "sbx_recover",
+          accessVersion: 4,
+          bootstrap: bootstrapPayload(),
+        });
+      });
+
+      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        accessVersion?: number;
+      }>;
+
+      const results = await act(async () => {
+        const pending = Promise.all([refresh(), refresh(), refresh()]);
+        await waitFor(() => expect(releaseRedeem).toBeDefined());
+        releaseRedeem?.();
+        return pending;
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+      expect(results).toEqual([
+        { ok: true, accessVersion: 4 },
+        { ok: true, accessVersion: 4 },
+        { ok: true, accessVersion: 4 },
+      ]);
+    });
+
+    it("reports a definitively refused redeem as denied and leaves the session mounted", async () => {
+      await renderPostStrip();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse(
+          {
+            code: "CHATBOX_MEMBERS_ONLY",
+            message: "You don't have access to Recoverable Chatbox.",
+          },
+          { ok: false, status: 403, statusText: "Forbidden" }
+        )
+      );
+
+      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        reason?: string;
+        error?: { status: number };
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("denied");
+      expect(result.error?.status).toBe(403);
+      // Reporting is NOT tearing down: the caller decides, and a lane that
+      // never sends again should keep its transcript.
+      expect(readChatboxSession()?.accessVersion).toBe(1);
+      expect(screen.getByTestId("chatbox-chat-tab")).toBeInTheDocument();
+    });
+
+    it("treats a rate-limited redeem as transient, not terminal", async () => {
+      // Recovering on `denied` costs one extra /redeem per denied send; a 429
+      // from the backend's redeem limiter must not read as a revocation.
+      await renderPostStrip();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse(
+          { code: "RATE_LIMITED", message: "Slow down." },
+          { ok: false, status: 429, statusText: "Too Many Requests" }
+        )
+      );
+
+      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        reason?: string;
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result).toMatchObject({ ok: false, reason: "transient" });
+      expect(screen.getByTestId("chatbox-chat-tab")).toBeInTheDocument();
+    });
+
+    it("tears down to the denied landing when onAccessRevoked fires", async () => {
+      await renderPostStrip();
+
+      const onAccessRevoked = latestHostedContext()?.onAccessRevoked as (error: {
+        status: number;
+        code?: string;
+        message: string;
+      }) => void;
+
+      act(() => {
+        onAccessRevoked({
+          status: 403,
+          code: "CHATBOX_ACCESS_DENIED",
+          message: "You don't have access to Recoverable Chatbox.",
+        });
+      });
+
+      expect(
+        await screen.findByRole("heading", { name: "Access Denied" })
+      ).toBeInTheDocument();
+      expect(readChatboxSession()).toBeNull();
+    });
+
+    it("in an embedded preview, refresh updates React state but never writes sessionStorage", async () => {
+      // The embed shares the tab's sessionStorage with the outer dashboard;
+      // writing there would hijack it on the next reload.
+      mockIsEmbeddedPreview.mockReturnValue(true);
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          chatboxId: "sbx_recover",
+          accessVersion: 1,
+          bootstrap: bootstrapPayload(),
+        })
+      );
+
+      render(<ChatboxChatPage pathToken="tok_embed" />);
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+      mockAuthFetch.mockClear();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          chatboxId: "sbx_recover",
+          accessVersion: 5,
+          bootstrap: bootstrapPayload(),
+        })
+      );
+
+      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        accessVersion?: number;
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result).toEqual({ ok: true, accessVersion: 5 });
+      await waitFor(() =>
+        expect(latestHostedContext()?.accessVersion).toBe(5)
+      );
+      expect(readChatboxSession()).toBeNull();
+    });
+
+    it("renders the denied landing for a CHATBOX_ACCESS_DENIED bootstrap failure", async () => {
+      // The code is authoritative — no message-substring match required.
+      window.history.replaceState({}, "", "/chatbox/test/tok_code_denied");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "CHATBOX_ACCESS_DENIED",
+            message: "This chatbox could not be opened.",
+          },
+          { ok: false, status: 403, statusText: "Forbidden" }
+        )
+      );
+
+      render(<ChatboxChatPage pathToken="tok_code_denied" />);
+
+      expect(
+        await screen.findByRole("heading", { name: "Access Denied" })
+      ).toBeInTheDocument();
+    });
+  });
 });

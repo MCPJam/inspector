@@ -81,6 +81,10 @@ import {
   getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
 import {
+  classifyChatboxAccessResponse,
+  patchBodyAccessVersion,
+} from "@/lib/chatbox-access-errors";
+import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
@@ -1543,6 +1547,8 @@ export function useChatSession(
   const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
+  const hostedRefreshAccessSession = hostedContext?.refreshAccessSession;
+  const hostedOnAccessRevoked = hostedContext?.onAccessRevoked;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
@@ -2309,9 +2315,55 @@ export function useChatSession(
       // the chatbox-installed apiContext) wherever the web engine is in
       // play — hosted builds, and chatbox runtime sessions on any platform.
       const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
-      const response = useAuthedFetch
+      let response = useAuthedFetch
         ? await authFetch(input, init)
         : await fetch(input, init);
+
+      // Chatbox access recovery. A chatbox turn re-resolves its authoritative
+      // config server-side on every send, so an open tab can lose access
+      // between one send and the next — a rebind, a mode round-trip, a
+      // rotated guest identity. The refusal lands here PRE-STREAM (the route
+      // fails closed during turn setup, before a single token reaches the
+      // parser and while `useChat` is still awaiting this promise), which is
+      // the one place a re-redeem + replay is invisible to the tester.
+      //
+      // DENIED is retried as well as STALE: /redeem re-mints the grant for an
+      // `anyone_with_link` chatbox, so most "denied" verdicts are recoverable
+      // identity drift rather than a real refusal. Exactly ONE recovery per
+      // send — the replay's own verdict is final.
+      if (
+        !response.ok &&
+        useAuthedFetch &&
+        hostedChatboxId &&
+        typeof init?.body === "string" &&
+        hostedRefreshAccessSession
+      ) {
+        const accessError = await classifyChatboxAccessResponse(response);
+        if (accessError) {
+          const recovery = await hostedRefreshAccessSession();
+          if (recovery.ok) {
+            // Byte-identical replay except for the field that went stale.
+            // `init.signal` rides along in the spread, so Stop still aborts.
+            response = await authFetch(input, {
+              ...init,
+              body: patchBodyAccessVersion(init.body, recovery.accessVersion),
+            });
+            if (!response.ok) {
+              const replayError =
+                await classifyChatboxAccessResponse(response);
+              if (replayError?.kind === "denied") {
+                hostedOnAccessRevoked?.(replayError);
+              }
+            }
+          } else if (recovery.reason === "denied" && recovery.error) {
+            hostedOnAccessRevoked?.(recovery.error);
+          }
+          // "transient" / "no_token" fall through deliberately: the original
+          // error surfaces in the normal banner and the next send is a fresh
+          // chatFetch that gets to recover again.
+        }
+      }
+
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
         if (useAuthedFetch) {
@@ -2320,7 +2372,12 @@ export function useChatSession(
       }
       return response;
     },
-    [hostedRequiresWebChatApi]
+    [
+      hostedRequiresWebChatApi,
+      hostedChatboxId,
+      hostedRefreshAccessSession,
+      hostedOnAccessRevoked,
+    ]
   );
 
   const handleChatError = useCallback((chatError: Error) => {

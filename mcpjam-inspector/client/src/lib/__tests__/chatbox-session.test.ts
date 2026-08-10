@@ -119,6 +119,35 @@ describe("chatbox-session", () => {
     });
   });
 
+  it("round-trips the share token — recovery's only way back to a grant", () => {
+    // The post-redeem URL strip removes the token from the address bar, so
+    // the persisted copy is what re-redeem reads. A session that dropped it
+    // could never recover from a rebind or a rotated guest identity.
+    const payload = {
+      projectId: "ws_1",
+      chatboxId: "sbx_1",
+      name: "Demo Chatbox",
+      hostStyle: "claude" as const,
+      mode: "anyone_with_link" as const,
+      allowGuestAccess: true,
+      viewerIsProjectMember: false,
+      systemPrompt: "You are helpful.",
+      modelId: "openai/gpt-5-mini",
+      temperature: 0.4,
+      requireToolApproval: false,
+      servers: [],
+    };
+
+    writeChatboxSession({
+      chatboxId: "sbx_1",
+      accessVersion: 2,
+      payload,
+      shareToken: "tok_share",
+    });
+
+    expect(readChatboxSession()?.shareToken).toBe("tok_share");
+  });
+
   it("rejects stored sessions that lack a top-level chatboxId or accessVersion", () => {
     sessionStorage.setItem(
       CHATBOX_SESSION_STORAGE_KEY,

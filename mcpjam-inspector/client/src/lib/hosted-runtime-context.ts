@@ -3,6 +3,28 @@ import type {
   HostedExecutionTarget,
 } from "@/shared/execution-target";
 
+export type HostedAccessErrorDetail = {
+  status: number;
+  code?: string;
+  message: string;
+};
+
+/**
+ * Outcome of a re-redeem attempt.
+ *
+ * `denied` is the only terminal reason: the backend definitively refused to
+ * re-mint a grant. `transient` (network blip, rate limiter, 5xx) and
+ * `no_token` both mean "nothing changed" — the caller surfaces the original
+ * error and the next send gets a fresh attempt.
+ */
+export type HostedAccessRecoveryResult =
+  | { ok: true; accessVersion: number }
+  | {
+      ok: false;
+      reason: "no_token" | "denied" | "transient";
+      error?: HostedAccessErrorDetail;
+    };
+
 export type HostedRuntimeContext = {
   projectId?: string | null;
   selectedServerIds?: string[];
@@ -66,6 +88,29 @@ export type HostedRuntimeContext = {
    * flows can retry without a page reload.
    */
   requestRefreshAccessVersion?: () => void;
+  /**
+   * Awaitable re-redeem, for callers that must know the outcome before they
+   * decide what to do next (the chat turn's recovery + replay). Resolves
+   * only AFTER the new session has been committed to React state and
+   * storage, so the returned `accessVersion` is the one downstream reads
+   * will see.
+   *
+   * Single-flight: concurrent callers — N chat lanes plus the widget-capture
+   * backoff — share ONE /redeem round trip rather than each minting their own
+   * grant and racing to write the session.
+   *
+   * Never rejects; a failure is reported in the result so the caller can
+   * distinguish "try again later" (transient) from "this visitor is out"
+   * (denied).
+   */
+  refreshAccessSession?: () => Promise<HostedAccessRecoveryResult>;
+  /**
+   * Terminal access loss: recovery ran and the visitor still cannot reach
+   * this chatbox. The page owner tears the runtime down to the denied
+   * landing (which carries the Sign in / Open in App affordances) instead of
+   * leaving a generic error banner over a chat that can no longer send.
+   */
+  onAccessRevoked?: (error: HostedAccessErrorDetail) => void;
   /**
    * True for published-chatbox runtime sessions (bootstrapped via
    * /api/web/chatboxes/redeem). Their server set is Convex-resolved by
