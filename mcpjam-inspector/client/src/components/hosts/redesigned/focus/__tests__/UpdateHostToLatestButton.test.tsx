@@ -141,7 +141,7 @@ describe("UpdateHostToLatestButton", () => {
   });
 
   it("keeps the update toast visible during Strict Mode effect replay", async () => {
-    renderButton({
+    const { unmount } = renderButton({
       initialDraft: emptyHostConfigInputV2({
         hostStyle: "mistral",
         modelId: "old-model",
@@ -153,6 +153,9 @@ describe("UpdateHostToLatestButton", () => {
     await waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(toast.dismiss).not.toHaveBeenCalled();
+
+    unmount();
+    await waitFor(() => expect(toast.dismiss).toHaveBeenCalledTimes(1));
   });
 
   it("does not treat unsaved local edits as a new client update", () => {

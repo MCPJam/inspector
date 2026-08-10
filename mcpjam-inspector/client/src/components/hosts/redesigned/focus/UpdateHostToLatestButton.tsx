@@ -158,11 +158,19 @@ export function UpdateHostToLatestButton({
       clearTimeout(dismissTimerRef.current);
       dismissTimerRef.current = null;
     }
+    const scheduleDismiss = () => {
+      // Defer cleanup so React Strict Mode's setup/cleanup/setup replay can
+      // cancel it instead of immediately hiding the toast in development.
+      dismissTimerRef.current = setTimeout(() => {
+        toast.dismiss(UPDATE_TOAST_ID);
+        dismissTimerRef.current = null;
+      }, 0);
+    };
     if (!updateAvailable || updateKey === undefined) {
       toast.dismiss(UPDATE_TOAST_ID);
       return;
     }
-    if (offeredUpdateKeyRef.current === updateKey) return;
+    if (offeredUpdateKeyRef.current === updateKey) return scheduleDismiss;
     offeredUpdateKeyRef.current = updateKey;
 
     toast.info("Client update available", {
@@ -175,14 +183,7 @@ export function UpdateHostToLatestButton({
       },
     });
 
-    return () => {
-      // Defer cleanup so React Strict Mode's setup/cleanup/setup replay can
-      // cancel it instead of immediately hiding the toast in development.
-      dismissTimerRef.current = setTimeout(() => {
-        toast.dismiss(UPDATE_TOAST_ID);
-        dismissTimerRef.current = null;
-      }, 0);
-    };
+    return scheduleDismiss;
   }, [latestDisplayName, updateAvailable, updateKey]);
 
   return (
