@@ -37,6 +37,7 @@ import {
   createDebugOAuthStateMachine as create2026_07_28,
   type DebugOAuthStateMachineConfig as Config2026_07_28,
 } from "./debug-oauth-2026-07-28.js";
+import { protocolVersionLabel } from "../../mcp-client-manager/mcp-protocol-version.js";
 
 /**
  * Configuration for creating an OAuth state machine with protocol version selection
@@ -195,11 +196,13 @@ export function getSupportedRegistrationStrategies(
 }
 
 /**
- * Protocol version metadata for UI display
+ * Protocol version metadata for UI display. Labels come from
+ * `protocolVersionLabel` so a consumer rendering this record cannot disagree
+ * with the inspector's dropdowns about which revision is Latest.
  */
 export const PROTOCOL_VERSION_INFO = {
   "2025-03-26": {
-    label: "2025-03-26 (Legacy)",
+    label: protocolVersionLabel("2025-03-26"),
     description: "Original MCP OAuth specification with direct discovery",
     features: [
       "Dynamic Client Registration (DCR) SHOULD be supported",
@@ -210,8 +213,8 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2025-06-18": {
-    label: "2025-06-18",
-    description: "Current MCP OAuth specification with resource metadata",
+    label: protocolVersionLabel("2025-06-18"),
+    description: "MCP OAuth specification with resource metadata",
     features: [
       "Dynamic Client Registration (DCR) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",
@@ -220,8 +223,8 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2025-11-25": {
-    label: "2025-11-25 (Latest)",
-    description: "Proposed MCP OAuth specification with CIMD support",
+    label: protocolVersionLabel("2025-11-25"),
+    description: "MCP OAuth specification with CIMD support",
     features: [
       "Client ID Metadata Documents (CIMD) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",
@@ -231,9 +234,9 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2026-07-28": {
-    label: "2026-07-28 (Draft)",
+    label: protocolVersionLabel("2026-07-28"),
     description:
-      "Draft MCP OAuth specification: 2025-11-25 discovery plus OIDC application_type",
+      "Newest MCP OAuth specification: 2025-11-25 discovery plus OIDC application_type",
     features: [
       "Client ID Metadata Documents (CIMD) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",
