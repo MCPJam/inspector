@@ -101,7 +101,14 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
         personalCloudAvailable,
         ephemeralCloudAvailable: localConfigured,
       },
-      defaultEngine: localEngine.available ? "local" : "cloud",
+      // Honest tri-state: `null` when NO engine can serve this inspector —
+      // a "cloud" default with every availability flag false would tell the
+      // client to prefer an engine that does not exist.
+      defaultEngine: localEngine.available
+        ? "local"
+        : personalCloudAvailable
+          ? "cloud"
+          : null,
     });
   });
 

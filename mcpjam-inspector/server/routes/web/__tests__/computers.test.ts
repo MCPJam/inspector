@@ -20,6 +20,7 @@ vi.mock("../../../config.js", async () => {
 });
 
 import { createComputersRoutes } from "../computers";
+import { isLocalComputerEngineAvailable } from "../../../utils/computers/local-machine";
 import type { BashRunner } from "../../../utils/computers/run-command";
 
 // Route-level tests: GET /config (data-plane discovery) and POST /exec (the
@@ -120,27 +121,44 @@ afterEach(() => {
 });
 
 describe("GET /api/web/computers/config", () => {
+  // The local-engine block depends on the host running the tests (bash on
+  // PATH); compose the expectation from the same probe the route consults so
+  // the suite is honest on a bash-less machine instead of failing on it.
+  function expectedLocalEngineBlock() {
+    const availability = isLocalComputerEngineAvailable();
+    return availability.available
+      ? {
+          available: true,
+          terminalAvailable: false,
+          workspaceDisplayRoot: "~/.mcpjam/computer",
+        }
+      : {
+          available: false,
+          terminalAvailable: false,
+          workspaceDisplayRoot: null,
+          reason: availability.reason,
+        };
+  }
+
   it("reports an unconfigured server — legacy fields intact, engines added", async () => {
+    const localBlock = expectedLocalEngineBlock();
     const response = await createApp().request("/api/web/computers/config");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       localConfigured: false,
       remoteDataPlaneUrl: null,
       engines: {
-        // Non-hosted test env with bash on PATH ⇒ the local engine exists;
-        // the terminal stays off until the node-pty PR wires its probe.
-        local: {
-          available: true,
-          terminalAvailable: false,
-          workspaceDisplayRoot: "~/.mcpjam/computer",
-        },
+        // Terminal stays off until the node-pty PR wires its probe.
+        local: localBlock,
         cloud: { available: false },
       },
       capabilities: {
         personalCloudAvailable: false,
         ephemeralCloudAvailable: false,
       },
-      defaultEngine: "local",
+      // No cloud anywhere ⇒ local when the machine can serve it, else the
+      // honest "no engine exists" null.
+      defaultEngine: localBlock.available ? "local" : null,
     });
   });
 
@@ -185,12 +203,23 @@ describe("GET /api/web/computers/config", () => {
     expect(body.defaultEngine).toBe("cloud");
   });
 
-  it("kill switch off: local engine unavailable with a reason", async () => {
+  it("kill switch off + no cloud: NO contradictory default — defaultEngine is null", async () => {
+    // Telling the client "the default engine is cloud" while every
+    // availability flag says cloud doesn't exist would send the engine UI
+    // chasing a phantom; null lets it fall through to its empty state.
     configState.localEnabled = false;
     const response = await createApp().request("/api/web/computers/config");
     const body = (await response.json()) as Record<string, any>;
     expect(body.engines.local.available).toBe(false);
     expect(body.engines.local.reason).toMatch(/disabled/);
+    expect(body.defaultEngine).toBeNull();
+  });
+
+  it("kill switch off with a cloud data plane: default falls back to cloud", async () => {
+    configState.localEnabled = false;
+    stubLocalDataPlaneEnv();
+    const response = await createApp().request("/api/web/computers/config");
+    const body = (await response.json()) as Record<string, any>;
     expect(body.defaultEngine).toBe("cloud");
   });
 
@@ -198,7 +227,9 @@ describe("GET /api/web/computers/config", () => {
     const response = await createApp().request("/api/web/computers/config");
     const raw = JSON.stringify(await response.json());
     expect(raw).not.toContain(process.env.HOME ?? "::never::");
-    expect(raw).toContain("~/.mcpjam/computer");
+    if (isLocalComputerEngineAvailable().available) {
+      expect(raw).toContain("~/.mcpjam/computer");
+    }
   });
 });
 
