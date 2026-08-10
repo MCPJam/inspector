@@ -1,0 +1,106 @@
+---
+title: "Discord"
+description: "Run MCPJam from Discord — mention the bot in a channel to ask about your projects, and approve the actions that spend credits"
+icon: "discord"
+---
+
+<Note>
+The Discord agent is rolling out, and its **settings** — connected servers, the
+org-wide default project, and channel bindings — are enabled per organization.
+If yours does not have them yet, the Discord card under **Settings →
+Integrations** opens a page with nothing on it. Everything else on this page
+describes the bot itself, which behaves the same once your server is connected.
+Ask us to enable it for your organization.
+</Note>
+
+The MCPJam Discord bot puts the agent where your team already is. Mention it in
+a channel and it answers about your projects, servers, and eval runs. Anything
+that would **spend credits or change state** comes back as a button for a human
+to approve first.
+
+## Install
+
+The bot is added **per server**, by someone with the Manage Server permission,
+using the install link on the Discord settings page. Adding the bot does not
+give it access to anyone's MCPJam data — individual accounts are linked
+separately, below.
+
+Once a server is connected — and once the settings above are enabled for your
+organization — **Settings → Integrations → Discord** navigates to the org's
+Discord settings page, which lists connected servers, the org-wide default
+project, and any channel bindings.
+
+## Connect your account
+
+Run `/mcpjam connect` in any channel the bot can see. This links your Discord
+user to your MCPJam account, and it is what the bot acts as.
+
+Two things follow from that, and they are the whole security model:
+
+- The bot's own credential names the **bot**, not you. Every request also
+  carries your Discord identity, and the server resolves *your* MCPJam account
+  and re-checks your org membership.
+- If you are not linked, the bot cannot act for you at all — it replies with a
+  connect prompt instead. The same is true if you are removed from the
+  organization later.
+
+## Ask it something
+
+Mention the bot in any channel it can see:
+
+```
+@MCPJam how did the checkout suite do this week?
+```
+
+It replies in a thread. Follow-ups in that thread do not need the mention — the
+thread is bound to the conversation, so context carries.
+
+## Approvals
+
+When the answer requires doing something — starting an eval run, generating
+cases, changing a schedule — the bot does not just do it. It posts what it
+proposes with **Approve** and **Dismiss** buttons.
+
+Three things are true of that button, each on purpose:
+
+- **The person who clicks is the person it runs as.** Not whoever asked. The
+  server re-resolves the clicker and re-checks their access, so a button left
+  in a channel cannot be used by someone without it.
+- **The button carries only an id.** What the action does comes from the
+  proposal MCPJam stored, never from the button itself.
+- **Double-clicking is safe.** The proposal transitions once, server-side. The
+  second click is told it lost, not billed.
+
+## Org settings
+
+Organization admins can configure Discord behavior under **Settings →
+Integrations → Discord** (or directly at `/organizations/:id/discord`).
+
+### Connected servers
+
+Lists every Discord server where at least one org member has run `/mcpjam
+connect`. Each row shows the server name, how many members are linked, and a
+**Default project** picker.
+
+The **Default project** is a fallback for members who have not picked a project
+of their own — it never overrides an individual's choice. A bound channel and
+an engaged thread both take precedence over it.
+
+### Channel bindings
+
+A channel binding routes every turn started in that channel to one project,
+regardless of who is speaking. Useful for a dedicated `#evals` or `#mcpjam`
+channel where the project context is always the same.
+
+To add a binding, you need the channel's ID. Turn on **Developer Mode** in
+Discord (**Settings → Advanced**), then right-click the channel and choose
+**Copy Channel ID**.
+
+A channel can be bound to one project at a time. Removing a binding does not
+affect turns already in flight.
+
+### Add to a server
+
+Org admins see an **Add to a server** button when a Discord application is
+configured. This opens Discord's OAuth install flow to add the bot to a new
+server.
