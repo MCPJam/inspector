@@ -16,7 +16,6 @@ import {
   clearChatboxSession,
   extractChatboxTokenFromPath,
   normalizeChatboxSession,
-  readPlaygroundSession,
   readChatboxSurfaceFromUrl,
   readChatboxSession,
   CHATBOX_OAUTH_PENDING_KEY,
@@ -73,7 +72,6 @@ type ChatboxErrorKind =
   | "access_denied"
   | "guest_blocked"
   | "invalid_link"
-  | "playground_expired"
   | "scenario_unavailable"
   | "unexpected";
 
@@ -202,9 +200,6 @@ function getChatboxDisplayError(
     error.code === "NOT_FOUND" ||
     normalizedMessage.includes("invalid or has expired") ||
     normalizedMessage.includes("invalid or expired");
-  const isPlaygroundExpired = normalizedMessage.includes(
-    "playground session expired"
-  );
   // The scenario exists and the link is valid — its environment just isn't
   // openable (archived by its owner, a disabled plugin, a deleted host). The
   // backend already authored visitor-facing copy for each case, so it is shown
@@ -218,14 +213,6 @@ function getChatboxDisplayError(
         error.code === "ENV_ARCHIVED"
           ? "This link has been archived"
           : "This link isn't available right now",
-      message: error.message,
-    };
-  }
-
-  if (isPlaygroundExpired) {
-    return {
-      kind: "playground_expired",
-      title: "Preview unavailable",
       message: error.message,
     };
   }
@@ -340,17 +327,6 @@ export function ChatboxChatPage({
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  const playgroundParams = useMemo(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const isPlayground = params.get("playground") === "1";
-      const playgroundId = params.get("playgroundId");
-      return isPlayground && playgroundId ? { playgroundId } : null;
-    } catch {
-      return null;
-    }
-  }, []);
-
   // The embedded Preview iframe is same-origin, so it shares the tab's
   // sessionStorage with the outer dashboard. Reading or writing the chatbox
   // session from inside the embed would leak it into (or pick it up from)
@@ -359,38 +335,29 @@ export function ChatboxChatPage({
   // never needs the fallback anyway: its URL keeps the share token (the
   // post-redeem strip only runs standalone), so a reload re-redeems.
   const readCurrentSession = useCallback(() => {
-    if (playgroundParams) {
-      return readPlaygroundSession(playgroundParams.playgroundId);
+    return isEmbeddedPreview() ? null : readChatboxSession();
+  }, []);
+
+  const writeCurrentSession = useCallback((nextSession: ChatboxSession) => {
+    if (isEmbeddedPreview()) {
+      return;
     }
 
-    return isEmbeddedPreview() ? null : readChatboxSession();
-  }, [playgroundParams]);
-
-  const writeCurrentSession = useCallback(
-    (nextSession: ChatboxSession) => {
-      if (playgroundParams || isEmbeddedPreview()) {
-        return;
-      }
-
-      writeChatboxSession(nextSession);
-    },
-    [playgroundParams]
-  );
+    writeChatboxSession(nextSession);
+  }, []);
 
   const clearCurrentSession = useCallback(() => {
-    if (playgroundParams || isEmbeddedPreview()) {
+    if (isEmbeddedPreview()) {
       return;
     }
 
     clearChatboxSession();
-  }, [playgroundParams]);
+  }, []);
 
   const [session, setSession] = useState<ChatboxSession | null>(() =>
     readCurrentSession()
   );
-  const [isBootstrapping, setIsBootstrapping] = useState(
-    Boolean(pathToken || playgroundParams)
-  );
+  const [isBootstrapping, setIsBootstrapping] = useState(Boolean(pathToken));
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
   const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
@@ -418,9 +385,7 @@ export function ChatboxChatPage({
     []
   );
   const isAuthSettling =
-    Boolean(tokenFromPath) &&
-    !playgroundParams &&
-    (isWorkOsLoading || isAuthLoading);
+    Boolean(tokenFromPath) && (isWorkOsLoading || isAuthLoading);
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
@@ -579,24 +544,6 @@ export function ChatboxChatPage({
     let cancelled = false;
 
     const resolve = async () => {
-      if (playgroundParams) {
-        const snapshot = readPlaygroundSession(playgroundParams.playgroundId);
-        if (snapshot) {
-          setSession({ ...snapshot, surface: "preview" });
-          setRouteError(null);
-        } else {
-          setSession(null);
-          setRouteError(
-            createChatboxRouteError(
-              410,
-              "Playground session expired. Return to the builder to preview."
-            )
-          );
-        }
-        setIsBootstrapping(false);
-        return;
-      }
-
       if (tokenFromPath) {
         const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
         setIsBootstrapping(true);
@@ -686,7 +633,6 @@ export function ChatboxChatPage({
     clearCurrentSession,
     isAuthenticated,
     isAuthSettling,
-    playgroundParams,
     readCurrentSession,
     tokenFromPath,
     writeCurrentSession,
@@ -717,9 +663,6 @@ export function ChatboxChatPage({
   } | null>(null);
   const refreshAccessSession =
     useCallback(async (): Promise<HostedAccessRecoveryResult> => {
-      if (playgroundParams) {
-        return { ok: false, reason: "no_token" };
-      }
       const token = resolveShareToken();
       if (!token) {
         return { ok: false, reason: "no_token" };
@@ -785,7 +728,7 @@ export function ChatboxChatPage({
 
       refreshInFlightRef.current = { token, promise };
       return promise;
-    }, [playgroundParams, resolveShareToken, writeCurrentSession]);
+    }, [resolveShareToken, writeCurrentSession]);
 
   // Fire-and-forget wrapper kept for `useSharedChatWidgetCapture`, whose
   // contract is a void call it never awaits.
@@ -1006,9 +949,8 @@ export function ChatboxChatPage({
             refreshAccessSession,
             onAccessRevoked: handleHostedAccessRevoked,
             // Redeemed sessions carry Convex-resolved server ids; only the
-            // web chat engine can connect them. Playground previews keep
-            // the platform default (local engine + builder connections).
-            requiresWebChatApi: !playgroundParams,
+            // web chat engine can connect them.
+            requiresWebChatApi: true,
           }}
           executionConfig={{
             modelId: session.payload.modelId,
@@ -1063,10 +1005,8 @@ export function ChatboxChatPage({
               <ChatboxSurfaceProvider value={true}>
                 {/* Redeemed sessions: servers are Convex-resolved, so MCP
                     Apps widget fetches and bridge resource/prompt calls
-                    must take the hosted API branch on every platform.
-                    Playground previews keep platform routing (local
-                    builds reuse the builder's local connections). */}
-                <WebManagedServersProvider value={!playgroundParams}>
+                    must take the hosted API branch on every platform. */}
+                <WebManagedServersProvider value={true}>
                   <div
                     className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
                     data-host-style={hostStyle}

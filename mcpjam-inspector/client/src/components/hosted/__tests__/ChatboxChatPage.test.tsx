@@ -6,7 +6,6 @@ import {
   CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
   clearChatboxSession,
   readChatboxSession,
-  writePlaygroundSession,
   writeChatboxSession,
 } from "@/lib/chatbox-session";
 import {
@@ -274,68 +273,6 @@ describe("ChatboxChatPage", () => {
   // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
   // it from `ChatboxHostStyleProvider` context. Behavior is covered in
   // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
-
-  it("loads playground sessions from local storage and skips bootstrap", async () => {
-    window.history.replaceState(
-      {},
-      "",
-      "/chatbox/demo/chatbox-token?playground=1&playgroundId=pg_123"
-    );
-
-    writePlaygroundSession({
-      playgroundId: "pg_123",
-      chatboxId: "sbx_1",
-      accessVersion: 1,
-      surface: "preview",
-      updatedAt: Date.now(),
-      payload: {
-        projectId: "ws_1",
-        chatboxId: "sbx_1",
-        name: "Playground Chatbox",
-        description: "Hosted chatbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsProjectMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "openai/gpt-5-mini",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
-      },
-    });
-
-    render(<ChatboxChatPage pathToken="chatbox-token" />);
-
-    expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(mockAuthFetch).not.toHaveBeenCalled();
-    expect(mockChatTabV2).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hostedContext: expect.objectContaining({
-          chatboxSurface: "preview",
-        }),
-      })
-    );
-  });
-
-  it("shows a clear error when a playground session has expired", async () => {
-    window.history.replaceState(
-      {},
-      "",
-      "/chatbox/demo/chatbox-token?playground=1&playgroundId=missing"
-    );
-
-    render(<ChatboxChatPage pathToken="chatbox-token" />);
-
-    expect(
-      await screen.findByRole("heading", { name: "Preview unavailable" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Playground session expired. Return to the builder to preview."
-      )
-    ).toBeInTheDocument();
-  });
 
   it("shows curated copy for an invalid or expired chatbox link", async () => {
     mockAuthFetch.mockResolvedValueOnce(
