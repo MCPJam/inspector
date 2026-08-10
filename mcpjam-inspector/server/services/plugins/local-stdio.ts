@@ -30,6 +30,7 @@ import {
   resolvePluginStdioLaunch,
   type PluginStdioLaunchSpec,
 } from "./plugin-root.js";
+import { ensurePluginDataDir } from "./plugin-data.js";
 import {
   containsPluginPlaceholder,
   PLUGIN_PLACEHOLDERS,
@@ -197,6 +198,8 @@ export async function preparePluginStdioLaunch(args: {
   leaseId: string;
   /** Just-imported bundle content, when the caller has it (desktop import). */
   source?: PluginFileSource;
+  /** Test seam for the `${PLUGIN_DATA}` root; defaults to `~/.mcpjam/plugin-data`. */
+  dataRoot?: string;
 }): Promise<PluginStdioPreparation> {
   const origin = await resolvePluginOriginForServer(args.client, {
     projectId: args.projectId,
@@ -266,14 +269,37 @@ export async function preparePluginStdioLaunch(args: {
     }
   }
 
-  const launch = resolvePluginStdioLaunch(args.spec, root);
+  // The writable per-plugin data directory (spec: created before launch,
+  // preserved across updates — keyed by pluginId, NOT bundleHash, so a
+  // version activation keeps the component's state). Creation failure is a
+  // launch failure, not a silent downgrade: a component that referenced
+  // ${PLUGIN_DATA} would otherwise spawn against a missing directory.
+  let dataDir: string;
+  try {
+    dataDir = await ensurePluginDataDir({
+      projectId: args.projectId,
+      pluginId: origin.pluginId,
+      ...(args.dataRoot !== undefined ? { rootDir: args.dataRoot } : {}),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "bundle_verification_failed",
+      origin,
+      message: `plugin data directory could not be created: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
 
-  // Substitution expands only ${PLUGIN_ROOT}; anything still carrying a
-  // placeholder (today: ${PLUGIN_DATA}, pending its runtime) must not spawn —
-  // the literal string would reach the child as an argv/env/cwd value. Only
-  // the placeholder TOKEN is reported: the containing string may embed an
-  // expanded cache path or an adjacent secret, and this reason surfaces in
-  // an error response.
+  const launch = resolvePluginStdioLaunch(args.spec, root, { dataDir });
+
+  // Defense in depth: anything STILL carrying a placeholder after both
+  // substitutions (a future placeholder this build doesn't implement) must
+  // not spawn — the literal string would reach the child as an argv/env/cwd
+  // value. Only the placeholder TOKEN is reported: the containing string may
+  // embed an expanded cache path or an adjacent secret, and this reason
+  // surfaces in an error response.
   const launchValues = [
     launch.command,
     ...launch.args,
@@ -348,6 +374,8 @@ export async function materializePluginStdioForConnect(args: {
   serverName: string;
   spec: PluginStdioLaunchSpec;
   cache?: PluginBundleCache;
+  /** Test seam for the `${PLUGIN_DATA}` root. */
+  dataRoot?: string;
 }): Promise<{
   command: string;
   args: string[];
@@ -366,6 +394,7 @@ export async function materializePluginStdioForConnect(args: {
     serverId: args.serverId,
     spec: args.spec,
     leaseId: args.serverName,
+    ...(args.dataRoot !== undefined ? { dataRoot: args.dataRoot } : {}),
   });
 
   if (!prepared.ok) {

@@ -3,19 +3,37 @@ import {
   needsPluginRoot,
   pluginRootEnv,
   resolvePluginStdioLaunch,
+  substitutePluginPlaceholders,
   substitutePluginRoot,
 } from "../plugin-root.js";
 
 const ROOT = "/home/tester/.mcpjam/plugins/p1/pl1/abc123";
+const DATA = "/home/tester/.mcpjam/plugin-data/p1/pl1";
 
 describe("plugin root substitution", () => {
-  it("substitutes ${PLUGIN_ROOT} but never ${PLUGIN_DATA}", () => {
+  it("substitutes ${PLUGIN_ROOT} and ${PLUGIN_DATA} against their own roots", () => {
     expect(substitutePluginRoot("${PLUGIN_ROOT}/a", ROOT)).toBe(`${ROOT}/a`);
-    // PLUGIN_DATA resolves to the writable data directory, not the bundle
-    // root — until the data-directory runtime lands it stays verbatim.
-    expect(substitutePluginRoot("${PLUGIN_DATA}/a", ROOT)).toBe(
-      "${PLUGIN_DATA}/a"
-    );
+    expect(
+      substitutePluginPlaceholders("${PLUGIN_DATA}/a", {
+        root: ROOT,
+        dataDir: DATA,
+      })
+    ).toBe(`${DATA}/a`);
+    // Distinct roots: the data dir is writable per-plugin state, never the
+    // immutable bundle.
+    expect(
+      substitutePluginPlaceholders("${PLUGIN_ROOT}/x:${PLUGIN_DATA}/y", {
+        root: ROOT,
+        dataDir: DATA,
+      })
+    ).toBe(`${ROOT}/x:${DATA}/y`);
+  });
+
+  it("leaves ${PLUGIN_DATA} verbatim when no data dir is supplied", () => {
+    // The caller's leftover-placeholder guard then refuses the spawn.
+    expect(
+      substitutePluginPlaceholders("${PLUGIN_DATA}/a", { root: ROOT })
+    ).toBe("${PLUGIN_DATA}/a");
   });
 
   it("substitutes every occurrence, not just the first", () => {
@@ -82,5 +100,23 @@ describe("plugin root substitution", () => {
       ROOT
     );
     expect(resolved.env).toEqual({ PLUGIN_ROOT: ROOT });
+  });
+
+  it("injects and substitutes PLUGIN_DATA when a data dir is supplied", () => {
+    const resolved = resolvePluginStdioLaunch(
+      {
+        command: "node",
+        args: ["--cache=${PLUGIN_DATA}/cache.db"],
+        env: { STATE_DIR: "${PLUGIN_DATA}/state" },
+      },
+      ROOT,
+      { dataDir: DATA }
+    );
+    expect(resolved.env).toEqual({
+      PLUGIN_ROOT: ROOT,
+      PLUGIN_DATA: DATA,
+      STATE_DIR: `${DATA}/state`,
+    });
+    expect(resolved.args).toEqual([`--cache=${DATA}/cache.db`]);
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
-import { appendFile } from "node:fs/promises";
+import { appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PluginBundleCache } from "../bundle-cache.js";
 import {
@@ -194,11 +194,12 @@ describe("plugin stdio origin resolution", () => {
     prepared.release();
   });
 
-  it("fails closed on a ${PLUGIN_DATA} placeholder, reporting only the token", async () => {
+  it("substitutes ${PLUGIN_DATA} against a created per-plugin data directory", async () => {
     await cache.materialize(
       { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
       { source: await fixtureBundleSource() }
     );
+    const dataRoot = join(cacheRoot, "plugin-data");
 
     const prepared = await preparePluginStdioLaunch({
       client: stubClient({ bundleHash }),
@@ -213,17 +214,18 @@ describe("plugin stdio origin resolution", () => {
         ],
       },
       leaseId: SERVER_ID,
+      dataRoot,
     });
 
-    expect(prepared).toMatchObject({
-      ok: false,
-      reason: "unsupported_placeholder",
-      // The bare token only — never the containing argv value, which can
-      // embed expanded paths or adjacent secrets.
-      placeholder: "${PLUGIN_DATA}",
-    });
-    // Nothing spawned, nothing leased.
-    expect(cache.activeEntries()).toEqual([]);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    // Keyed by pluginId, NOT bundleHash: the directory survives version
+    // activations, which is the spec's whole point for PLUGIN_DATA.
+    const expectedDataDir = join(dataRoot, PROJECT_ID, PLUGIN_ID);
+    expect(prepared.launch.args[1]).toBe(`--cache=${expectedDataDir}/cache.db`);
+    expect(prepared.launch.env.PLUGIN_DATA).toBe(expectedDataDir);
+    await expect(stat(expectedDataDir)).resolves.toMatchObject({});
+    prepared.release();
   });
 
   it.each([
@@ -373,6 +375,7 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     });
 
     expect(result?.args[0]).toBe(`${result?.pluginRoot}/server/index.js`);
@@ -387,6 +390,7 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     });
     expect(cache.activeEntries()).toEqual([result?.pluginRoot]);
     releasePluginLease(SERVER_ID);
@@ -407,6 +411,7 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     }).catch((err) => err);
 
     expect(error).toBeInstanceOf(WebRouteError);
