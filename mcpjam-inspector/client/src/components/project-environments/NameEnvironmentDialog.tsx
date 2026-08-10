@@ -92,12 +92,12 @@ export function NameEnvironmentDialog({
         ...(description.trim() ? { description: description.trim() } : {}),
       });
       toast.success(
-        `Environment named "${trimmedName}" — it is now editable from Environments.`,
+        `Saved as "${trimmedName}" — it is now editable from Environments.`,
       );
       onOpenChange(false);
       onNamed?.(named);
     } catch (err) {
-      setError(convexErrMessage(err, "Failed to name the environment."));
+      setError(convexErrMessage(err, "Failed to save the environment."));
     } finally {
       setIsSaving(false);
     }
@@ -122,9 +122,9 @@ export function NameEnvironmentDialog({
           </DialogTitle>
           <DialogDescription>
             This environment was created automatically from a setup, so it
-            can&apos;t be edited. Naming it turns it into an ordinary
-            environment you can manage from the Environments page — everything
-            already running on it follows along.
+            can&apos;t be edited. Saving it turns it into an ordinary environment
+            you can manage from the Environments page — everything already
+            running on it follows along.
           </DialogDescription>
         </DialogHeader>
 

@@ -15,8 +15,17 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       textarea.style.opacity = "0";
       document.body.appendChild(textarea);
       textarea.select();
-      document.execCommand("copy");
+      // execCommand REPORTS failure by returning false rather than throwing, so
+      // the result has to be forwarded — swallowing it makes every caller show a
+      // success toast for a copy that never happened.
+      const copied = document.execCommand("copy");
       document.body.removeChild(textarea);
+      if (!copied) {
+        console.warn(
+          "Clipboard copy failed: execCommand fallback reported failure",
+        );
+        return false;
+      }
       console.warn(
         "Clipboard API unavailable, used deprecated execCommand fallback",
       );

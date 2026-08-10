@@ -339,13 +339,11 @@ export function EnvironmentPicker({
         ) : null}
         <div className="mt-0.5 border-t pt-0.5">
           {footerSlot ? (
-            <div
-              className="contents"
-              onClick={() => setOpen(false)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") setOpen(false);
-              }}
-            >
+            // Close on the bubbled CLICK only. A keydown handler here would fire
+            // before the browser dispatches a button's synthetic click for Enter
+            // and Space, unmounting the footer action before it ever ran; the
+            // click covers pointer and keyboard activation alike.
+            <div className="contents" onClick={() => setOpen(false)}>
               {footerSlot}
             </div>
           ) : null}
