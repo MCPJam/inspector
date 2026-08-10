@@ -12,6 +12,17 @@ import {
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  emptyComposerState,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
+import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
+import { useAdhocEnvironmentsEnabled } from "@/hooks/useAdhocEnvironmentsEnabled";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { toast } from "@/lib/toast";
 import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
@@ -29,6 +40,14 @@ export type CreateSuitePayload = {
   hostAttachments?: HostAttachmentDraft[];
   /** Standalone server attachment shared across all runs of this suite. */
   serverAttachmentId?: string;
+  /**
+   * Resolved environments, when the dialog composed them. Present ⇒ the suite
+   * should be born in environment mode, which the caller does in a second call
+   * (`createTestSuite` does not accept environments). The legacy fields above
+   * are still sent alongside, so a failure between the two calls leaves a suite
+   * that knows its clients rather than an empty skeleton.
+   */
+  environmentIds?: string[];
 };
 
 type CreateSuiteDialogProps = {
@@ -62,6 +81,23 @@ export function CreateSuiteDialog({
     null,
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [target, setTarget] = useState<EnvironmentComposerState>(
+    emptyComposerState,
+  );
+
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const adhocEnabled = useAdhocEnvironmentsEnabled();
+  /**
+   * Born in environment mode. A suite created legacy can be converted from the
+   * header later, but starting there means the axes the dialog offers are the
+   * ones its runs will actually read.
+   */
+  const composeMode = Boolean(projectId) && environmentsEnabled && adhocEnabled;
+  // Only used when `composeMode`; `projectId` is non-null in that case.
+  const resolveTargets = useComposerResolver(projectId ?? "");
+  const composerEnvironments = useProjectEnvironments(
+    composeMode ? projectId : null,
+  );
 
   const { isAuthenticated } = useConvexAuth();
   const shouldFetchDefaults = open && hostsEnabled && projectId !== null;
@@ -85,6 +121,7 @@ export function CreateSuiteDialog({
       setName("");
       setHostAttachments([]);
       setServerAttachmentId(null);
+      setTarget(emptyComposerState());
       setIsSaving(false);
     } else if (justOpened && initialName) {
       // Applied ONLY on the closed→open transition. A parent that changes
@@ -95,32 +132,66 @@ export function CreateSuiteDialog({
   }, [open, initialName]);
 
   useEffect(() => {
-    if (!shouldFetchDefaults) return;
+    // Compose mode picks its own defaults through the composer; seeding the
+    // legacy server group here would send a field its runs never read.
+    if (!shouldFetchDefaults || composeMode) return;
     if (serverAttachmentId === null && serverAttachments.length > 0) {
       setServerAttachmentId(serverAttachments[0]._id);
     }
-  }, [shouldFetchDefaults, serverAttachmentId, serverAttachments]);
+  }, [
+    composeMode,
+    shouldFetchDefaults,
+    serverAttachmentId,
+    serverAttachments,
+  ]);
 
   useEffect(() => {
     if (!shouldFetchDefaults) return;
-    if (hostAttachments.length > 0 || hosts.length === 0) return;
+    if (hosts.length === 0) return;
     const preferred =
       hosts.find((h) => h.hostId === previewedHostId) ?? hosts[0];
+    if (composeMode) {
+      // Same default, expressed as a stack: a suite almost always starts on the
+      // client the user was just looking at.
+      setTarget((current) =>
+        current.stack.hostIds.length > 0 || current.environmentIds.length > 0
+          ? current
+          : {
+              ...current,
+              stack: { ...current.stack, hostIds: [preferred.hostId] },
+              customized: true,
+            },
+      );
+      return;
+    }
+    if (hostAttachments.length > 0) return;
     setHostAttachments([
       { namedHostId: preferred.hostId, enabledOptionalServerIds: [] },
     ]);
-  }, [shouldFetchDefaults, hostAttachments.length, hosts, previewedHostId]);
+  }, [
+    composeMode,
+    shouldFetchDefaults,
+    hostAttachments.length,
+    hosts,
+    previewedHostId,
+  ]);
 
   const attachmentsRequired = hostsEnabled && projectId !== null;
-  const hasRequiredAttachments =
-    !attachmentsRequired ||
-    (serverAttachmentId !== null && hostAttachments.length > 0);
+  const composeHasTarget =
+    target.stack.hostIds.length > 0 || target.environmentIds.length > 0;
+  const hasRequiredAttachments = composeMode
+    ? composeHasTarget
+    : !attachmentsRequired ||
+      (serverAttachmentId !== null && hostAttachments.length > 0);
   const canSubmit =
     name.trim().length > 0 && hasRequiredAttachments && !isSaving;
 
   const blockReason: string | null = (() => {
     if (canSubmit || isSaving) return null;
     if (name.trim().length === 0) return "Add a suite name first.";
+    if (composeMode && !composeHasTarget) {
+      return "Pick an environment or at least one client first.";
+    }
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
@@ -138,12 +209,53 @@ export function CreateSuiteDialog({
     }
 
     setIsSaving(true);
-    try {
-      await onSubmit({
+    // Resolve BEFORE creating anything, so a composition that cannot become
+    // rows never leaves a suite behind. Its own catch: `onSubmit` reports its
+    // failures, a resolve failure has nobody else to report it.
+    let payload: CreateSuitePayload;
+    if (composeMode) {
+      try {
+        const resolved = await resolveTargets({
+          state: target,
+          liveEnvironments: composerEnvironments ?? [],
+          max: MAX_SUITE_ENVIRONMENTS,
+        });
+        payload = {
+          name: name.trim(),
+          environmentIds: resolved.environmentIds,
+          // Legacy fields ride along as rollback data, the way journey writes
+          // keep theirs from going stale.
+          ...(target.stack.hostIds.length > 0
+            ? {
+                hostAttachments: target.stack.hostIds.map((namedHostId) => ({
+                  namedHostId,
+                  enabledOptionalServerIds: [],
+                })),
+              }
+            : {}),
+          ...(target.stack.serverAttachmentId
+            ? { serverAttachmentId: target.stack.serverAttachmentId }
+            : {}),
+        };
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : "Could not resolve where this suite runs.",
+        );
+        setIsSaving(false);
+        return;
+      }
+    } else {
+      payload = {
         name: name.trim(),
         ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
         ...(serverAttachmentId ? { serverAttachmentId } : {}),
-      });
+      };
+    }
+
+    try {
+      await onSubmit(payload);
     } catch {
       // onSubmit surfaces its own error toast; keep the dialog open so the
       // user can retry, but don't propagate as an unhandled rejection.
@@ -175,7 +287,28 @@ export function CreateSuiteDialog({
             />
           </div>
 
-          {hostsEnabled && projectId ? (
+          {composeMode && projectId ? (
+            <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+              <div className="space-y-0.5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Where it runs
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Start from an environment, or build one here. Each client fans
+                  out into its own run.
+                </p>
+              </div>
+              <EnvironmentComposer
+                projectId={projectId}
+                environments={composerEnvironments ?? []}
+                value={target}
+                onChange={setTarget}
+                maxTargets={MAX_SUITE_ENVIRONMENTS}
+                disabled={isSaving}
+                testIdPrefix="create-suite"
+              />
+            </div>
+          ) : hostsEnabled && projectId ? (
             <div className="divide-y rounded-lg border bg-muted/20">
               <div className="flex items-start justify-between gap-4 p-3">
                 <div className="min-w-0 space-y-0.5">

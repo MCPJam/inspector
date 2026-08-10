@@ -22,6 +22,7 @@ import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import { isNamedEnvironment } from "@/lib/environment-label";
 
 export type EnvironmentStack = {
   /** Primary fan-out axis. Required for the compose (resolve) path. */
@@ -75,6 +76,59 @@ export function stackFromEnvironment(
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
+  };
+}
+
+/**
+ * Composer state for a surface whose `environmentIds` are already PERSISTED.
+ *
+ * The stack is what the selection has in common: every attached environment's
+ * client, plus the shared slots when all of them agree. When they disagree the
+ * slot reads empty rather than picking a winner — editing another slot would
+ * otherwise silently impose one environment's server group on the rest.
+ *
+ * Ad-hoc rows seed as a COMPOSITION, not a selection: they are deliberately not
+ * offerable in the saved-environment picker, so presenting them there would
+ * render a row of identical, undetachable "Automatic environment" chips. Their
+ * stack is the honest description of them.
+ */
+export function composerStateFromEnvironments(
+  environments: ProjectEnvironmentView[]
+): EnvironmentComposerState {
+  const hostIds: string[] = [];
+  for (const env of environments) {
+    if (env.hostId && !hostIds.includes(env.hostId)) hostIds.push(env.hostId);
+  }
+  const first = environments[0];
+  const shared =
+    first &&
+    environments.every((env) =>
+      stackFieldsEqual(
+        {
+          serverAttachmentId: env.serverAttachmentId ?? null,
+          skillSelection: env.skillSelection ?? null,
+          computerEnvironmentId: env.computerEnvironmentId ?? null,
+        },
+        {
+          serverAttachmentId: first.serverAttachmentId ?? null,
+          skillSelection: first.skillSelection ?? null,
+          computerEnvironmentId: first.computerEnvironmentId ?? null,
+        }
+      )
+    )
+      ? first
+      : undefined;
+
+  const allNamed = environments.length > 0 && environments.every(isNamedEnvironment);
+  return {
+    environmentIds: allNamed ? environments.map((e) => e.environmentId) : [],
+    stack: {
+      hostIds,
+      serverAttachmentId: shared?.serverAttachmentId ?? null,
+      skillSelection: shared?.skillSelection ?? null,
+      computerEnvironmentId: shared?.computerEnvironmentId ?? null,
+    },
+    customized: !allNamed,
   };
 }
 

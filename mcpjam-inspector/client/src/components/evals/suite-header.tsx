@@ -59,11 +59,10 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
-import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
+import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
-import type { HostListItem } from "@/hooks/useClients";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
@@ -122,8 +121,6 @@ interface SuiteHeaderProps {
   onSuiteHostAttachmentsUpdate?: (
     attachments: HostAttachmentDraft[]
   ) => Promise<void>;
-  /** Hosts available to attach (from `useHostList`). Optional for legacy callers. */
-  projectHosts?: HostListItem[];
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -175,7 +172,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runningTestCaseId = null,
     runsViewMode = "runs",
     onSuiteHostAttachmentsUpdate,
-    projectHosts = [],
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
   } = props;
@@ -441,17 +437,16 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     return null;
   }
 
-  // Hosts bar is rendered whenever the suite overview is visible, regardless
-  // of whether any cases exist yet — the empty "Attach host" affordance is
-  // the whole point of surfacing the axis up front. The model-axis bar was
-  // removed: a host's `modelId` is the source of truth for what each run
-  // runs against, so a separate suite-wide model selector is just noise.
+  // Rendered whenever the suite overview is visible, regardless of whether any
+  // cases exist yet — the empty "pick a client" affordance is the whole point of
+  // surfacing the axis up front. The model-axis bar was removed: a host's
+  // `modelId` is the source of truth for what each run runs against, so a
+  // separate suite-wide model selector is just noise.
   const suiteOverviewHostBar = (
-    <SuiteOverviewClientBar
+    <SuiteEnvironmentComposerBar
       containerVariant="inline"
       className="py-1.5 md:py-2"
       suite={suite}
-      projectHosts={projectHosts}
       readOnly={readOnlyConfig}
       onUpdate={onSuiteHostAttachmentsUpdate}
       onUpdateServerAttachment={handleServerAttachmentUpdate}
