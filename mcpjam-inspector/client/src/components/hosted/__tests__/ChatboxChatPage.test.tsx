@@ -1303,6 +1303,62 @@ describe("ChatboxChatPage", () => {
       expect(screen.getByTestId("chatbox-chat-tab")).toBeInTheDocument();
     });
 
+    it("discards a refresh that resolves after navigating to a different chatbox", async () => {
+      // The staleness guard: a token swap while the redeem is in flight must
+      // not install chatbox A's freshly-minted session over chatbox B's.
+      const view = await renderPostStrip();
+
+      // Only the FIRST redeem (the refresh under test) is held open; the
+      // navigation's own mount redeem resolves immediately with a different
+      // version so the two commits are distinguishable.
+      let releaseFirstRedeem: (() => void) | undefined;
+      let redeemCalls = 0;
+      mockAuthFetch.mockImplementation(async () => {
+        redeemCalls += 1;
+        if (redeemCalls === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstRedeem = resolve;
+          });
+          return createFetchResponse({
+            chatboxId: "sbx_recover",
+            accessVersion: 8,
+            bootstrap: bootstrapPayload(),
+          });
+        }
+        return createFetchResponse({
+          chatboxId: "sbx_recover",
+          accessVersion: 3,
+          bootstrap: bootstrapPayload(),
+        });
+      });
+
+      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        reason?: string;
+      }>;
+
+      const pending = refresh();
+      await waitFor(() => expect(releaseFirstRedeem).toBeDefined());
+
+      // Navigate to a DIFFERENT chatbox while the redeem is in flight, and
+      // let its effects flush so the live token is the new one.
+      window.history.replaceState({}, "", "/chatbox/other/tok_other");
+      view.rerender(<ChatboxChatPage pathToken="tok_other" />);
+      await waitFor(() => expect(redeemCalls).toBeGreaterThanOrEqual(2));
+
+      const result = await act(async () => {
+        releaseFirstRedeem?.();
+        return pending;
+      });
+
+      expect(result).toMatchObject({ ok: false, reason: "transient" });
+      // The committed session is the navigation's (version 3), never the
+      // resolved-but-stale refresh's (version 8).
+      await waitFor(() =>
+        expect(readChatboxSession()?.accessVersion).toBe(3)
+      );
+    });
+
     it("tears down to the denied landing when onAccessRevoked fires", async () => {
       await renderPostStrip();
 

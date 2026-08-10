@@ -1446,9 +1446,6 @@ chatV2.post("/", async (c) => {
                   : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                  ? { accessVersion: bodyAccessVersion }
-                  : {}),
                 authHeader,
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
@@ -1553,9 +1550,6 @@ chatV2.post("/", async (c) => {
                 : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                ? { accessVersion: bodyAccessVersion }
-                : {}),
               authHeader: requestAuthHeader,
               sessionMessages: stampSenderUserIdsOnSessionMessages(
                 fullHistory,
@@ -1760,9 +1754,6 @@ chatV2.post("/", async (c) => {
                 : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                ? { accessVersion: bodyAccessVersion }
-                : {}),
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,

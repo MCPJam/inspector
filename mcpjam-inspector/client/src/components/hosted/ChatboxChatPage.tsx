@@ -263,7 +263,19 @@ function getChatboxDisplayError(
  * Throws a `ChatboxRouteError` on any failure, so callers can classify the
  * refusal (denied vs transient) off `status`/`code`.
  */
-async function redeemChatboxToken(token: string): Promise<ChatboxSession> {
+async function redeemChatboxToken(
+  token: string,
+  options?: {
+    /**
+     * Surface to stamp on the produced session instead of re-deriving it
+     * from the URL. Recovery passes the mounted session's surface: the
+     * post-redeem strip removes the query string in the standalone page, so
+     * a URL re-read mid-session would quietly demote a preview session to
+     * `share_link` on the request wire.
+     */
+    surface?: ChatboxSession["surface"];
+  }
+): Promise<ChatboxSession> {
   const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -288,7 +300,8 @@ async function redeemChatboxToken(token: string): Promise<ChatboxSession> {
         ? redeemed.accessVersion
         : undefined,
     payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
-    surface: readChatboxSurfaceFromUrl(window.location.search),
+    surface:
+      options?.surface ?? readChatboxSurfaceFromUrl(window.location.search),
     // Stamped so recovery has a way back to a grant after the post-redeem
     // strip removes the token from the URL.
     shareToken: token,
@@ -376,6 +389,16 @@ export function ChatboxChatPage({
   // has removed it from the URL.
   const sessionRef = useRef<ChatboxSession | null>(session);
   sessionRef.current = session;
+  // Lifetime latch for async recovery: a re-redeem that resolves after this
+  // page unmounted must not write sessionStorage (which outlives the page and
+  // would hijack the next mount with a resurrected session).
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   // The token still in the URL when there is one, else the token the redeem
   // persisted onto the session. Post-strip these are the same value, which is
   // precisely what keeps the staleness guards below from discarding every
@@ -674,11 +697,16 @@ export function ChatboxChatPage({
 
       const promise = (async (): Promise<HostedAccessRecoveryResult> => {
         try {
-          const nextSession = await redeemChatboxToken(token);
-          // Guard before mutating shared session state: a navigation between
-          // the request and now would otherwise install another chatbox's
-          // session over the active one.
-          if (resolveShareToken() !== token) {
+          const nextSession = await redeemChatboxToken(token, {
+            surface: sessionRef.current?.surface,
+          });
+          // Guards before mutating shared session state: a navigation to a
+          // different chatbox between the request and now would install
+          // another chatbox's session over the active one, and an unmount
+          // (the visitor left the page, or the exit path just CLEARED the
+          // stored session) must not resurrect a session the page no longer
+          // owns — sessionStorage outlives this component.
+          if (!isMountedRef.current || resolveShareToken() !== token) {
             return { ok: false, reason: "transient" };
           }
           writeCurrentSession(nextSession);

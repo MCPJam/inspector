@@ -2355,7 +2355,7 @@ export function useChatSession(
                 hostedOnAccessRevoked?.(replayError);
               }
             }
-          } else if (recovery.reason === "denied" && recovery.error) {
+          } else if (recovery.reason === "denied") {
             hostedOnAccessRevoked?.(recovery.error);
           }
           // "transient" / "no_token" fall through deliberately: the original

@@ -207,7 +207,7 @@ describe("ChatboxPreviewPane", () => {
       expect(screen.getByTestId("user-testing-preview-frame")).toBe(before);
     });
 
-    it("omitting remountKey keeps the pre-existing src-only behavior", () => {
+    it("omitting remountKey keeps the pre-existing src-keyed behavior", () => {
       const { rerender } = render(
         <ChatboxPreviewPane
           publishLink={sameOriginLink}
@@ -216,14 +216,26 @@ describe("ChatboxPreviewPane", () => {
       );
       const before = screen.getByTestId("user-testing-preview-frame");
 
+      // Same link → same frame.
       rerender(
         <ChatboxPreviewPane
           publishLink={sameOriginLink}
           mcpProfile={undefined}
         />,
       );
-
       expect(screen.getByTestId("user-testing-preview-frame")).toBe(before);
+
+      // A rotated link still remounts without any remountKey — the original
+      // src-keyed behavior this prop must not regress.
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={`${window.location.origin}/chatbox/payments-beta/tok-2`}
+          mcpProfile={undefined}
+        />,
+      );
+      expect(screen.getByTestId("user-testing-preview-frame")).not.toBe(
+        before,
+      );
     });
   });
 });

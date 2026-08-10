@@ -19,9 +19,12 @@ export type HostedAccessErrorDetail = {
  */
 export type HostedAccessRecoveryResult =
   | { ok: true; accessVersion: number }
+  // Denied always carries the detail: the consumer hands it straight to
+  // `onAccessRevoked`, so a detail-less denial would be a silent no-op.
+  | { ok: false; reason: "denied"; error: HostedAccessErrorDetail }
   | {
       ok: false;
-      reason: "no_token" | "denied" | "transient";
+      reason: "no_token" | "transient";
       error?: HostedAccessErrorDetail;
     };
 
