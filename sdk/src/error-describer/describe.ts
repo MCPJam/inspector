@@ -239,11 +239,14 @@ function messageSlug(message: string): string | undefined {
   // real reason ("... : connect ECONNREFUSED 127.0.0.1:9999"), so matching
   // `fetch failed` first threw away the only actionable half of the message —
   // "we couldn't reach it" instead of "nothing is listening on that port".
-  const errnoInMessage = message.match(
-    /\b(E[A-Z]{2,}|EAI_AGAIN|UND_ERR_[A-Z_]+)\b/,
-  )?.[1];
-  if (errnoInMessage) {
-    const errnoSlug = nodeErrnoToSlug(errnoInMessage);
+  // Every candidate token is checked, not just the first. These messages are
+  // concatenations — a combined transport failure quotes both attempts, and
+  // words like `ERROR` tokenize the same way — so stopping at the first
+  // unmapped match would step over the `ECONNREFUSED` further along.
+  for (const match of message.matchAll(
+    /\b(E[A-Z]{2,}(?:_[A-Z]+)*|UND_ERR_[A-Z_]+)\b/g,
+  )) {
+    const errnoSlug = nodeErrnoToSlug(match[1]);
     if (errnoSlug) {
       return errnoSlug;
     }

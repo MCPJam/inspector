@@ -81,7 +81,78 @@ describe("HTTP connect failures keep their provenance", () => {
   }, 20000);
 });
 
+describe("mixed auth and transport failure", () => {
+  let server: Server;
+  let url: string;
+
+  // Streamable HTTP (POST) answers 401 while SSE (GET) fails for an unrelated
+  // reason. The auth challenge that triggers the MCPAuthError therefore lives
+  // ONLY on the Streamable error — `cause` holds the SSE failure.
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      if (req.method === "POST") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+      res.writeHead(500, { "content-type": "text/plain" });
+      res.end("sse exploded");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (typeof address === "string" || address === null) {
+      throw new Error("expected an AddressInfo from the test server");
+    }
+    url = `http://127.0.0.1:${address.port}/mcp`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+  });
+
+  it("keeps the Streamable HTTP auth failure reachable on the auth error", async () => {
+    const manager = new MCPClientManager({});
+    let captured: unknown;
+    try {
+      await manager.connectToServer("mixed", { url } as never);
+    } catch (error) {
+      captured = error;
+    } finally {
+      await manager.disconnectAllServers();
+    }
+
+    const error = captured as Error & {
+      streamableCause?: unknown;
+      statusCode?: number;
+    };
+    // Pin the branch: this must be the auth throw, not the combined transport
+    // throw below it, or the assertion proves nothing.
+    expect(error.name).toBe("MCPAuthError");
+    expect(error.statusCode).toBe(401);
+    // Without this the 401 is unrecoverable: `cause` is the SSE 500.
+    expect(error.streamableCause).toBeDefined();
+    expect(Object.keys(error)).not.toContain("streamableCause");
+  }, 20000);
+});
+
 describe("extractNodeErrno — wrapper codes must not shadow the real errno", () => {
+  it("walks past an E-prefixed wrapper code that merely looks like an errno", () => {
+    // `EWRAPPER` has the shape of a Node errno without being one. Recognition
+    // by pattern would end the walk here and lose the errno below.
+    const systemError = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+    const wrapper = Object.assign(new Error("wrapped"), {
+      code: "EWRAPPER",
+      cause: systemError,
+    });
+
+    expect(extractNodeErrno(wrapper)).toBe("ECONNREFUSED");
+    expect(describeError(wrapper).slug).toBe("transport/econnrefused");
+  });
+
   it("walks past an unrecognized string code to the errno below it", () => {
     // Exactly the production shape: the MCP SDK's era-negotiation failure
     // stamps `code: "ERA_NEGOTIATION_FAILED"` on the outside of the chain.
@@ -104,5 +175,24 @@ describe("extractNodeErrno — wrapper codes must not shadow the real errno", ()
     });
 
     expect(extractNodeErrno(wrapper)).toBe("ERA_NEGOTIATION_FAILED");
+  });
+});
+
+describe("errno recovered from message text", () => {
+  it("checks every errno-shaped token, not just the first", () => {
+    // The first token here maps to nothing. Stopping at it would fall through
+    // to the generic `fetch failed` slug and discard the ECONNREFUSED that
+    // says what actually happened.
+    const error = new Error(
+      "SSE ERROR: TypeError: fetch failed: connect ECONNREFUSED 127.0.0.1:9999",
+    );
+
+    expect(describeError(error).slug).toBe("transport/econnrefused");
+  });
+
+  it("still reports fetch_failed when no errno is present anywhere", () => {
+    const error = new Error("TypeError: fetch failed");
+
+    expect(describeError(error).slug).toBe("transport/fetch_failed");
   });
 });

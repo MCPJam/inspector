@@ -46,18 +46,17 @@ export function extractNodeErrno(
 }
 
 /**
- * Node errnos are bare screaming-snake tokens (`ECONNREFUSED`, `EPIPE`) plus
- * undici's `UND_ERR_*` family. Membership in the shared retryable set is
- * checked first so multi-word errnos like `EAI_AGAIN` are recognized without
- * loosening the pattern enough to swallow unrelated wrapper codes such as
- * `ERA_NEGOTIATION_FAILED`.
+ * Recognition is by explicit membership, never by shape. An `E`-prefixed
+ * screaming-snake pattern reads like a safe heuristic and is not: a wrapper
+ * that stamps `code: "EWRAPPER"` on the outside of a chain would satisfy it,
+ * end the walk, and hide the real `ECONNREFUSED` below — the exact failure
+ * this walk exists to prevent, reintroduced through a looser door.
+ *
+ * An unlisted errno costs nothing: the walk continues, and `extractNodeErrno`
+ * still returns the code as its last-resort fallback.
  */
 function looksLikeNodeErrno(code: string): boolean {
-  return (
-    RETRYABLE_NODE_ERROR_CODES.has(code) ||
-    code.startsWith("UND_ERR_") ||
-    /^E[A-Z]{2,}$/.test(code)
-  );
+  return RETRYABLE_NODE_ERROR_CODES.has(code) || code.startsWith("UND_ERR_");
 }
 
 /**
