@@ -55,6 +55,22 @@ describe("useEphemeralCloudAvailable", () => {
     await waitFor(() => expect(result.current).toBe(true));
   });
 
+  it("ignores a non-boolean capabilities value and derives from localConfigured", async () => {
+    const mod = await loadWithConfig({
+      localConfigured: false,
+      remoteDataPlaneUrl: null,
+      capabilities: { ephemeralCloudAvailable: "yes" },
+    });
+    const { result } = renderHook(() => mod.useEphemeralCloudAvailable());
+    await waitFor(() => expect(result.current).toBe(false));
+  });
+
+  it("treats an unparseable body like a fetch failure — per-mount fail-open", async () => {
+    const mod = await loadWithConfig(null);
+    const { result } = renderHook(() => mod.useEphemeralCloudAvailable());
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
   it("fails open on a fetch failure — no scary banners from a flaky request", async () => {
     vi.stubGlobal(
       "fetch",

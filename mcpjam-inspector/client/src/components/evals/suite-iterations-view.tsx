@@ -6,7 +6,10 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
-import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
+import {
+  CloudUnreachableNotice,
+  EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
+} from "@/components/computer/CloudUnreachableNotice";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
 import { toast } from "sonner";
@@ -932,6 +935,7 @@ export function SuiteIterationsView({
         <div className="shrink-0">
           <SuiteHeader
             suite={suite}
+            projectId={projectId}
             viewMode={headerViewMode}
             selectedRunDetails={selectedRunDetails}
             isEditMode={isEditMode}
@@ -1472,7 +1476,7 @@ export function SuiteIterationsView({
                     <div className="mt-2">
                       <CloudUnreachableNotice
                         data-testid="suite-eval-cloud-unreachable"
-                        message="This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
+                        message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
                         detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
                       />
                     </div>

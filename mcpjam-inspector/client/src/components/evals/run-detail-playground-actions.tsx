@@ -23,6 +23,7 @@ export function RunDetailPlaygroundActions({
   missingServers,
   showCloseButton = false,
   onBackToOverview,
+  runsDisabledReason = null,
   className,
 }: {
   suite: EvalSuite;
@@ -38,6 +39,12 @@ export function RunDetailPlaygroundActions({
   missingServers: string[];
   showCloseButton?: boolean;
   onBackToOverview?: () => void;
+  /**
+   * Externally-derived reason no run may start (billing gate, unreachable
+   * cloud sandboxes for a pinned-image suite). Blocks BOTH rerun and replay —
+   * a replay provisions from the run's frozen image pin just like a rerun.
+   */
+  runsDisabledReason?: string | null;
   className?: string;
 }) {
   const isCancelling = cancellingRunId === selectedRun._id;
@@ -53,9 +60,12 @@ export function RunDetailPlaygroundActions({
   const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
   const isReplayAction = Boolean(replayableSelectedRun);
   const canUseLiveRun = hasServersConfigured;
-  const runActionDisabled = isReplayAction
-    ? showAsRunning || !onReplayRun
-    : !canUseLiveRun || showAsRunning;
+  const runActionDisabled = Boolean(
+    runsDisabledReason ||
+      (isReplayAction
+        ? showAsRunning || !onReplayRun
+        : !canUseLiveRun || showAsRunning)
+  );
   const runActionLabel = showAsRunning
     ? isReplayAction
       ? "Replaying..."
@@ -63,13 +73,15 @@ export function RunDetailPlaygroundActions({
     : isReplayAction
       ? "Replay this run"
       : "Rerun";
-  const runActionTooltip = isReplayAction
-    ? "Replay this CI run in the playground"
-    : !hasServersConfigured
-      ? "No MCP servers are configured for this suite"
-      : missingServers.length > 0
-        ? "Connect and run."
-        : "Run all cases";
+  const runActionTooltip = runsDisabledReason
+    ? runsDisabledReason
+    : isReplayAction
+      ? "Replay this CI run in the playground"
+      : !hasServersConfigured
+        ? "No MCP servers are configured for this suite"
+        : missingServers.length > 0
+          ? "Connect and run."
+          : "Run all cases";
 
   return (
     <div

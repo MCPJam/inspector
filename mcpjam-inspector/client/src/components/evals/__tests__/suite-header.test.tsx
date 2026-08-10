@@ -27,6 +27,13 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
 }));
 
+const envState = vi.hoisted(() => ({
+  rows: [] as Array<{ environmentId: string; computerEnvironmentId?: string }>,
+}));
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: () => envState.rows,
+}));
+
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => null,
 }));
@@ -85,6 +92,7 @@ describe("SuiteHeader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cloudState.ephemeralAvailable = true;
+    envState.rows = [];
     mockIsHostedMode.mockReturnValue(false);
   });
 
@@ -369,6 +377,45 @@ describe("SuiteHeader", () => {
           ...baseSuite,
           environment: { servers: ["asana"], computerEnvironmentId: "img-1" },
         }}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Run all cases in this suite/i })
+    ).toBeDisabled();
+  });
+
+  it("catches a pin carried by an ATTACHED environment, not just the suite field", () => {
+    // Env-backed suites resolve their image server-side at launch — checking
+    // only `suite.environment.computerEnvironmentId` would let exactly those
+    // suites launch into the failure the preflight exists to prevent.
+    cloudState.ephemeralAvailable = false;
+    envState.rows = [
+      { environmentId: "env-9", computerEnvironmentId: "img-9" },
+    ];
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        suite={{
+          ...baseSuite,
+          environmentIds: ["env-9"],
+        }}
+        projectId="proj-1"
         viewMode="overview"
         selectedRunDetails={null}
         runsViewMode="runs"

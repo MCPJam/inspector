@@ -377,7 +377,7 @@ export function SwarmTargetComposer({
         <CloudUnreachableNotice
           data-testid="new-swarm-cloud-unreachable"
           message="Swarm computer commands need an MCPJam cloud sandbox, which this inspector can't run."
-          detail="Runs without a computer can continue; sandbox-backed sessions would fail, so picking a sandbox image is disabled here."
+          detail="Runs without a computer can continue; sandbox-backed sessions would fail. Picking a new sandbox image is disabled — clear an existing one with Computer · default."
         />
       ) : null}
 
@@ -440,7 +440,7 @@ export function SwarmTargetComposer({
             data-testid="new-swarm-sandbox-image"
             aria-label="Sandbox image"
             value={value.legos.computerEnvironmentId ?? ""}
-            disabled={disabled || sandboxCloudUnreachable}
+            disabled={disabled}
             onChange={(e) =>
               patchLegos({
                 computerEnvironmentId: e.target.value || null,
@@ -456,7 +456,11 @@ export function SwarmTargetComposer({
                 <option
                   key={img.environmentId}
                   value={img.environmentId}
-                  disabled={isDraft}
+                  // When cloud sandboxes are unreachable, IMAGE options are
+                  // disabled but the select itself stays live — a pin seeded
+                  // from a saved environment/draft must remain clearable back
+                  // to "Computer · default" (the opt-out the notice promises).
+                  disabled={isDraft || sandboxCloudUnreachable}
                 >
                   {img.name}
                   {isDraft

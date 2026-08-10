@@ -138,6 +138,12 @@ describe("humanizeSwarmAttemptError — sandbox error codes", () => {
     expect(info.message).toBe("Daily limit reached");
   });
 
+  it("maps a recognized code even with no stored message at all", () => {
+    const info = humanizeSwarmAttemptError(undefined, "sandbox_at_capacity");
+    expect(info.message).toMatch(/at capacity/i);
+    expect(info.code).toBe("sandbox_at_capacity");
+  });
+
   it("stays idempotent-compatible when no code is passed", () => {
     const info = humanizeSwarmAttemptError("Could not provision a sandbox.");
     expect(info.message).toBe("Could not provision a sandbox.");

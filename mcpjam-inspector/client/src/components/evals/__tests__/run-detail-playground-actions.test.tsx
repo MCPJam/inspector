@@ -56,4 +56,28 @@ describe("RunDetailPlaygroundActions", () => {
     await user.click(screen.getByRole("button", { name: /replay this run/i }));
     expect(onReplayRun).toHaveBeenCalledWith(suite, baseRun);
   });
+
+  it("blocks replay AND rerun when a runsDisabledReason is supplied", () => {
+    // A replay provisions from the run's frozen image pin just like a rerun —
+    // an external block (billing, unreachable cloud sandboxes) covers both.
+    render(
+      <RunDetailPlaygroundActions
+        suite={suite}
+        selectedRun={baseRun}
+        readOnlyConfig
+        onReplayRun={vi.fn()}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        rerunningSuiteId={null}
+        replayingRunId={null}
+        cancellingRunId={null}
+        hasServersConfigured
+        missingServers={[]}
+        runsDisabledReason="This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /replay this run/i }),
+    ).toBeDisabled();
+  });
 });

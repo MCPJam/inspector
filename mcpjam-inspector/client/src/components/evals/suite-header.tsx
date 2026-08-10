@@ -45,6 +45,8 @@ import {
 } from "./types";
 import { useMutation } from "convex/react";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE } from "@/components/computer/CloudUnreachableNotice";
 import { toast } from "sonner";
 
 import { CiMetadataDisplay } from "./ci-metadata-display";
@@ -69,6 +71,11 @@ import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
+  /**
+   * Needed only to resolve ATTACHED project environments' sandbox-image pins
+   * for the cloud preflight; absent ⇒ only the suite's own pin is checked.
+   */
+  projectId?: string | null;
   viewMode: "overview" | "run-detail" | "test-detail" | "test-edit";
   selectedRunDetails: EvalSuiteRun | null;
   isEditMode: boolean;
@@ -154,6 +161,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     iterationOverride,
     onIterationOverrideChange,
     connectedServerNames,
+    projectId,
     rerunningSuiteId,
     replayingRunId = null,
     cancellingRunId,
@@ -185,13 +193,29 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   // box per iteration — from an inspector that can't execute in those boxes,
   // every run would fail its computer setup. Fold that preflight into the
   // same disabled-reason channel billing uses, so every run control (Run all,
-  // per-case, rerun) blocks with one consistent tooltip.
+  // per-case, rerun, run-detail rerun/replay) blocks with one consistent
+  // tooltip. The pin can come from TWO places: the suite's own
+  // `environment.computerEnvironmentId` (migration-era override) or any
+  // ATTACHED project environment's pin, which the backend resolves fresh at
+  // launch — checking only the suite field would let env-backed suites launch
+  // into the exact failure this preflight exists to prevent.
   const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  const attachedEnvironments = useProjectEnvironments(
+    (suite.environmentIds?.length ?? 0) > 0 ? (projectId ?? null) : null
+  );
+  const suitePinsSandboxImage =
+    Boolean(suite.environment?.computerEnvironmentId) ||
+    (suite.environmentIds ?? []).some((environmentId) =>
+      Boolean(
+        (attachedEnvironments ?? []).find(
+          (environment) => environment.environmentId === environmentId
+        )?.computerEnvironmentId
+      )
+    );
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
-    (suite.environment?.computerEnvironmentId &&
-    ephemeralCloudAvailable === false
-      ? "This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
+    (suitePinsSandboxImage && ephemeralCloudAvailable === false
+      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
       : null);
 
   const showTestCaseCtas =
@@ -377,6 +401,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               cancellingRunId={cancellingRunId}
               hasServersConfigured={hasServersConfigured}
               missingServers={missingServers}
+              runsDisabledReason={evalRunsDisabledReason}
               showCloseButton
               onBackToOverview={() => onViewModeChange("overview")}
             />
@@ -441,6 +466,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 cancellingRunId={cancellingRunId}
                 hasServersConfigured={hasServersConfigured}
                 missingServers={missingServers}
+                runsDisabledReason={evalRunsDisabledReason}
                 showCloseButton
                 onBackToOverview={() => onViewModeChange("overview")}
               />

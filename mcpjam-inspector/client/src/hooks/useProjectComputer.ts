@@ -163,6 +163,10 @@ export interface ComputersDataPlaneConfig {
 // One fetch per page load — the answer is env-derived and can't change
 // without a server restart.
 let cachedDataPlaneConfig: ComputersDataPlaneConfig | null = null;
+// Concurrent first mounts (e.g. suite view + suite header) share one request
+// instead of racing duplicate fetches to the same env-derived answer.
+let inFlightDataPlaneConfigFetch: Promise<ComputersDataPlaneConfig | null> | null =
+  null;
 
 function parseDataPlaneConfig(value: unknown): ComputersDataPlaneConfig | null {
   if (!value || typeof value !== "object") return null;
@@ -213,25 +217,28 @@ export function useComputersDataPlaneConfig():
   useEffect(() => {
     if (cachedDataPlaneConfig) return;
     let cancelled = false;
-    void fetch("/api/web/computers/config")
+    // Only cache real answers. The assume-local fallback below is per-mount,
+    // so a transient /config failure can't pin the wrong data plane for the
+    // rest of the SPA session. The in-flight promise IS shared (deduped), but
+    // it resolves `null` on failure so each mount applies its own fallback.
+    inFlightDataPlaneConfigFetch ??= fetch("/api/web/computers/config")
       .then((response) => (response.ok ? response.json() : null))
       .then((json: unknown) => {
-        // Only cache real answers. The assume-local fallback below is
-        // per-mount, so a transient /config failure can't pin the wrong
-        // data plane for the rest of the SPA session.
         const parsed = parseDataPlaneConfig(json);
         if (parsed) cachedDataPlaneConfig = parsed;
-        if (!cancelled) {
-          setConfig(
-            parsed ?? { localConfigured: true, remoteDataPlaneUrl: null }
-          );
-        }
+        return parsed;
       })
-      .catch(() => {
-        if (!cancelled) {
-          setConfig({ localConfigured: true, remoteDataPlaneUrl: null });
-        }
+      .catch(() => null)
+      .finally(() => {
+        inFlightDataPlaneConfigFetch = null;
       });
+    void inFlightDataPlaneConfigFetch.then((parsed) => {
+      if (!cancelled) {
+        setConfig(
+          parsed ?? { localConfigured: true, remoteDataPlaneUrl: null }
+        );
+      }
+    });
     return () => {
       cancelled = true;
     };

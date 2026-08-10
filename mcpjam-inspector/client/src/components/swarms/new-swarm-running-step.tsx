@@ -713,7 +713,9 @@ export function NewSwarmRunningStep({
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
           continue;
         }
-        if (!attempt.errorMessage) continue;
+        // A structured code alone is enough — the humanizer maps recognized
+        // sandbox codes without any stored message.
+        if (!attempt.errorMessage && !attempt.errorCode) continue;
         return {
           kind: attempt.status,
           info: humanizeSwarmAttemptError(

@@ -1,6 +1,14 @@
 import { AlertTriangle } from "lucide-react";
 
 /**
+ * One sentence, two surfaces: the suite header's disabled-run tooltip and the
+ * Computer-environment section's notice band. Shared so a copy edit can't
+ * leave one of them stale.
+ */
+export const EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE =
+  "This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes.";
+
+/**
  * Amber preflight band for a cloud-only surface whose sandbox execution this
  * inspector cannot provide (`ephemeralCloudAvailable === false`) — shown
  * BEFORE a run is started, so the user isn't invited into a known failure.

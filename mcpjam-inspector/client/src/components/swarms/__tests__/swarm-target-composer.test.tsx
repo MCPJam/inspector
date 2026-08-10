@@ -231,14 +231,20 @@ describe("SwarmTargetComposer", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("blocks the sandbox-image opt-in when cloud sandboxes are unreachable", () => {
+  it("blocks NEW sandbox-image pins but keeps the clear path when cloud is unreachable", () => {
     // `false` means a sandbox-backed session WOULD fail per-attempt — the
-    // composer must warn and disable the opt-in instead of inviting it.
+    // composer must warn and disable the opt-in. But the SELECT stays live:
+    // a pin seeded from a saved environment/draft must remain clearable back
+    // to "Computer · default" (the opt-out the notice promises).
     flagState.computers = true;
     cloudState.ephemeralAvailable = false;
     render(<Harness />);
     expect(screen.getByTestId("new-swarm-cloud-unreachable")).toBeVisible();
-    expect(screen.getByTestId("new-swarm-sandbox-image")).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-sandbox-image")).not.toBeDisabled();
+    expect(screen.getByRole("option", { name: /Base box/i })).toBeDisabled();
+    expect(
+      screen.getByRole("option", { name: /Computer · default/i })
+    ).not.toBeDisabled();
   });
 
   it("stays quiet while cloud availability is still loading", () => {
