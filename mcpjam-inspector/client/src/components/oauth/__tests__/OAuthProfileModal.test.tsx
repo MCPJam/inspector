@@ -215,6 +215,28 @@ describe("OAuthProfileModal", () => {
     );
   });
 
+  it("clears the client-id error once the strategy moves off pre-registered", async () => {
+    // The error names switching to DCR as a remedy, so it must not survive the
+    // user doing exactly that.
+    const user = userEvent.setup();
+    renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/Registration/));
+    await user.click(await screen.findByRole("option", { name: "Dynamic (DCR)" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("reveals the collapsed advanced section when pre-registered is in play", async () => {
     // The client id input lives behind "Advanced settings (optional)", so a
     // required field was hidden by a control that calls itself optional.
@@ -358,5 +380,74 @@ describe("OAuthProfileModal — agentSeed", () => {
     );
 
     expect(screen.queryByPlaceholderText("Client ID")).not.toBeInTheDocument();
+  });
+
+  it("keeps user edits when the parent refreshes its server record mid-edit", async () => {
+    // `derivedProfile`/`generateDefaultName` change identity whenever the
+    // server row ticks (connection status, tokens) or the name list is rebuilt.
+    // Reseeding on that churn wipes the open dialog's typed values.
+    const user = userEvent.setup();
+    const server = createServer("oauth-flow-target");
+    const { rerender } = render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        server={server}
+        existingServerNames={["oauth-flow-target"]}
+        onSave={vi.fn()}
+      />,
+    );
+
+    await user.clear(screen.getByLabelText(/Server URL/));
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://typed.example.com/mcp",
+    );
+
+    // A status tick replaces the server object and the name array wholesale.
+    rerender(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        server={{ ...server, connectionStatus: "connecting" } as ServerWithName}
+        existingServerNames={["oauth-flow-target"]}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://typed.example.com/mcp",
+    );
+  });
+
+  it("still reseeds when an agent re-targets an already-open modal", () => {
+    // The churn guard above must not swallow a genuine new prefill: the agent
+    // command sets a seed and opens the modal even when it is already open.
+    const { rerender } = render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={{ serverUrl: "https://first.example.com/mcp" }}
+      />,
+    );
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://first.example.com/mcp",
+    );
+
+    rerender(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={{ serverUrl: "https://second.example.com/mcp" }}
+      />,
+    );
+
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://second.example.com/mcp",
+    );
   });
 });

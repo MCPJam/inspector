@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -138,36 +138,54 @@ export function OAuthProfileModal({
     return baseName;
   }, [server?.name, existingServerNames]);
 
+  // Seeding is an event — the modal opening, or a fresh agent prefill — not a
+  // re-render. `derivedProfile` and `generateDefaultName` change identity every
+  // time the parent's server record ticks (connection status, tokens), and
+  // reseeding on that would wipe whatever the user has typed into an open
+  // dialog. These two refs make the effect body run once per such event.
+  const seededWhileOpenRef = useRef(false);
+  const seededAgentSeedRef = useRef<OAuthProfileAgentSeed | null | undefined>(
+    undefined,
+  );
+
   useEffect(() => {
-    if (open) {
-      // The agent seed overlays the server-derived values; anything it omits
-      // keeps the derived default. It never carries credentials (see the
-      // OAuthProfileAgentSeed type).
-      setServerName(agentSeed?.serverName ?? generateDefaultName());
-      const nextDraft = {
-        ...derivedProfile,
-        ...(agentSeed?.serverUrl ? { serverUrl: agentSeed.serverUrl } : {}),
-        ...(agentSeed?.registrationStrategy
-          ? { registrationStrategy: agentSeed.registrationStrategy }
-          : {}),
-      };
-      setDraft(nextDraft);
-      // Derived from `nextDraft`, not `draft`: the setDraft above has not
-      // landed yet, so reading state here would reveal (or hide) the section
-      // based on the previously configured server.
-      setAdvancedOpen(
-        nextDraft.registrationStrategy === "preregistered" ? "advanced" : "",
-      );
-      setHeaderRows(
-        derivedProfile.customHeaders.length
-          ? derivedProfile.customHeaders.map((header) =>
-              createHeaderRow(header),
-            )
-          : [createHeaderRow()],
-      );
-      setAllowPathScopedIssuer(server?.oauthAllowPathScopedIssuer === true);
-      setError(null);
+    if (!open) {
+      seededWhileOpenRef.current = false;
+      return;
     }
+    // An agent command can re-target an already-open modal, so a new seed must
+    // still reseed; anything else while open is parent churn to ignore.
+    if (seededWhileOpenRef.current && seededAgentSeedRef.current === agentSeed) {
+      return;
+    }
+    seededWhileOpenRef.current = true;
+    seededAgentSeedRef.current = agentSeed;
+
+    // The agent seed overlays the server-derived values; anything it omits
+    // keeps the derived default. It never carries credentials (see the
+    // OAuthProfileAgentSeed type).
+    setServerName(agentSeed?.serverName ?? generateDefaultName());
+    const nextDraft = {
+      ...derivedProfile,
+      ...(agentSeed?.serverUrl ? { serverUrl: agentSeed.serverUrl } : {}),
+      ...(agentSeed?.registrationStrategy
+        ? { registrationStrategy: agentSeed.registrationStrategy }
+        : {}),
+    };
+    setDraft(nextDraft);
+    // Derived from `nextDraft`, not `draft`: the setDraft above has not landed
+    // yet, so reading state here would reveal (or hide) the section based on
+    // the previously configured server.
+    setAdvancedOpen(
+      nextDraft.registrationStrategy === "preregistered" ? "advanced" : "",
+    );
+    setHeaderRows(
+      derivedProfile.customHeaders.length
+        ? derivedProfile.customHeaders.map((header) => createHeaderRow(header))
+        : [createHeaderRow()],
+    );
+    setAllowPathScopedIssuer(server?.oauthAllowPathScopedIssuer === true);
+    setError(null);
   }, [
     open,
     derivedProfile,
@@ -183,6 +201,10 @@ export function OAuthProfileModal({
   // whenever that strategy is chosen; a manual collapse afterwards sticks.
   const handleRegistrationChange = (value: OAuthRegistrationStrategy) => {
     setDraft((prev) => ({ ...prev, registrationStrategy: value }));
+    // The client-id error names switching to DCR as one of its two remedies,
+    // so leaving it on screen after the user does exactly that reads as though
+    // the save is still blocked. Any strategy change re-opens the question.
+    setError(null);
     if (value === "preregistered") {
       setAdvancedOpen("advanced");
     }
