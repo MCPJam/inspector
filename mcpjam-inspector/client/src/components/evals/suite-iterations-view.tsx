@@ -4,6 +4,13 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
+import {
+  CloudUnreachableNotice,
+  EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
+} from "@/components/computer/CloudUnreachableNotice";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
 import { toast } from "sonner";
@@ -11,6 +18,7 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   buildHostNamesById,
   compareRunsBySequence,
+  evalSuitePinsSandboxImage,
   getLatestRunMetricSource,
   getRunMetricSource,
   runEnvironmentRef,
@@ -210,7 +218,7 @@ export function SuiteIterationsView({
   onContinueInChat,
   projectServers,
   generateTestCasesDisabledReason,
-  evalRunsDisabledReason,
+  evalRunsDisabledReason: evalRunsDisabledReasonProp,
   isDirectGuest = false,
   ensureServersReady,
 }: {
@@ -402,6 +410,23 @@ export function SuiteIterationsView({
   const computerEnvironments = useSandboxImages(
     computersEnabled && projectId ? projectId : null
   );
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  // Cloud-sandbox preflight, derived ONCE here — the parent owns every run
+  // control (header Run all, run-detail rerun/replay, per-case play buttons
+  // in both dashboards), so deriving any lower down leaves some of them
+  // ungated. Folded into the same disabled-reason channel billing uses.
+  const attachedEnvironments = useProjectEnvironments(
+    (suite.environmentIds?.length ?? 0) > 0 ? (projectId ?? null) : null
+  );
+  const suitePinsSandboxImage = evalSuitePinsSandboxImage(
+    suite,
+    attachedEnvironments ?? undefined
+  );
+  const evalRunsDisabledReason =
+    evalRunsDisabledReasonProp ??
+    (suitePinsSandboxImage && ephemeralCloudAvailable === false
+      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
+      : null);
   // Hosts available to attach in the header's "+ Attach host" picker. The
   // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
   // pure-props and renderable in test environments without a Convex provider.
@@ -1397,6 +1422,12 @@ export function SuiteIterationsView({
               {computersEnabled && projectId ? (
                 <SettingsSection
                   label="Computer environment"
+                  labelAccessory={
+                    <CloudRunBadge
+                      tooltip="Eval iterations run their computer commands in disposable MCPJam cloud sandboxes — never on the machine running this inspector."
+                      data-testid="suite-eval-cloud-run-badge"
+                    />
+                  }
                   layout="inline"
                   inlineSlot={
                     <select
@@ -1453,8 +1484,19 @@ export function SuiteIterationsView({
                     Each eval iteration boots a fresh sandbox from this image
                     and the agent gets a <span className="font-mono">bash</span>{" "}
                     tool in it. Build the environment before running, or the run
-                    fails fast.
+                    fails fast. Eval computer commands always run in MCPJam
+                    cloud sandboxes — never on the machine running this
+                    inspector.
                   </p>
+                  {suitePinsSandboxImage && ephemeralCloudAvailable === false ? (
+                    <div className="mt-2">
+                      <CloudUnreachableNotice
+                        data-testid="suite-eval-cloud-unreachable"
+                        message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
+                        detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
+                      />
+                    </div>
+                  ) : null}
                 </SettingsSection>
               ) : null}
 

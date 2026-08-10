@@ -20,6 +20,8 @@ import {
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ProjectEnvironmentSkillsPicker } from "@/components/project-environments/ProjectEnvironmentSkillsPicker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
+import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
 import { MAX_ENVIRONMENTS_PER_JOURNEY } from "@/components/swarms/journey-environments";
 import {
@@ -33,6 +35,7 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
@@ -275,6 +278,12 @@ export function SwarmTargetComposer({
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  // `false` only from a real server answer — loading/fetch-failure never
+  // paints the warning. Gates the sandbox-image opt-in AND shows the
+  // preflight band, so a user isn't invited into a known per-attempt failure.
+  const sandboxCloudUnreachable =
+    computersEnabled && ephemeralCloudAvailable === false;
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
     [environments]
@@ -348,13 +357,29 @@ export function SwarmTargetComposer({
   return (
     <div className="space-y-3" data-testid="new-swarm-target-composer">
       <div className="space-y-1">
-        <Label>Where it runs</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Label>Where it runs</Label>
+          {computersEnabled ? (
+            <CloudRunBadge
+              tooltip="Swarm sessions run their computer commands in disposable MCPJam cloud sandboxes — never on the machine running this inspector."
+              data-testid="new-swarm-cloud-run-badge"
+            />
+          ) : null}
+        </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
           {environmentsEnabled
             ? "Start from an environment or build from clients and the shared stack below. Clients are the usual fan-out."
             : "Build from clients and the shared stack below. Clients are the usual fan-out."}
         </p>
       </div>
+
+      {sandboxCloudUnreachable ? (
+        <CloudUnreachableNotice
+          data-testid="new-swarm-cloud-unreachable"
+          message="Swarm computer commands need an MCPJam cloud sandbox, which this inspector can't run."
+          detail="Runs without a computer can continue; sandbox-backed sessions would fail. Picking a new sandbox image is disabled — clear an existing one with Computer · default."
+        />
+      ) : null}
 
       {environmentsEnabled ? (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -431,7 +456,11 @@ export function SwarmTargetComposer({
                 <option
                   key={img.environmentId}
                   value={img.environmentId}
-                  disabled={isDraft}
+                  // When cloud sandboxes are unreachable, IMAGE options are
+                  // disabled but the select itself stays live — a pin seeded
+                  // from a saved environment/draft must remain clearable back
+                  // to "Computer · default" (the opt-out the notice promises).
+                  disabled={isDraft || sandboxCloudUnreachable}
                 >
                   {img.name}
                   {isDraft

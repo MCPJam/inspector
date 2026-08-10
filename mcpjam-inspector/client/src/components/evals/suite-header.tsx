@@ -168,6 +168,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onGenerateTestCases,
     canGenerateTestCases = false,
     generateTestCasesDisabledReason,
+    // Effective reason, derived by the PARENT (suite-iterations-view) — it
+    // owns every run control, so the cloud-sandbox preflight is folded in
+    // there, not here (deriving here left the per-case buttons ungated).
     evalRunsDisabledReason = null,
     isGeneratingTestCases = false,
     onCreateTestCase,
@@ -363,6 +366,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               cancellingRunId={cancellingRunId}
               hasServersConfigured={hasServersConfigured}
               missingServers={missingServers}
+              runsDisabledReason={evalRunsDisabledReason}
               showCloseButton
               onBackToOverview={() => onViewModeChange("overview")}
             />
@@ -427,6 +431,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 cancellingRunId={cancellingRunId}
                 hasServersConfigured={hasServersConfigured}
                 missingServers={missingServers}
+                runsDisabledReason={evalRunsDisabledReason}
                 showCloseButton
                 onBackToOverview={() => onViewModeChange("overview")}
               />
