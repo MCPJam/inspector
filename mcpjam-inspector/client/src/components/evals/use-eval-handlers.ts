@@ -24,6 +24,11 @@ import {
 } from "./helpers";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
+import {
+  disambiguateLabels,
+  environmentLabel,
+} from "@/lib/environment-label";
 import { draftTestCaseId } from "./draft-test-case";
 import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
 import type { useEvalMutations } from "./use-eval-mutations";
@@ -234,23 +239,28 @@ export function useEvalHandlers({
   // fans out correctly with ids as display fallbacks.
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const projectEnvironments = useProjectEnvironments(
-    projectEnvironmentsEnabled ? projectId : null
+    projectEnvironmentsEnabled ? projectId : null,
+    // Ad-hoc rows included: a suite composed from the header bar attaches
+    // nameless ones, and a run labeled by a bare id is not a label.
+    { includeAdhoc: true }
   );
-  // Narrowed to rows that actually carry a name, for the run-plan labels below.
-  const namedProjectEnvironments = useMemo(
-    () =>
-      projectEnvironments?.flatMap((environment) =>
-        environment.name === undefined
-          ? []
-          : [
-              {
-                environmentId: environment.environmentId,
-                name: environment.name,
-              },
-            ]
-      ),
-    [projectEnvironments]
+  // Labels for the run-plan fan-out. Ad-hoc rows have no name, so they are
+  // labeled by their client and then disambiguated — two setups on one client
+  // would otherwise render as the same string, which is exactly the case the
+  // composer makes common.
+  const environmentLabelContext = useEnvironmentLabelContext(
+    projectEnvironmentsEnabled ? projectId : null,
+    projectEnvironments
   );
+  const labeledProjectEnvironments = useMemo(() => {
+    if (!projectEnvironments) return undefined;
+    return disambiguateLabels(
+      projectEnvironments.map((environment) => ({
+        environmentId: environment.environmentId,
+        label: environmentLabel(environment, environmentLabelContext),
+      }))
+    ).map(({ environmentId, label }) => ({ environmentId, name: label }));
+  }, [environmentLabelContext, projectEnvironments]);
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
@@ -670,13 +680,11 @@ export function useEvalHandlers({
       // server resolves the environment's closed set at launch.
       const runPlans = buildSuiteRunPlans(
         suite,
-        // NAMED rows only. A suite can only ever attach a named environment, so
-        // this drops nothing in practice — and for a stale pin at an id that no
-        // longer resolves to a name, `buildSuiteRunPlans` already degrades to
-        // showing the raw id, which is exactly today's behavior. Keeping the
-        // helper's parameter a plain `{environmentId, name}` keeps that pure
-        // module out of the label vocabulary.
-        namedProjectEnvironments,
+        // Already-resolved display labels, named and ad-hoc alike. The helper's
+        // parameter stays a plain `{environmentId, name}`, which keeps that pure
+        // module out of the label vocabulary; an id it cannot find still
+        // degrades to the raw id exactly as before.
+        labeledProjectEnvironments,
         executionContext.suiteServers
       );
 
@@ -910,7 +918,7 @@ export function useEvalHandlers({
       getAccessToken,
       projectId,
       projectServers,
-      projectEnvironments,
+      labeledProjectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
       evalsNavigationContext,
