@@ -76,6 +76,11 @@ import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal.js";
+import {
+  createLocalComputerTerminalWsHandler,
+  killLocalComputerTerminals,
+  shutdownLocalComputerTerminals,
+} from "./routes/web/local-computer-terminal.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -280,6 +285,14 @@ export async function createHonoApp() {
     "/api/web/computers/terminal",
     createComputerTerminalWsHandler(upgradeWebSocket)
   );
+  // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted.
+  // Mirror of the mount in server/index.ts.
+  if (!HOSTED_MODE) {
+    app.get(
+      "/api/web/computers/local-terminal",
+      createLocalComputerTerminalWsHandler(upgradeWebSocket)
+    );
+  }
   app.post(
     "/api/web/computers/upload",
     bodyLimit({
@@ -566,5 +579,15 @@ export async function createHonoApp() {
 
   // Return `injectWebSocket` alongside the app so the caller (src/main.ts) can
   // attach the WS upgrade handler to its node server — same as server/index.ts.
-  return { app, injectWebSocket };
+  // The two PTY-cleanup hooks ride along for the same reason: the Electron entry
+  // owns this process's lifecycle and must kill live local PTYs itself
+  // (server.close() does not close established sockets). `shutdown…` latches
+  // and belongs on a real quit; `kill…` does not and belongs on
+  // `window-all-closed`, which on macOS is followed by a server RESTART.
+  return {
+    app,
+    injectWebSocket,
+    shutdownLocalComputerTerminals,
+    killLocalComputerTerminals,
+  };
 }

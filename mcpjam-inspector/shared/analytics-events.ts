@@ -101,6 +101,23 @@ export const ANALYTICS_EVENTS = {
   computer_chat_attachment_uploaded: { source: "client" },
   computer_start_limit_hit: { source: "client" },
   computer_terminal_opened: { source: "client" },
+  // --- Local computer engine ("This machine") ---
+  // Content-free by construction: props are enums/booleans only. NEVER a
+  // command, a path, a workspace dir, an OS username, or a consent token.
+  // computer_engine_selected: the user moved the Local⇄Cloud toggle {engine}.
+  // local_computer_consent_gate_shown: the consent gate rendered.
+  // local_computer_consent_granted / _denied: Allow / "Use cloud instead" —
+  //   the only two affordances on the gate.
+  // local_computer_consent_reauthorized: "Forget & re-authorize" (the stale-
+  //   capability recovery path).
+  // local_terminal_unavailable: the local terminal could not be offered
+  //   {reason} — an enum, never a node-pty error string.
+  computer_engine_selected: { source: "client" },
+  local_computer_consent_denied: { source: "client" },
+  local_computer_consent_gate_shown: { source: "client" },
+  local_computer_consent_granted: { source: "client" },
+  local_computer_consent_reauthorized: { source: "client" },
+  local_terminal_unavailable: { source: "client" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },

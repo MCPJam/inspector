@@ -54,6 +54,10 @@ import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
+import {
+  createLocalComputerTerminalWsHandler,
+  shutdownLocalComputerTerminals,
+} from "./routes/web/local-computer-terminal";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
@@ -448,6 +452,15 @@ app.get(
   "/api/web/computers/terminal",
   createComputerTerminalWsHandler(upgradeWebSocket)
 );
+// LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted —
+// a hosted server must have no path at all to a local PTY. Auth is the
+// single-use nonce from POST /api/mcp/computers/local-terminal-token.
+if (!HOSTED_MODE) {
+  app.get(
+    "/api/web/computers/local-terminal",
+    createLocalComputerTerminalWsHandler(upgradeWebSocket)
+  );
+}
 // Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
 // auth as the WS above; its own 30MB bodyLimit (the global /api/web/* 1MB cap
 // excludes this path). See routes/web/computer-upload.
@@ -863,6 +876,10 @@ async function shutdown() {
     // and lets in-flight sessions report a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
+    // Kill local PTYs BEFORE server.close(): close() stops new connections but
+    // does NOT tear down established sockets, so a live shell would otherwise
+    // outlive the inspector.
+    shutdownLocalComputerTerminals();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.
