@@ -797,9 +797,9 @@ describe("useChatSession fork preservation", () => {
     // The race being guarded: the transport `body()` closes over the render's
     // chatSessionId, so a send issued before hydration lands would write the
     // branch's first turn to the ORIGINAL session row.
-    let sessionIdAtSend: string | undefined;
+    let bodyAtSend: Record<string, unknown> | undefined;
     mockState.sendMessage.mockImplementation(() => {
-      sessionIdAtSend = mockState.lastTransportOptions.body().chatSessionId;
+      bodyAtSend = mockState.lastTransportOptions.body();
     });
 
     // Not wrapped in `act(async () => ...)`: the promise `rewindToMessage`
@@ -823,9 +823,16 @@ describe("useChatSession fork preservation", () => {
     await waitFor(() => {
       expect(mockState.sendMessage).toHaveBeenCalled();
     });
-    expect(sessionIdAtSend).toBe(branchChatSessionId);
+    expect(bodyAtSend).toMatchObject({
+      chatSessionId: branchChatSessionId,
+      rewind: {
+        parentChatSessionId: initialChatSessionId,
+        rewoundFromMessageId: "user-2",
+        reason: "message_edit",
+      },
+    });
 
-    // THE assertion for the second half of the race. `sessionIdAtSend` above
+    // THE assertion for the second half of the race. `bodyAtSend` above
     // reads the transport, which is a stable proxy over a ref — it says the
     // branch id, whether or not the send ran on the branch's own `Chat`. This
     // says WHICH instance's `sendMessage` was invoked. A `rewindToMessage` that

@@ -106,7 +106,7 @@ import {
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import type { ChatRewind, WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
   isScopeStepUpDataPart,
   isScopeStepUpFinishedDataPart,
@@ -1616,6 +1616,10 @@ export function useChatSession(
     Map<string, Map<string | number, string>>
   >(new Map());
   const resumedVersionRef = useRef<number | null>(null);
+  const rewindRef = useRef<{
+    chatSessionId: string;
+    lineage: ChatRewind;
+  } | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
   >({});
@@ -2476,6 +2480,10 @@ export function useChatSession(
           : getTrackedTaskScope();
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
+        const rewind =
+          rewindRef.current?.chatSessionId === chatSessionIdRef.current
+            ? rewindRef.current.lineage
+            : undefined;
         return {
           model: selectedModel,
           ...(shouldSendClientApiKey ? { apiKey } : {}),
@@ -2579,6 +2587,7 @@ export function useChatSession(
           ...(resumedVersionRef.current !== null
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
+          ...(rewind ? { rewind } : {}),
           // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
           // when non-empty so pre-feature traces stay byte-identical. The
           // chatbox path overrides this with the persisted host config server-
@@ -3481,6 +3490,7 @@ export function useChatSession(
     clearPendingSessionHydration();
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
+    rewindRef.current = null;
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
@@ -3511,6 +3521,7 @@ export function useChatSession(
       skipNextForkDetectionRef.current = true;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
+      rewindRef.current = null;
       // Resolve to the minted session id (not just a void hydration signal) so
       // callers can chain work that must run AFTER the seeded messages are
       // applied (e.g. the eval handoff sending a widget's `ui/message`
@@ -3639,6 +3650,15 @@ export function useChatSession(
       if (chatSessionIdRef.current !== branchSessionId) {
         return null;
       }
+
+      rewindRef.current = {
+        chatSessionId: branchSessionId,
+        lineage: {
+          parentChatSessionId: previousChatSessionId,
+          rewoundFromMessageId: options.messageId,
+          reason: "message_edit",
+        },
+      };
 
       // Read through the ref, NOT the closure: the `sendMessage` captured
       // before the await belongs to the pre-branch `Chat` instance and would
@@ -3770,6 +3790,7 @@ export function useChatSession(
       }
 
       skipNextForkDetectionRef.current = true;
+      rewindRef.current = null;
       await queueSessionHydration({
         sessionId: session.chatSessionId,
         messages: uiMessages,
