@@ -8,7 +8,7 @@
  * would leave a window where this process still answers with a token the
  * workspace just killed.
  */
-import { purgeChannelBindings } from '../../agent/binding-cache.js';
+import { purgeChannelBindings } from '../../agent/turn-target.js';
 import { revokeInstallationRecord } from '../../installations/backend-client.js';
 import { purgeInstallation, resolveInstallation } from '../../installations/store.js';
 import { sessionStore } from '../../thread-context/index.js';

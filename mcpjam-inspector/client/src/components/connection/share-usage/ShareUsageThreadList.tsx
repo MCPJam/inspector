@@ -188,6 +188,14 @@ export function ThreadCard({
             Needs review
           </span>
         ) : null}
+        {/* Sessions started from the in-app Preview pane, not by a tester.
+            Only rendered when the session actually carries the tag — older
+            sessions predate it and shouldn't be labelled either way. */}
+        {thread.surface === "preview" ? (
+          <span className="rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+            Preview
+          </span>
+        ) : null}
         {thread.themeClusterLabel ? (
           <span className="max-w-[120px] truncate text-[10px] text-muted-foreground">
             {thread.themeClusterLabel}

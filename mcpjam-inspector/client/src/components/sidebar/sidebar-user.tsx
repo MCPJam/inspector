@@ -23,7 +23,6 @@ import {
 import { getInitials } from "@/lib/utils";
 import {
   Bell,
-  LogIn,
   ChevronsUpDown,
   CircleUser,
   LogOut,
@@ -44,7 +43,7 @@ interface SidebarUserProps {
 
 export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signIn, signOut, isLoading: isWorkOsAuthLoading } = useAuth();
+  const { user, signOut, isLoading: isWorkOsAuthLoading } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -135,28 +134,11 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
     return loadingState;
   }
 
-  // No WorkOS user → offer sign-in. In local/npx mode the actor is an anonymous
-  // guest (the raw WorkOS `user` stays null), and the header's sign-in button is
-  // hidden on the Home route, so the sidebar footer is the only sign-in
-  // affordance there. Surface it in both modes for parity with hosted.
+  // No WorkOS user → render nothing. Guests sign in from the header button and
+  // the org switcher's sign-in chip; a third affordance in the sidebar footer is
+  // redundant.
   if (!user) {
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="lg"
-            onClick={() => signIn()}
-            aria-label="Sign in"
-            className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground group-data-[collapsible=icon]:justify-center"
-          >
-            <LogIn className="size-4" />
-            <span className="truncate group-data-[collapsible=icon]:hidden">
-              Sign in
-            </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    );
+    return null;
   }
 
   if (isLoading) {

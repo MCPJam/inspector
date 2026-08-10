@@ -33,7 +33,6 @@ vi.mock("@/hooks/usePluginImportApi", () => ({
     startImport: h.startImport,
     inspectImport: h.inspectImport,
     commitImport: h.commitImport,
-    generateBundleUploadUrl: vi.fn(),
     createImport: vi.fn(),
   }),
 }));

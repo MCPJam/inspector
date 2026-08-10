@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,8 @@ const {
   mockNavigate,
   mockOrgsLoading,
   mockSlackConnections,
+  mockDiscordConnections,
+  mockSurfaceSettingsCalls,
   mockDiscord,
 } = vi.hoisted(() => ({
   mockAvailability: {
@@ -22,6 +24,17 @@ const {
     value: undefined as
       | { workspaces: Array<{ installed: boolean }> }
       | undefined,
+  },
+  mockDiscordConnections: {
+    value: undefined as
+      | { workspaces: Array<{ installed: boolean }> }
+      | undefined,
+  },
+  mockSurfaceSettingsCalls: {
+    value: [] as Array<{
+      organizationId: string | null;
+      surfaceKind?: string;
+    }>,
   },
   mockDiscord: {
     enabled: false,
@@ -43,7 +56,26 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
 }));
 
 vi.mock("@/hooks/useOrgSlackSettings", () => ({
-  useOrgSlackSettings: () => ({ connections: mockSlackConnections.value }),
+  // Surface-aware, because the Slack and Discord cards now read the same hook
+  // with different arguments — a mock that ignored the kind would let a
+  // Discord card silently render Slack's workspaces and still pass.
+  //
+  // Calls are RECORDED so a test can assert the flag reached the query, not
+  // just the render: the hook skips on a null organization id, and that is
+  // the only thing keeping a flagged-off visitor from firing a
+  // `surfaceKind: "discord"` query at a backend that may reject it.
+  useOrgSlackSettings: (
+    organizationId: string | null,
+    surfaceKind?: string
+  ) => {
+    mockSurfaceSettingsCalls.value.push({ organizationId, surfaceKind });
+    return {
+      connections:
+        surfaceKind === "discord"
+          ? mockDiscordConnections.value
+          : mockSlackConnections.value,
+    };
+  },
 }));
 
 vi.mock("@/lib/app-navigation", () => ({
@@ -93,6 +125,7 @@ function renderRoute({
   mockAvailability.error = error;
   mockRepos.value = repos;
   mockSlackConnections.value = slackConnections;
+  mockSurfaceSettingsCalls.value = [];
   mockNavigate.mockClear();
   return render(
     <MemoryRouter initialEntries={["/settings/integrations"]}>
@@ -206,12 +239,48 @@ describe("IntegrationsRoute", () => {
       expect(screen.queryByText("Discord")).not.toBeInTheDocument();
     });
 
-    it("is hidden when no client id is configured, even with the flag on", () => {
+    it("does not query at all while the flag is off", () => {
+      // A hook cannot be called conditionally, so the flag has to reach the
+      // hook's own skip condition — an early `return null` happens after the
+      // query has already fired. This is the one call that sends
+      // `surfaceKind: "discord"`, which a backend deployed before that
+      // argument existed rejects; the throw would surface as an ErrorCard to
+      // a user who should see no Discord entry whatsoever.
+      renderRoute({ availability: { state: "enabled" }, repos: [] });
+      const discordCalls = mockSurfaceSettingsCalls.value.filter(
+        (call) => call.surfaceKind === "discord"
+      );
+      expect(discordCalls.length).toBeGreaterThan(0);
+      for (const call of discordCalls) {
+        expect(call.organizationId).toBeNull();
+      }
+    });
+
+    it("queries with the real org id once the flag is on", () => {
+      mockDiscord.enabled = true;
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        expect(mockSurfaceSettingsCalls.value).toContainEqual({
+          organizationId: "org-1",
+          surfaceKind: "discord",
+        });
+      } finally {
+        mockDiscord.enabled = false;
+      }
+    });
+
+    it("shows even without a client id — the card is no longer the install link", () => {
+      // The install button moved onto the Discord settings page, next to the
+      // server list it affects. A missing client id hides THAT button; it no
+      // longer hides the whole entry, because the page still has a server
+      // list and a default-project picker worth reaching.
       mockDiscord.enabled = true;
       mockDiscord.installUrl = null;
       try {
         renderRoute({ availability: { state: "enabled" }, repos: [] });
-        expect(screen.queryByText("Discord")).not.toBeInTheDocument();
+        expect(
+          screen.getByTestId("integration-card-discord"),
+        ).toBeInTheDocument();
       } finally {
         mockDiscord.enabled = false;
         mockDiscord.installUrl =
@@ -219,31 +288,53 @@ describe("IntegrationsRoute", () => {
       }
     });
 
-    it("renders as a real link out to Discord, not an in-app navigation", () => {
+    it("navigates IN-APP to the org's Discord settings, not out to Discord", () => {
       mockDiscord.enabled = true;
       try {
         renderRoute({ availability: { state: "enabled" }, repos: [] });
         const card = screen.getByTestId("integration-card-discord");
-        expect(card.tagName).toBe("A");
-        expect(card).toHaveAttribute(
-          "href",
-          "https://discord.com/oauth2/authorize?client_id=1",
+        // A button, not an anchor: the destination is ours now.
+        expect(card.tagName).toBe("BUTTON");
+        card.click();
+        expect(mockNavigate).toHaveBeenCalledWith(
+          "/organizations/org-1/discord",
         );
-        expect(card).toHaveAttribute("target", "_blank");
-        expect(card).toHaveAttribute("rel", "noreferrer");
-        expect(mockNavigate).not.toHaveBeenCalled();
       } finally {
         mockDiscord.enabled = false;
+        mockNavigate.mockClear();
       }
     });
 
-    it("reports an action rather than a connection state", () => {
-      // This page is org-scoped and a Discord link is per-member, so it cannot
-      // honestly say "Not connected" the way the GitHub card can.
+    it("reports a connection state, like the other cards", () => {
+      // It could not before: the card was org-scoped but Discord had no
+      // org-scoped read, so it reported the ACTION instead. Now that
+      // `getConnections` answers per surface, it can say the true thing.
       mockDiscord.enabled = true;
+      mockDiscordConnections.value = {
+        workspaces: [{ installed: true }, { installed: false }],
+      };
       try {
         renderRoute({ availability: { state: "enabled" }, repos: [] });
-        expect(screen.getByText("Add to a server")).toBeInTheDocument();
+        expect(screen.getByText("1 server connected")).toBeInTheDocument();
+      } finally {
+        mockDiscord.enabled = false;
+        mockDiscordConnections.value = undefined;
+      }
+    });
+
+    it("stays quiet while the read is in flight, rather than claiming none", () => {
+      // Same rule as the Slack and GitHub cards: `undefined` is "still
+      // asking", and "Not connected" in that window tells a connected org
+      // their setup is gone.
+      mockDiscord.enabled = true;
+      mockDiscordConnections.value = undefined;
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        // Scoped to THIS card: the GitHub card legitimately says "Not
+        // connected" for `repos: []`, so an unscoped query would pass for the
+        // wrong reason and keep passing if Discord regressed.
+        const card = screen.getByTestId("integration-card-discord");
+        expect(within(card).queryByText("Not connected")).not.toBeInTheDocument();
       } finally {
         mockDiscord.enabled = false;
       }

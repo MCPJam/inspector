@@ -212,14 +212,36 @@ export function relayBodyLimit() {
 // The proxy itself.
 // ---------------------------------------------------------------------------
 
-// Inside a sub-app mounted via app.route("/relay", ...), c.req.path is still
+// The relay answers on TWO mount prefixes:
+//
+// - `/relay` — the original mount. Railway's edge (in front of the hosted
+//   app; Cloudflare-branded, `x-hikari-trace` on responses) 403s GETs under
+//   `/relay/static/*` and `/relay/array/*` while letting the event/flags
+//   POSTs through. That silently broke session replay and posthog-js remote
+//   config on hosted — the SDK's server-side-enabled flag never arrived, so
+//   recording stayed `disabled` even with the recorder code bundled
+//   (client/src/lib/posthog-bundled-extensions.ts).
+// - `/tlm` — the alias new clients point `api_host` at. Verified against the
+//   deployed edge: the block is scoped to the `/relay` prefix (identical
+//   subpaths under a decoy prefix pass), and `tlm` is deliberately short and
+//   meaningless so it matches no analytics-proxy WAF signature.
+//
+// `/relay` stays mounted for already-shipped clients (Electron builds pin
+// old bundles), whose events and flags still flow through it.
+export const RELAY_MOUNT_PREFIXES = ["/relay", "/tlm"] as const;
+
+// Inside a sub-app mounted via app.route(prefix, ...), c.req.path is still
 // the full request path including the mount prefix. PostHog must receive
-// /i/v0/e/, /static/array.js, etc. — never /relay/... — so strip explicitly.
+// /i/v0/e/, /static/array.js, etc. — never /relay/... or /tlm/... — so strip
+// explicitly.
 function stripRelayPrefix(path: string): string {
-  const stripped = path.startsWith("/relay")
-    ? path.slice("/relay".length)
-    : path;
-  return stripped === "" ? "/" : stripped;
+  for (const prefix of RELAY_MOUNT_PREFIXES) {
+    if (path === prefix || path.startsWith(`${prefix}/`)) {
+      const stripped = path.slice(prefix.length);
+      return stripped === "" ? "/" : stripped;
+    }
+  }
+  return path;
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -244,14 +266,21 @@ relayRoutes.all("*", async (c) => {
 
   const url = new URL(c.req.url);
   const subpath = stripRelayPrefix(url.pathname);
-  // Static assets (recorder.js, array config) live on the assets host; all
-  // other endpoints (/i/v0/e/, /flags/, /decide/, /s/) on the ingest host.
+  // Only /static/* goes to the assets host. Everything else — including
+  // /array/<token>/config(.js), the SDK's remote-config fetch — goes to the
+  // ingest host, which serves it too and is what posthog-js itself targets
+  // when unproxied (it derives the config URL from api_host). This matters
+  // in production: the assets host 403s our server's egress (Cloudflare in
+  // front of us-assets challenging datacenter IPs — the block page our relay
+  // then piped through verbatim), while the ingest host demonstrably accepts
+  // it (events and flags have always flowed). /static is unaffected in
+  // practice: every runtime script is compiled into the client bundle
+  // (client/src/lib/posthog-bundled-extensions.ts).
   // Unknown subpaths forward to ingest rather than 404ing here: the
   // posthog-js endpoint set changes across SDK versions.
-  const upstreamBase =
-    subpath.startsWith("/static/") || subpath.startsWith("/array/")
-      ? ASSET_HOST
-      : INGEST_HOST;
+  const upstreamBase = subpath.startsWith("/static/")
+    ? ASSET_HOST
+    : INGEST_HOST;
   // Preserve the subpath verbatim (trailing slashes matter to PostHog) and
   // the full query string (compression=gzip-js, ver, ip flags).
   const target = `${upstreamBase}${subpath}${url.search}`;
