@@ -947,17 +947,11 @@ export function useEvalHandlers({
         return null;
       }
 
-      // Environment suites resolve their closed server set server-side (P0.1)
-      // at Run-all fan-out; the single-case quick-run path below still derives
-      // servers from host/flat plans and can't send `environmentId`, so it
-      // would mis-launch (or trip the "attach a client" gate). Route env suites
-      // to Run all instead of silently running against the wrong servers.
-      if ((suite.environmentIds?.length ?? 0) > 0) {
-        toast.info(
-          "Run environment suites with Run all — single-case quick-run doesn't resolve environments yet."
-        );
-        return null;
-      }
+      // Environment suites resolve their closed server set SERVER-side, from
+      // the first attached environment (attach order is run order). The browser
+      // never learns that set, so every local server gate below must be skipped
+      // for them — checking a set we don't have would block a runnable case.
+      const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
 
       // Widget probes have no single-case quick-run path yet: the
       // run-test-case endpoints only execute model-driven cases, and probes
@@ -987,12 +981,12 @@ export function useEvalHandlers({
         (serverName) => !connectedServerNames?.has(serverName)
       );
 
-      if (suiteServers.length === 0) {
+      if (!isEnvironmentSuite && suiteServers.length === 0) {
         toast.error("Attach a client to this suite before running it.");
         return null;
       }
 
-      if (disconnectedSuiteServers.length > 0) {
+      if (!isEnvironmentSuite && disconnectedSuiteServers.length > 0) {
         if (ensureServersReady != null) {
           const readiness = await ensureServersReady(suiteServers);
           if (hasUnavailableServers(readiness)) {
@@ -1028,6 +1022,9 @@ export function useEvalHandlers({
                   ...suite.environment,
                   servers: suiteServers,
                 },
+                // Present ⇒ the runner sends `environmentId` and the server
+                // substitutes the environment's resolved set for `servers`.
+                environmentIds: suite.environmentIds,
               },
               testCase,
               getAccessToken,

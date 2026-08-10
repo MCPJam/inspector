@@ -62,7 +62,7 @@ type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
 
 interface PrepareSingleTestCaseRunParams {
   projectId: string | null;
-  suite: Pick<EvalSuite, "environment">;
+  suite: Pick<EvalSuite, "environment" | "environmentIds">;
   testCase: Pick<EvalCase, "_id" | "models">;
   getAccessToken: () => Promise<string | null>;
   selectedModel?: string | null;
@@ -252,6 +252,14 @@ export async function prepareSingleTestCaseRun({
 
   const convexAuthToken = HOSTED_MODE ? null : await getAccessToken();
 
+  /**
+   * An environment suite runs in its environments, and a quick run is ONE
+   * execution — so it uses the first attached one, since attach order is the
+   * order Run all fans out in. The server resolves the closed set from this and
+   * ignores `serverIds`, exactly as it does for a full run.
+   */
+  const environmentId = suite.environmentIds?.[0];
+
   return {
     modelValue,
     request: {
@@ -259,12 +267,15 @@ export async function prepareSingleTestCaseRun({
       testCaseId: testCase._id,
       model,
       provider,
-      serverIds: suite.environment?.servers || [],
+      // Empty for an environment run; the server substitutes the environment's
+      // resolved set. Legacy runs still need at least one.
+      serverIds: environmentId ? [] : suite.environment?.servers || [],
       convexAuthToken,
       testCaseOverrides,
       matchOptionsOverride,
       namedHostId,
       hostConfigOverride,
+      ...(environmentId ? { environmentId } : {}),
     },
   };
 }

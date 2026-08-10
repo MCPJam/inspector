@@ -1160,7 +1160,12 @@ export function TestTemplateEditor({
     missingServers.length,
   ]);
 
-  const hasConfiguredSuiteServers = quickRunSuiteServers.length > 0;
+  // An environment suite's servers are resolved server-side from its first
+  // attached environment, so the local list is empty and says nothing about
+  // whether this case can run.
+  const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
+  const hasConfiguredSuiteServers =
+    isEnvironmentSuite || quickRunSuiteServers.length > 0;
   // Guests rely on the local persistent MCP manager; don't block Run on the
   // connected-servers check — the runner surfaces a connection error if the
   // server is genuinely missing.
