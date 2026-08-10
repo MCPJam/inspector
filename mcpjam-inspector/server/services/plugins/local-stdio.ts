@@ -395,6 +395,15 @@ export async function materializePluginStdioForConnect(args: {
    * managers key by serverId). Defaults to `serverName`.
    */
   displayName?: string;
+  /**
+   * Caller-held lease: when provided, the bundle's release closure is handed
+   * here INSTEAD of the process-wide per-serverName registry. Ephemeral
+   * web-route managers need this — two concurrent turns on the same server
+   * must each pin the bundle independently (the registry's replace-on-retain
+   * semantics would let the second turn unpin the first's running child),
+   * and the caller releases at its own teardown.
+   */
+  onLease?: (release: () => void) => void;
   spec: PluginStdioLaunchSpec;
   cache?: PluginBundleCache;
   /** Test seam for the `${PLUGIN_DATA}` root. */
@@ -427,7 +436,11 @@ export async function materializePluginStdioForConnect(args: {
     );
   }
 
-  retainPluginLease(args.serverName, prepared.release);
+  if (args.onLease) {
+    args.onLease(prepared.release);
+  } else {
+    retainPluginLease(args.serverName, prepared.release);
+  }
   return {
     command: prepared.launch.command,
     args: prepared.launch.args,

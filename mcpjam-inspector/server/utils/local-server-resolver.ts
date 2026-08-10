@@ -829,6 +829,12 @@ async function applyLocalRuntimeResolution<
     chatboxId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
+    /**
+     * Caller-held plugin bundle lease (see `materializePluginStdioForConnect`).
+     * Absent ⇒ the process-wide registry, which is what the /api/mcp
+     * long-lived manager wants.
+     */
+    onPluginLease?: (release: () => void) => void;
   }
 ): Promise<T> {
   const { bearerToken, projectId, serverId } = args;
@@ -872,11 +878,30 @@ async function applyLocalRuntimeResolution<
     const materialized = await materializePluginStdioForConnect({
       // Lazy: an ordinary stdio server must not pay a Convex read — or
       // require Convex configuration at all — to connect.
-      createClient: () => createPluginRuntimeConvexClient(bearerToken),
+      createClient: () => {
+        // The plugin runtime reads ride the Convex QUERY protocol (a user
+        // JWT via setAuth) — the service-token acting-as exchange is an
+        // HTTP-route header mechanism and cannot authenticate
+        // `client.query()`. A delegated (WorkOS API key) caller's bearer is
+        // deliberately empty, so fail closed with the real reason instead of
+        // letting the reads run unauthenticated into a confusing 401.
+        if (args.workosApiKeyActingAs) {
+          throw new WebRouteError(
+            501,
+            ErrorCode.FEATURE_NOT_SUPPORTED,
+            `Server "${
+              args.serverDisplayName ?? args.managerKey
+            }" is a plugin component; plugin materialization is not yet supported for API-key (delegated) callers.`,
+            { serverId }
+          );
+        }
+        return createPluginRuntimeConvexClient(bearerToken);
+      },
       projectId,
       serverId,
       serverName: args.managerKey,
       displayName: args.serverDisplayName ?? args.managerKey,
+      onLease: args.onPluginLease,
       spec: {
         command: stdioConfig.command,
         args: stdioConfig.args ?? [],
@@ -952,6 +977,13 @@ export async function resolveLocalStdioServerConfig(
     chatboxId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
+    /**
+     * Receives the plugin bundle release closure when this server is a
+     * plugin component. Ephemeral web-route managers MUST pass this and
+     * release at teardown — the process-wide registry's replace-on-retain
+     * semantics assume one long-lived manager per key.
+     */
+    onPluginLease?: (release: () => void) => void;
   }
 ): Promise<MCPServerConfig> {
   let result = await authorizeServerLocal(
@@ -983,6 +1015,7 @@ export async function resolveLocalStdioServerConfig(
     chatboxId: options?.chatboxId,
     accessVersion: options?.accessVersion,
     workosApiKeyActingAs: options?.workosApiKeyActingAs,
+    onPluginLease: options?.onPluginLease,
   });
   return toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs,

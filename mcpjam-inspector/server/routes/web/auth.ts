@@ -1237,6 +1237,20 @@ export async function createAuthorizedManager(
     }
   }
 
+  // Plugin bundle leases acquired by the stdio divert below. Held per
+  // MANAGER, not in the process-wide registry: two concurrent turns on the
+  // same plugin server must each pin the bundle independently (the
+  // registry's replace-on-retain would let the second turn unpin the
+  // first's still-running child), and this batch releases its own leases at
+  // teardown. Drained (not just iterated) so a double disconnect can't
+  // double-release.
+  const pluginLeaseReleases: Array<() => void> = [];
+  const releasePluginLeases = () => {
+    while (pluginLeaseReleases.length > 0) {
+      pluginLeaseReleases.pop()!();
+    }
+  };
+
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
   const configEntries = await Promise.all(
@@ -1317,6 +1331,7 @@ export async function createAuthorizedManager(
                     mcpjamOrganizationId: caller.mcpjamOrganizationId,
                   }
                 : undefined,
+            onPluginLease: (release) => pluginLeaseReleases.push(release),
           }
         );
         return [serverId, config] as const;
@@ -1533,7 +1548,13 @@ export async function createAuthorizedManager(
         ),
       ] as const;
     })
-  );
+  ).catch((error) => {
+    // A sibling server's throw (OAuth-required, XAA mint failure, …) aborts
+    // the whole batch — leases already acquired by other servers' diverts
+    // must not outlive the manager that will now never exist.
+    releasePluginLeases();
+    throw error;
+  });
 
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
@@ -1546,6 +1567,21 @@ export async function createAuthorizedManager(
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),
   });
+  if (pluginLeaseReleases.length > 0) {
+    // Every ephemeral-manager teardown path (withManager, web-chat-turn
+    // cleanup, manual-connection callers) funnels through
+    // `disconnectAllServers`, so decorating the instance releases this
+    // batch's plugin bundle leases on ALL of them without threading a new
+    // return value to every caller. The drain makes a second call a no-op.
+    const disconnect = manager.disconnectAllServers.bind(manager);
+    manager.disconnectAllServers = async () => {
+      try {
+        await disconnect();
+      } finally {
+        releasePluginLeases();
+      }
+    };
+  }
   // SYNCHRONOUS, before any `await` — the constructor above queued its connects
   // as microtasks, and `buildCapabilities` (which decides whether `elicitation`
   // survives onto the initialize wire) runs inside them. Registering here always

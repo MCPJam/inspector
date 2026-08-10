@@ -1369,4 +1369,46 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       accessVersion: 7,
     });
   });
+
+  // Plugin runtime reads ride the Convex QUERY protocol (user JWT), which
+  // cannot carry the service-token acting-as exchange. A delegated caller
+  // hitting a plugin component must get the real reason, not an
+  // unauthenticated-query failure.
+  it("fails closed when a delegated caller resolves a plugin component", async () => {
+    const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return localBatchResponse({
+          transportType: "stdio",
+          command: "node",
+          args: ["${PLUGIN_ROOT}/server/index.js"],
+          env: {},
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(
+        resolveLocalStdioServerConfig("", "proj-1", "srv-stdio", {
+          workosApiKeyActingAs: {
+            workosUserId: "user_workos_1",
+            mcpjamOrganizationId: "org_1",
+          },
+        })
+      ).rejects.toMatchObject({
+        status: 501,
+        code: "FEATURE_NOT_SUPPORTED",
+      });
+    } finally {
+      if (originalServiceToken === undefined) {
+        delete process.env.INSPECTOR_SERVICE_TOKEN;
+      } else {
+        process.env.INSPECTOR_SERVICE_TOKEN = originalServiceToken;
+      }
+    }
+  });
 });
