@@ -114,6 +114,34 @@ describe("PluginGroupCard", () => {
     );
   });
 
+  it("keeps an unrecognized readiness distinguishable from needs_setup on the card", () => {
+    h.setupStatus.value = {
+      pluginVersionId: "pv_1",
+      status: "ready",
+      components: [
+        {
+          componentKey: "server:api",
+          placement: "remote",
+          authenticationPolicy: "on_install",
+          readiness: "some_future_state",
+        },
+      ],
+    };
+    render(<PluginGroupCard plugin={plugin} />);
+    const badge = screen.getByTestId("plugin-health-badge");
+    // The label is deliberately generic (never claims readiness), so the raw
+    // backend code has to reach the card some other way.
+    expect(badge.textContent).toBe("Setup required");
+    expect(badge.getAttribute("title")).toContain("some_future_state");
+
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]);
+    expect(
+      screen
+        .getByTestId("plugin-component-readiness")
+        .getAttribute("title"),
+    ).toContain("some_future_state");
+  });
+
   it("reports a disabled plugin as disabled regardless of component health", () => {
     h.setupStatus.value = {
       pluginVersionId: "pv_1",
@@ -265,7 +293,11 @@ describe("PluginGroupCard — inline component setup", () => {
       envRequirements: [
         { name: "API_KEY", required: true },
         { name: "MODE", required: false, value: "production" },
-        { name: "CONFIG_PATH", hasTemplate: true },
+        {
+          name: "CONFIG_PATH",
+          hasTemplate: true,
+          valueTemplate: "${PLUGIN_ROOT}/data",
+        },
       ],
       headerRequirements: [{ name: "X-Api-Key", secret: true }],
     });
@@ -297,18 +329,60 @@ describe("PluginGroupCard — inline component setup", () => {
     });
 
     // Credential-only payload: the server id plus values, never structural
-    // fields (the backend rejects structural edits on plugin rows). The
-    // untouched literal and the template-supplied entry are not sent either
-    // — one already lives in the stored config, the other never exists
-    // before launch.
+    // fields (the backend rejects structural edits on plugin rows). The map
+    // is COMPLETE per group — `updateServerWithClientSecret` REPLACES the
+    // env/header map rather than merging, so the untouched literal and the
+    // template must ride along or they are dropped from the runtime launch.
     expect(h.updateServerWithClientSecret).toHaveBeenCalledWith({
       serverId: "s_1",
-      env: { API_KEY: "sk-test-123" },
+      env: {
+        API_KEY: "sk-test-123",
+        MODE: "production",
+        CONFIG_PATH: "${PLUGIN_ROOT}/data",
+      },
       headers: { "X-Api-Key": "abc" },
     });
     // A successful save closes the editor; readiness stays whatever the
     // backend subscription says, never a client-side claim.
     expect(screen.queryByTestId("plugin-server-setup")).toBeNull();
+  });
+
+  it("sends the whole group's declared values when only one requirement is edited", async () => {
+    // The regression this pins: `updateServerWithClientSecret` REPLACES the
+    // env map (a new vault object is created from exactly this payload and
+    // the row's pointer repointed at it), and connect-time resolution
+    // prefers the vault map over the row's plaintext env. A partial map
+    // therefore permanently drops the omitted names from the launch.
+    h.version.value = versionWithRequirements({
+      envRequirements: [
+        { name: "API_KEY", required: true },
+        { name: "MODE", required: false, value: "production" },
+        {
+          name: "DATA_DIR",
+          hasTemplate: true,
+          valueTemplate: "${PLUGIN_DATA}/cache",
+        },
+      ],
+      headerRequirements: [{ name: "X-Api-Key", secret: true }],
+    });
+    expandCard();
+    fireEvent.click(screen.getByTestId("plugin-component-configure"));
+    fireEvent.change(screen.getByLabelText("Value for API_KEY"), {
+      target: { value: "sk-test-123" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("plugin-server-setup-save"));
+    });
+
+    const payload = h.updateServerWithClientSecret.mock.calls[0][0];
+    expect(payload.env).toEqual({
+      API_KEY: "sk-test-123",
+      MODE: "production",
+      DATA_DIR: "${PLUGIN_DATA}/cache",
+    });
+    // The header group was not touched, so its pointer is left alone
+    // entirely rather than replaced with a map built from stale knowledge.
+    expect(payload.headers).toBeUndefined();
   });
 
   it("overrides a bundle-declared literal only when the value actually changed", async () => {
@@ -336,6 +410,29 @@ describe("PluginGroupCard — inline component setup", () => {
       serverId: "s_1",
       env: { MODE: "staging" },
     });
+  });
+
+  it("does not fire the credential mutation for a whitespace-only value", async () => {
+    h.version.value = versionWithRequirements({
+      envRequirements: [{ name: "API_KEY", required: true }],
+    });
+    expandCard();
+    fireEvent.click(screen.getByTestId("plugin-component-configure"));
+    fireEvent.change(screen.getByLabelText("Value for API_KEY"), {
+      target: { value: "   " },
+    });
+
+    // Whitespace is not a value: there is nothing to save…
+    const save = screen.getByTestId(
+      "plugin-server-setup-save",
+    ) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    // …and forcing the click through writes nothing either.
+    await act(async () => {
+      fireEvent.click(save);
+    });
+    expect(h.updateServerWithClientSecret).not.toHaveBeenCalled();
+    expect(screen.getByTestId("plugin-server-setup")).toBeTruthy();
   });
 
   it("keeps the editor open and surfaces the backend error when the save fails", async () => {

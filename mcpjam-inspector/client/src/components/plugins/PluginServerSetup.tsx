@@ -22,6 +22,22 @@ import type {
  * override affordance: overriding stores a user value on the server row; the
  * bundle itself is never modified.
  *
+ * REPLACE, NOT MERGE. `updateServerWithClientSecret` repoints the row's
+ * `envSecretId`/`headersSecretId` at a NEW vault object built from exactly
+ * the map it is given, and connect-time resolution prefers that vault map
+ * over the row's plaintext env entirely. A partial map is therefore
+ * DESTRUCTIVE: omitting a bundle-declared literal or template drops it from
+ * the runtime launch. So a save submits the COMPLETE intended map for
+ * whichever group it touches — every declared literal, every template, plus
+ * the user's typed values (typed wins) — and the untouched group is omitted
+ * entirely so its pointer is left alone.
+ *
+ * Residual limitation: values a user typed in an EARLIER session live only
+ * in the vault, which this surface cannot read, so they are not in the map
+ * this editor can rebuild. Re-entering them in the same save is what keeps
+ * them; the group-scoped payload keeps that blast radius to the one group
+ * being edited.
+ *
  * Purely presentational: the caller supplies `onSave`, which is expected to
  * call the `servers:updateServerWithClientSecret` action with the component's
  * materialized server id.
@@ -47,7 +63,11 @@ interface SetupRow {
   rowKey: string;
   group: "env" | "header";
   name: string;
-  /** Screened non-secret literal declared by the bundle, when present. */
+  /**
+   * The value the BUNDLE declared for this name — a screened non-secret
+   * literal, or a `${PLUGIN_ROOT}`-style template string. Either way it must
+   * be re-sent on every save of this group (replace semantics).
+   */
   declaredValue?: string;
   /** Template-supplied (`${PLUGIN_ROOT}`-style): the runtime resolves it at
    * launch — pre-configured, never user-editable text. */
@@ -70,19 +90,24 @@ export function PluginServerSetupEditor({
 }) {
   const rows = useMemo<SetupRow[]>(
     () => [
-      ...envRequirements.map((entry) => ({
-        rowKey: `env:${entry.name}`,
-        group: "env" as const,
-        name: entry.name,
-        declaredValue: entry.value,
-        template: entry.hasTemplate === true,
-        // Only an EXPLICIT required:false is rendered as optional — an
-        // omitted flag must not claim optionality the bundle never declared.
-        optional:
-          entry.required === false &&
-          entry.value === undefined &&
-          entry.hasTemplate !== true,
-      })),
+      ...envRequirements.map((entry) => {
+        // `hasTemplate` is the marker and `valueTemplate` the string; accept
+        // either as proof this entry is template-supplied.
+        const template =
+          entry.hasTemplate === true || entry.valueTemplate !== undefined;
+        return {
+          rowKey: `env:${entry.name}`,
+          group: "env" as const,
+          name: entry.name,
+          declaredValue: entry.value ?? entry.valueTemplate,
+          template,
+          // Only an EXPLICIT required:false is rendered as optional — an
+          // omitted flag must not claim optionality the bundle never
+          // declared.
+          optional:
+            entry.required === false && entry.value === undefined && !template,
+        };
+      }),
       ...headerRequirements.map((entry) => ({
         rowKey: `header:${entry.name}`,
         group: "header" as const,
@@ -107,32 +132,38 @@ export function PluginServerSetupEditor({
   );
 
   const collected = useMemo<PluginServerSetupValues>(() => {
-    const env: Record<string, string> = {};
-    const headers: Record<string, string> = {};
-    for (const row of rows) {
-      // Template-supplied values are resolved by the runtime at launch —
-      // never written from here.
-      if (row.template) continue;
-      // A literal that was never overridden is already part of the stored
-      // config server-side — nothing to write.
-      if (row.declaredValue !== undefined && !overridden.has(row.rowKey)) {
-        continue;
+    /**
+     * The COMPLETE map for one group, or `undefined` when the user changed
+     * nothing in it. Every declared literal and template is carried through
+     * even when untouched — under replace semantics, omitting one deletes it.
+     */
+    const buildGroup = (
+      group: SetupRow["group"],
+    ): Record<string, string> | undefined => {
+      const map: Record<string, string> = {};
+      let changed = false;
+      for (const row of rows) {
+        if (row.group !== group) continue;
+        const typed = values[row.rowKey];
+        // Whitespace-only counts as "no value" (matching the clientSecret
+        // convention), but the exact typed value is what gets sent.
+        const hasTyped = Boolean(typed && typed.trim());
+        if (hasTyped && typed !== row.declaredValue) changed = true;
+        const effective = hasTyped ? typed : row.declaredValue;
+        // A name-only requirement the user has not filled in has no value to
+        // send; it stays absent rather than being written as empty.
+        if (effective !== undefined) map[row.name] = effective;
       }
-      const value = values[row.rowKey] ?? "";
-      // Whitespace-only counts as "no value" (matching the clientSecret
-      // convention), but the exact typed value is what gets sent.
-      if (!value.trim()) continue;
-      // An unchanged override writes nothing new.
-      if (row.declaredValue !== undefined && value === row.declaredValue) {
-        continue;
-      }
-      (row.group === "env" ? env : headers)[row.name] = value;
-    }
-    return {
-      ...(Object.keys(env).length > 0 ? { env } : {}),
-      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      return changed ? map : undefined;
     };
-  }, [overridden, rows, values]);
+
+    const env = buildGroup("env");
+    const headers = buildGroup("header");
+    return {
+      ...(env ? { env } : {}),
+      ...(headers ? { headers } : {}),
+    };
+  }, [rows, values]);
 
   const hasChanges =
     collected.env !== undefined || collected.headers !== undefined;

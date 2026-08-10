@@ -139,6 +139,10 @@ export function PluginGroupCard({ plugin }: { plugin: PluginSummary }) {
                   "font-normal",
                   TONE_CLASSES[healthPresentation.tone],
                 )}
+                // The label alone cannot distinguish an unrecognized backend
+                // readiness from `needs_setup`; the detail carries the raw
+                // code, so it must reach this surface.
+                title={healthPresentation.detail}
                 data-testid="plugin-health-badge"
               >
                 {healthPresentation.label}
@@ -275,6 +279,8 @@ export function PluginGroupCard({ plugin }: { plugin: PluginSummary }) {
                                     "font-normal",
                                     TONE_CLASSES[described.tone],
                                   )}
+                                  title={described.detail}
+                                  data-testid="plugin-component-readiness"
                                 >
                                   {described.label}
                                 </Badge>

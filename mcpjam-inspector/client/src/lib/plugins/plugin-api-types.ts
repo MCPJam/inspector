@@ -249,12 +249,19 @@ export interface PluginDetail extends PluginSummary {
  * `{"MODE": "production"}`): the parser never stores secret-looking values,
  * so its presence is safe to render. `hasTemplate` marks a
  * `${PLUGIN_ROOT}`-style template-supplied value the runtime resolves at
- * launch — pre-configured, never user-editable text.
+ * launch — pre-configured, never user-editable text; `valueTemplate` carries
+ * that template STRING (a path shape, not a secret — same rationale as `cwd`
+ * on the authorize payload).
+ *
+ * Both declared forms must survive a credential save: the backend's
+ * env/header maps are REPLACED, not merged, so a payload that omits them
+ * drops them from the runtime launch (see `PluginServerSetupEditor`).
  */
 export interface PluginComponentEnvRequirement {
   name: string;
   required?: boolean;
   value?: string;
+  valueTemplate?: string;
   hasTemplate?: boolean;
 }
 

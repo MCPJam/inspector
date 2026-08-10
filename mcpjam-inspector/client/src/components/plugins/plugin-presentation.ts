@@ -149,22 +149,49 @@ export function rollUpPluginHealth(
   return { kind: "needs_attention", readiness: worst };
 }
 
+/**
+ * `detail` accompanies every rollup so a surface that renders only the badge
+ * can still expose WHY (as a title/tooltip). Without it an unrecognized
+ * backend readiness — whose label is the generic "Setup required" — would be
+ * indistinguishable from `needs_setup`, with the raw code nowhere on the card.
+ */
 export function describePluginHealth(health: PluginHealth): {
   label: string;
+  detail: string;
   tone: "ready" | "attention" | "info" | "muted";
 } {
   switch (health.kind) {
     case "disabled":
-      return { label: "Disabled", tone: "muted" };
+      return {
+        label: "Disabled",
+        detail: "This plugin is disabled for the project.",
+        tone: "muted",
+      };
     case "not_activated":
-      return { label: "No active revision", tone: "info" };
+      return {
+        label: "No active revision",
+        detail: "No revision has been activated yet.",
+        tone: "info",
+      };
     case "unknown":
-      return { label: "Checking…", tone: "muted" };
+      return {
+        label: "Checking…",
+        detail: "Component readiness has not loaded yet.",
+        tone: "muted",
+      };
     case "ready":
-      return { label: "Ready", tone: "ready" };
+      return {
+        label: "Ready",
+        detail: "Every component is ready to use.",
+        tone: "ready",
+      };
     case "needs_attention": {
       const described = describePluginReadiness(health.readiness);
-      return { label: described.label, tone: described.tone };
+      return {
+        label: described.label,
+        detail: described.detail,
+        tone: described.tone,
+      };
     }
   }
 }

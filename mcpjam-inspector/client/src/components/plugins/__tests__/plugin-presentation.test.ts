@@ -98,6 +98,27 @@ describe("rollUpPluginHealth", () => {
 });
 
 describe("describePluginHealth", () => {
+  it("carries a detail for every rollup so badge-only surfaces can explain it", () => {
+    const healths = [
+      { kind: "disabled" },
+      { kind: "not_activated" },
+      { kind: "unknown" },
+      { kind: "ready", componentCount: 1 },
+      { kind: "needs_attention", readiness: "needs_auth" },
+    ] as const;
+    for (const health of healths) {
+      expect(describePluginHealth(health).detail.length).toBeGreaterThan(0);
+    }
+    // An unrecognized backend state keeps its raw code in the detail — the
+    // only place a card rendering just the badge can surface it.
+    expect(
+      describePluginHealth({
+        kind: "needs_attention",
+        readiness: "some_future_state",
+      }).detail,
+    ).toContain("some_future_state");
+  });
+
   it("only ever says Ready for the ready rollup", () => {
     const labels = (
       [
