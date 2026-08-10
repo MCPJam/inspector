@@ -482,10 +482,11 @@ export function ProjectEnvironmentEditor({
             ) : null}
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Applies to eval runs in this environment: each run boots a fresh,
-            isolated sandbox from this image. Playground, chatboxes, and swarms
-            don&apos;t use the sandbox image yet. A not-built image fails at
-            launch — build it first under Computer → Images.
+            Applies to cloud runs in this environment: evals, swarms, and
+            user-testing sessions each boot a fresh, isolated sandbox from this
+            image. Cloud runs only — sandbox images never apply to the machine
+            running this inspector. A not-built image fails at launch — build
+            it first under Computer → Images.
           </p>
         </div>
       ) : null}
