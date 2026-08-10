@@ -107,7 +107,7 @@ describe("GET /api/web/environments/:id/preview", () => {
     expect(response.status).toBe(200);
     expect(convexQueryMock).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForRuntime",
-      { projectId: "p_1", environmentId: "env_1" }
+      { projectId: "p_1", environmentId: "env_1", runtimeVenue: "local" }
     );
     // A preview describes the SAVED environment; a caller must not be able to
     // reshape it into a configuration nobody stored.

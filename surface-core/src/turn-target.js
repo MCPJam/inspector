@@ -22,12 +22,30 @@
  *   surfaceKind: string,
  *   hasPerUserAuth?: () => boolean,
  *   legacyProjectId?: () => string | undefined,
+ *   channelBindingCache?: import('./channel-binding-cache.js').ChannelBindingCache,
  * }} options
  */
 export function createTurnTargetResolver(options) {
 	const hasAuth = options.hasPerUserAuth || (() => true);
 	const legacyProjectId =
 		options.legacyProjectId || (() => process.env.MCPJAM_PROJECT_ID);
+	// Channel bindings are written by an admin through a separate settings
+	// flow, never by the turn that reads one — so unlike a thread binding,
+	// there is no same-request write-then-stale-read race, and caching (INCLUDING
+	// negatives, the common case: most channels have none) is safe. Optional:
+	// a caller that supplies no cache gets the prior uncached behavior exactly.
+	const channelBindingCache = options.channelBindingCache;
+	/** @param {any} ctx @param {string} conversationId @param {{fetchImpl?: typeof fetch}} opts */
+	const fetchChannelBinding = (ctx, conversationId, opts) => {
+		const read = () =>
+			options.backend.fetchChannelBinding(ctx, conversationId, opts);
+		if (!channelBindingCache) return read();
+		const key = `${options.surfaceKind}:${ctx.tenantId}:${conversationId}`;
+		const cached = channelBindingCache.get(key);
+		return cached !== undefined
+			? Promise.resolve(cached)
+			: channelBindingCache.coalesce(key, read);
+	};
 
 	/**
 	 * @param {any} ctx
@@ -80,7 +98,7 @@ export function createTurnTargetResolver(options) {
 		// exactly the channels an org configured to be frictionless.
 		const [channelBinding, link] = await Promise.all([
 			conversationId && options.backend.fetchChannelBinding
-				? options.backend.fetchChannelBinding(ctx, conversationId, opts)
+				? fetchChannelBinding(ctx, conversationId, opts)
 				: Promise.resolve(null),
 			options.backend.fetchAccountLink(ctx, opts),
 		]);

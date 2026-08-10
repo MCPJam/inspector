@@ -52,15 +52,16 @@ export function formatRunOutcome(run, url, userId) {
 /**
  * Whether a terminal run is the red-circle case — the one whose thread said
  * "see what broke". Matches `formatRunOutcome`'s failure branch so evidence
- * and outcome copy can never disagree: posting screenshots under a green
- * "Run passed" is noise, and a *passing* run's screenshots under a red
- * verdict actively misleads the approver about what broke.
+ * and outcome copy can never disagree.
  *
- * @param {{ status: string, result: string | null }} run
+ * NOW SHARED with the Discord surface, which was checking `status` alone and
+ * so treated a run that COMPLETED with `result: 'failed'` as a success. Both
+ * surfaces re-export the one predicate rather than each keeping their own,
+ * because a divergence here shows up as evidence attached to the wrong verdict
+ * rather than as an error. Re-exported (not re-implemented) so this name keeps
+ * resolving for every existing importer and test.
  */
-export function isFailedOutcome(run) {
-  return run?.status === 'failed' || (run?.status === 'completed' && run?.result === 'failed');
-}
+export { isFailedOutcome } from '@mcpjam/surface-core';
 
 /**
  * Watch a run until terminal and edit the status message in place.

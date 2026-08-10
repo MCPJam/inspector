@@ -1,0 +1,67 @@
+import { HOSTED_MODE } from "@/lib/config";
+import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { ComputerView } from "./ComputerView";
+import { LocalComputerView } from "./LocalComputerView";
+
+/**
+ * The Computer tab's outer shell. Chooses the FACE:
+ *
+ *  - Hosted, a guest/non-member, or no synced project ⇒ the existing cloud
+ *    `ComputerView`, byte-identical to before (it also owns the sign-in /
+ *    no-project empty states).
+ *  - A signed-in member on a non-hosted inspector ⇒ a Local⇄Cloud face chosen
+ *    by the user's SELECTED engine, with a toggle when both engines exist.
+ *
+ * The face follows `selectedEngine` (consent-blind) rather than the resolved
+ * `engine`, so picking "This machine" before consenting shows the local
+ * face's consent gate instead of bouncing back to cloud.
+ */
+export function ComputerTabView({
+  projectId,
+  isSignedInMember,
+}: {
+  projectId: string | null;
+  isSignedInMember: boolean;
+}) {
+  // Called unconditionally (hooks rule); returns cloud defaults when there's
+  // no project or in hosted mode.
+  const engine = useComputerEngine(projectId);
+
+  if (HOSTED_MODE || !isSignedInMember || !projectId) {
+    return (
+      <ComputerView projectId={projectId} isSignedInMember={isSignedInMember} />
+    );
+  }
+
+  const showLocalFace = engine.selectedEngine === "local";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {engine.toggleVisible ? (
+        <div className="flex justify-end px-6 pt-4">
+          <ViewModeSelector
+            value={engine.selectedEngine}
+            ariaLabel="Computer engine"
+            indicatorId="computer-engine"
+            options={[
+              { value: "local", label: "This machine" },
+              { value: "cloud", label: "Cloud" },
+            ]}
+            onChange={(next) => engine.setEngine(next)}
+          />
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1">
+        {showLocalFace ? (
+          <LocalComputerView projectId={projectId} engine={engine} />
+        ) : (
+          <ComputerView
+            projectId={projectId}
+            isSignedInMember={isSignedInMember}
+          />
+        )}
+      </div>
+    </div>
+  );
+}

@@ -599,6 +599,9 @@ export const APP_SURFACES = [
       // it at a screen most orgs cannot see would waste a turn on a door that
       // is locked.
       "organizations/:orgId/slack",
+      // Discord agent settings — same reasoning as Slack directly above,
+      // including staying out of `userActivities` while `discord-agent` is off.
+      "organizations/:orgId/discord",
     ],
     navSegments: ["organizations"],
     title: "Organizations",

@@ -185,10 +185,15 @@ export function usePlaygroundConversationUrl(options: {
   );
 
   const clearConversation = useCallback(() => {
+    // A surface that opted out of URL sync never wrote the param, so it must
+    // not delete it either — the effects below already guard on `enabled`, but
+    // this callback is handed out and called directly (a rewind branch clears
+    // it), which mutated the URL on surfaces that never asked for the feature.
+    if (!enabled) return;
     // Masked synchronously; the navigation below only catches up later.
     setClearedParam(paramValueRef.current);
     writeParam((params) => params.delete(PLAYGROUND_CONVERSATION_PARAM));
-  }, [writeParam]);
+  }, [enabled, writeParam]);
 
   const writeConversation = useCallback(
     (conversationId: string) => {
