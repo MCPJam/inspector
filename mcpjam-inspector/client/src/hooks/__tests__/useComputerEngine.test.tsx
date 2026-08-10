@@ -90,6 +90,25 @@ describe("useComputerEngine", () => {
     expect(result.current.engine).toBe("cloud");
   });
 
+  it("selectedEngine is consent-BLIND: local default selects local without consent", () => {
+    // The toggle/face follow the user's pick; execution still waits on consent.
+    const { result } = renderHook(() => useComputerEngine("p1"));
+    expect(result.current.selectedEngine).toBe("local");
+    expect(result.current.engine).toBe("cloud"); // no consent yet
+  });
+
+  it("selectedEngine follows a stored 'local' pref even without consent", () => {
+    saveComputerEngine("p1", "local");
+    const { result } = renderHook(() => useComputerEngine("p1"));
+    expect(result.current.selectedEngine).toBe("local");
+  });
+
+  it("selectedEngine falls to cloud when local is unavailable", () => {
+    state.config = config({ localAvailable: false });
+    const { result } = renderHook(() => useComputerEngine("p1"));
+    expect(result.current.selectedEngine).toBe("cloud");
+  });
+
   it("a stored 'cloud' pref beats the server's local default even with consent", () => {
     state.consentGranted = true;
     saveComputerEngine("p1", "cloud");
