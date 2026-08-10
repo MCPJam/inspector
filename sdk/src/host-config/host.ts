@@ -8,9 +8,8 @@
  * import { Host } from "@mcpjam/sdk";
  *
  * const host = new Host({ style: "mcpjam", model: "anthropic/claude-sonnet-4-6" });
- * host.mcp.protocolVersion = "auto";
- * host.mcp.supportedProtocolVersions = ["2025-11-25", "2026-07-28"];
- * host.mcp.clientInfo = { name: "my-app", version: "1.0" };
+ * host.mcp.protocolVersion = "2025-11-25";
+ * host.mcp.initialize = { clientInfo: { name: "my-app", version: "1.0" } };
  * host.mcp.apps = { sandbox: { csp: { mode: "declared" } } };
  * host.requireServer("srv_abc");
  *
@@ -74,10 +73,6 @@ function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
   if (mcp.protocolVersion !== undefined) {
     profile.mcpProtocolVersion = mcp.protocolVersion;
   }
-  if (mcp.supportedProtocolVersions !== undefined) {
-    profile.supportedProtocolVersions = mcp.supportedProtocolVersions;
-  }
-  if (mcp.clientInfo !== undefined) profile.clientInfo = mcp.clientInfo;
   if (mcp.toolParamHeaderMirroring !== undefined) {
     profile.toolParamHeaderMirroring = mcp.toolParamHeaderMirroring;
   }
@@ -106,8 +101,6 @@ function isEmptyHostMcp(mcp: HostMcp | undefined): boolean {
   if (mcp === undefined) return true;
   return (
     mcp.protocolVersion === undefined &&
-    mcp.supportedProtocolVersions === undefined &&
-    mcp.clientInfo === undefined &&
     mcp.toolParamHeaderMirroring === undefined &&
     CONFORMANCE_PROFILE_KEYS.every(
       (key) => (mcp as Record<string, unknown>)[key] === undefined
@@ -152,10 +145,6 @@ function profileToHostMcp(profile: HostConfigMcpProfileV1): HostMcp {
   if (profile.mcpProtocolVersion !== undefined) {
     mcp.protocolVersion = profile.mcpProtocolVersion;
   }
-  if (profile.supportedProtocolVersions !== undefined) {
-    mcp.supportedProtocolVersions = profile.supportedProtocolVersions;
-  }
-  if (profile.clientInfo !== undefined) mcp.clientInfo = profile.clientInfo;
   if (profile.toolParamHeaderMirroring !== undefined) {
     mcp.toolParamHeaderMirroring = profile.toolParamHeaderMirroring;
   }

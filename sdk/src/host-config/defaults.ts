@@ -41,7 +41,7 @@ export const DEFAULT_TEMPERATURE_V2 = 0.7;
  */
 export function resolveEffectiveMcpProtocolVersion(
   serverOverride: McpProtocolVersion | undefined,
-  hostDefault: McpProtocolVersion | "auto" | undefined,
+  hostDefault: McpProtocolVersion | "auto" | undefined
 ): McpProtocolVersion | undefined {
   if (serverOverride !== undefined) return serverOverride;
   return hostDefault === "auto" ? undefined : hostDefault;

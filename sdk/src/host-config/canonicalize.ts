@@ -694,9 +694,8 @@ function canonicalizeMcpProfile(
 
   const out: HostConfigMcpProfileV1 = { profileVersion: 1 };
 
-  // Host-default protocol selection. `auto` is a storage-only negotiation
-  // policy; concrete values are wire pins. Absent remains accepted for legacy
-  // rows and has the same runtime meaning as auto.
+  // Host-default protocol selection. `auto` is a storage-only policy; concrete
+  // values are wire pins. Absent stays accepted for legacy rows.
   if (input.mcpProtocolVersion !== undefined) {
     if (
       input.mcpProtocolVersion !== "auto" &&
@@ -709,50 +708,6 @@ function canonicalizeMcpProfile(
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
-  }
-
-  if (input.supportedProtocolVersions !== undefined) {
-    const versions = input.supportedProtocolVersions;
-    if (!Array.isArray(versions) || versions.length === 0) {
-      throw new Error(
-        "hostConfigV2: mcpProfile.supportedProtocolVersions must be a non-empty string[] when set"
-      );
-    }
-    for (const version of versions) {
-      if (typeof version !== "string" || version.trim() === "") {
-        throw new Error(
-          "hostConfigV2: mcpProfile.supportedProtocolVersions entries must be non-empty strings"
-        );
-      }
-    }
-    // Order is semantic — do NOT sort or dedupe.
-    out.supportedProtocolVersions = [...versions];
-  }
-
-  if (input.clientInfo !== undefined) {
-    const clientInfo = input.clientInfo;
-    if (!isPlainObject(clientInfo)) {
-      throw new Error(
-        "hostConfigV2: mcpProfile.clientInfo must be a plain object"
-      );
-    }
-    if (
-      typeof clientInfo.name !== "string" ||
-      clientInfo.name.trim() === ""
-    ) {
-      throw new Error(
-        "hostConfigV2: mcpProfile.clientInfo.name must be a non-empty string"
-      );
-    }
-    if (
-      typeof clientInfo.version !== "string" ||
-      clientInfo.version.trim() === ""
-    ) {
-      throw new Error(
-        "hostConfigV2: mcpProfile.clientInfo.version must be a non-empty string"
-      );
-    }
-    out.clientInfo = deepSortStringKeys(clientInfo);
   }
 
   // SEP-2243 `Mcp-Param-*` mirroring policy for the simulated client. Same
@@ -865,71 +820,40 @@ function canonicalizeMcpProfile(
     }
   }
 
-  if (
-    out.supportedProtocolVersions !== undefined &&
-    out.initialize?.supportedProtocolVersions !== undefined &&
-    JSON.stringify(out.supportedProtocolVersions) !==
-      JSON.stringify(out.initialize.supportedProtocolVersions)
-  ) {
-    throw new Error(
-      "hostConfigV2: conflicting supportedProtocolVersions in mcpProfile and deprecated mcpProfile.initialize"
-    );
-  }
-  if (
-    out.clientInfo !== undefined &&
-    out.initialize?.clientInfo !== undefined &&
-    JSON.stringify(out.clientInfo) !== JSON.stringify(out.initialize.clientInfo)
-  ) {
-    throw new Error(
-      "hostConfigV2: conflicting clientInfo in mcpProfile and deprecated mcpProfile.initialize"
-    );
-  }
-
-  // Cross-field rule (Option A): when `mcpProtocolVersion` pins a stateful
-  // (pre-2026) version, the legacy `initialize` handshake runs and must
-  // advertise that exact version. Derive when caller didn't set one; throw if
-  // they set both AND the pin isn't in the list. Stateless versions skip
-  // initialize entirely, so leave `supportedProtocolVersions` alone there.
+  // Any concrete pin must be one of the client's declared supported versions.
+  // For legacy pins, derive a missing list because initialize needs one. A
+  // modern pin does not run initialize, but the stored list still describes
+  // what this client can speak and therefore cannot contradict the pin.
   if (
     out.mcpProtocolVersion !== undefined &&
-    out.mcpProtocolVersion !== "auto" &&
-    !isStatelessProtocolVersion(out.mcpProtocolVersion)
+    out.mcpProtocolVersion !== "auto"
   ) {
-    const advertised =
-      out.supportedProtocolVersions ??
-      out.initialize?.supportedProtocolVersions;
-    if (advertised === undefined) {
-      if (
-        input.supportedProtocolVersions !== undefined ||
-        input.clientInfo !== undefined
-      ) {
-        out.supportedProtocolVersions = [out.mcpProtocolVersion];
-      } else {
-        // Preserve the canonical bytes of legacy rows that predate the
-        // era-neutral sibling fields. New profiles derive onto the sibling;
-        // old profiles keep their historical initialize envelope and hash.
-        const initBase = out.initialize ?? {};
-        const initWithDerived: NonNullable<
-          HostConfigMcpProfileV1["initialize"]
-        > = {
+    const advertised = out.initialize?.supportedProtocolVersions;
+    if (
+      advertised === undefined &&
+      !isStatelessProtocolVersion(out.mcpProtocolVersion)
+    ) {
+      const initBase = out.initialize ?? {};
+      const initWithDerived: NonNullable<HostConfigMcpProfileV1["initialize"]> =
+        {
           ...initBase,
           supportedProtocolVersions: [out.mcpProtocolVersion],
         };
-        const sortedInit: NonNullable<
-          HostConfigMcpProfileV1["initialize"]
-        > = {};
-        for (const k of Object.keys(initWithDerived).sort()) {
-          (sortedInit as Record<string, unknown>)[k] = (
-            initWithDerived as Record<string, unknown>
-          )[k];
-        }
-        out.initialize = sortedInit;
+      const sortedInit: NonNullable<HostConfigMcpProfileV1["initialize"]> = {};
+      for (const k of Object.keys(initWithDerived).sort()) {
+        (sortedInit as Record<string, unknown>)[k] = (
+          initWithDerived as Record<string, unknown>
+        )[k];
       }
-    } else if (!advertised.includes(out.mcpProtocolVersion)) {
+      out.initialize = sortedInit;
+    } else if (
+      advertised !== undefined &&
+      !advertised.includes(out.mcpProtocolVersion)
+    ) {
       throw new Error(
         `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${
           out.mcpProtocolVersion
-        }" is not in supportedProtocolVersions [${advertised.join(
+        }" is not in initialize.supportedProtocolVersions [${advertised.join(
           ", "
         )}]. Either omit one or align them.`
       );

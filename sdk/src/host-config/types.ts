@@ -267,20 +267,10 @@ export type CspDomainSet = {
 // NOT validated here — that's a UI/SDK concern.
 export type HostConfigMcpProfileV1 = {
   profileVersion: 1;
-  // Host-default protocol selection. `"auto"` probes the modern era and
-  // falls back to a legacy initialize handshake; a wire version pins that
-  // exact era. Per-server pins live on serverConnectionOverrides.
-  // `"auto"` is storage-only and is never emitted as a wire version.
+  // Host-default protocol selection. `"auto"` negotiates at connect time;
+  // concrete revisions pin that exact wire era. Per-server pins live on
+  // serverConnectionOverrides and win over this default.
   mcpProtocolVersion?: McpProtocolVersion | "auto";
-  // One source of truth for every protocol revision this client can speak.
-  // The connection layer uses the selected mode to decide whether this list
-  // participates in modern discovery or the legacy initialize handshake.
-  // Order is semantic and preserved verbatim.
-  supportedProtocolVersions?: string[];
-  // Client identity is era-neutral: legacy connections send it in
-  // initialize.clientInfo; modern connections carry it in the per-request
-  // metadata envelope (including server/discover).
-  clientInfo?: Record<string, unknown>;
   // Whether the simulated client mirrors `x-mcp-header` tool arguments into
   // `Mcp-Param-*` request headers (SEP-2243). Absent → `"mirror"`, the
   // spec-conforming default; `"omit"` simulates a non-conforming client so a
@@ -295,12 +285,6 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
-  /**
-   * @deprecated Legacy storage shape. New profiles store `clientInfo` and
-   * `supportedProtocolVersions` as siblings of `mcpProtocolVersion` so modern
-   * clients do not appear to run initialize. Readers continue accepting this
-   * envelope for existing host rows.
-   */
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the

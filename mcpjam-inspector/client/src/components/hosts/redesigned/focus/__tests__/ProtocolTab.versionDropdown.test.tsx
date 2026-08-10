@@ -41,8 +41,7 @@ function Harness({ initial }: { initial: HostConfigInputV2 }) {
         {draft.mcpProfile?.mcpProtocolVersion ?? "<undefined>"}
       </div>
       <div data-testid="advertised">
-        {(draft.mcpProfile?.supportedProtocolVersions ??
-          draft.mcpProfile?.initialize?.supportedProtocolVersions)?.join(",") ??
+        {draft.mcpProfile?.initialize?.supportedProtocolVersions?.join(",") ??
           "<undefined>"}
       </div>
       <ProtocolTab
@@ -117,7 +116,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     expect(screen.getByTestId("pin").textContent).toBe("2025-06-18");
   });
 
-  it("renders a legacy host with no selection as Automatic", () => {
+  it("renders a legacy unpinned host as Automatic without rewriting it", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     expect(
@@ -136,7 +135,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     await user.click(screen.getByRole("option", { name: /Latest/i }));
     expect(screen.getByTestId("pin").textContent).toBe("2026-07-28");
 
-    // Automatic is explicit selection policy, not a wire protocol literal.
+    // Automatic is an explicit selection policy, not a wire protocol literal.
     await user.click(
       screen.getByRole("combobox", { name: "MCP protocol version" })
     );
@@ -175,8 +174,8 @@ describe("ProtocolTab protocol-version dropdown", () => {
 });
 
 /**
- * The backend (`canonicalizeMcpProfile`) refuses to store a STATEFUL pin that
- * is absent from `supportedProtocolVersions` —
+ * The backend (`canonicalizeMcpProfile`) refuses to store a concrete pin that
+ * is absent from `initialize.supportedProtocolVersions` —
  * `ConflictingProtocolVersionPin`. Preset-backed clients carry that list, so
  * offering the full set on them produced choices that failed at Save with an
  * opaque "Server Error". Offer only what saves.
@@ -224,7 +223,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
       hostStyle: "claude",
       mcpProfile: {
         profileVersion: 1,
-        supportedProtocolVersions,
+        initialize: { supportedProtocolVersions },
         ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
       },
     } as unknown as Partial<HostConfigInputV2>);
@@ -256,11 +255,9 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
       screen.getByRole("combobox", { name: "MCP protocol version" })
     );
 
-    // The backend WOULD accept a stateless pin here (it only validates
-    // stateful ones), but accepting it is not the same as the client speaking
-    // it: offering 2026-07-28 to a client that never advertised it emulates a
-    // capability the real product does not have. Automatic selection survives
-    // alongside the revisions this client actually advertises.
+    // Every concrete pin is constrained by the advertised support list,
+    // including the stateless 2026 revision. Automatic remains available as
+    // the negotiation policy.
     expect(
       (await screen.findAllByRole("option")).map((o) => o.textContent)
     ).toEqual(["Automatic", "2025-11-25"]);
@@ -385,7 +382,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not warn on an advertised or stateless pin", () => {
+  it("does not warn on an advertised pin and warns on any unadvertised pin", () => {
     // Advertised pin: fine.
     const { unmount } = render(
       <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />
@@ -393,11 +390,8 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     expect(screen.queryByText(/does not advertise/)).toBeNull();
     unmount();
 
-    // Stateless pin: the dropdown no longer OFFERS an unadvertised stateless
-    // version, but a config that already carries one still saves — the backend
-    // rule never reaches it. The warning speaks only to save failure, so it
-    // must stay silent here rather than crying wolf.
+    // The stateless wire path also has to match the client's advertised list.
     render(<Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />);
-    expect(screen.queryByText(/does not advertise/)).toBeNull();
+    expect(screen.getByText(/does not advertise/)).toBeInTheDocument();
   });
 });

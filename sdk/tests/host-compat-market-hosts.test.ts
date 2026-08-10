@@ -60,8 +60,8 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("chatgpt")?.capabilities).toMatchObject({
       serverResources: true,
       logging: true,
-      requestTeardown: false,
     });
+    expect(profileFor("chatgpt")?.capabilities?.downloadFile).toBeUndefined();
   });
 
   it("carries each host's advertised protocol versions (or none)", () => {
@@ -88,15 +88,11 @@ describe("buildMarketHostProfiles", () => {
     // wouldn't otherwise notice.
     for (const profile of buildMarketHostProfiles()) {
       const seeded = seedHostTemplate(profile.id as HostTemplateId);
-      const seededProfile = seeded.mcpProfile as
-        | { supportedProtocolVersions?: string[] }
-        | undefined;
       const initialize = seeded.mcpProfile?.initialize as
         | { supportedProtocolVersions?: string[] }
         | undefined;
       expect(profile.supportedProtocolVersions).toEqual(
-        seededProfile?.supportedProtocolVersions ??
-          initialize?.supportedProtocolVersions
+        initialize?.supportedProtocolVersions
       );
     }
   });

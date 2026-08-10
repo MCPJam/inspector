@@ -640,6 +640,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "ChatGPT",
       provenance: "probe",
       rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
       verifiedAt: 1785974400000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -724,15 +725,17 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
-        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
-        clientInfo: {
-          name: "openai-mcp",
-          version: "1.0.0",
-        },
         toolCallCancellation: false,
         mrtrModes: {
           requestState: true,
           elicitation: false,
+        },
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          clientInfo: {
+            name: "openai-mcp",
+            version: "1.0.0",
+          },
         },
         apps: {
           uiInitialize: {
@@ -820,7 +823,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
-      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
     },
     mistral: {
       id: "mistral",

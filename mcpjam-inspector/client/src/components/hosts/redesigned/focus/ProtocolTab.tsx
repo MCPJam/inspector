@@ -43,10 +43,9 @@ import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 /**
- * "auto" is a stored negotiation policy, NOT a wire literal. The connection
- * resolver reduces it to no pin and enables SDK automatic negotiation.
- * Deliberately not labelled with a version number: Automatic means the SDK
- * picks the version at connect time, so hardcoding a revision into that
+ * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
+ * at connect time and never emits the string itself. Deliberately not labelled
+ * with a version number: hardcoding a revision into that
  * label would go stale the moment the SDK's default moves (the sequenced
  * Phase-5 `versionNegotiation: 'auto'` activation) without anything in
  * this file changing.
@@ -112,23 +111,20 @@ const HOST_PROTOCOL_OPTIONS: Array<{
 /**
  * Which versions this client may actually be pinned to.
  *
- * The backend refuses to store a STATEFUL pin the client does not also
- * advertise in `supportedProtocolVersions` — the SDK's
+ * The backend refuses to store a concrete pin the client does not also
+ * advertise in `initialize.supportedProtocolVersions` — the SDK's
  * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. Presets
  * carry that list (VS Code ships `["2025-11-25"]`), so offering every version
  * on those clients produced choices that could only fail at Save with an
  * opaque "Server Error". Offer what actually saves instead.
  *
  * The advertised list is the whole answer, INCLUDING for stateless revisions.
- * The backend only validates stateful pins (stateless ones skip the initialize
- * handshake, so `ConflictingProtocolVersionPin` never fires for them), but
- * "the backend would accept it" is not the same as "this client speaks it":
- * offering `2026-07-28` on a client that never advertised it emulates a
+ * Offering `2026-07-28` on a client that never advertised it would emulate a
  * product capability that does not exist. A client supports a revision when it
  * lists that revision — there is no separate stateless-support flag.
  *
  * Exempt from the filter:
- * - `"auto"`, which stores an explicit negotiation policy rather than a pin.
+ * - `"auto"`, which is a negotiation policy rather than a concrete pin.
  * - The stored value, so a row already pinned outside its own advertised list
  *   keeps rendering its selection instead of silently reading as "Automatic".
  *   Same don't-strand-the-user rule as the policy controls further down.
@@ -267,8 +263,7 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
     },
   };
 
-  const ci =
-    draft.mcpProfile?.clientInfo ?? draft.mcpProfile?.initialize?.clientInfo;
+  const ci = draft.mcpProfile?.initialize?.clientInfo;
   if (
     ci &&
     typeof ci.name === "string" &&
@@ -279,14 +274,12 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
     doc.clientInfo = { name: ci.name, version: ci.version };
   }
 
-  const versions =
-    draft.mcpProfile?.supportedProtocolVersions ??
-    draft.mcpProfile?.initialize?.supportedProtocolVersions;
+  const versions = draft.mcpProfile?.initialize?.supportedProtocolVersions;
   if (versions && versions.length > 0) {
     doc.supportedProtocolVersions = [...versions];
   }
 
-  // Surface mcpProtocolVersion only when explicitly set. Legacy absence is
+  // Surface mcpProtocolVersion only when explicitly set. Absence is
   // semantic ("SDK default") and must round-trip through the editor
   // verbatim — materializing a placeholder here would churn canonical
   // hashes for legacy rows that haven't opted into a pin. The dropdown
@@ -520,8 +513,8 @@ export function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
-  // mcpProtocolVersion — `auto` is a storage-only negotiation policy; every
-  // other accepted value is a concrete wire revision.
+  // `auto` is a stored selection policy; every other accepted value is a
+  // concrete wire revision. Typo strings still collapse to undefined.
   let mcpProtocolVersion: HostProtocolDropdownValue | undefined;
   const rawProtocolVersion = parsed.mcpProtocolVersion;
   if (rawProtocolVersion === "auto") {
@@ -608,13 +601,18 @@ export function applyJsonToDraft(
   // Build the new mcpProfile envelope, collapsing to undefined when empty so
   // the canonical hash stays stable with the form-based editor's outputs.
   const nextProfile = patchProfile(prev.mcpProfile, (base) => {
+    const initialize: HostConfigMcpProfileV1["initialize"] = {};
+    if (clientInfo) initialize.clientInfo = clientInfo;
+    if (supportedProtocolVersions)
+      initialize.supportedProtocolVersions = supportedProtocolVersions;
+    const initHasFields =
+      initialize.clientInfo !== undefined ||
+      (initialize.supportedProtocolVersions &&
+        initialize.supportedProtocolVersions.length > 0);
+
     const next: HostConfigMcpProfileV1 = {
       ...base,
-      clientInfo,
-      supportedProtocolVersions,
-      // Editing this section migrates the deprecated envelope to the sibling
-      // fields above; retaining both would recreate two sources of truth.
-      initialize: undefined,
+      initialize: initHasFields ? initialize : undefined,
       mcpProtocolVersion,
       toolParamHeaderMirroring,
       paginationTraversal,
@@ -669,28 +667,27 @@ export function ProtocolTab({
   const advertisedProtocolVersions =
     draft.hostStyle === "mcpjam"
       ? undefined
-      : draft.mcpProfile?.supportedProtocolVersions ??
-        draft.mcpProfile?.initialize?.supportedProtocolVersions;
+      : draft.mcpProfile?.initialize?.supportedProtocolVersions;
   const protocolOptions = visibleHostProtocolOptions(
     advertisedProtocolVersions,
     selectedDropdownValue
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
-  // A stored stateful pin outside the advertised list — a legacy row, or one
+  // A stored concrete pin outside the advertised list — a legacy row, or one
   // hand-edited in the JSON. Its option is force-kept (see the helper), which
   // can pad the list back to full length, so this must be detected directly
   // rather than inferred from the option count. Saving such a draft throws
   // `ConflictingProtocolVersionPin`; warn before Save does.
   const selectedPinUnadvertised =
     selectedDropdownValue !== "auto" &&
-    !isStatelessProtocolVersion(selectedDropdownValue) &&
     advertisedProtocolVersions !== undefined &&
     advertisedProtocolVersions.length > 0 &&
     !advertisedProtocolVersions.includes(selectedDropdownValue);
 
-  // Dropdown handler. Automatic is persisted explicitly so a host profile can
-  // advertise a support list without ambiguity about its default selection.
+  // Dropdown handler. `undefined` here means the user selected Automatic;
+  // persist the explicit policy so ChatGPT's default can differ from a legacy
+  // row whose field is genuinely absent.
   const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
     const warning = legacyProtocolSupportWarning(
       draft.hostStyle,
@@ -889,8 +886,8 @@ export function ProtocolTab({
         {/* Spells out what a pin actually stores. The two pinned cases differ
             materially, so they get their own copy: a stateless pin has no
             legacy fallback, while a stateful pin narrows the initialize
-            handshake to that one version. "Automatic" gets no line — its
-            negotiation policy needs no extra explanation and keeps the panel quiet in
+            handshake to that one version. "Automatic" gets no line — the
+            selection policy needs no extra explanation and keeps the panel quiet in
             the default state. */}
         {selectedDropdownValue !== "auto" && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
@@ -902,8 +899,7 @@ export function ProtocolTab({
         {/* Without this line a preset-backed client reads as a broken control:
             the missing revisions look arbitrary, and the list that removed them
             is invisible unless the JSON editor below is open. Name both. The
-            claim is scoped to pre-2026 revisions — stateless versions skip the
-            initialize handshake and stay pinnable regardless of the list. */}
+            list constrains every concrete pin, including 2026. */}
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
             This client advertises{" "}

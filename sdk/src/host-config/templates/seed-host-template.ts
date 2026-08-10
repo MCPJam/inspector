@@ -843,10 +843,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
-        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
-        // Era-neutral identity: the runtime sends this in legacy initialize
-        // or modern request metadata according to the negotiated protocol.
-        clientInfo: { name: "openai-mcp", version: "1.0.0" },
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          // Stored in the established connection-profile envelope. The
+          // runtime sends initialize only when a 2025 protocol is selected.
+          clientInfo: { name: "openai-mcp", version: "1.0.0" },
+        },
         apps: {
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo

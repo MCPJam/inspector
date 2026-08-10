@@ -154,8 +154,10 @@ describe("normalizeSdkEvalHostConfigForWire — preservation", () => {
     const mcpProfile: HostConfigMcpProfileV1 = {
       profileVersion: 1,
       mcpProtocolVersion: "2025-11-25",
-      clientInfo: { name: "my-app", version: "1.0" },
-      supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+      initialize: {
+        clientInfo: { name: "my-app", version: "1.0" },
+        supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+      },
       apps: {
         sandbox: { csp: { mode: "declared" } },
       },
@@ -233,8 +235,6 @@ describe("normalizeSdkEvalHostConfigForWire — public HostJson acceptance", () 
       .requireServer("everything")
       .requireServer("filesystem");
     host.mcp.protocolVersion = "2025-11-25";
-    host.mcp.clientInfo = { name: "my-app", version: "1.0" };
-    host.mcp.supportedProtocolVersions = ["2025-11-25", "2025-06-18"];
 
     const json: HostJson = host.toJSON();
 
@@ -258,14 +258,6 @@ describe("normalizeSdkEvalHostConfigForWire — public HostJson acceptance", () 
     // mcpProfile preserved.
     expect(out.mcpProfile?.mcpProtocolVersion).toBe("2025-11-25");
     expect(out.mcpProfile?.profileVersion).toBe(1);
-    expect(out.mcpProfile?.clientInfo).toEqual({
-      name: "my-app",
-      version: "1.0",
-    });
-    expect(out.mcpProfile?.supportedProtocolVersions).toEqual([
-      "2025-11-25",
-      "2025-06-18",
-    ]);
   });
 
   it("projects the client-conformance knobs from HostJson.mcp to mcpProfile", () => {
