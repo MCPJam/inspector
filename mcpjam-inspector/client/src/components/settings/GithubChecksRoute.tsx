@@ -15,7 +15,7 @@ import {
 } from "@mcpjam/design-system/select";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { SettingsSection } from "../setting/SettingsSection";
-import { SettingsNav } from "./SettingsNav";
+import { SettingsPageShell } from "./SettingsPageShell";
 import {
   GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
   useGithubChecksSettings,
@@ -267,178 +267,169 @@ export function GithubChecksRoute({
         );
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-10 space-y-8 max-w-3xl">
-        <div className="space-y-4">
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <SettingsNav
-            active="integrations"
-            activeOrganizationId={activeOrganizationId}
-          />
-        </div>
-
-        {/* This page sits one level below the Integrations directory, and the
+    <SettingsPageShell
+      active="integrations"
+      activeOrganizationId={activeOrganizationId}
+    >
+      {/* This page sits one level below the Integrations directory, and the
             nav's Integrations tab reads as active while you are on it — so
             without this there is no visible way back up. */}
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={() => appNavigate("/settings/integrations")}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <ChevronLeft className="size-3" aria-hidden />
-            Integrations
-          </button>
-          <h2 className="text-lg font-medium">GitHub Checks</h2>
-        </div>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={() => appNavigate("/settings/integrations")}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="size-3" aria-hidden />
+          Integrations
+        </button>
+        <h2 className="text-lg font-medium">GitHub Checks</h2>
+      </div>
 
-        <p className="text-sm text-muted-foreground">
-          Connect a repository to run an eval suite as a GitHub check on every
-          pull request. The check runs the suite you pick here against the PR's
-          head commit and reports back as a status check.
-        </p>
+      <p className="text-sm text-muted-foreground">
+        Connect a repository to run an eval suite as a GitHub check on every
+        pull request. The check runs the suite you pick here against the PR's
+        head commit and reports back as a status check.
+      </p>
 
-        <SettingsSection title="Connected repositories">
-          {repos === undefined ? (
-            <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
-              Loading…
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
-              <p>
-                No repositories connected yet. Install the MCPJam GitHub App on
-                a repository, then connect it below to start running checks on
-                its pull requests.
-              </p>
-              <p>
-                A repository can declare its check recipe in a{" "}
-                <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                  mcpjam.yaml
-                </code>{" "}
-                at the repo root. Without one, MCPJam detects a recipe
-                automatically.{" "}
-                <a
-                  className="underline underline-offset-2 hover:text-foreground"
-                  href="https://docs.mcpjam.com/github-checks"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Read the docs
-                </a>
-                .
-              </p>
-            </div>
-          ) : (
-            rows.map((row) => (
-              <div
-                key={row._id}
-                className="flex items-center justify-between gap-4 px-4 py-3 rounded-md border border-border/40 bg-muted/20 transition-colors"
-                data-testid={`repo-row-${row.repoFullName}`}
+      <SettingsSection title="Connected repositories">
+        {repos === undefined ? (
+          <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
+            Loading…
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
+            <p>
+              No repositories connected yet. Install the MCPJam GitHub App on a
+              repository, then connect it below to start running checks on its
+              pull requests.
+            </p>
+            <p>
+              A repository can declare its check recipe in a{" "}
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">
+                mcpjam.yaml
+              </code>{" "}
+              at the repo root. Without one, MCPJam detects a recipe
+              automatically.{" "}
+              <a
+                className="underline underline-offset-2 hover:text-foreground"
+                href="https://docs.mcpjam.com/github-checks"
+                target="_blank"
+                rel="noreferrer"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                    <Github className="size-4 text-primary" aria-hidden />
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-sm font-medium truncate">
-                      {row.repoFullName}
-                    </span>
-                    <RepoCheckState enabled={row.enabled} />
-                  </div>
+                Read the docs
+              </a>
+              .
+            </p>
+          </div>
+        ) : (
+          rows.map((row) => (
+            <div
+              key={row._id}
+              className="flex items-center justify-between gap-4 px-4 py-3 rounded-md border border-border/40 bg-muted/20 transition-colors"
+              data-testid={`repo-row-${row.repoFullName}`}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                  <Github className="size-4 text-primary" aria-hidden />
                 </div>
-
-                <div className="flex items-center gap-3 shrink-0">
-                  <Select
-                    value={row.suiteId}
-                    onValueChange={(value) =>
-                      void handleSuiteChange(row, value)
-                    }
-                  >
-                    <SelectTrigger
-                      className="w-48"
-                      aria-label={`Suite for ${row.repoFullName}`}
-                    >
-                      <SelectValue placeholder="Select a suite" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suiteOptions.map((suite) => (
-                        <SelectItem key={suite._id} value={suite._id}>
-                          {suite.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  <Switch
-                    checked={row.enabled}
-                    disabled={pendingToggles.has(row._id)}
-                    onCheckedChange={() => void handleToggle(row)}
-                    aria-label={`Enable checks for ${row.repoFullName}`}
-                  />
-
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Disconnect ${row.repoFullName}`}
-                    onClick={() => void handleDisconnect(row)}
-                  >
-                    <Trash2 className="size-4" aria-hidden />
-                  </Button>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-medium truncate">
+                    {row.repoFullName}
+                  </span>
+                  <RepoCheckState enabled={row.enabled} />
                 </div>
               </div>
-            ))
-          )}
-        </SettingsSection>
 
-        <SettingsSection title="Connect a repository">
-          <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-            <Select value={pickerRepo} onValueChange={setPickerRepo}>
-              <SelectTrigger className="w-64" aria-label="Repository">
-                <SelectValue placeholder="Select a repository" />
-              </SelectTrigger>
-              <SelectContent>
-                {connectableRepos.map((repo) => (
-                  <SelectItem key={repo.fullName} value={repo.fullName}>
-                    {repo.fullName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <div className="flex items-center gap-3 shrink-0">
+                <Select
+                  value={row.suiteId}
+                  onValueChange={(value) => void handleSuiteChange(row, value)}
+                >
+                  <SelectTrigger
+                    className="w-48"
+                    aria-label={`Suite for ${row.repoFullName}`}
+                  >
+                    <SelectValue placeholder="Select a suite" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suiteOptions.map((suite) => (
+                      <SelectItem key={suite._id} value={suite._id}>
+                        {suite.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-            <Select value={pickerSuite} onValueChange={setPickerSuite}>
-              <SelectTrigger className="w-56" aria-label="Suite">
-                <SelectValue placeholder="Select a suite" />
-              </SelectTrigger>
-              <SelectContent>
-                {suiteOptions.map((suite) => (
-                  <SelectItem key={suite._id} value={suite._id}>
-                    {suite.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                <Switch
+                  checked={row.enabled}
+                  disabled={pendingToggles.has(row._id)}
+                  onCheckedChange={() => void handleToggle(row)}
+                  aria-label={`Enable checks for ${row.repoFullName}`}
+                />
 
-            <Button
-              onClick={() => void handleConnect()}
-              disabled={connecting || !pickerRepo || !pickerSuite}
-            >
-              <Plus className="mr-2 size-4" aria-hidden /> Connect
-            </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Disconnect ${row.repoFullName}`}
+                  onClick={() => void handleDisconnect(row)}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                </Button>
+              </div>
+            </div>
+          ))
+        )}
+      </SettingsSection>
+
+      <SettingsSection title="Connect a repository">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+          <Select value={pickerRepo} onValueChange={setPickerRepo}>
+            <SelectTrigger className="w-64" aria-label="Repository">
+              <SelectValue placeholder="Select a repository" />
+            </SelectTrigger>
+            <SelectContent>
+              {connectableRepos.map((repo) => (
+                <SelectItem key={repo.fullName} value={repo.fullName}>
+                  {repo.fullName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={pickerSuite} onValueChange={setPickerSuite}>
+            <SelectTrigger className="w-56" aria-label="Suite">
+              <SelectValue placeholder="Select a suite" />
+            </SelectTrigger>
+            <SelectContent>
+              {suiteOptions.map((suite) => (
+                <SelectItem key={suite._id} value={suite._id}>
+                  {suite.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            onClick={() => void handleConnect()}
+            disabled={connecting || !pickerRepo || !pickerSuite}
+          >
+            <Plus className="mr-2 size-4" aria-hidden /> Connect
+          </Button>
+        </div>
+
+        {installationReposFailed ? (
+          <div className="px-4 pb-4 text-sm text-muted-foreground">
+            Could not load repositories from GitHub. This is usually temporary —
+            reload the page to try again.
           </div>
-
-          {installationReposFailed ? (
-            <div className="px-4 pb-4 text-sm text-muted-foreground">
-              Could not load repositories from GitHub. This is usually temporary
-              — reload the page to try again.
-            </div>
-          ) : installationRepos !== null && installationRepos.length === 0 ? (
-            <div className="px-4 pb-4 text-sm text-muted-foreground">
-              No repositories available. Install the MCPJam GitHub App on the
-              repositories you want checked, then reload this page.
-            </div>
-          ) : null}
-        </SettingsSection>
-      </div>
-    </div>
+        ) : installationRepos !== null && installationRepos.length === 0 ? (
+          <div className="px-4 pb-4 text-sm text-muted-foreground">
+            No repositories available. Install the MCPJam GitHub App on the
+            repositories you want checked, then reload this page.
+          </div>
+        ) : null}
+      </SettingsSection>
+    </SettingsPageShell>
   );
 }

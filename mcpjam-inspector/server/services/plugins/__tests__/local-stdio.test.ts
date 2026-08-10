@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
-import { appendFile } from "node:fs/promises";
+import { appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PluginBundleCache } from "../bundle-cache.js";
 import {
@@ -10,8 +10,10 @@ import {
   resolvePluginOriginForServer,
 } from "../local-stdio.js";
 import {
+  fixtureBundleFiles,
   fixtureBundleHash,
   fixtureBundleSource,
+  fixtureBundleZip,
   makeCacheRoot,
 } from "./fixture-bundle.js";
 import { WebRouteError } from "../../../routes/web/errors.js";
@@ -30,6 +32,8 @@ function stubClient(options?: {
   enabled?: boolean;
   available?: boolean;
   bundleHash?: string | null;
+  /** When set, `plugins:getBundleDownloadUrl` answers with this URL. */
+  downloadUrl?: string;
 }): ConvexHttpClient {
   const enabled = options?.enabled ?? true;
   const available = options?.available ?? true;
@@ -37,6 +41,12 @@ function stubClient(options?: {
     options?.bundleHash === undefined ? "hash-pending" : options.bundleHash;
   return {
     async query(name: string) {
+      if (name === "plugins:getBundleDownloadUrl") {
+        if (options?.downloadUrl === undefined) {
+          throw new Error("no downloadable bundle");
+        }
+        return { url: options.downloadUrl, bundleHash };
+      }
       if (name === "plugins:listProjectPlugins") {
         return [
           {
@@ -48,7 +58,14 @@ function stubClient(options?: {
         ];
       }
       if (name === "plugins:resolvePluginRuntimePreview") {
-        if (!available) return { pluginVersions: [], effectiveServerIds: [] };
+        if (!available) {
+          return {
+            pluginVersions: [],
+            effectiveServerIds: [],
+            serverComponents: [],
+            pluginSkills: [],
+          };
+        }
         return {
           pluginVersions: [
             {
@@ -59,6 +76,15 @@ function stubClient(options?: {
             },
           ],
           effectiveServerIds: [SERVER_ID],
+          serverComponents: [
+            {
+              pluginVersionId: VERSION_ID,
+              componentKey: "server:fixture-local",
+              placement: "local",
+              authenticationPolicy: "on_use",
+              materializedServerId: SERVER_ID,
+            },
+          ],
           pluginSkills: [],
         };
       }
@@ -87,6 +113,7 @@ describe("plugin stdio origin resolution", () => {
 
   afterEach(async () => {
     releasePluginLease(SERVER_ID);
+    vi.unstubAllGlobals();
     await cleanup();
   });
 
@@ -141,6 +168,160 @@ describe("plugin stdio origin resolution", () => {
     expect(cache.activeEntries()).toEqual([]);
   });
 
+  it("substitutes a ${PLUGIN_ROOT}-rooted working directory", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        workingDirectory: "${PLUGIN_ROOT}/server",
+      },
+      leaseId: SERVER_ID,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.launch.workingDirectory).toBe(
+      `${prepared.pluginRoot}/server`
+    );
+    prepared.release();
+  });
+
+  it("substitutes ${PLUGIN_DATA} against a created per-plugin data directory", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    const dataRoot = join(cacheRoot, "plugin-data");
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        args: [
+          "${PLUGIN_ROOT}/server/index.js",
+          "--cache=${PLUGIN_DATA}/cache.db",
+        ],
+      },
+      leaseId: SERVER_ID,
+      dataRoot,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    // Keyed by pluginId, NOT bundleHash: the directory survives version
+    // activations, which is the spec's whole point for PLUGIN_DATA.
+    const expectedDataDir = join(dataRoot, PROJECT_ID, PLUGIN_ID);
+    expect(prepared.launch.args[1]).toBe(`--cache=${expectedDataDir}/cache.db`);
+    expect(prepared.launch.env.PLUGIN_DATA).toBe(expectedDataDir);
+    const dirStat = await stat(expectedDataDir);
+    if (process.platform !== "win32") {
+      // Owner-only regardless of umask: persisted plugin state must not be
+      // readable by other local users.
+      expect(dirStat.mode & 0o777).toBe(0o700);
+    }
+    prepared.release();
+  });
+
+  it("reports a filesystem problem as plugin_data_unavailable, never a bundle problem", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    // A FILE where the data root must be a directory: mkdir fails.
+    const blockedRoot = join(cacheRoot, "blocked-data-root");
+    await appendFile(blockedRoot, "not a directory");
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: PLACEHOLDER_SPEC,
+      leaseId: SERVER_ID,
+      dataRoot: blockedRoot,
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "plugin_data_unavailable",
+    });
+    expect(cache.activeEntries()).toEqual([]);
+  });
+
+  it("fails closed on a placeholder this build does not implement", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        // A future spec placeholder: the generic guard must refuse the
+        // spawn and report only the bare token.
+        args: ["${PLUGIN_ROOT}/server/index.js", "--x=${PLUGIN_CACHE}/db"],
+      },
+      leaseId: SERVER_ID,
+      dataRoot: join(cacheRoot, "plugin-data"),
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "unsupported_placeholder",
+      placeholder: "${PLUGIN_CACHE}",
+    });
+    expect(cache.activeEntries()).toEqual([]);
+  });
+
+  it("tolerates placeholder-shaped text in the machine's own paths", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    // The guard scans the SPEC, never the resolved launch: a data root that
+    // happens to contain a placeholder-shaped segment is the machine's own
+    // path, not an unresolved bundle input, and must not refuse the spawn.
+    const weirdDataRoot = join(cacheRoot, "${PLUGIN_DATA}-lookalike");
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        args: [
+          "${PLUGIN_ROOT}/server/index.js",
+          "--cache=${PLUGIN_DATA}/cache.db",
+        ],
+      },
+      leaseId: SERVER_ID,
+      dataRoot: weirdDataRoot,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.launch.args[1]).toBe(
+      `--cache=${join(weirdDataRoot, PROJECT_ID, PLUGIN_ID)}/cache.db`
+    );
+    prepared.release();
+  });
+
   it.each([
     [
       "a plugin that no longer resolves",
@@ -177,6 +358,68 @@ describe("plugin stdio origin resolution", () => {
       ok: false,
       reason: "bundle_not_materialized",
     });
+  });
+
+  it("downloads the backend bundle on a cache miss and materializes it", async () => {
+    // Nothing pre-seeded in the cache — the historical dead end. The
+    // download endpoint serves the fixture bytes; the verified cache
+    // re-hashes them against the pinned bundleHash before anything spawns.
+    const zipBytes = await fixtureBundleZip();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(zipBytes as unknown as BodyInit))
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({
+        bundleHash,
+        downloadUrl: "https://convex.example/storage/fixture-bundle",
+      }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: PLACEHOLDER_SPEC,
+      leaseId: SERVER_ID,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.launch.args[0]).toBe(
+      `${prepared.pluginRoot}/server/index.js`
+    );
+    expect(cache.activeEntries()).toEqual([prepared.pluginRoot]);
+    prepared.release();
+  });
+
+  it("fails closed when the downloaded content does not hash to the pinned bundle", async () => {
+    // A valid archive with the WRONG content: the cache's re-parse computes
+    // a different bundleHash than the pin, so nothing materializes.
+    const tamperedZip = await fixtureBundleZip({
+      ...fixtureBundleFiles(),
+      "data.txt": "tampered payload\n",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(tamperedZip as unknown as BodyInit))
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({
+        bundleHash,
+        downloadUrl: "https://convex.example/storage/tampered-bundle",
+      }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: PLACEHOLDER_SPEC,
+      leaseId: SERVER_ID,
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "bundle_verification_failed",
+    });
+    expect(cache.activeEntries()).toEqual([]);
   });
 });
 
@@ -226,10 +469,11 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     });
 
     expect(result?.args[0]).toBe(`${result?.pluginRoot}/server/index.js`);
-    expect(result?.env.CODEX_PLUGIN_ROOT).toBe(result?.pluginRoot);
+    expect(result?.env.PLUGIN_ROOT).toBe(result?.pluginRoot);
     expect(cache.activeEntries()).toEqual([result?.pluginRoot]);
 
     // Re-connecting the same server replaces its lease instead of stacking one.
@@ -240,9 +484,46 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     });
     expect(cache.activeEntries()).toEqual([result?.pluginRoot]);
     releasePluginLease(SERVER_ID);
+    expect(cache.activeEntries()).toEqual([]);
+  });
+
+  // Ephemeral web-route managers: each concurrent turn holds its OWN lease
+  // via onLease — the registry's replace-on-retain must not apply, or turn B
+  // would unpin turn A's still-running child.
+  it("hands the lease to the caller via onLease, bypassing the registry", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const held: Array<() => void> = [];
+    const materializeHeld = () =>
+      materializePluginStdioForConnect({
+        createClient: () => stubClient({ bundleHash }),
+        projectId: PROJECT_ID,
+        serverId: SERVER_ID,
+        serverName: SERVER_ID,
+        onLease: (release) => held.push(release),
+        spec: PLACEHOLDER_SPEC,
+        cache,
+        dataRoot: join(cacheRoot, "plugin-data"),
+      });
+
+    const first = await materializeHeld();
+    const second = await materializeHeld();
+    expect(held).toHaveLength(2);
+    expect(cache.activeEntries()).toEqual([first?.pluginRoot]);
+
+    // The registry never saw these leases: releasing by serverName is a
+    // no-op, and dropping one held lease keeps the other's pin alive.
+    releasePluginLease(SERVER_ID);
+    held.pop()!();
+    expect(cache.activeEntries()).toEqual([second?.pluginRoot]);
+    held.pop()!();
     expect(cache.activeEntries()).toEqual([]);
   });
 
@@ -260,6 +541,7 @@ describe("materializePluginStdioForConnect", () => {
       serverName: SERVER_ID,
       spec: PLACEHOLDER_SPEC,
       cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
     }).catch((err) => err);
 
     expect(error).toBeInstanceOf(WebRouteError);
