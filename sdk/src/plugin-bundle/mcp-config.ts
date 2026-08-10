@@ -1,29 +1,69 @@
 /**
- * MCP configuration normalization (`.mcp.json`).
+ * Agent Plugins 1.0 MCP configuration (`mcp.json` at the bundle root) —
+ * https://agent-plugins.org/schemas/1.0.0/mcp.schema.json.
  *
- * Accepts the three compatible source shapes — a direct server map, an
- * `mcp_servers` wrapper (current OpenAI plugin docs), and an `mcpServers`
- * wrapper (MCPJam/Claude-style) — and normalizes them into one MCPJam-owned
- * discriminated union. Resolved environment/header VALUES are never stored:
- * the normalized shape carries requirement names only. `${PLUGIN_ROOT}` /
- * `${CODEX_PLUGIN_ROOT}` are recognized as runtime placeholders and preserved
- * verbatim, never substituted at parse time.
+ * The plugin path is spec-strict: the document requires `$schema` +
+ * `mcpServers` (closed object); every entry requires an explicit `type`
+ * (`stdio` | `streamable-http` | `sse`) — the declared transport is
+ * authoritative, never inferred. One invalid entry is skipped (failure
+ * isolation), never the whole document; an invalid document disables the
+ * MCP component type, never the whole bundle.
+ *
+ * Secret hygiene: env/header VALUES that look like credentials are never
+ * stored (a documented deviation from verbatim pass-through). Screened
+ * non-secret literals ARE stored, so `{"MODE": "production"}` works.
+ * `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` are preserved verbatim for the
+ * runtime to expand — only in args, env values, and cwd, per spec.
+ *
+ * The two policy-free shape primitives (`selectPluginMcpServerMap`,
+ * `detectPluginMcpTransport`) keep their lenient behavior: the inspector's
+ * generic MCP-JSON import shares them and must keep accepting wrapper
+ * variants, spelling variants, and command/url inference.
  */
 
 import {
+  isSecretLikeValue,
+  PluginIssueCollector,
   SECRET_FIELD_NAME,
   sanitizeUnknownRecord,
   type PluginIssueCode,
-  type PluginIssueCollector,
 } from "./validation.js";
+import { resolveContainedPath } from "./paths.js";
 
-export const PLUGIN_ROOT_PLACEHOLDERS = [
-  "${PLUGIN_ROOT}",
-  "${CODEX_PLUGIN_ROOT}",
+/**
+ * Canonical MCP-config schema identifiers per Agent Plugins version.
+ * Frozen: this map IS the compiled-in allowlist.
+ */
+export const PLUGIN_MCP_SCHEMAS: Readonly<Record<string, string>> =
+  Object.freeze({
+    "1.0.0": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  });
+
+export const PLUGIN_ROOT_PLACEHOLDER = "${PLUGIN_ROOT}";
+export const PLUGIN_DATA_PLACEHOLDER = "${PLUGIN_DATA}";
+
+/**
+ * Placeholders substituted with the materialized bundle root at spawn.
+ * `${PLUGIN_DATA}` is deliberately NOT in this list — it resolves to the
+ * writable per-plugin data directory, never the bundle root.
+ */
+export const PLUGIN_ROOT_PLACEHOLDERS = [PLUGIN_ROOT_PLACEHOLDER] as const;
+
+/** Both runtime placeholders, for detection (not substitution). */
+export const PLUGIN_PLACEHOLDERS = [
+  PLUGIN_ROOT_PLACEHOLDER,
+  PLUGIN_DATA_PLACEHOLDER,
 ] as const;
 
 export function containsRootPlaceholder(value: string): boolean {
   return PLUGIN_ROOT_PLACEHOLDERS.some((placeholder) =>
+    value.includes(placeholder)
+  );
+}
+
+/** Does the value reference either runtime placeholder? */
+export function containsPluginPlaceholder(value: string): boolean {
+  return PLUGIN_PLACEHOLDERS.some((placeholder) =>
     value.includes(placeholder)
   );
 }
@@ -35,15 +75,15 @@ const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 const ENV_REFERENCE_GLOBAL = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 /**
- * A PURE plugin-root path template: the placeholder itself, optionally
+ * A PURE placeholder path template: the placeholder itself, optionally
  * followed by a path-y remainder. Anything else — including a secret with a
  * placeholder smuggled onto the end ("sk-live-...${PLUGIN_ROOT}") — takes
- * the normal literal-value path and is never stored.
+ * the normal literal-value path.
  */
-const PURE_ROOT_TEMPLATE =
-  /^\$\{(?:PLUGIN_ROOT|CODEX_PLUGIN_ROOT)\}[A-Za-z0-9._/-]*$/;
+const PURE_PLACEHOLDER_TEMPLATE =
+  /^\$\{(?:PLUGIN_ROOT|PLUGIN_DATA)\}[A-Za-z0-9._/-]*$/;
 
-const ROOT_PLACEHOLDER_VARS = new Set(["PLUGIN_ROOT", "CODEX_PLUGIN_ROOT"]);
+const RESERVED_ENV_KEYS = new Set(["PLUGIN_ROOT", "PLUGIN_DATA"]);
 
 /**
  * Characters allowed in the non-reference remainder of a composite template
@@ -60,6 +100,10 @@ const SECRET_HEADER_NAME =
 
 const SERVER_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+/** Agent Plugins cwd rule: `./…`, `${PLUGIN_ROOT}…`, or `${PLUGIN_DATA}…`. */
+const AP_CWD =
+  /^(?:\.\/|\$\{PLUGIN_ROOT\}(?:\/|$)|\$\{PLUGIN_DATA\}(?:\/|$))/;
+
 function byName<T extends { name: string }>(a: T, b: T): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
@@ -68,19 +112,26 @@ export interface PluginEnvRequirement {
   name: string;
   required: boolean;
   /**
-   * Preserved only when the declared value is a PURE plugin-root path
-   * template (`${PLUGIN_ROOT}/...`) or a composite reference template whose
-   * literal remainder passed the secret screen
-   * (`postgres://${DB_HOST}:${DB_PORT}/x`). Placeholders are substituted by
-   * the runtime at process launch; the parser never does, and any value that
-   * fails the screen is dropped entirely.
+   * Preserved only when the declared value is a PURE placeholder path
+   * template (`${PLUGIN_ROOT}/...`, `${PLUGIN_DATA}/...`) or a composite
+   * reference template whose literal remainder passed the secret screen.
+   * Placeholders are substituted by the runtime at process launch; the
+   * parser never does.
    */
   valueTemplate?: string;
+  /**
+   * A declared literal value that passed the secret screen (non-secret name,
+   * non-secret-looking value). Secret-looking literals are never stored —
+   * they become name-only setup requirements instead.
+   */
+  value?: string;
 }
 
 export interface PluginHeaderRequirement {
   name: string;
   secret: boolean;
+  /** Screened non-secret literal header value, when declared. */
+  value?: string;
 }
 
 export interface NormalizedPluginOAuthHint {
@@ -100,6 +151,8 @@ export type NormalizedPluginMcpServer =
     }
   | {
       transport: "http";
+      /** Declared wire transport — authoritative for the initial connection. */
+      httpVariant: "streamable-http" | "sse";
       url: string;
       headerRequirements: PluginHeaderRequirement[];
       oauth?: NormalizedPluginOAuthHint;
@@ -115,24 +168,25 @@ export interface ParsedPluginServer {
   config: NormalizedPluginMcpServer;
   /** SHA-256 of the canonical JSON of `config`; filled in by the parser. */
   configHash: string;
-  /** Unknown, non-secret source fields preserved for round-tripping. */
-  extensions: Record<string, unknown>;
 }
 
-const STDIO_KNOWN_FIELDS = new Set([
-  "type",
-  "transport",
-  "command",
-  "args",
-  "env",
-  "cwd",
-  "working_directory",
-  "workingDirectory",
-]);
+/** One skipped component, per the spec's failure-isolation boundaries. */
+export interface PluginSkippedComponent {
+  kind: "server" | "skill" | "mcp-config";
+  /** Server key, skill directory name, or the config path. */
+  key: string;
+  reason: string;
+}
 
+const STDIO_KNOWN_FIELDS = new Set(["type", "command", "args", "env", "cwd"]);
+
+/**
+ * `oauth` / `authentication` are MCPJam-recognized extension fields (auth
+ * timing + scopes hints), not part of the published schema — a documented
+ * deviation from the closed entry shape.
+ */
 const HTTP_KNOWN_FIELDS = new Set([
   "type",
-  "transport",
   "url",
   "headers",
   "oauth",
@@ -157,6 +211,15 @@ function normalizeEnv(
   const byNameMap = new Map<string, PluginEnvRequirement>();
   const referencedVars = new Set<string>();
   for (const [name, value] of Object.entries(env as Record<string, unknown>)) {
+    if (RESERVED_ENV_KEYS.has(name)) {
+      // Spec: env may not define the client-controlled placeholder keys.
+      issues.error(
+        "MCP_RESERVED_ENV_KEY",
+        `server "${serverKey}": env may not define "${name}" — it is client-controlled`,
+        { componentKey }
+      );
+      return null;
+    }
     if (typeof value !== "string") {
       issues.error(
         "MCP_INVALID_ENV",
@@ -165,7 +228,7 @@ function normalizeEnv(
       );
       continue;
     }
-    if (PURE_ROOT_TEMPLATE.test(value)) {
+    if (PURE_PLACEHOLDER_TEMPLATE.test(value)) {
       // Pure path template resolved by the runtime at launch — not a secret.
       byNameMap.set(name, { name, required: false, valueTemplate: value });
       continue;
@@ -176,7 +239,7 @@ function normalizeEnv(
     }
     const refs = [...value.matchAll(ENV_REFERENCE_GLOBAL)]
       .map((match) => match[1])
-      .filter((variable) => !ROOT_PLACEHOLDER_VARS.has(variable));
+      .filter((variable) => !RESERVED_ENV_KEYS.has(variable));
     if (refs.length > 0) {
       // Composite template ("postgres://${DB_HOST}:${DB_PORT}/x"): store it
       // with placeholders preserved only when the literal remainder cannot
@@ -192,10 +255,18 @@ function normalizeEnv(
         for (const variable of refs) referencedVars.add(variable);
         continue;
       }
+    } else if (!SECRET_FIELD_NAME.test(name) && !isSecretLikeValue(value)) {
+      // Plain literal that passed the secret screen: store it, so portable
+      // plugins declaring non-secret config ({"MODE": "production"}) run
+      // without a setup step.
+      byNameMap.set(name, { name, required: false, value });
+      continue;
     }
-    // A resolved literal value (or a value with a placeholder smuggled into
-    // a secret-looking string). Never persist it — it may be a credential.
-    byNameMap.set(name, { name, required: false });
+    // A secret-looking literal (or a composite whose remainder failed the
+    // screen). Never persist it — it may be a credential. The bundle DID
+    // declare a value here, so the component cannot run until the user
+    // re-supplies one: the requirement is required, not optional.
+    byNameMap.set(name, { name, required: true });
     issues.warn(
       "MCP_ENV_VALUE_OMITTED",
       `server "${serverKey}": literal value of env "${name}" is not stored; configure it during setup`,
@@ -242,14 +313,25 @@ function normalizeHeaders(
       );
       continue;
     }
-    if (value !== "" && !ENV_REFERENCE.test(value)) {
-      issues.warn(
-        "MCP_HEADER_VALUE_OMITTED",
-        `server "${serverKey}": literal value of header "${name}" is not stored; configure it during setup`,
-        { componentKey }
-      );
+    const secretName = SECRET_HEADER_NAME.test(name);
+    if (value === "" || ENV_REFERENCE.test(value)) {
+      requirements.push({ name, secret: secretName });
+      continue;
     }
-    requirements.push({ name, secret: SECRET_HEADER_NAME.test(name) });
+    const secretValue = isSecretLikeValue(value);
+    if (!secretName && !secretValue) {
+      // Screened non-secret literal ("X-Api-Version: 2") — store it.
+      requirements.push({ name, secret: false, value });
+      continue;
+    }
+    issues.warn(
+      "MCP_HEADER_VALUE_OMITTED",
+      `server "${serverKey}": literal value of header "${name}" is not stored; configure it during setup`,
+      { componentKey }
+    );
+    // A value that LOOKED secret marks the header secret even under an
+    // innocuous name, so setup UIs mask what the user re-enters.
+    requirements.push({ name, secret: secretName || secretValue });
   }
   // Sorted so the configHash is insensitive to source key order.
   return requirements.sort(byName);
@@ -316,11 +398,11 @@ export type PluginMcpTransportDetection =
  * the presence of `command` vs `url`.
  *
  * Pure and policy-free: it reports what the shape says and never applies the
- * plugin path's stricter rules (HTTPS, server-key format, secret stripping).
- * The strict plugin normalizer and the inspector's MCP-JSON import share this
- * one function so `type: "streamable_http"`, `sse`, and a bare `command`/`url`
- * are classified identically everywhere. `message` is caller-facing text; the
- * `code` is the stable contract.
+ * plugin path's stricter rules (explicit `type` required, HTTPS, server-key
+ * format, secret stripping). The inspector's generic MCP-JSON import shares
+ * this function so `type: "streamable_http"`, `sse`, and a bare
+ * `command`/`url` are classified identically everywhere. `message` is
+ * caller-facing text; the `code` is the stable contract.
  */
 export function detectPluginMcpTransport(
   config: unknown,
@@ -382,15 +464,29 @@ export function detectPluginMcpTransport(
   };
 }
 
-function detectTransport(
+/**
+ * Strict Agent Plugins entry transports. The declared `type` is authoritative
+ * for the initial connection attempt — never inferred, never folded.
+ */
+type ApDeclaredTransport = "stdio" | "streamable-http" | "sse";
+
+function readDeclaredTransport(
   serverKey: string,
   componentKey: string,
   record: Record<string, unknown>,
   issues: PluginIssueCollector
-): "stdio" | "http" | null {
-  const detected = detectPluginMcpTransport(record, serverKey);
-  if (detected.ok) return detected.transport;
-  issues.error(detected.code, detected.message, { componentKey });
+): ApDeclaredTransport | null {
+  const declared = record.type;
+  if (declared === "stdio" || declared === "streamable-http" || declared === "sse") {
+    return declared;
+  }
+  issues.error(
+    "MCP_UNKNOWN_TRANSPORT",
+    declared === undefined
+      ? `server "${serverKey}": missing required "type" (stdio | streamable-http | sse)`
+      : `server "${serverKey}": unknown transport "${String(declared)}"`,
+    { componentKey }
+  );
   return null;
 }
 
@@ -411,41 +507,64 @@ function normalizeServer(
   }
   const record = raw as Record<string, unknown>;
 
-  const transport = detectTransport(serverKey, componentKey, record, issues);
-  if (transport === null) return null;
+  const declared = readDeclaredTransport(
+    serverKey,
+    componentKey,
+    record,
+    issues
+  );
+  if (declared === null) return null;
 
+  // Closed entry schema: an unknown field invalidates only this entry.
   const knownFields =
-    transport === "stdio" ? STDIO_KNOWN_FIELDS : HTTP_KNOWN_FIELDS;
-  const unknownFields: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (knownFields.has(key)) continue;
-    unknownFields[key] = value;
-  }
-  // Recursive sanitation of unknown fields: secret-looking keys and values
-  // are dropped at every depth before anything reaches the stored DTO.
-  const extensions = sanitizeUnknownRecord(unknownFields, {
-    issues,
-    secretCode: "MCP_SECRET_FIELD_OMITTED",
-    label: `server "${serverKey}"`,
-    context: { componentKey },
-  });
-  for (const key of Object.keys(extensions)) {
-    issues.warn(
-      "MCP_UNKNOWN_FIELD",
-      `server "${serverKey}": field "${key}" is not recognized; preserved in extensions`,
-      { componentKey }
-    );
+    declared === "stdio" ? STDIO_KNOWN_FIELDS : HTTP_KNOWN_FIELDS;
+  for (const key of Object.keys(record)) {
+    if (!knownFields.has(key)) {
+      issues.error(
+        "MCP_UNKNOWN_FIELD",
+        `server "${serverKey}": field "${key}" is not part of the Agent Plugins ${declared} entry schema`,
+        { componentKey }
+      );
+      return null;
+    }
   }
 
-  if (transport === "stdio") {
-    const command = record.command;
-    if (typeof command !== "string" || command.length === 0) {
+  if (declared === "stdio") {
+    const declaredCommand = record.command;
+    if (typeof declaredCommand !== "string" || declaredCommand.length === 0) {
       issues.error(
         "MCP_MISSING_COMMAND",
         `server "${serverKey}": stdio servers require a non-empty "command"`,
         { componentKey }
       );
       return null;
+    }
+    let command: string = declaredCommand;
+    // Spec: plugin variables expand only in args, env values, and cwd —
+    // a placeholder in `command` can never be expanded, so reject the entry.
+    if (containsPluginPlaceholder(command)) {
+      issues.error(
+        "MCP_PLACEHOLDER_IN_COMMAND",
+        `server "${serverKey}": placeholders are not expanded in "command"; use a "./" path or a bare command`,
+        { componentKey }
+      );
+      return null;
+    }
+    // `./` commands resolve against the plugin root with containment (spec).
+    // The stored config carries the CANONICAL `${PLUGIN_ROOT}/...` form: a
+    // bare relative string would look like an ordinary server config to the
+    // runtime and spawn against the host process directory, while the
+    // placeholder form routes through materialization and substitutes to the
+    // verified bundle path — the only correct resolution.
+    if (command.startsWith("./")) {
+      const resolved = resolveContainedPath("", command);
+      if (!resolved.ok) {
+        issues.error(resolved.code, `server "${serverKey}": ${resolved.message}`, {
+          componentKey,
+        });
+        return null;
+      }
+      command = `${PLUGIN_ROOT_PLACEHOLDER}/${resolved.path}`;
     }
     let args: string[] = [];
     if (record.args !== undefined) {
@@ -471,29 +590,45 @@ function normalizeServer(
     if (envRequirements === null) return null;
 
     let workingDirectory: string | undefined;
-    const cwd =
-      record.cwd ?? record.working_directory ?? record.workingDirectory;
-    if (cwd !== undefined) {
+    if (record.cwd !== undefined) {
+      const cwd = record.cwd;
       if (typeof cwd !== "string") {
         issues.error(
           "MCP_INVALID_SERVER",
-          `server "${serverKey}": working directory must be a string`,
+          `server "${serverKey}": "cwd" must be a string`,
           { componentKey }
         );
         return null;
       }
-      if (
-        (cwd.startsWith("/") || /^[A-Za-z]:[\\/]/.test(cwd)) &&
-        !containsRootPlaceholder(cwd)
-      ) {
+      if (!AP_CWD.test(cwd)) {
         issues.error(
-          "MCP_ABSOLUTE_WORKING_DIRECTORY",
-          `server "${serverKey}": working directory must be plugin-root-relative or use \${PLUGIN_ROOT}`,
+          "MCP_INVALID_WORKING_DIRECTORY",
+          `server "${serverKey}": "cwd" must start with "./", "\${PLUGIN_ROOT}", or "\${PLUGIN_DATA}"`,
           { componentKey }
         );
         return null;
       }
-      workingDirectory = cwd;
+      // `./` working directories canonicalize to the `${PLUGIN_ROOT}` form,
+      // same as commands: the bare relative string carries no placeholder,
+      // so nothing downstream would ever resolve it against the bundle.
+      if (cwd.startsWith("./")) {
+        if (cwd === "./") {
+          workingDirectory = PLUGIN_ROOT_PLACEHOLDER;
+        } else {
+          const resolved = resolveContainedPath("", cwd);
+          if (!resolved.ok) {
+            issues.error(
+              resolved.code,
+              `server "${serverKey}": ${resolved.message}`,
+              { componentKey }
+            );
+            return null;
+          }
+          workingDirectory = `${PLUGIN_ROOT_PLACEHOLDER}/${resolved.path}`;
+        }
+      } else {
+        workingDirectory = cwd;
+      }
     }
 
     return {
@@ -507,16 +642,15 @@ function normalizeServer(
         envRequirements,
         ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       },
-      extensions,
     };
   }
 
-  // transport === "http"
+  // declared === "streamable-http" | "sse"
   const url = record.url;
   if (typeof url !== "string" || url.length === 0) {
     issues.error(
       "MCP_MISSING_URL",
-      `server "${serverKey}": http servers require a non-empty "url"`,
+      `server "${serverKey}": ${declared} servers require a non-empty "url"`,
       { componentKey }
     );
     return null;
@@ -574,11 +708,11 @@ function normalizeServer(
     sourcePath,
     config: {
       transport: "http",
+      httpVariant: declared,
       url,
       headerRequirements,
       ...(oauth !== undefined ? { oauth } : {}),
     },
-    extensions,
   };
 }
 
@@ -592,7 +726,7 @@ export interface PluginMcpServerEntry {
    * — VALUES INTACT. This is the caller's own input handed back in a uniform
    * shape, not a normalized DTO: it may carry env values, header values, and
    * other credentials. Never persist it or fold it into a hash. Use
-   * {@link normalizePluginMcpConfig} when you need the value-free form.
+   * {@link normalizePluginMcpConfig} when you need the screened form.
    */
   config: unknown;
 }
@@ -619,17 +753,14 @@ export type PluginMcpServerMapSelection =
     };
 
 /**
- * Resolve which of the three compatible document shapes a `.mcp.json`-style
- * config uses — a direct server map, an `mcp_servers` wrapper (current OpenAI
- * plugin docs), or an `mcpServers` wrapper (MCPJam/Claude-style) — and return
- * its entries in declaration order.
+ * Resolve which of the three compatible document shapes an MCP-JSON config
+ * uses — a direct server map, an `mcp_servers` wrapper, or an `mcpServers`
+ * wrapper — and return its entries in declaration order.
  *
- * Pure and policy-free: entries come back unfiltered and unvalidated, so a
- * caller that tolerates server names or URLs the plugin path rejects (the
- * inspector's MCP-JSON import) keeps them, while
- * {@link normalizePluginMcpConfig} layers the strict plugin rules on top.
- * Sharing this function is what makes the OpenAI direct and `mcp_servers`
- * shapes import identically everywhere.
+ * Pure and policy-free: entries come back unfiltered and unvalidated. The
+ * inspector's generic MCP-JSON import keeps names/URLs the plugin path
+ * rejects, while {@link normalizePluginMcpConfig} layers the strict Agent
+ * Plugins rules on top.
  */
 export function selectPluginMcpServerMap(
   raw: unknown
@@ -700,34 +831,155 @@ export function selectPluginMcpServerMap(
   };
 }
 
+export interface PluginMcpConfigNormalization {
+  /** Valid servers, in declaration order (without `configHash`). */
+  servers: Array<Omit<ParsedPluginServer, "configHash">>;
+  /** Per-entry skips (failure isolation) — never bundle-fatal. */
+  skipped: PluginSkippedComponent[];
+  /**
+   * `null` when the DOCUMENT is invalid (missing/unsupported `$schema`,
+   * missing `mcpServers`, unknown top-level field, version mismatch): the
+   * MCP component type is disabled; `servers` is empty and the document
+   * issue was reported on the parent collector as a warning.
+   */
+  documentVersion: string | null;
+}
+
 /**
- * Normalize a parsed `.mcp.json` document. Returns the normalized servers
- * (without `configHash`, which the parser computes) in declaration order.
+ * Normalize a parsed root `mcp.json` document, Agent Plugins-strict.
+ *
+ * `manifestSchemaVersion` is the version resolved from `plugin.json` —
+ * the two documents MUST target the same Agent Plugins version (spec).
+ * All failure boundaries are narrow: entry problems skip the entry,
+ * document problems disable the component type. Nothing here is
+ * bundle-fatal.
  */
 export function normalizePluginMcpConfig(
   raw: unknown,
-  context: { sourcePath: string; issues: PluginIssueCollector }
-): Array<Omit<ParsedPluginServer, "configHash">> {
-  const { sourcePath, issues } = context;
+  context: {
+    sourcePath: string;
+    manifestSchemaVersion: string;
+    issues: PluginIssueCollector;
+    /**
+     * Bundle-level cap on DECLARED `mcpServers` entries. Enforced before
+     * entry isolation runs, so a flood of malformed entries cannot bypass
+     * the limit or bloat the skipped/warning lists. Emitted as an
+     * error-severity issue — the caller's throw makes it bundle-fatal.
+     */
+    maxServers?: number;
+  }
+): PluginMcpConfigNormalization {
+  const { sourcePath, manifestSchemaVersion, issues, maxServers } = context;
+  const disabled = (
+    code: PluginIssueCode,
+    message: string
+  ): PluginMcpConfigNormalization => {
+    issues.warn(code, message, { path: sourcePath });
+    issues.warn(
+      "COMPONENT_SKIPPED",
+      `MCP servers are disabled for this bundle: ${message}`,
+      { path: sourcePath }
+    );
+    return {
+      servers: [],
+      skipped: [{ kind: "mcp-config", key: sourcePath, reason: message }],
+      documentVersion: null,
+    };
+  };
 
-  const selection = selectPluginMcpServerMap(raw);
-  if (!selection.ok) {
-    issues.error(selection.code, selection.message, { path: sourcePath });
-    return [];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return disabled("MCP_INVALID_CONFIG", "mcp.json must be a JSON object");
+  }
+  const record = raw as Record<string, unknown>;
+
+  const schema = record.$schema;
+  const documentVersion =
+    typeof schema === "string"
+      ? Object.keys(PLUGIN_MCP_SCHEMAS).find(
+          (version) => PLUGIN_MCP_SCHEMAS[version] === schema
+        )
+      : undefined;
+  if (documentVersion === undefined) {
+    return disabled(
+      "MCP_UNSUPPORTED_SCHEMA",
+      schema === undefined
+        ? `mcp.json is missing the required "$schema" field`
+        : `mcp.json "$schema" is not a supported Agent Plugins schema: ${String(schema)}`
+    );
+  }
+  if (documentVersion !== manifestSchemaVersion) {
+    return disabled(
+      "MCP_UNSUPPORTED_SCHEMA",
+      `mcp.json targets Agent Plugins ${documentVersion} but plugin.json targets ${manifestSchemaVersion}; versions must match`
+    );
+  }
+
+  for (const key of Object.keys(record)) {
+    if (key !== "$schema" && key !== "mcpServers") {
+      return disabled(
+        "MCP_INVALID_CONFIG",
+        `mcp.json field "${key}" is not part of the Agent Plugins schema`
+      );
+    }
+  }
+
+  const serverMap = record.mcpServers;
+  if (
+    serverMap === null ||
+    serverMap === undefined ||
+    typeof serverMap !== "object" ||
+    Array.isArray(serverMap)
+  ) {
+    return disabled(
+      "MCP_INVALID_CONFIG",
+      `mcp.json requires an "mcpServers" object`
+    );
+  }
+
+  const declaredKeys = Object.keys(serverMap as Record<string, unknown>);
+  if (maxServers !== undefined && declaredKeys.length > maxServers) {
+    issues.error(
+      "MCP_TOO_MANY_SERVERS",
+      `mcp.json declares ${declaredKeys.length} MCP servers; the limit is ${maxServers}`,
+      { path: sourcePath }
+    );
+    return { servers: [], skipped: [], documentVersion };
   }
 
   const servers: Array<Omit<ParsedPluginServer, "configHash">> = [];
-  for (const { key: serverKey, config } of selection.servers) {
+  const skipped: PluginSkippedComponent[] = [];
+  const skip = (key: string, scoped: PluginIssueCollector): void => {
+    const reason = scoped.firstErrorMessage() ?? "invalid server entry";
+    issues.absorbDemoted(scoped);
+    issues.warn(
+      "COMPONENT_SKIPPED",
+      `server "${key}" was skipped: ${reason}`,
+      { path: sourcePath, componentKey: `server:${key}` }
+    );
+    skipped.push({ kind: "server", key, reason });
+  };
+
+  for (const [serverKey, config] of Object.entries(
+    serverMap as Record<string, unknown>
+  )) {
+    const scoped = new PluginIssueCollector();
     if (!SERVER_KEY.test(serverKey)) {
-      issues.error(
+      scoped.error(
         "MCP_INVALID_SERVER_NAME",
         `server name "${serverKey}" must match ${SERVER_KEY}`,
         { path: sourcePath }
       );
+      skip(serverKey, scoped);
       continue;
     }
-    const server = normalizeServer(serverKey, sourcePath, config, issues);
-    if (server !== null) servers.push(server);
+    const server = normalizeServer(serverKey, sourcePath, config, scoped);
+    if (server === null || scoped.hasErrors()) {
+      skip(serverKey, scoped);
+      continue;
+    }
+    // Entry-level warnings (omitted values, loopback URLs) survive as-is.
+    issues.absorbDemoted(scoped);
+    servers.push(server);
   }
-  return servers;
+  return { servers, skipped, documentVersion };
 }

@@ -1,20 +1,25 @@
 /**
  * Root-variable substitution AT SPAWN (INS-6).
  *
- * The SDK parser preserves `${PLUGIN_ROOT}` / `${CODEX_PLUGIN_ROOT}` verbatim
- * on purpose: at parse time there IS no root — the bundle has not been
- * materialized, and a value baked in then would be a local absolute path
- * persisted into an immutable, content-addressed version (rotating its hash and
- * pinning one user's home directory into everyone's pin). Substitution belongs
- * here, at the last possible moment, against a cache directory derived from the
- * bundle hash.
+ * The SDK parser preserves `${PLUGIN_ROOT}` verbatim on purpose: at parse
+ * time there IS no root — the bundle has not been materialized, and a value
+ * baked in then would be a local absolute path persisted into an immutable,
+ * content-addressed version (rotating its hash and pinning one user's home
+ * directory into everyone's pin). Substitution belongs here, at the last
+ * possible moment, against a cache directory derived from the bundle hash.
+ *
+ * `${PLUGIN_DATA}` substitutes to the writable per-plugin data directory
+ * (`plugin-data.ts`) when the caller supplies one; without it the
+ * placeholder stays verbatim and the leftover guard in
+ * `preparePluginStdioLaunch` refuses the spawn — a child process never sees
+ * a placeholder either way.
  *
  * The placeholder list itself is imported from the SDK rather than restated —
- * one list, one rule, no drift when a third alias appears.
+ * one list, one rule, no drift when the spec evolves.
  */
 import {
   PLUGIN_ROOT_PLACEHOLDERS,
-  containsRootPlaceholder,
+  containsPluginPlaceholder,
 } from "@mcpjam/sdk/plugin-bundle";
 
 /** The stdio fields a plugin component can express a root placeholder in. */
@@ -27,13 +32,10 @@ export interface PluginStdioLaunchSpec {
 
 /**
  * Environment variables every plugin child process gets, pointing at the
- * materialized bundle. Both names are set unconditionally: a bundle authored
- * against Codex reads `CODEX_PLUGIN_ROOT`, ours reads `PLUGIN_ROOT`, and a
- * component that resolves its own assets at runtime (rather than through an
- * argv placeholder) can only work if the alias it was written against exists.
+ * materialized bundle.
  */
 export function pluginRootEnv(root: string): Record<string, string> {
-  return { PLUGIN_ROOT: root, CODEX_PLUGIN_ROOT: root };
+  return { PLUGIN_ROOT: root };
 }
 
 /** Replace every known root placeholder in one value. */
@@ -45,41 +47,77 @@ export function substitutePluginRoot(value: string, root: string): string {
   return out;
 }
 
-/** Does any field still reference a root placeholder? */
+/**
+ * Does any field still reference a plugin placeholder (`${PLUGIN_ROOT}` or
+ * `${PLUGIN_DATA}`)? This is the detection signal that routes a server
+ * config through the plugin materialization path instead of the ordinary
+ * stdio spawn.
+ */
 export function needsPluginRoot(spec: PluginStdioLaunchSpec): boolean {
   return (
-    containsRootPlaceholder(spec.command) ||
-    spec.args.some(containsRootPlaceholder) ||
-    Object.values(spec.env).some(containsRootPlaceholder) ||
+    containsPluginPlaceholder(spec.command) ||
+    spec.args.some(containsPluginPlaceholder) ||
+    Object.values(spec.env).some(containsPluginPlaceholder) ||
     (spec.workingDirectory !== undefined &&
-      containsRootPlaceholder(spec.workingDirectory))
+      containsPluginPlaceholder(spec.workingDirectory))
   );
 }
 
 /**
- * Resolve a plugin stdio component against its materialized bundle.
+ * Substitute both runtime placeholders in one value. `${PLUGIN_ROOT}` maps to
+ * the immutable materialized bundle; `${PLUGIN_DATA}` maps to the writable
+ * per-plugin data directory (spec: created before launch, preserved across
+ * updates). When no data directory is supplied, `${PLUGIN_DATA}` is left
+ * verbatim — the caller's leftover-placeholder guard then refuses the spawn,
+ * so the literal can never reach a child process.
+ */
+export function substitutePluginPlaceholders(
+  value: string,
+  roots: { root: string; dataDir?: string }
+): string {
+  // Single pass over the ORIGINAL value: sequential per-token replacement
+  // would re-scan earlier substitutions, so a substituted path that happened
+  // to contain a literal placeholder token would be substituted again.
+  return value.replace(/\$\{PLUGIN_ROOT\}|\$\{PLUGIN_DATA\}/g, (token) =>
+    token === "${PLUGIN_ROOT}" ? roots.root : (roots.dataDir ?? token)
+  );
+}
+
+/**
+ * Resolve a plugin stdio component against its materialized bundle and its
+ * writable data directory.
  *
- * The injected root aliases are applied FIRST and can be overridden by the
- * component's own env only if the bundle explicitly declares those names —
- * substitution runs over the merged map, so a component that sets
- * `PLUGIN_ROOT=${PLUGIN_ROOT}/inner` still gets a real path.
+ * The injected `PLUGIN_ROOT`/`PLUGIN_DATA` aliases are applied FIRST; the
+ * component's own env entries are substituted over them. (The SDK parser
+ * rejects bundles whose env declares the reserved `PLUGIN_ROOT`/`PLUGIN_DATA`
+ * keys, so the spec's env can never shadow the injected aliases.)
  */
 export function resolvePluginStdioLaunch(
   spec: PluginStdioLaunchSpec,
-  root: string
+  root: string,
+  options?: { dataDir?: string }
 ): Required<Pick<PluginStdioLaunchSpec, "command" | "args" | "env">> & {
   workingDirectory?: string;
 } {
-  const env: Record<string, string> = { ...pluginRootEnv(root) };
+  const roots = { root, dataDir: options?.dataDir };
+  const env: Record<string, string> = {
+    ...pluginRootEnv(root),
+    ...(roots.dataDir !== undefined ? { PLUGIN_DATA: roots.dataDir } : {}),
+  };
   for (const [key, value] of Object.entries(spec.env)) {
-    env[key] = substitutePluginRoot(value, root);
+    env[key] = substitutePluginPlaceholders(value, roots);
   }
   return {
-    command: substitutePluginRoot(spec.command, root),
-    args: spec.args.map((arg) => substitutePluginRoot(arg, root)),
+    command: substitutePluginPlaceholders(spec.command, roots),
+    args: spec.args.map((arg) => substitutePluginPlaceholders(arg, roots)),
     env,
     ...(spec.workingDirectory !== undefined
-      ? { workingDirectory: substitutePluginRoot(spec.workingDirectory, root) }
+      ? {
+          workingDirectory: substitutePluginPlaceholders(
+            spec.workingDirectory,
+            roots
+          ),
+        }
       : {}),
   };
 }

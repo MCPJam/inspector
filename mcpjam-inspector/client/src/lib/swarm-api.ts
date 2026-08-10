@@ -90,12 +90,30 @@ export const SWARM_ACTIONS = {
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
 /** Terminal + in-flight states a journey run can surface in the UI. */
+/**
+ * A run's status AS DISPLAYED. Not identical to the stored one.
+ *
+ * The backend stores five statuses (`running` … `rate_limited`) and records
+ * two special endings as a MARKER on `error` rather than as a status:
+ * `canceled` (someone stopped it) and `stale_runner` (the runner went silent
+ * and the watchdog settled it). Both leave `status: "failed"`.
+ *
+ * That is a deliberate backend decision — a status literal would have to be
+ * threaded through `recomputeRunSummaries` and every exhaustive switch, for a
+ * distinction only presentation cares about — but it means a UI reading
+ * `status` alone paints a deliberate stop bright red as a failure. `stale` was
+ * already in this union and NOTHING ever produced it: the chip's `case "stale"`
+ * has been dead since it was written. Use `journeyRunDisplayStatus` to get one
+ * of these from a run.
+ */
 export type JourneyRunStatus =
   | "running"
   | "completed"
   | "partial"
   | "failed"
   | "rate_limited"
+  // Display-only, derived from the `error` marker. See above.
+  | "canceled"
   | "stale";
 
 export interface JourneyRunSummary {
@@ -191,6 +209,11 @@ export interface JourneyRunAttempt {
 export interface JourneyRun {
   _id: string;
   status: JourneyRunStatus | string;
+  /**
+   * Free-form ending marker. `"canceled"` and `"stale_runner"` are the two
+   * that change how a run should be PRESENTED — see `JourneyRunStatus`.
+   */
+  error?: string;
   summary: JourneyRunSummary;
   hostSummaries: JourneyHostSummary[];
   /** Per-attempt outcomes. Absent on runs read before the field shipped. */

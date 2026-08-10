@@ -93,6 +93,37 @@ export function translateConvexWriteError(
   const structuredMessage =
     typeof data?.message === "string" ? data.message : undefined;
 
+  // The `sandboxes-enabled` beta gate (mcpjam-backend lib/sandboxesGate.ts).
+  //
+  // Handled BEFORE the generic branches, and given a real 403 with the real
+  // message, because the default treatment would be actively misleading: the
+  // gate throws a ConvexError whose `code` would otherwise fall through to
+  // the FORBIDDEN branch below, which collapses to 404 so a non-member cannot
+  // probe for existence. That rule is right for membership and wrong here — a
+  // flagged-off customer would be told their own project does not exist,
+  // rather than that a feature is not available to them yet.
+  //
+  // The message is the backend's, forwarded verbatim: it is already
+  // customer-facing, already feature-parameterized ("Swarms" vs "User
+  // testing"), and re-writing it here would create a second place to keep
+  // that copy correct.
+  if (code === "FEATURE_UNAVAILABLE") {
+    return new WebRouteError(
+      403,
+      // FORBIDDEN, not FEATURE_NOT_SUPPORTED, and the distinction is not
+      // cosmetic: the canonical contract maps FEATURE_NOT_SUPPORTED to **422**
+      // (unprocessable content), which describes a malformed request. This is
+      // a well-formed request the server refuses to authorize for this
+      // organization — 403, exactly what FORBIDDEN means. What makes it safe to
+      // reuse the code here is that this branch runs BEFORE the generic
+      // FORBIDDEN one, so it keeps the real message and its 403 instead of
+      // being collapsed into the neutral 404.
+      ErrorCode.FORBIDDEN,
+      structuredMessage ??
+        "This feature is not available for your organization."
+    );
+  }
+
   if (code === "CONFLICT") {
     return new WebRouteError(
       409,

@@ -5,7 +5,7 @@ import {
   materializeSwarmTargets,
   SwarmTargetMaterializeError,
 } from "../swarm-target-materialize";
-import { emptySwarmLegoStack } from "../swarm-target-types";
+import { emptyEnvironmentStack } from "@/components/environment-composer/environment-stack";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { MAX_ENVIRONMENTS_PER_JOURNEY } from "../journey-environments";
 
@@ -83,7 +83,7 @@ describe("materializeSwarmTargets", () => {
       projectId: "proj-1",
       stackName: "Billing",
       legos: {
-        ...emptySwarmLegoStack(),
+        ...emptyEnvironmentStack(),
         hostIds: ["h1", "h2"],
         serverAttachmentId: "sg1",
       },
@@ -123,7 +123,7 @@ describe("materializeSwarmTargets", () => {
       materializeSwarmTargets({
         projectId: "proj-1",
         stackName: "Swarm setup",
-        legos: { ...emptySwarmLegoStack(), hostIds },
+        legos: { ...emptyEnvironmentStack(), hostIds },
         hostName: (id) => id,
         liveEnvironments: [],
         createEnvironment: vi.fn(),
@@ -143,7 +143,7 @@ describe("materializeSwarmTargets", () => {
     await materializeSwarmTargets({
       projectId: "proj-1",
       stackName: describe,
-      legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+      legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
       hostName: () => "Claude Code",
       liveEnvironments: [],
       createEnvironment,
@@ -168,7 +168,7 @@ describe("materializeSwarmTargets", () => {
     await materializeSwarmTargets({
       projectId: "proj-1",
       stackName: "Billing",
-      legos: { ...emptySwarmLegoStack(), hostIds: ["h1", "h2"] },
+      legos: { ...emptyEnvironmentStack(), hostIds: ["h1", "h2"] },
       // Both clients render the same display name, so the auto-names collide.
       hostName: () => "Claude",
       liveEnvironments: [
@@ -195,7 +195,7 @@ describe("materializeSwarmTargets", () => {
     const result = await materializeSwarmTargets({
       projectId: "proj-1",
       stackName: "Billing",
-      legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+      legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
       hostName: () => "Claude",
       liveEnvironments: [],
       createEnvironment,
@@ -223,7 +223,7 @@ describe("materializeSwarmTargets", () => {
       materializeSwarmTargets({
         projectId: "proj-1",
         stackName: "Billing",
-        legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+        legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
         hostName: () => "Claude",
         liveEnvironments: [],
         createEnvironment,
@@ -236,7 +236,7 @@ describe("materializeSwarmTargets", () => {
       materializeSwarmTargets({
         projectId: "proj-1",
         stackName: "Billing",
-        legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+        legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
         hostName: () => "Claude",
         liveEnvironments: [],
         createEnvironment,
@@ -258,7 +258,7 @@ describe("materializeSwarmTargets", () => {
       projectId: "proj-1",
       stackName: "Swarm setup",
       legos: {
-        ...emptySwarmLegoStack(),
+        ...emptyEnvironmentStack(),
         hostIds: ["h1"],
         skillSelection: { mode: "explicit", skillIds: ["sk1"] },
         computerEnvironmentId: "img1",

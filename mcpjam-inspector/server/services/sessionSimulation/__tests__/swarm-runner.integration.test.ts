@@ -42,10 +42,9 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
 });
 
 vi.mock("../../../utils/assistant-turn.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../utils/assistant-turn.js")>(
-      "../../../utils/assistant-turn.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../../utils/assistant-turn.js")
+  >("../../../utils/assistant-turn.js");
   return {
     ...actual,
     runAssistantTurn: (...args: unknown[]) => runAssistantTurnMock(...args),
@@ -53,10 +52,9 @@ vi.mock("../../../utils/assistant-turn.js", async () => {
 });
 
 vi.mock("../../../utils/org-model-config.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../utils/org-model-config.js")>(
-      "../../../utils/org-model-config.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../../utils/org-model-config.js")
+  >("../../../utils/org-model-config.js");
   return {
     ...actual,
     resolveSyntheticModelSource: (...args: unknown[]) =>
@@ -65,10 +63,9 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 vi.mock("../../../utils/chat-ingestion.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../utils/chat-ingestion.js")>(
-      "../../../utils/chat-ingestion.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-ingestion.js")
+  >("../../../utils/chat-ingestion.js");
   return {
     ...actual,
     persistChatSessionToConvex: (...args: unknown[]) => {
@@ -79,10 +76,9 @@ vi.mock("../../../utils/chat-ingestion.js", async () => {
 });
 
 vi.mock("../../../utils/chat-v2-orchestration.js", async () => {
-  const actual =
-    await vi.importActual<
-      typeof import("../../../utils/chat-v2-orchestration.js")
-    >("../../../utils/chat-v2-orchestration.js");
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-v2-orchestration.js")
+  >("../../../utils/chat-v2-orchestration.js");
   return {
     ...actual,
     prepareChatV2: (...args: unknown[]) => prepareChatV2Mock(...args),
@@ -90,10 +86,9 @@ vi.mock("../../../utils/chat-v2-orchestration.js", async () => {
 });
 
 vi.mock("../../browser-session-context.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../browser-session-context.js")>(
-      "../../browser-session-context.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../browser-session-context.js")
+  >("../../browser-session-context.js");
   return {
     ...actual,
     createBrowserSessionContext: (...args: unknown[]) =>
@@ -102,10 +97,9 @@ vi.mock("../../browser-session-context.js", async () => {
 });
 
 vi.mock("../../swarm-agent.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../swarm-agent.js")>(
-      "../../swarm-agent.js"
-    );
+  const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
+    "../../swarm-agent.js"
+  );
   return {
     ...actual,
     reportAttempt: (...args: unknown[]) => {
@@ -114,7 +108,8 @@ vi.mock("../../swarm-agent.js", async () => {
     },
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
-    heartbeatJourneyRun: (...args: unknown[]) => heartbeatJourneyRunMock(...args),
+    heartbeatJourneyRun: (...args: unknown[]) =>
+      heartbeatJourneyRunMock(...args),
   };
 });
 
@@ -172,8 +167,7 @@ function baseOpts() {
     sessionsPerTarget: 1,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
-    bearer: "token",
-    authHeader: "Bearer token",
+    getBearer: async () => "token",
     managerFactory: async () => ({
       manager: {
         hasServer: () => false,

@@ -82,13 +82,11 @@ describe("plugin stdio component (desktop)", () => {
     )) as { content: Array<{ text: string }> };
     const reported = JSON.parse(result.content[0].text) as {
       pluginRoot: string;
-      codexPluginRoot: string;
       scriptPath: string;
       dataFileArg: string;
     };
 
     expect(reported.pluginRoot).toBe(materialized.root);
-    expect(reported.codexPluginRoot).toBe(materialized.root);
     expect(reported.scriptPath).toBe(join(materialized.root, "server", "index.js"));
     expect(reported.dataFileArg).toBe(join(materialized.root, "data.txt"));
 
