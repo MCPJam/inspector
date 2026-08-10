@@ -208,7 +208,18 @@ function DiscordCard({
 }) {
   const appNavigate = useAppNavigate();
   const enabled = useDiscordAgentEnabled();
-  const { connections } = useOrgSlackSettings(activeOrganizationId, "discord");
+  // THE FLAG HAS TO REACH THE QUERY, not just the render. A hook cannot be
+  // called conditionally, so `if (!enabled) return null` below happens too
+  // late — the query would already have fired for every visitor to this page,
+  // including flagged-off ones. That matters because this is the one call
+  // that sends `surfaceKind: "discord"`, which a backend deployed before that
+  // argument existed rejects: the throw would hit this card's error boundary
+  // and render an ErrorCard to someone who should see no Discord entry at all.
+  // A null organization id is the hook's own documented skip.
+  const { connections } = useOrgSlackSettings(
+    enabled ? activeOrganizationId : null,
+    "discord"
+  );
 
   if (!enabled) return null;
 

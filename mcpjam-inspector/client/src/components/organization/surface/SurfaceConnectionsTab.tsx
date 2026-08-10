@@ -412,6 +412,13 @@ export function SurfaceConnectionsTab({
               </label>
               <Input
                 id="binding-channel"
+                // The hint below carries the ONLY instructions for finding a
+                // channel id, and they differ per surface (Slack's About
+                // panel vs Discord's Developer Mode). A screen reader
+                // announces the label and placeholder but not a sibling
+                // paragraph, so without this the one piece of copy that makes
+                // the field answerable is the piece that goes unread.
+                aria-describedby="binding-channel-hint"
                 className="w-52"
                 placeholder={copy.channelIdPlaceholder}
                 value={newBinding.channelId}
@@ -464,7 +471,10 @@ export function SurfaceConnectionsTab({
               Bind channel
             </Button>
           </div>
-          <p className="px-4 pb-3 text-xs text-muted-foreground">
+          <p
+            id="binding-channel-hint"
+            className="px-4 pb-3 text-xs text-muted-foreground"
+          >
             {copy.channelIdHint}
           </p>
         </SettingsSection>

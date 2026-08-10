@@ -9,6 +9,7 @@ const {
   mockOrgsLoading,
   mockSlackConnections,
   mockDiscordConnections,
+  mockSurfaceSettingsCalls,
   mockDiscord,
 } = vi.hoisted(() => ({
   mockAvailability: {
@@ -28,6 +29,12 @@ const {
     value: undefined as
       | { workspaces: Array<{ installed: boolean }> }
       | undefined,
+  },
+  mockSurfaceSettingsCalls: {
+    value: [] as Array<{
+      organizationId: string | null;
+      surfaceKind?: string;
+    }>,
   },
   mockDiscord: {
     enabled: false,
@@ -52,12 +59,23 @@ vi.mock("@/hooks/useOrgSlackSettings", () => ({
   // Surface-aware, because the Slack and Discord cards now read the same hook
   // with different arguments — a mock that ignored the kind would let a
   // Discord card silently render Slack's workspaces and still pass.
-  useOrgSlackSettings: (_organizationId: string, surfaceKind?: string) => ({
-    connections:
-      surfaceKind === "discord"
-        ? mockDiscordConnections.value
-        : mockSlackConnections.value,
-  }),
+  //
+  // Calls are RECORDED so a test can assert the flag reached the query, not
+  // just the render: the hook skips on a null organization id, and that is
+  // the only thing keeping a flagged-off visitor from firing a
+  // `surfaceKind: "discord"` query at a backend that may reject it.
+  useOrgSlackSettings: (
+    organizationId: string | null,
+    surfaceKind?: string
+  ) => {
+    mockSurfaceSettingsCalls.value.push({ organizationId, surfaceKind });
+    return {
+      connections:
+        surfaceKind === "discord"
+          ? mockDiscordConnections.value
+          : mockSlackConnections.value,
+    };
+  },
 }));
 
 vi.mock("@/lib/app-navigation", () => ({
@@ -107,6 +125,7 @@ function renderRoute({
   mockAvailability.error = error;
   mockRepos.value = repos;
   mockSlackConnections.value = slackConnections;
+  mockSurfaceSettingsCalls.value = [];
   mockNavigate.mockClear();
   return render(
     <MemoryRouter initialEntries={["/settings/integrations"]}>
@@ -218,6 +237,36 @@ describe("IntegrationsRoute", () => {
       // anyone else. Offering an install would invite a dead bot into a server.
       renderRoute({ availability: { state: "enabled" }, repos: [] });
       expect(screen.queryByText("Discord")).not.toBeInTheDocument();
+    });
+
+    it("does not query at all while the flag is off", () => {
+      // A hook cannot be called conditionally, so the flag has to reach the
+      // hook's own skip condition — an early `return null` happens after the
+      // query has already fired. This is the one call that sends
+      // `surfaceKind: "discord"`, which a backend deployed before that
+      // argument existed rejects; the throw would surface as an ErrorCard to
+      // a user who should see no Discord entry whatsoever.
+      renderRoute({ availability: { state: "enabled" }, repos: [] });
+      const discordCalls = mockSurfaceSettingsCalls.value.filter(
+        (call) => call.surfaceKind === "discord"
+      );
+      expect(discordCalls.length).toBeGreaterThan(0);
+      for (const call of discordCalls) {
+        expect(call.organizationId).toBeNull();
+      }
+    });
+
+    it("queries with the real org id once the flag is on", () => {
+      mockDiscord.enabled = true;
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        expect(mockSurfaceSettingsCalls.value).toContainEqual({
+          organizationId: "org-1",
+          surfaceKind: "discord",
+        });
+      } finally {
+        mockDiscord.enabled = false;
+      }
     });
 
     it("shows even without a client id — the card is no longer the install link", () => {
