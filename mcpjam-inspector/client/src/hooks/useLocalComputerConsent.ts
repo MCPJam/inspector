@@ -33,33 +33,53 @@ export interface LocalComputerConsent {
   revoke: () => Promise<void>;
 }
 
+interface ConsentSnapshot {
+  status: LocalComputerConsentStatus;
+  token: string | null;
+}
+
 export function useLocalComputerConsent(): LocalComputerConsent {
-  const [status, setStatus] = useState<LocalComputerConsentStatus>(
-    HOSTED_MODE ? "absent" : "unknown",
+  // status AND token live together in state, so a token rotation that keeps
+  // status "granted" (tab B rotated A→B) still forces a re-render and the
+  // returned `token` follows — reading it from storage at render time would
+  // go stale whenever React bailed on the same-value status update.
+  const [snapshot, setSnapshot] = useState<ConsentSnapshot>(
+    HOSTED_MODE
+      ? { status: "absent", token: null }
+      : { status: "unknown", token: null },
   );
-  // Monotonic sequence guarding every status write. Verify, grant, and revoke
-  // all resolve asynchronously and can complete out of order (mount + storage
-  // event + an explicit grant race routinely); only the LATEST-initiated
-  // operation may write status, so a slow stale verify can never restore
-  // `granted` after a revoke, nor "absent" after a fresh grant.
+  // Monotonic sequence guarding every write. Verify, grant, and revoke all
+  // resolve asynchronously and can complete out of order (mount + storage
+  // event + an explicit grant race routinely); each op CLAIMS its slot
+  // synchronously and only the latest-claimed op may write. That ordering —
+  // claim-before-await — is what makes a later revoke beat an earlier in-flight
+  // grant, not merely a faster one.
   const opSeqRef = useRef(0);
-  const commit = useCallback(
-    (seq: number, next: LocalComputerConsentStatus) => {
-      if (seq === opSeqRef.current) setStatus(next);
-    },
-    [],
-  );
+  const apply = useCallback((seq: number, next: ConsentSnapshot) => {
+    if (seq !== opSeqRef.current) return;
+    setSnapshot((prev) =>
+      prev.status === next.status && prev.token === next.token ? prev : next,
+    );
+  }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (HOSTED_MODE) return;
     const seq = ++opSeqRef.current;
     if (!loadStoredLocalComputerConsent()) {
-      commit(seq, "absent");
+      apply(seq, { status: "absent", token: null });
       return;
     }
     const valid = await verifyStoredLocalComputerConsent();
-    commit(seq, valid ? "granted" : "absent");
-  }, [commit]);
+    // Re-read after verify — a concurrent grant may have rotated the token;
+    // whatever is stored now is the capability this "granted" refers to.
+    const token = loadStoredLocalComputerConsent()?.token ?? null;
+    apply(
+      seq,
+      valid && token
+        ? { status: "granted", token }
+        : { status: "absent", token: null },
+    );
+  }, [apply]);
 
   useEffect(() => {
     if (HOSTED_MODE) return;
@@ -71,31 +91,41 @@ export function useLocalComputerConsent(): LocalComputerConsent {
 
   const grant = useCallback(async (): Promise<boolean> => {
     if (HOSTED_MODE) return false;
+    // CLAIM before awaiting: a revoke that starts after this line gets a higher
+    // sequence and wins, even if the grant request resolves later.
+    const seq = ++opSeqRef.current;
     const ok = await grantLocalComputerConsent();
-    // Claim the latest slot so an in-flight refresh can't overwrite this.
-    // grant's persist fired the subscription → a refresh will re-confirm
-    // "granted"; this just makes the Allow click feel immediate.
-    if (ok) commit(++opSeqRef.current, "granted");
-    return ok;
-  }, [commit]);
+    if (!ok) return false;
+    if (seq === opSeqRef.current) {
+      apply(seq, {
+        status: "granted",
+        token: loadStoredLocalComputerConsent()?.token ?? null,
+      });
+      return true;
+    }
+    // Superseded by a later op (a revoke). The grant already persisted a token;
+    // undo it so the later revoke stays final — including cross-tab.
+    clearStoredLocalComputerConsent();
+    void revokeLocalComputerConsent();
+    return false;
+  }, [apply]);
 
   const revoke = useCallback(async (): Promise<void> => {
     if (HOSTED_MODE) return;
-    // Forget the capability locally FIRST and unconditionally — this is the
-    // user's explicit revoke — and claim the latest op slot so any in-flight
-    // verify (older seq) can't restore consent. The server call is best-effort
-    // on top of the guaranteed local forget.
+    // Claim the latest slot, then forget the capability locally FIRST and
+    // unconditionally — this is the user's explicit revoke. The higher
+    // sequence makes any in-flight grant/verify discard itself on resolve; the
+    // server call is best-effort on top of the guaranteed local forget.
+    const seq = ++opSeqRef.current;
     clearStoredLocalComputerConsent();
-    commit(++opSeqRef.current, "absent");
+    apply(seq, { status: "absent", token: null });
     await revokeLocalComputerConsent();
-  }, [commit]);
+  }, [apply]);
 
   return {
-    status,
-    granted: status === "granted",
-    token: status === "granted"
-      ? (loadStoredLocalComputerConsent()?.token ?? null)
-      : null,
+    status: snapshot.status,
+    granted: snapshot.status === "granted",
+    token: snapshot.status === "granted" ? snapshot.token : null,
     grant,
     revoke,
   };
