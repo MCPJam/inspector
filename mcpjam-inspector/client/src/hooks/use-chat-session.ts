@@ -86,6 +86,7 @@ import {
 } from "@/lib/mcpjam-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
@@ -306,6 +307,18 @@ export interface UseChatSessionOptions {
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /**
+   * Resolved Local⇄Cloud engine for this project's personal computer, provided
+   * by the caller (Playground) so the CENTRAL hook stays free of the config
+   * fetch `useComputerEngine` runs. When `engine === "local"` a direct
+   * /api/mcp/chat-v2 turn forwards `computerEngine:"local"` plus the consent
+   * capability header, so the server runs this host's bash on the local
+   * machine. Absent ⇒ legacy cloud-family resolution (every other surface).
+   */
+  personalComputerEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
   /**
@@ -1460,8 +1473,13 @@ export function useChatSession(
     minimalMode: _minimalMode = false,
     executionConfig,
     hostStyle,
+    personalComputerEngine,
     onReset,
   } = options;
+  // Caller-provided (Playground): send local only when it will actually run
+  // there. Consent-gated `engine`, device-scoped token — both from the caller.
+  const resolvedLocalEngine = personalComputerEngine?.engine === "local";
+  const localConsentToken = personalComputerEngine?.consentToken ?? null;
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
   // defaults. Surfaces that pass `executionConfig` are in controlled mode and
@@ -1565,6 +1583,13 @@ export function useChatSession(
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
+  // Whether the turn's Authorization is a real member (WorkOS) bearer vs a
+  // guest bearer (which the auth effect attaches when signed out). Defense in
+  // depth for the local engine: a stale consent token can outlive sign-out, so
+  // never forward the local engine on a guest turn even if the token verifies.
+  // The server independently rejects guest local turns — this just avoids
+  // sending a header a guest can't use.
+  const authIsMemberRef = useRef(false);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
   const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
@@ -2365,6 +2390,27 @@ export function useChatSession(
       string,
       string
     >;
+    // Consent capability for the local computer engine — a header, never the
+    // body, so it can't land in a persisted transcript. Only on a direct
+    // (non-chatbox) turn whose resolved engine is local; the server re-checks
+    // !HOSTED_MODE + non-guest + non-chatbox + verifies the token.
+    //
+    // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
+    // local engine only exists on the local server's mcp route (both this
+    // transmission AND the server-side resolver live there). An org-runtime
+    // model routes to /api/web/chat-v2, which has no local engine — so we send
+    // nothing local there (no stray consent header on the web route) and that
+    // turn's bash resolves cloud, as it must. Local engine + org model is a
+    // deliberate non-combo in v1.
+    const sendLocalEngine =
+      !shouldUseOrgAwareChatApi &&
+      resolvedLocalEngine &&
+      !hostedChatboxId &&
+      Boolean(localConsentToken) &&
+      authIsMemberRef.current;
+    if (sendLocalEngine && localConsentToken) {
+      mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
+    }
     // When authFetch carries the request (hosted builds, chatbox runtime
     // sessions), it owns the Authorization header — don't double-attach.
     const transportHeaders =
@@ -2521,6 +2567,13 @@ export function useChatSession(
                 ...(!hostedChatboxId && !hostedExecutionTarget && hostedHostId
                   ? { hostId: hostedHostId }
                   : {}),
+                // "This machine": run this host's bash on the local computer
+                // engine. The consent capability rides the header above; the
+                // server ignores this without it (and off the /mcp direct
+                // path). Absent ⇒ the legacy cloud-family resolution.
+                ...(sendLocalEngine
+                  ? { computerEngine: "local" as const }
+                  : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
                 // Convex server Ids parallel to `selectedServers`. Only sent
@@ -2639,6 +2692,11 @@ export function useChatSession(
     getAzureBaseUrl,
     hostStyle,
     chatFetch,
+    // Local computer engine: rebuild the transport when the resolved engine or
+    // consent token changes, so the header/body reflect a grant or toggle on
+    // the very next turn.
+    resolvedLocalEngine,
+    localConsentToken,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -3850,12 +3908,15 @@ export function useChatSession(
         if (!active) return;
         if (token) {
           resolvedAuthHeaders = { Authorization: `Bearer ${token}` };
+          authIsMemberRef.current = true;
           setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         }
       } catch {
         // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
       }
+      // Anything past the WorkOS-token path is a guest (or unauthenticated).
+      if (!resolved) authIsMemberRef.current = false;
 
       // In non-hosted mode, attach a guest bearer so local chat persistence and
       // history lookups use the same Convex identity as the active thread.
