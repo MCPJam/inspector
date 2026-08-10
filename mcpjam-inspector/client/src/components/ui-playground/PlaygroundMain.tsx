@@ -123,6 +123,7 @@ import {
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useComputerEngine } from "@/hooks/useComputerEngine";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
@@ -737,6 +738,14 @@ export function PlaygroundMain({
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
 
+  // Resolved Local⇄Cloud engine for this project's personal computer. Passed
+  // into useChatSession so a direct turn runs this host's bash on the local
+  // machine when the user has selected + consented to "This machine". The
+  // config fetch lives here (the surface that uses it), not in the central
+  // chat hook. Hosted mode / no local engine ⇒ cloud, and the turn sends
+  // nothing extra.
+  const playgroundComputerEngine = useComputerEngine(convexProjectId);
+
   // COMP-14: when the previewed host attaches a personal computer, composer
   // attachments are ALSO uploaded into the sandbox (reserve → mint → upload,
   // the same primitives the Shell uses) and the outgoing message carries a
@@ -969,6 +978,10 @@ export function PlaygroundMain({
     // execution-context helper, so this also flows through chatbox sessions
     // (where the persisted host config wins via the runtime-config fetch).
     builtInToolIds: previewedHost?.config?.builtInToolIds,
+    personalComputerEngine: {
+      engine: playgroundComputerEngine.engine,
+      consentToken: playgroundComputerEngine.consent.token,
+    },
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);

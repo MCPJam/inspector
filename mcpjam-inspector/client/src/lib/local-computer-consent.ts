@@ -30,6 +30,14 @@ import { authFetch } from "@/lib/session-token";
 const STORAGE_KEY = "mcp-local-computer-consent-v1";
 const EVENT_NAME = "local-computer-consent-changed";
 
+/**
+ * Header that carries the consent capability on a local-engine chat turn. The
+ * server reads it case-insensitively (`x-mcpjam-local-consent`); this is the
+ * canonical casing. Kept out of the request BODY so it can't enter persisted
+ * transcripts.
+ */
+export const LOCAL_CONSENT_HEADER = "X-MCPJam-Local-Consent";
+
 export interface StoredLocalComputerConsent {
   token: string;
   grantedAt: string;
