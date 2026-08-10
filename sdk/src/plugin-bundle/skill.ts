@@ -1,12 +1,13 @@
 /**
- * Plugin skill (`skills/<dir>/SKILL.md`) parsing and validation.
+ * Plugin skill (`skills/<dir>/SKILL.md`) parsing and validation, per the
+ * Agent Skills specification Agent Plugins 1.0 references.
  *
  * Mirrors the Agent Skills rules the inspector already enforces (kebab-case
  * name, required description <= 1024 chars) without Node dependencies: the
- * frontmatter and `agents/openai.yaml` metadata use a deliberately small
- * YAML subset (scalars, `- ` lists, `|`/`>` blocks). Lines the subset cannot
- * interpret are preserved raw and reported as warnings — never guessed at.
- * Scripts are never executed during import.
+ * frontmatter uses a deliberately small YAML subset (scalars, `- ` lists,
+ * `|`/`>` blocks). Lines the subset cannot interpret are preserved raw and
+ * reported as warnings — never guessed at. Scripts are never executed
+ * during import.
  */
 
 import { computeAggregateHash } from "./hashes.js";
@@ -14,7 +15,6 @@ import { MAX_VALUE_DEPTH, type PluginIssueCollector } from "./validation.js";
 
 export const SKILLS_DIR = "skills";
 export const SKILL_FILE_NAME = "SKILL.md";
-export const SKILL_OPENAI_METADATA_PATH = "agents/openai.yaml";
 
 const SKILL_NAME_MAX_LENGTH = 64;
 const SKILL_DESCRIPTION_MAX_LENGTH = 1024;
@@ -42,13 +42,6 @@ export interface ParsedPluginSkillFile {
   contentHash: string;
 }
 
-export interface ParsedPluginSkillOpenAiMetadata {
-  /** Canonical bundle path of `agents/openai.yaml`. */
-  path: string;
-  /** Parsed key/value data (YAML subset). */
-  data: Record<string, unknown>;
-}
-
 export interface ParsedPluginSkill {
   /** `skill:<directory-name>` — stable component identity. */
   componentKey: string;
@@ -63,14 +56,13 @@ export interface ParsedPluginSkill {
   modelRef: string;
   /** SKILL.md body with frontmatter stripped. */
   instructions: string;
-  /** Parsed frontmatter, including preserved optional OpenAI metadata. */
+  /** Parsed frontmatter (YAML subset). */
   frontmatter: Record<string, unknown>;
   /** Raw frontmatter text for lossless round-tripping. */
   frontmatterRaw: string;
   allowImplicitInvocation?: boolean;
-  /** MCP tool dependencies declared in frontmatter or agents/openai.yaml. */
+  /** MCP tool dependencies declared in frontmatter. */
   mcpToolDependencies: string[];
-  openaiMetadata?: ParsedPluginSkillOpenAiMetadata;
   /** Every skill-directory file except SKILL.md itself. */
   supportingFiles: ParsedPluginSkillFile[];
   /** SHA-256 of the raw SKILL.md bytes. */
@@ -254,8 +246,6 @@ export interface ParsePluginSkillArgs {
   skillContentHash: string;
   /** Every file in the skill directory (including SKILL.md), with hashes. */
   files: PluginSkillFileInput[];
-  /** Decoded `agents/openai.yaml`, when the skill ships one. */
-  openaiYaml?: { path: string; text: string };
   issues: PluginIssueCollector;
 }
 
@@ -271,7 +261,6 @@ export async function parsePluginSkill(
     skillText,
     skillContentHash,
     files,
-    openaiYaml,
     issues,
   } = args;
   const componentKey = `skill:${directoryName}`;
@@ -352,59 +341,34 @@ export async function parsePluginSkill(
     return null;
   }
 
-  // Optional OpenAI metadata: frontmatter first, agents/openai.yaml wins.
-  let openaiMetadata: ParsedPluginSkillOpenAiMetadata | undefined;
-  if (openaiYaml !== undefined) {
-    const parsed = parseYamlLite(openaiYaml.text);
-    for (const line of parsed.unparsed) {
-      issues.warn(
-        "SKILL_INVALID_METADATA",
-        `skill "${directoryName}": openai.yaml line not interpreted: ${line.trim()}`,
-        { path: openaiYaml.path, componentKey }
-      );
-    }
-    for (const line of parsed.tooDeep) {
-      issues.error(
-        "VALUE_TOO_DEEP",
-        `skill "${directoryName}": openai.yaml value nests deeper than ${MAX_VALUE_DEPTH} levels: ${line
-          .trim()
-          .slice(0, 80)}`,
-        { path: openaiYaml.path, componentKey }
-      );
-    }
-    openaiMetadata = { path: openaiYaml.path, data: parsed.data };
-  }
-
   let allowImplicitInvocation: boolean | undefined;
-  for (const source of [frontmatter, openaiMetadata?.data]) {
-    const value = source?.allow_implicit_invocation;
-    if (value === undefined) continue;
-    if (typeof value !== "boolean") {
+  const implicitValue = frontmatter.allow_implicit_invocation;
+  if (implicitValue !== undefined) {
+    if (typeof implicitValue !== "boolean") {
       issues.warn(
         "SKILL_INVALID_METADATA",
         `skill "${directoryName}": "allow_implicit_invocation" must be a boolean`,
         context
       );
-      continue;
+    } else {
+      allowImplicitInvocation = implicitValue;
     }
-    allowImplicitInvocation = value;
   }
 
   const mcpToolDependencies: string[] = [];
-  for (const source of [frontmatter, openaiMetadata?.data]) {
-    const value = source?.mcp_tools;
-    if (value === undefined) continue;
-    const tools = readStringList(value);
+  const toolsValue = frontmatter.mcp_tools;
+  if (toolsValue !== undefined) {
+    const tools = readStringList(toolsValue);
     if (tools === null) {
       issues.warn(
         "SKILL_INVALID_METADATA",
         `skill "${directoryName}": "mcp_tools" must be a list of strings`,
         context
       );
-      continue;
-    }
-    for (const tool of tools) {
-      if (!mcpToolDependencies.includes(tool)) mcpToolDependencies.push(tool);
+    } else {
+      for (const tool of tools) {
+        if (!mcpToolDependencies.includes(tool)) mcpToolDependencies.push(tool);
+      }
     }
   }
 
@@ -439,7 +403,6 @@ export async function parsePluginSkill(
       ? { allowImplicitInvocation }
       : {}),
     mcpToolDependencies,
-    ...(openaiMetadata !== undefined ? { openaiMetadata } : {}),
     supportingFiles,
     contentHash: skillContentHash,
     aggregateHash,

@@ -73,10 +73,53 @@ jobs:
         run: npm run build -w @mcpjam/inspector
         shell: powershell
 
+      # ONLY dist/client here. The packaged app serves its UI from
+      # dist/client via the embedded Hono server (server/app.ts
+      # serveStatic root + forge extraResource), and `npm run build`
+      # produces it — so this is both the bundle desktop users execute
+      # and the one that exists at this point in the job.
+      #
+      # The Electron bundles (.vite/build, .vite/renderer) are NOT
+      # handled here: @electron-forge/plugin-vite builds them during
+      # `electron:make`, so they do not exist yet. Their injection and
+      # upload lives in forge.config.ts's `packageAfterCopy` hook, the
+      # first point where the built bundles exist and are still
+      # editable before asar packing.
+      - name: Inject and upload web sourcemaps to Sentry
+        continue-on-error: true
+        timeout-minutes: 10
+        working-directory: mcpjam-inspector
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+
+          # Cleanup runs on EVERY exit path, including a sentry-cli
+          # failure — `-e` would otherwise skip a trailing delete and
+          # `continue-on-error` would still let packaging proceed,
+          # shipping full source maps in the installer.
+          trap "find dist/client -name '*.map' -type f -delete 2>/dev/null || true" EXIT
+
+          if [ -d dist/client ]; then
+            npx @sentry/cli sourcemaps inject dist/client
+            npx @sentry/cli sourcemaps upload \
+              --release="$version" \
+              --org=mcpjam-gh \
+              --project=inspector-client \
+              dist/client
+          fi
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
       - name: Make Windows installer
         env:
           WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          # Actions injects a secret only into steps that name it. The
+          # `.vite/build` + `.vite/renderer` sourcemaps are injected and
+          # uploaded by forge.config.ts's `packageAfterCopy` hook, which runs
+          # inside THIS step — without the token here the hook silently
+          # early-returns and desktop crashes never symbolicate.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: npm run electron:make -w @mcpjam/inspector
         shell: powershell
 

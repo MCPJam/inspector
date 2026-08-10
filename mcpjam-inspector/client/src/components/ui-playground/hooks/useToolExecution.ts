@@ -14,6 +14,7 @@ import {
   type ToolExecutionResponse,
 } from "@/lib/apis/mcp-tools-api";
 import { readResource } from "@/lib/apis/mcp-resources-api";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   driveScopeStepUpFromChallenge,
   resetScopeStepUp,
@@ -471,6 +472,10 @@ export function useToolExecution({
         };
       } catch (err) {
         console.error("Tool execution error:", err);
+        reportCaught(err, {
+          source: "app_builder_tool_execution",
+          extra: { toolName: effectiveToolName, toolSource: "server" },
+        });
         const errorMessage =
           err instanceof Error ? err.message : "Tool execution failed";
 
@@ -716,6 +721,10 @@ async function executeAppTool({
     };
   } catch (err) {
     console.error("App tool execution error:", err);
+    reportCaught(err, {
+      source: "app_builder_tool_execution",
+      extra: { toolName: reportedName, toolSource: "app" },
+    });
     const message =
       err instanceof Error ? err.message : "App tool execution failed";
     setExecutionError(message);
