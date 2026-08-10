@@ -5,21 +5,22 @@ import { MCPJAM_COMMANDS, resolveCommandRegistration } from "../commands.js";
 /**
  * Registration used to require BOTH an application id and a guild id, which
  * meant a bot added to a second server registered nothing — `/mcpjam` simply
- * did not exist there. These pin the scope decision that fixes it: the guild
- * id is now a development override, and its absence means global.
+ * did not exist there. These pin the scope decision that fixes it: the
+ * development override is opt-in under a NEW name, and its absence means
+ * global.
  */
 
-test("no guild id registers GLOBALLY — the production path, so every server gets the command", () => {
+test("no dev guild id registers GLOBALLY — the production path, so every server gets the command", () => {
 	const registration = resolveCommandRegistration({ applicationId: "app-1" });
 	assert.equal(registration.scope, "global");
 	// The global route addresses the application alone, with no guild segment.
 	assert.equal(registration.route, "/applications/app-1/commands");
 });
 
-test("a guild id registers to THAT guild — the development override, instant propagation", () => {
+test("a dev guild id registers to THAT guild — instant propagation while iterating", () => {
 	const registration = resolveCommandRegistration({
 		applicationId: "app-1",
-		guildId: "guild-9",
+		devGuildId: "guild-9",
 	});
 	assert.equal(registration.scope, "guild");
 	assert.equal(
@@ -28,11 +29,36 @@ test("a guild id registers to THAT guild — the development override, instant p
 	);
 });
 
+/**
+ * THE MIGRATION GUARD. Every deployment that had a working `/mcpjam` before
+ * this change necessarily set `DISCORD_GUILD_ID`, because registration
+ * required it — production included. If that value reached this function it
+ * would keep those deployments guild-scoped, making the whole change a no-op
+ * exactly where it matters. `config.js` maps the old name to
+ * `legacyGuildId` (warn-only) and never passes it here; this asserts the
+ * function itself has no path that would honour it.
+ */
+test("the OLD guild id key does not scope registration — an upgrade goes global by default", () => {
+	const registration = resolveCommandRegistration({
+		applicationId: "app-1",
+		// The pre-migration spelling, plus the shape config.js now produces
+		// for a deployment that still has the stale variable set.
+		guildId: "legacy-guild",
+		legacyGuildId: "legacy-guild",
+	});
+	assert.equal(
+		registration.scope,
+		"global",
+		"a stale DISCORD_GUILD_ID must not pin an upgraded deployment to one server",
+	);
+	assert.equal(registration.route, "/applications/app-1/commands");
+});
+
 test("no application id skips registration — there is nothing to register against", () => {
 	assert.deepEqual(resolveCommandRegistration({ applicationId: "" }), {
 		scope: "skipped",
 	});
-	assert.deepEqual(resolveCommandRegistration({ guildId: "guild-9" }), {
+	assert.deepEqual(resolveCommandRegistration({ devGuildId: "guild-9" }), {
 		scope: "skipped",
 	});
 	assert.deepEqual(resolveCommandRegistration(), { scope: "skipped" });

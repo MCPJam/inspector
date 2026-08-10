@@ -121,13 +121,25 @@ export function loadConfig(env = process.env) {
 		 * Slash-command registration. `applicationId` is required, or
 		 * registration is skipped entirely.
 		 *
-		 * `guildId` is an OPTIONAL DEVELOPMENT OVERRIDE: set it and commands
+		 * `devGuildId` is an OPTIONAL DEVELOPMENT OVERRIDE: set it and commands
 		 * register to that one server and propagate instantly; leave it unset
 		 * and they register globally, reaching every server the bot is added
 		 * to. See commands.js for why global is the production default.
+		 *
+		 * A NEW variable name, deliberately, rather than reusing
+		 * `DISCORD_GUILD_ID`. Registration previously REQUIRED a guild id, so
+		 * every deployment with a working `/mcpjam` necessarily has the old
+		 * variable set — including production. Reading it here would keep
+		 * exactly those deployments guild-scoped after this upgrade, which is
+		 * the one thing the change exists to stop. Ignoring the old name makes
+		 * the new behavior the default on deploy, with no ops step to
+		 * remember; `describeConfigGaps` warns when the stale variable is
+		 * still present so it does not look like the override silently broke.
 		 */
 		applicationId: trimmed(env.DISCORD_APPLICATION_ID),
-		guildId: trimmed(env.DISCORD_GUILD_ID),
+		devGuildId: trimmed(env.DISCORD_DEV_GUILD_ID),
+		/** Read ONLY to warn that it is now ignored. Never used for scoping. */
+		legacyGuildId: trimmed(env.DISCORD_GUILD_ID),
 	};
 }
 
@@ -162,6 +174,14 @@ export function describeConfigGaps(config) {
 	if (!config.botEnabled) {
 		warnings.push(
 			'POSTHOG_DISCORD_AGENT_ENABLED is not "true" — the bot will connect but will not answer mentions.',
+		);
+	}
+	// Not a gap so much as a stale setting, but it belongs in the same boot
+	// output: someone upgrading sees their commands go global and needs to
+	// know it was deliberate, not a broken override.
+	if (config.legacyGuildId) {
+		warnings.push(
+			"DISCORD_GUILD_ID is set but no longer does anything — slash commands now register globally so every server gets them. Remove it, or set DISCORD_DEV_GUILD_ID instead to keep registering to one server during development.",
 		);
 	}
 	return warnings;

@@ -499,12 +499,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 // ── Slash-command registration ──────────────────────────────────────────────
 
-// Guild-scoped when a guild id is configured (the development override:
+// Guild-scoped when DISCORD_DEV_GUILD_ID is set (the development override:
 // instant propagation in one server), GLOBAL otherwise so every server the
-// bot is added to gets `/mcpjam`. See commands.js for the full reasoning.
+// bot is added to gets `/mcpjam`. See commands.js for the full reasoning,
+// including why this reads a NEW variable rather than the old
+// DISCORD_GUILD_ID.
 const registration = resolveCommandRegistration({
 	applicationId: config.applicationId,
-	guildId: config.guildId,
+	devGuildId: config.devGuildId,
 });
 if (registration.scope === "skipped") {
 	console.warn(
@@ -520,7 +522,7 @@ if (registration.scope === "skipped") {
 		await rest.put(registration.route, { body: MCPJAM_COMMANDS });
 		console.log(
 			registration.scope === "guild"
-				? `[discord] registered slash commands to guild ${config.guildId} (development override)`
+				? `[discord] registered slash commands to guild ${config.devGuildId} (DISCORD_DEV_GUILD_ID development override)`
 				: "[discord] registered slash commands globally; Discord may take up to an hour to propagate them",
 		);
 	} catch (error) {
