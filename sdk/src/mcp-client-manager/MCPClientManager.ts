@@ -575,8 +575,14 @@ export class MCPClientManager {
       transportType = "stdio";
     } else {
       const url = new URL(config.url);
+      // Same nullish precedence the CONNECT path uses (`connectViaHttp`):
+      // an explicit `preferSSE: false` — how a plugin-declared
+      // streamable-http server pins its transport — must beat the `/sse`
+      // URL heuristic here too, or this reports "sse" for a connection that
+      // actually ran over Streamable HTTP, and that wrong value reaches
+      // snapshots, conformance output and hosted trace metadata.
       transportType =
-        config.preferSSE || url.pathname.endsWith("/sse")
+        (config.preferSSE ?? url.pathname.endsWith("/sse"))
           ? "sse"
           : "streamable-http";
     }

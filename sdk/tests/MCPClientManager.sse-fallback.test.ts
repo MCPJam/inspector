@@ -2,6 +2,7 @@ import http from "http";
 import type { AddressInfo } from "net";
 import { afterEach, describe, expect, it } from "vitest";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { MCPAuthError, MCPClientManager } from "../src/mcp-client-manager";
 import { createMockServer, startMockStreamableHttpServer } from "./mock-servers";
 
@@ -58,6 +59,43 @@ async function startSseOnlyServerOnPlainPath(): Promise<{
       const address = httpServer.address() as AddressInfo;
       resolve({
         url: `http://127.0.0.1:${address.port}/mcp`,
+        stop: () =>
+          new Promise<void>((resolveStop) => {
+            httpServer.close(() => resolveStop());
+          }),
+      });
+    });
+  });
+}
+
+/**
+ * A genuine Streamable HTTP server served at a `/sse` PATH — the shape that
+ * makes the URL heuristic disagree with the declaration.
+ */
+async function startStreamableServerOnSsePath(): Promise<{
+  url: string;
+  stop: () => Promise<void>;
+}> {
+  const mcpServer = createMockServer();
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => `session-${Math.random()}`,
+  });
+  await mcpServer.connect(transport);
+
+  const httpServer = http.createServer(async (req, res) => {
+    if (req.url === "/sse") {
+      await transport.handleRequest(req, res);
+      return;
+    }
+    res.writeHead(404);
+    res.end("Not found");
+  });
+
+  return new Promise((resolve) => {
+    httpServer.listen(0, "127.0.0.1", () => {
+      const address = httpServer.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${address.port}/sse`,
         stop: () =>
           new Promise<void>((resolveStop) => {
             httpServer.close(() => resolveStop());
@@ -154,4 +192,27 @@ describe("MCPClientManager disableSseFallback", () => {
       })
     ).rejects.toThrow(MCPAuthError);
   }, 15000);
+
+  it("reports streamable-http when preferSSE is pinned false on a /sse URL", async () => {
+    // The declared-streamable mapping sends `preferSSE: false` precisely so
+    // the `/sse` URL heuristic cannot claim the connection. The REPORTED
+    // transport must agree with the one actually used, or snapshots and
+    // hosted trace metadata record a transport that never ran.
+    const server = await startStreamableServerOnSsePath();
+    stops.push(server.stop);
+    const manager = new MCPClientManager();
+    managers.push(manager);
+
+    await manager.connectToServer("declared-on-sse-path", {
+      url: server.url,
+      preferSSE: false,
+      disableSseFallback: true,
+    });
+    expect(manager.getConnectionStatus("declared-on-sse-path")).toBe(
+      "connected"
+    );
+    const info = manager.getInitializationInfo("declared-on-sse-path");
+    expect(info?.transport).toBe("streamable-http");
+  }, 15000);
 });
+
