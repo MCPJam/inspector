@@ -2,13 +2,14 @@
  * Swarm's "Where it runs" section.
  *
  * The two picker rows are the shared {@link EnvironmentComposer}; this wrapper
- * owns only what is swarm's: the section copy, the empty states, and the two
- * draft actions (persist the composition as real environments now, or park it
- * as a per-device draft).
+ * owns only what is swarm's: the section copy, the cloud-execution framing, the
+ * empty states, and the draft action.
  */
 import { useCallback } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
+import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
+import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
 import {
   isComposeMode,
@@ -16,6 +17,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { MAX_ENVIRONMENTS_PER_JOURNEY } from "@/components/swarms/journey-environments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -44,6 +46,12 @@ export function SwarmTargetComposer({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  // `false` only from a real server answer — loading / fetch failure never
+  // paints the warning. The image pill disables its own options on the same
+  // signal; this only EXPLAINS the block, in swarm's terms.
+  const sandboxCloudUnreachable =
+    computersEnabled && ephemeralCloudAvailable === false;
   const composeMode = isComposeMode(value);
   const stackName = draftNameHint?.trim() || "Swarm setup";
   const hasLiveEnvironments = environments.some((e) => !e.archivedAt);
@@ -77,13 +85,29 @@ export function SwarmTargetComposer({
   return (
     <div className="space-y-3" data-testid="new-swarm-target-composer">
       <div className="space-y-1">
-        <Label>Where it runs</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Label>Where it runs</Label>
+          {computersEnabled ? (
+            <CloudRunBadge
+              tooltip="Swarm sessions run their computer commands in disposable MCPJam cloud sandboxes — never on the machine running this inspector."
+              data-testid="new-swarm-cloud-run-badge"
+            />
+          ) : null}
+        </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
           {environmentsEnabled
             ? "Start from an environment or build from clients and the shared stack below. Clients are the usual fan-out."
             : "Build from clients and the shared stack below. Clients are the usual fan-out."}
         </p>
       </div>
+
+      {sandboxCloudUnreachable ? (
+        <CloudUnreachableNotice
+          data-testid="new-swarm-cloud-unreachable"
+          message="Swarm computer commands need an MCPJam cloud sandbox, which this inspector can't run."
+          detail="Runs without a computer can continue; sandbox-backed sessions would fail. Picking a new sandbox image is disabled — clear an existing one with Computer · default."
+        />
+      ) : null}
 
       <EnvironmentComposer
         projectId={projectId}

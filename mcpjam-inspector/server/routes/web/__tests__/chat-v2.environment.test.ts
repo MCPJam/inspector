@@ -427,6 +427,15 @@ describe("web chat-v2 — environment execution target", () => {
         ? {
             pluginVersions: [ENV_SPEC.pluginVersions[0]],
             effectiveServerIds: ["env-server-2"],
+            serverComponents: [
+              {
+                pluginVersionId: ENV_SPEC.pluginVersions[0].pluginVersionId,
+                componentKey: "server:asana",
+                placement: "remote",
+                authenticationPolicy: "on_use",
+                materializedServerId: "env-server-2",
+              },
+            ],
             pluginSkills: [],
             unavailableComponents: [],
           }
@@ -486,6 +495,7 @@ describe("web chat-v2 — environment execution target", () => {
         ? {
             pluginVersions: [],
             effectiveServerIds: [],
+            serverComponents: [],
             pluginSkills: [],
             unavailableComponents: [
               { pluginVersionId: "pv_1", reason: "disabled" },
@@ -509,6 +519,28 @@ describe("web chat-v2 — environment execution target", () => {
   });
 
   it("delivers ONLY the resolved skills to the emulated engine (no cloudSkills)", async () => {
+    // The attribution probe answers the single-call shape: pv_1 contributed
+    // env-server-2 and no skills, so the capability set carries no plugin
+    // skills and no problems.
+    convexQueryMock.mockImplementation(async (ref: string) =>
+      ref === "plugins:resolvePluginRuntimePreview"
+        ? {
+            pluginVersions: [ENV_SPEC.pluginVersions[0]],
+            effectiveServerIds: ["env-server-2"],
+            serverComponents: [
+              {
+                pluginVersionId: ENV_SPEC.pluginVersions[0].pluginVersionId,
+                componentKey: "server:asana",
+                placement: "remote",
+                authenticationPolicy: "on_use",
+                materializedServerId: "env-server-2",
+              },
+            ],
+            pluginSkills: [],
+            unavailableComponents: [],
+          }
+        : ENV_SPEC
+    );
     const { app, token } = createWebTestApp();
     await postJson(
       app,
@@ -639,8 +671,21 @@ describe("web chat-v2 — plugin capability attribution", () => {
       },
     ],
     effectiveServerIds: ["env-server-2"],
+    serverComponents: [
+      {
+        pluginVersionId: "pv_1",
+        componentKey: "server:asana",
+        placement: "remote",
+        authenticationPolicy: "on_use",
+        materializedServerId: "env-server-2",
+      },
+    ],
     pluginSkills: [
-      { modelRef: "linear/summarize", materializedSkillId: "sk_plugin" },
+      {
+        pluginVersionId: "pv_1",
+        modelRef: "linear/summarize",
+        materializedSkillId: "sk_plugin",
+      },
     ],
     unavailableComponents: [],
   };

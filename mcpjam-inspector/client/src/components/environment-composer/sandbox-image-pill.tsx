@@ -8,6 +8,7 @@
  * the query lives here so the hook is never fired on a surface without it.
  */
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 
 export function SandboxImagePill({
@@ -27,6 +28,12 @@ export function SandboxImagePill({
   const selected = value
     ? (sandboxImages ?? []).find((img) => img.environmentId === value)
     : undefined;
+  // `false` only from a real server answer — loading or a fetch failure never
+  // blocks the control. Gated here rather than per surface so every consumer
+  // inherits it; a surface that wants to EXPLAIN the block renders its own
+  // notice (see `CloudUnreachableNotice`) alongside.
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  const cloudUnreachable = ephemeralCloudAvailable === false;
 
   return (
     <>
@@ -48,7 +55,11 @@ export function SandboxImagePill({
             <option
               key={img.environmentId}
               value={img.environmentId}
-              disabled={isDraft}
+              // When cloud sandboxes are unreachable, IMAGE options are disabled
+              // but the select itself stays live — a pin seeded from a saved
+              // environment or draft must remain clearable back to
+              // "Computer · default", which is the opt-out on offer.
+              disabled={isDraft || cloudUnreachable}
             >
               {img.name}
               {isDraft ? " (draft)" : ready ? "" : " (not built)"}

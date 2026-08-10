@@ -17,6 +17,7 @@ import {
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
@@ -82,6 +83,7 @@ export function UserTestingScenarioCreateFlow({
   onCreateEnvironment,
   onCreateScenario,
 }: UserTestingScenarioCreateFlowProps) {
+  const computersEnabled = useComputersEnabled();
   const environments = useProjectEnvironments(projectId);
   const resolveComposerTargets = useComposerResolver(projectId);
   const [target, setTarget] = useState<EnvironmentComposerState>(
@@ -236,6 +238,15 @@ export function UserTestingScenarioCreateFlow({
                 </button>
               </>
             }
+            {computersEnabled ? (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid="user-testing-create-cloud-note"
+              >
+                Tester-session computer commands run in MCPJam cloud sandboxes —
+                never on the machine serving this inspector.
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-2">

@@ -30,11 +30,18 @@ import {
   resolvePluginStdioLaunch,
   type PluginStdioLaunchSpec,
 } from "./plugin-root.js";
-import type { PluginFileSource } from "@mcpjam/sdk/plugin-bundle";
+import { ensurePluginDataDir } from "./plugin-data.js";
+import {
+  containsPluginPlaceholder,
+  type PluginFileSource,
+} from "@mcpjam/sdk/plugin-bundle";
+import { createZipPluginFileSource } from "./bundle-file-sources.js";
+import { MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES } from "../../../shared/plugin-bundle-limits.js";
 
 export { PluginBundleCache, PluginBundleCacheError };
 
 const LIST_PLUGINS_FUNCTION_REF = "plugins:listProjectPlugins" as const;
+const BUNDLE_DOWNLOAD_FUNCTION_REF = "plugins:getBundleDownloadUrl" as const;
 
 let leaseSequence = 0;
 
@@ -100,11 +107,71 @@ export async function resolvePluginOriginForServer(
   return origin ? { ...origin } : null;
 }
 
+/**
+ * Fetch a version's bundle bytes from the backend's authorized read
+ * (`plugins:getBundleDownloadUrl`, Phase 0.4) as a parseable source.
+ *
+ * Every failure returns `null` rather than throwing: a backend without the
+ * endpoint yet, revoked access, a network error, an over-cap body, or a
+ * non-archive response all fall back to the historical "re-import on this
+ * device" remedy. Integrity is NOT judged here — the verified cache
+ * re-hashes whatever this returns against the pinned bundleHash.
+ */
+async function downloadBundleSource(
+  client: ConvexHttpClient,
+  pluginVersionId: string
+): Promise<PluginFileSource | null> {
+  let url: string;
+  try {
+    const raw: unknown = await client.query(
+      BUNDLE_DOWNLOAD_FUNCTION_REF as any,
+      { pluginVersionId } as any
+    );
+    if (!isRecord(raw) || typeof raw.url !== "string" || raw.url.length === 0) {
+      return null;
+    }
+    url = raw.url;
+  } catch {
+    return null;
+  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES) return null;
+    return await createZipPluginFileSource(new Uint8Array(buffer));
+  } catch {
+    return null;
+  }
+}
+
 export type PluginStdioPreparationFailure =
   | { reason: "no_plugin_origin" }
   | { reason: "missing_bundle_hash"; origin: PluginServerOrigin }
   | {
       reason: "bundle_not_materialized" | "bundle_verification_failed";
+      origin: PluginServerOrigin;
+      message: string;
+    }
+  | {
+      /**
+       * A placeholder-shaped token survived substitution — a future spec
+       * placeholder this build does not implement. Fail closed: a child
+       * process must never see a placeholder verbatim. `placeholder` is the
+       * bare token only — never the containing value, which may embed
+       * expanded paths or adjacent secrets.
+       */
+      reason: "unsupported_placeholder";
+      origin: PluginServerOrigin;
+      placeholder: string;
+    }
+  | {
+      /**
+       * The writable `${PLUGIN_DATA}` directory could not be created — a
+       * LOCAL filesystem problem (unwritable `~/.mcpjam`, full disk,
+       * permissions), never a bundle problem: re-importing cannot fix it.
+       */
+      reason: "plugin_data_unavailable";
       origin: PluginServerOrigin;
       message: string;
     };
@@ -140,6 +207,8 @@ export async function preparePluginStdioLaunch(args: {
   leaseId: string;
   /** Just-imported bundle content, when the caller has it (desktop import). */
   source?: PluginFileSource;
+  /** Test seam for the `${PLUGIN_DATA}` root; defaults to `~/.mcpjam/plugin-data`. */
+  dataRoot?: string;
 }): Promise<PluginStdioPreparation> {
   const origin = await resolvePluginOriginForServer(args.client, {
     projectId: args.projectId,
@@ -148,6 +217,62 @@ export async function preparePluginStdioLaunch(args: {
   if (!origin) return { ok: false, reason: "no_plugin_origin" };
   if (!origin.bundleHash) {
     return { ok: false, reason: "missing_bundle_hash", origin };
+  }
+
+  // A placeholder the bundle declared that this build does not implement
+  // must not spawn — the literal would reach the child as an argv/env/cwd
+  // value. The scan runs on the ORIGINAL spec, never the resolved launch:
+  // the machine's own root/data paths may legitimately contain
+  // placeholder-shaped text, and substitution deliberately never re-scans
+  // inserted values — re-checking resolved output would refuse exactly the
+  // paths the single-pass substitution promises to preserve. The GENERIC
+  // token shape (minus the implemented set) is what makes this
+  // future-proof: `${PLUGIN_CACHE}` from a spec revision we haven't
+  // shipped trips it today. Only the bare token is reported — the
+  // containing value may embed an adjacent secret.
+  const implementedTokens = new Set(["${PLUGIN_ROOT}", "${PLUGIN_DATA}"]);
+  const specValues = [
+    args.spec.command,
+    ...args.spec.args,
+    ...Object.values(args.spec.env),
+    ...(args.spec.workingDirectory !== undefined
+      ? [args.spec.workingDirectory]
+      : []),
+  ];
+  for (const value of specValues) {
+    for (const match of value.matchAll(/\$\{PLUGIN_[A-Z0-9_]+\}/g)) {
+      if (!implementedTokens.has(match[0])) {
+        return {
+          ok: false,
+          reason: "unsupported_placeholder",
+          origin,
+          placeholder: match[0],
+        };
+      }
+    }
+  }
+
+  // The writable per-plugin data directory (spec: created before launch,
+  // preserved across updates — keyed by pluginId, NOT bundleHash, so a
+  // version activation keeps the component's state). Created BEFORE the
+  // bundle materializes: this await must not sit between materialization
+  // and the lease acquisition below, where a concurrent GC sweep could
+  // reclaim the just-verified entry. Creation failure is a launch failure
+  // with its own reason — a filesystem problem, not a bundle problem.
+  let dataDir: string;
+  try {
+    dataDir = await ensurePluginDataDir({
+      projectId: args.projectId,
+      pluginId: origin.pluginId,
+      ...(args.dataRoot !== undefined ? { rootDir: args.dataRoot } : {}),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "plugin_data_unavailable",
+      origin,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const identity: PluginBundleIdentity = {
@@ -164,16 +289,52 @@ export async function preparePluginStdioLaunch(args: {
   } catch (error) {
     const code =
       error instanceof PluginBundleCacheError ? error.code : "invalid_bundle";
-    return {
-      ok: false,
-      reason:
-        code === "not_cached"
-          ? "bundle_not_materialized"
-          : "bundle_verification_failed",
-      origin,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    if (code !== "not_cached" || args.source !== undefined) {
+      return {
+        ok: false,
+        reason:
+          code === "not_cached"
+            ? "bundle_not_materialized"
+            : "bundle_verification_failed",
+        origin,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    // Cache miss with no caller-supplied content: fetch the backend's stored
+    // bundle (the version's own bytes, re-stored at commit). The cache
+    // re-parses the download through the SDK parser and compares the
+    // computed hash against the pinned `bundleHash`, so the URL grants
+    // CONTENT, never trust — wrong bytes surface as verification failures
+    // below and never materialize.
+    const downloaded = await downloadBundleSource(
+      args.client,
+      origin.pluginVersionId
+    );
+    if (downloaded === null) {
+      return {
+        ok: false,
+        reason: "bundle_not_materialized",
+        origin,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    try {
+      const materialized = await args.cache.materialize(identity, {
+        source: downloaded,
+      });
+      root = materialized.root;
+    } catch (retryError) {
+      return {
+        ok: false,
+        reason: "bundle_verification_failed",
+        origin,
+        message:
+          retryError instanceof Error ? retryError.message : String(retryError),
+      };
+    }
   }
+
+  const launch = resolvePluginStdioLaunch(args.spec, root, { dataDir });
 
   // Unique per call, not just per server: a reconnect acquires the new lease
   // BEFORE releasing the old one, and two holders sharing an id would make
@@ -186,7 +347,7 @@ export async function preparePluginStdioLaunch(args: {
     ok: true,
     origin,
     pluginRoot: root,
-    launch: resolvePluginStdioLaunch(args.spec, root),
+    launch,
     release,
   };
 }
@@ -231,10 +392,14 @@ export async function materializePluginStdioForConnect(args: {
   serverName: string;
   spec: PluginStdioLaunchSpec;
   cache?: PluginBundleCache;
+  /** Test seam for the `${PLUGIN_DATA}` root. */
+  dataRoot?: string;
 }): Promise<{
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** Substituted working directory, when the component declared one. */
+  workingDirectory?: string;
   pluginRoot: string;
   origin: PluginServerOrigin;
 } | null> {
@@ -247,6 +412,7 @@ export async function materializePluginStdioForConnect(args: {
     serverId: args.serverId,
     spec: args.spec,
     leaseId: args.serverName,
+    ...(args.dataRoot !== undefined ? { dataRoot: args.dataRoot } : {}),
   });
 
   if (!prepared.ok) {
@@ -258,6 +424,9 @@ export async function materializePluginStdioForConnect(args: {
     command: prepared.launch.command,
     args: prepared.launch.args,
     env: prepared.launch.env,
+    ...(prepared.launch.workingDirectory !== undefined
+      ? { workingDirectory: prepared.launch.workingDirectory }
+      : {}),
     pluginRoot: prepared.pluginRoot,
     origin: prepared.origin,
   };
@@ -292,7 +461,7 @@ function pluginStdioFailureToRouteError(
       return new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        `Plugin "${failure.origin.name}" is not materialized on this machine. Re-import the plugin from its folder on this device to run its local component.`,
+        `Plugin "${failure.origin.name}" is not materialized on this machine and its bundle could not be downloaded from MCPJam. Re-import the plugin from its folder on this device to run its local component.`,
         {
           reason: failure.reason,
           serverName,
@@ -310,6 +479,30 @@ function pluginStdioFailureToRouteError(
           serverName,
           pluginId: failure.origin.pluginId,
           bundleHash: failure.origin.bundleHash,
+          details: failure.message,
+        }
+      );
+    case "unsupported_placeholder":
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        `Plugin "${failure.origin.name}" uses ${failure.placeholder}, which this MCPJam version does not provide, so the component will not be launched. Update MCPJam to run it.`,
+        {
+          reason: failure.reason,
+          serverName,
+          pluginId: failure.origin.pluginId,
+          placeholder: failure.placeholder,
+        }
+      );
+    case "plugin_data_unavailable":
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        `Plugin "${failure.origin.name}" needs its data directory, but it could not be created on this machine. Check that ~/.mcpjam is writable and has free space.`,
+        {
+          reason: failure.reason,
+          serverName,
+          pluginId: failure.origin.pluginId,
           details: failure.message,
         }
       );

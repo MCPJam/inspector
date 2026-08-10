@@ -1,6 +1,7 @@
 // @ts-nocheck
 import {
 	fetchRunEvidence,
+	formatRunOutcome,
 	isFailedOutcome,
 	plainText,
 	watchRunUntilDone,
@@ -49,6 +50,9 @@ export function watchDiscordRun({
 			if (images.length && surfaceDelivery?.uploadImages)
 				await surfaceDelivery.uploadImages(ctx, images);
 		},
+		// The generic copy, not a Discord-specific one — matches what the core
+		// used to default to. `delivery.edit` stringifies it below either way.
+		formatOutcome: formatRunOutcome,
 		delivery: {
 			edit: (messageHandle, content) =>
 				messageHandle.message.edit({
