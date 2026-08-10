@@ -263,8 +263,24 @@ export async function provisionJourneySandbox(args: {
   );
 }
 
-/** A one-time, user-visible fact about a chatbox conversation's sandbox. */
+/**
+ * A one-time, user-visible fact about a chatbox conversation's sandbox —
+ * the BACKEND-mintable subset of `SandboxNoticeReason`. Inspector-minted
+ * reasons (`sandbox_unavailable`) are deliberately NOT members: there is no
+ * backend notice row behind them, so they must never enter the ack protocol.
+ */
 export type ChatboxSandboxNotice = "sandbox_reset" | "stale_image";
+
+const CHATBOX_SANDBOX_NOTICES: ReadonlySet<string> = new Set([
+  "sandbox_reset",
+  "stale_image",
+]);
+
+export function isChatboxSandboxNotice(
+  value: unknown
+): value is ChatboxSandboxNotice {
+  return typeof value === "string" && CHATBOX_SANDBOX_NOTICES.has(value);
+}
 
 /**
  * The notice peek/ack protocol version this build speaks (mcpjam-backend

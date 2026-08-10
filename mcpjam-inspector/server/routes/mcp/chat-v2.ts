@@ -75,6 +75,11 @@ import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
+import { resolvePersonalComputerEngine } from "../../utils/computers/engine.js";
+import {
+  LOCAL_CONSENT_HEADER,
+  verifyLocalComputerConsent,
+} from "../../utils/computers/local-consent.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -589,6 +594,11 @@ chatV2.post("/", async (c) => {
       surface?: "preview" | "share_link";
       // Saved host being previewed (Playground over /mcp). See web/chat-v2.ts.
       hostId?: string;
+      // Local⇄Cloud engine preference for the PERSONAL computer. Selects
+      // WHERE the host-attached computer executes, never WHETHER one exists
+      // (computer still comes only from the server-resolved runtime config).
+      // "local" additionally requires the consent capability header.
+      computerEngine?: "local" | "cloud";
     };
     const mcpClientManager = c.mcpClientManager;
     const rawScopeStepUpResume = body.scopeStepUpResume;
@@ -1019,6 +1029,43 @@ chatV2.post("/", async (c) => {
         | undefined
     )?.executionScope;
 
+    // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
+    // is not mounted hosted). The field selects WHERE the host-attached
+    // computer executes; the consent CAPABILITY in the header — never the
+    // field — is the proof the human clicked Allow on this machine. An
+    // ineligible request degrades to the legacy cloud family; an eligible
+    // explicit ask that can't be honored resolves `unavailable`, never
+    // silently cloud.
+    const rawEnginePref = body.computerEngine;
+    const enginePref =
+      rawEnginePref === "local" || rawEnginePref === "cloud"
+        ? rawEnginePref
+        : undefined;
+    const localPrefEligible =
+      enginePref === "local" && Boolean(requestAuthHeader) && !isChatboxSession;
+    if (enginePref === "local" && !localPrefEligible) {
+      logger.debug(
+        "[mcp/chat-v2] computerEngine=local ignored for an ineligible request",
+        { isChatboxSession, hasAuth: Boolean(requestAuthHeader) }
+      );
+    }
+    const localConsentValid = localPrefEligible
+      ? await verifyLocalComputerConsent(c.req.header(LOCAL_CONSENT_HEADER))
+      : false;
+    if (localPrefEligible && !localConsentValid) {
+      logger.warn(
+        "[mcp/chat-v2] computerEngine=local without a valid consent capability; local engine unavailable for this turn"
+      );
+    }
+    const computerEngine = resolvePersonalComputerEngine({
+      ...(localPrefEligible
+        ? { preference: "local" as const }
+        : enginePref === "cloud"
+          ? { preference: "cloud" as const }
+          : {}),
+      localConsentValid,
+    });
+
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1042,6 +1089,13 @@ chatV2.post("/", async (c) => {
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
               : {}),
+            // Host approval policy — previously not threaded on this route,
+            // so playground bash silently ran with needsApproval:false
+            // whatever the host said. Cloud bash now honors it; local bash
+            // requires approval regardless (see bash.ts).
+            requireToolApproval: resolvedExecution.requireToolApproval === true,
+            computerEngine,
+            localComputerRequested: localPrefEligible,
           }
         : null
     );
@@ -1054,7 +1108,11 @@ chatV2.post("/", async (c) => {
     // block is turn-injected, not user configuration.
     const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
       systemPrompt,
-      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
+      // The environment context describes the pinned E2B image — the WRONG
+      // machine when this turn's bash runs on the user's own computer.
+      hasBashTool:
+        computerEngine !== "local" &&
+        Boolean(builtInTools?.[BASH_TOOL_NAME]),
       bearer: builtInAuthHeader,
       projectId:
         typeof body.projectId === "string" ? body.projectId : undefined,
