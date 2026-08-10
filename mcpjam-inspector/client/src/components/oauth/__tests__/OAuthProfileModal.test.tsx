@@ -320,4 +320,43 @@ describe("OAuthProfileModal — agentSeed", () => {
       "oauth-flow-target",
     );
   });
+
+  it("collapses the advanced section again on a reopen that does not need it", () => {
+    // The modal is never unmounted, so the accordion state outlives a close —
+    // without a reset the next (DCR) target opens with Advanced expanded.
+    const { rerender } = render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={{
+          serverUrl: "https://agent.example.com/mcp",
+          registrationStrategy: "preregistered",
+        }}
+      />,
+    );
+    expect(screen.getByPlaceholderText("Client ID")).toBeInTheDocument();
+
+    rerender(
+      <OAuthProfileModal
+        open={false}
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={null}
+      />,
+    );
+    rerender(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={null}
+      />,
+    );
+
+    expect(screen.queryByPlaceholderText("Client ID")).not.toBeInTheDocument();
+  });
 });

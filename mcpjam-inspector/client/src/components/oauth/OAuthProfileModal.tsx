@@ -144,13 +144,20 @@ export function OAuthProfileModal({
       // keeps the derived default. It never carries credentials (see the
       // OAuthProfileAgentSeed type).
       setServerName(agentSeed?.serverName ?? generateDefaultName());
-      setDraft({
+      const nextDraft = {
         ...derivedProfile,
         ...(agentSeed?.serverUrl ? { serverUrl: agentSeed.serverUrl } : {}),
         ...(agentSeed?.registrationStrategy
           ? { registrationStrategy: agentSeed.registrationStrategy }
           : {}),
-      });
+      };
+      setDraft(nextDraft);
+      // Derived from `nextDraft`, not `draft`: the setDraft above has not
+      // landed yet, so reading state here would reveal (or hide) the section
+      // based on the previously configured server.
+      setAdvancedOpen(
+        nextDraft.registrationStrategy === "preregistered" ? "advanced" : "",
+      );
       setHeaderRows(
         derivedProfile.customHeaders.length
           ? derivedProfile.customHeaders.map((header) =>
@@ -171,15 +178,15 @@ export function OAuthProfileModal({
 
   // The Client ID input lives inside "Advanced settings (optional)", which is
   // collapsed by default, while Registration is a top-level dropdown. Picking
-  // "Pre-registered" therefore hid the one field that strategy cannot run
-  // without, and the flow only failed later at the registration step. Reveal
-  // the section as soon as the strategy needs it. A manual collapse sticks:
-  // this only fires when the strategy changes (or the modal reopens).
-  useEffect(() => {
-    if (open && draft.registrationStrategy === "preregistered") {
+  // "Pre-registered" hid the one field that strategy cannot run without, and
+  // the flow only failed later at the registration step. Reveal the section
+  // whenever that strategy is chosen; a manual collapse afterwards sticks.
+  const handleRegistrationChange = (value: OAuthRegistrationStrategy) => {
+    setDraft((prev) => ({ ...prev, registrationStrategy: value }));
+    if (value === "preregistered") {
       setAdvancedOpen("advanced");
     }
-  }, [open, draft.registrationStrategy]);
+  };
 
   const normalizedHeaders = useMemo(
     () =>
@@ -460,11 +467,9 @@ export function OAuthProfileModal({
                   <Select
                     value={draft.registrationStrategy}
                     onValueChange={(value) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        registrationStrategy:
-                          value as OAuthRegistrationStrategy,
-                      }))
+                      handleRegistrationChange(
+                        value as OAuthRegistrationStrategy,
+                      )
                     }
                   >
                     <SelectTrigger
