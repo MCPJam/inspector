@@ -106,18 +106,60 @@ export function grantLocalComputerConsent(): Promise<{
   });
 }
 
-/** Constant-time verify of a presented capability against the stored hash. */
+/**
+ * Constant-time verify of a presented capability against the stored hash.
+ *
+ * Delegates to `verifyAndFingerprintLocalConsent` so the length bounds and the
+ * `timingSafeEqual` compare live in exactly ONE place and cannot drift apart.
+ * Same single-read property, same lock-free behavior.
+ */
 export async function verifyLocalComputerConsent(
   token: string | null | undefined
 ): Promise<boolean> {
-  if (!token || token.length < 16 || token.length > 256) return false;
+  return (await verifyAndFingerprintLocalConsent(token)) !== null;
+}
+
+/**
+ * Fingerprint of the CURRENTLY persisted capability (its stored SHA-256), or
+ * null when no consent exists.
+ *
+ * Lets a holder of a derived credential — the local terminal's handshake nonce —
+ * verify that the capability it was minted against is still the live one,
+ * WITHOUT holding the plaintext token. A revoke (no consent) or a re-grant from
+ * another browser profile (rotated hash) both change the answer, so a nonce
+ * minted before either becomes unredeemable.
+ */
+export async function getLocalConsentFingerprint(): Promise<string | null> {
+  return (await readPersistedConsent())?.tokenHash ?? null;
+}
+
+/**
+ * Verify a presented capability AND return the fingerprint it matched, from a
+ * SINGLE read of the consent file.
+ *
+ * Minting a terminal nonce needs both facts, and taking them from two separate
+ * reads is a real race: a re-grant landing between them would verify the OLD
+ * token and then hand back the NEW capability's fingerprint, so the old browser
+ * profile would get a nonce that survives the rotation it should have died to.
+ * One read makes the pair internally consistent — the returned fingerprint is
+ * always the very hash the token was checked against.
+ *
+ * Deliberately still lock-free, like `verifyLocalComputerConsent`: this is on
+ * the enforcement path and must never queue behind a mutation. A rotation that
+ * happens *after* this read is caught later, when the WebSocket re-checks the
+ * fingerprint against the live capability.
+ */
+export async function verifyAndFingerprintLocalConsent(
+  token: string | null | undefined
+): Promise<string | null> {
+  if (!token || token.length < 16 || token.length > 256) return null;
   const persisted = await readPersistedConsent();
-  if (!persisted) return false;
+  if (!persisted) return null;
   const presented = Buffer.from(hashToken(token), "hex");
   const stored = Buffer.from(persisted.tokenHash, "hex");
-  return (
-    presented.length === stored.length && timingSafeEqual(presented, stored)
-  );
+  const matches =
+    presented.length === stored.length && timingSafeEqual(presented, stored);
+  return matches ? persisted.tokenHash : null;
 }
 
 /**

@@ -218,7 +218,6 @@ export interface UseHostedOAuthGateOptions {
   servers: HostedOAuthServerDescriptor[];
   projectId?: string | null;
   chatboxId?: string;
-  accessVersion?: number;
   isAuthenticated?: boolean;
 }
 
@@ -239,7 +238,6 @@ export function useHostedOAuthGate({
   servers,
   projectId,
   chatboxId,
-  accessVersion,
   isAuthenticated = false,
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
   const oauthServers = useMemo(
@@ -361,7 +359,6 @@ export function useHostedOAuthGate({
                 serverName: server.serverName,
                 accessScope: "chat_v2",
                 chatboxId,
-                ...(Number.isFinite(accessVersion) ? { accessVersion } : {}),
               }
             : undefined
         );
@@ -422,7 +419,6 @@ export function useHostedOAuthGate({
     surface,
     isVaultBacked,
     chatboxId,
-    accessVersion,
     projectId,
   ]);
 
@@ -470,7 +466,6 @@ export function useHostedOAuthGate({
           ? "project_member"
           : undefined,
         chatboxId,
-        accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
         returnPath,
       });
       // The sentinel is a legacy boolean; the structured marker written just
@@ -558,7 +553,6 @@ export function useHostedOAuthGate({
       isVaultBacked,
       pendingKey,
       chatboxId,
-      accessVersion,
       surface,
       projectId,
     ]

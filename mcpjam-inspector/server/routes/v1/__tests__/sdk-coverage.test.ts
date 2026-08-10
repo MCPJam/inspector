@@ -102,6 +102,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/environments/{environmentId}/restore":
     "restoreEnvironment",
 
+  // Agent Plugins (read-only)
+  "get /projects/{projectId}/plugins": "listProjectPlugins",
+  "get /plugin-versions/{pluginVersionId}": "getPluginVersion",
+
   // Sandbox images
   "get /projects/{projectId}/images": "listImages",
   "post /projects/{projectId}/images": "createImage",

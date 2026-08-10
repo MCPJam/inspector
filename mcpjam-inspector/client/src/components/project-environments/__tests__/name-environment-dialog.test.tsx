@@ -159,7 +159,7 @@ describe("NameEnvironmentDialog", () => {
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(toastMock.success).toHaveBeenCalledWith(
-      expect.stringContaining('named "Checkout flow"'),
+      expect.stringContaining('Saved as "Checkout flow"'),
     );
   });
 });

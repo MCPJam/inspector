@@ -130,7 +130,10 @@ import { PlaygroundEnvironmentSection } from "@/components/playground/Playground
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
-import { buildComputerAttachmentNote } from "@/lib/computer-attachments";
+import {
+  buildComputerAttachmentNote,
+  isComputerAttachmentUploadActive,
+} from "@/lib/computer-attachments";
 import {
   getBillingErrorMessage,
   isComputerStartLimitError,
@@ -860,11 +863,15 @@ export function PlaygroundMain({
 
   // COMP-14 gate: composer attachments go into the sandbox only when the
   // previewed host actually attaches a computer (honesty rule — no computer, no
-  // sandbox upload; attachments stay inline-only exactly as before).
-  const computerAttachmentsActive =
-    computersEnabled &&
-    isConvexAuthenticated &&
-    !!previewedHost?.config?.computer;
+  // sandbox upload; attachments stay inline-only exactly as before) AND the
+  // resolved engine is cloud — the upload targets the CLOUD box, so on "This
+  // machine" it would wake a sandbox the local bash tool can't see.
+  const computerAttachmentsActive = isComputerAttachmentUploadActive({
+    computersEnabled: computersEnabled === true,
+    isAuthenticated: isConvexAuthenticated,
+    hostHasComputer: !!previewedHost?.config?.computer,
+    engine: playgroundComputerEngine.engine,
+  });
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});

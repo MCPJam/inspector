@@ -144,29 +144,13 @@ export const CHATBOX_SESSION_STORAGE_KEY = "mcpjam_chatbox_session_v2";
 export const CHATBOX_OAUTH_PENDING_KEY = "mcp-oauth-chatbox-pending";
 export const CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY =
   "mcpjam_chatbox_signin_return_path_v1";
-export const CHATBOX_PLAYGROUND_KEY_PREFIX =
-  "mcpjam_chatbox_playground_session_v1:";
 
 /** sessionStorage: optional servers the tester enabled for this chatbox session. */
 export function chatboxEnabledOptionalStorageKey(chatboxId: string): string {
   return `chatbox-enabled-optional:${chatboxId}`;
 }
 
-/** sessionStorage: optional servers enabled in builder preview for a chatbox id. */
-export function chatboxPreviewEnabledOptionalStorageKey(
-  chatboxId: string
-): string {
-  return `chatbox-preview-opt-in:${chatboxId}`;
-}
-
-const PLAYGROUND_TTL_MS = 24 * 60 * 60 * 1000;
-
-export interface ChatboxPlaygroundSession extends ChatboxSession {
-  playgroundId: string;
-  updatedAt: number;
-}
-
-// Defensive normalizer for the chatUi envelope in playground snapshots and
+// Defensive normalizer for the chatUi envelope in
 // /web/chatbox/redeem responses. Returns `undefined` when no recognized
 // surface is present; the hosted runtime only consumes the `welcome`
 // surface today (feedback never reaches the bootstrap payload).
@@ -433,103 +417,6 @@ export function clearChatboxSession(): void {
   sessionStorage.removeItem(CHATBOX_SESSION_STORAGE_KEY);
 }
 
-function pruneExpiredPlaygroundSessions(): void {
-  try {
-    const now = Date.now();
-    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
-      const key = localStorage.key(index);
-      if (!key?.startsWith(CHATBOX_PLAYGROUND_KEY_PREFIX)) {
-        continue;
-      }
-
-      try {
-        const raw = localStorage.getItem(key);
-        if (!raw) {
-          continue;
-        }
-
-        const parsed = JSON.parse(raw) as { updatedAt?: number };
-        if (
-          typeof parsed.updatedAt !== "number" ||
-          now - parsed.updatedAt > PLAYGROUND_TTL_MS
-        ) {
-          localStorage.removeItem(key);
-        }
-      } catch {
-        localStorage.removeItem(key);
-      }
-    }
-  } catch {
-    // Ignore storage access failures.
-  }
-}
-
-export function writePlaygroundSession(
-  session: ChatboxPlaygroundSession
-): void {
-  try {
-    localStorage.setItem(
-      `${CHATBOX_PLAYGROUND_KEY_PREFIX}${session.playgroundId}`,
-      JSON.stringify({
-        ...session,
-        updatedAt: Date.now(),
-      })
-    );
-    pruneExpiredPlaygroundSessions();
-  } catch {
-    // Ignore storage failures.
-  }
-}
-
-export function readPlaygroundSession(
-  playgroundId: string
-): ChatboxPlaygroundSession | null {
-  try {
-    const storageKey = `${CHATBOX_PLAYGROUND_KEY_PREFIX}${playgroundId}`;
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as Partial<ChatboxPlaygroundSession> | null;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      typeof parsed.updatedAt !== "number" ||
-      Date.now() - parsed.updatedAt > PLAYGROUND_TTL_MS
-    ) {
-      localStorage.removeItem(storageKey);
-      return null;
-    }
-
-    const normalized = normalizeChatboxSession(parsed);
-    if (!normalized) {
-      return null;
-    }
-
-    pruneExpiredPlaygroundSessions();
-
-    return {
-      ...normalized,
-      playgroundId:
-        typeof parsed.playgroundId === "string"
-          ? parsed.playgroundId
-          : playgroundId,
-      updatedAt: parsed.updatedAt,
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function clearPlaygroundSession(playgroundId: string): void {
-  try {
-    localStorage.removeItem(`${CHATBOX_PLAYGROUND_KEY_PREFIX}${playgroundId}`);
-  } catch {
-    // Ignore storage failures.
-  }
-}
-
 export function writeChatboxSignInReturnPath(path: string): void {
   const normalizedPath = path.trim();
   if (!extractChatboxTokenFromPath(normalizedPath)) {
@@ -569,49 +456,4 @@ export function buildChatboxLink(token: string, chatboxName: string): string {
   return `${origin}/chatbox/${slugify(chatboxName)}/${encodeURIComponent(
     token
   )}`;
-}
-
-export function buildPlaygroundChatboxLink(
-  token: string,
-  chatboxName: string,
-  playgroundId: string
-): string {
-  const url = new URL(buildChatboxLink(token, chatboxName));
-  url.searchParams.set("playground", "1");
-  url.searchParams.set("surface", "preview");
-  url.searchParams.set("playgroundId", playgroundId);
-  return url.toString();
-}
-
-// --- Builder session (survives OAuth redirect) ---
-
-const BUILDER_SESSION_KEY = "mcpjam_chatbox_builder_session_v1";
-
-export interface ChatboxBuilderSession {
-  projectId: string;
-  chatboxId: string | null;
-  draft: Record<string, unknown> | null;
-  viewMode: string;
-}
-
-export function readBuilderSession(
-  projectId: string
-): ChatboxBuilderSession | null {
-  try {
-    const raw = sessionStorage.getItem(BUILDER_SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as ChatboxBuilderSession;
-    if (parsed.projectId !== projectId) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-export function writeBuilderSession(session: ChatboxBuilderSession): void {
-  sessionStorage.setItem(BUILDER_SESSION_KEY, JSON.stringify(session));
-}
-
-export function clearBuilderSession(): void {
-  sessionStorage.removeItem(BUILDER_SESSION_KEY);
 }
