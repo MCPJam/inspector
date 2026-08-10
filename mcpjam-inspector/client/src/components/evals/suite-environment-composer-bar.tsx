@@ -24,6 +24,7 @@ import { useMutation } from "convex/react";
 import { Globe, Server } from "lucide-react";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerStateFromEnvironments,
   type EnvironmentComposerState,
@@ -33,6 +34,7 @@ import { CompareClientsButton } from "@/components/evals/compare-clients-button"
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useAdhocEnvironmentsEnabled } from "@/hooks/useAdhocEnvironmentsEnabled";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -302,6 +304,9 @@ function LegacyModeBar({
   useEffect(() => {
     setAttachments(initialAttachments);
   }, [initialAttachments]);
+  const updateSuite = useMutation(
+    "testSuites:updateTestSuite" as any
+  ) as unknown as (args: Record<string, unknown>) => Promise<unknown>;
 
   const persistVersion = useRef(0);
   const persist = useCallback(
@@ -318,6 +323,36 @@ function LegacyModeBar({
       }
     },
     [attachments, onUpdate]
+  );
+
+  /**
+   * The sandbox image belongs on this bar even in legacy mode — a legacy suite
+   * has a real field for it, and it was previously reachable only by opening
+   * the settings sheet. Skills are the one strip slot with nowhere to write
+   * here (there is no suite-level skills axis), so they stay hidden until the
+   * suite is in environment mode.
+   */
+  const computersEnabled = useComputersEnabled();
+  const handleSandboxImageChange = useCallback(
+    async (next: string | null) => {
+      try {
+        await updateSuite({
+          suiteId: suite._id,
+          // Whole-object replace: `servers`/`serverBindings` are re-sent so
+          // setting an image doesn't wipe them, and clearing works by omitting
+          // the key rather than sending null.
+          environment: {
+            servers: suite.environment?.servers ?? [],
+            serverBindings: suite.environment?.serverBindings,
+            ...(next ? { computerEnvironmentId: next } : {}),
+          },
+        });
+        toast.success(next ? "Computer image set" : "Computer image cleared");
+      } catch (error) {
+        toast.error(convexErrMessage(error, "Failed to update the suite"));
+      }
+    },
+    [suite._id, suite.environment?.serverBindings, suite.environment?.servers, updateSuite]
   );
 
   const hostIds = attachments.map((a) => a.namedHostId);
@@ -399,6 +434,17 @@ function LegacyModeBar({
         )}
         <CompareClientsButton hostIds={hostIds} />
       </div>
+
+      {computersEnabled && editable && suite.projectId ? (
+        <div className="shrink-0">
+          <SandboxImagePill
+            projectId={suite.projectId}
+            value={suite.environment?.computerEnvironmentId ?? null}
+            onChange={(next) => void handleSandboxImageChange(next)}
+            testId="suite-env-sandbox-image"
+          />
+        </div>
+      ) : null}
     </>
   );
 }
