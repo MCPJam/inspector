@@ -1,18 +1,127 @@
 ---
 title: "Plugins"
-description: "Import and manage OpenAI plugin bundles as versioned, read-only projections of their skills and MCP servers"
+description: "Import Agent Plugins 1.0 bundles as versioned, read-only projections of their skills and MCP servers"
 icon: "package"
 ---
 
 <Note>
-Plugins are available to project admins on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account.
+Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account. Guest sessions can import plugins too — the same upload path and limits apply to every actor.
 </Note>
 
-A **plugin** is an OpenAI plugin bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
+A **plugin** is an [Agent Plugins 1.0](https://agent-plugins.org) bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
+
+## Bundle layout
+
+Agent Plugins fixes where each component lives. MCPJam discovers components **only** from these locations:
+
+```
+my-plugin/
+├── plugin.json          # required manifest, at the root
+├── mcp.json             # optional MCP server configuration, at the root
+├── skills/              # optional skills, one immediate child directory each
+│   └── deploy-app/
+│       ├── SKILL.md     # required per skill
+│       └── scripts/     # supporting files, never executed at import
+└── assets/              # optional icons, logos, screenshots
+```
+
+A `plugin.json` or `mcp.json` anywhere else in the bundle is treated as an ordinary file, and a `SKILL.md` deeper than one directory under `skills/` is not a skill. Directories the format does not define (`hooks/`, vendored folders, and so on) are preserved as plain files — they are not components and not errors.
+
+### `plugin.json`
+
+The manifest requires two fields:
+
+- **`$schema`** — the canonical Agent Plugins schema identifier, for example `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`. MCPJam uses it to select its locally supported validation rules; the URL is **never fetched** during import. A missing or unsupported `$schema` rejects the bundle.
+- **`name`** — the plugin's stable identity: 1–64 lowercase characters from `a-z`, `0-9`, `-`, and `.`. Dots are legal (`com.example.deploy` is a valid name), separators may not lead or trail, and the same separator may not repeat (`--` and `..` are invalid — mixed pairs like `foo.-bar` are allowed by the spec).
+
+`version` is a free-form string — the format imposes no semver rule. The manifest is a **closed object**: unknown top-level fields are reported in the import preview and ignored. The `extensions` field carries client-specific data under reverse-domain namespaces; MCPJam reads its own presentation metadata (display name, icon, logo) from the `com.mcpjam` namespace and preserves other namespaces without validating them.
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "com.example.deploy",
+  "version": "2.1.0",
+  "description": "Deploy tools and the workflows that drive them.",
+  "extensions": {
+    "com.mcpjam": { "display_name": "Deploy Tools", "icon": "assets/icon.png" }
+  }
+}
+```
+
+### `mcp.json`
+
+MCP servers are declared in one root document requiring its own `$schema` and an `mcpServers` object. The Agent Plugins version in `mcp.json` must match the one in `plugin.json`.
+
+Every server entry declares an explicit **`type`**, which is authoritative — MCPJam never infers the transport from the presence of `command` or `url`:
+
+| `type` | Transport | Requires |
+|--------|-----------|----------|
+| `stdio` | Local child process | `command` (plus optional `args`, `env`, `cwd`) |
+| `streamable-http` | Streamable HTTP | `url` (plus optional `headers`) |
+| `sse` | Legacy HTTP+SSE | `url` (plus optional `headers`) |
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "deploy-local": {
+      "type": "stdio",
+      "command": "./bin/server",
+      "args": ["--data", "${PLUGIN_DATA}/state"],
+      "env": { "MODE": "production", "API_KEY": "${API_KEY}" }
+    },
+    "deploy-remote": {
+      "type": "streamable-http",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+Remote URLs must use HTTPS; plain-HTTP loopback URLs (`http://localhost:…`) are accepted with a warning for local development.
+
+### Plugin variables
+
+Two placeholders are defined by the format, both resolved by MCPJam at launch time — never at import time:
+
+| Placeholder | Resolves to |
+|-------------|-------------|
+| `${PLUGIN_ROOT}` | The read-only root of the materialized bundle |
+| `${PLUGIN_DATA}` | A writable per-plugin data directory, preserved across plugin updates |
+
+Placeholders expand **only in `args`, `env` values, and `cwd`** — a placeholder in `command` invalidates that server entry. Commands are single executable tokens: a `./`-prefixed command resolves against the plugin root with containment enforced, so `./bin/server` runs the binary shipped in the bundle and `./bin/../../outside` invalidates the entry. `cwd` must start with `./`, `${PLUGIN_ROOT}`, or `${PLUGIN_DATA}`. A bundle's `env` may not define `PLUGIN_ROOT` or `PLUGIN_DATA` — those variables are client-controlled.
+
+### Failure isolation
+
+Problems are contained at the narrowest boundary the format defines:
+
+| Problem | Effect |
+|---------|--------|
+| Archive violation (path traversal, symlink entry, size limits) or fatal manifest violation | The whole import is rejected |
+| Invalid `mcp.json` document (bad JSON, wrong `$schema`, unknown top-level field, version mismatch) | MCP servers are disabled for the bundle; skills still import |
+| One invalid server entry (unknown `type`, unknown field, placeholder in `command`, escaping path) | Only that entry is **skipped**; sibling servers import |
+| One non-conforming skill | Only that skill is skipped; sibling skills import |
+
+A **skip** in the import preview means exactly this: the component was declared but did not conform, so it is absent from the imported revision. Each skip appears in the preview's warnings as a `COMPONENT_SKIPPED` entry naming the component and the reason. A skipped server is a bundle problem to fix and re-import — not a runtime failure.
+
+### Credential values are never imported
+
+MCPJam screens every literal `env` and `headers` value in the bundle:
+
+- **Non-secret literals are stored** — `{"MODE": "production"}` or an `X-Api-Version` header imports as-is, so portable plugins run without a setup step.
+- **Secret-looking literals are never stored** — anything resembling a token, key, PEM block, or URL-embedded password is dropped with a warning and becomes a **required setup item**: you supply the value per server after installing.
+- **`${VAR}` references** always become setup items — the bundle names the variable, you provide the value.
+
+The setup section of the install summary lists these names. Values are always provided by you, per server; MCPJam never reads or stores credential values from a bundle.
+
+## Where plugin servers run
+
+- **`stdio` components run on the local MCPJam runtime today.** At connect time the bundle is materialized into a local content-addressed cache, `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` are substituted, and the process spawns on your machine. Hosted VM execution for plugin stdio components is coming; the plugin card shows a **Local runtime** badge in the meantime.
+- **`streamable-http` and `sse` components** are remote connections and work from any client.
 
 ## Importing a plugin
 
-Plugin import requires a synced cloud project. Local or unsynced mode shows an explanation instead of the import picker.
+Plugin import needs a cloud project — signed-in or guest. Fully local, unsynced mode shows an explanation instead of the import picker.
 
 1. Open the **Connect** tab (Servers).
 2. Click the **⋯** actions menu in the top-right of the server list.
@@ -35,17 +144,13 @@ Before you confirm the install, MCPJam shows a preview of what the bundle declar
 |---------|---------------|
 | Identity | Plugin name, version, and a short content-addressed revision ID |
 | Census | Counts of skills, MCP servers, app mappings, and assets |
-| Warnings | Non-fatal issues the inspector found in the bundle |
-| Unsupported components | Components preserved in the stored bundle that MCPJam does not run (for example, lifecycle hooks) |
+| Warnings | Non-fatal issues, including every skipped component with its reason |
+| Unsupported components | Anything preserved in the stored bundle that MCPJam does not run |
 | Setup required | Environment variable and header names the bundle declares — you supply values per server after installing, not here |
 | Skills | Declared skill model references and descriptions |
 | MCP servers | Server keys, transports, and any OAuth or credential requirements |
 | App mappings | Metadata entries preserved from `.app.json` files |
 | Assets | Icons and other static files included in the bundle |
-
-<Note>
-MCPJam never reads credential values from the bundle. The setup section lists the names of required environment variables and headers so you know what to configure after installing — values are always provided by you, per server.
-</Note>
 
 ### Content-addressed re-import
 
@@ -81,7 +186,7 @@ Click the card header to expand it and see the active revision's components:
 
 - **Revision ID** — the short content-addressed identity of the active bundle.
 - **MCP servers** — each server's key, transport, placement, and readiness.
-- **Skills** — model references for each declared skill.
+- **Skills** — model references for each declared skill, namespaced as `<plugin-name>/<skill-name>`.
 - **Unsupported components** — a count of components preserved in the bundle that MCPJam does not run.
 - **Other revisions** — ready revisions of the same plugin that are not currently active. Click **Activate** next to a revision to make it the active one.
 
@@ -91,17 +196,6 @@ Click the **⋮** menu on a plugin card to:
 
 - **Disable / Enable** — temporarily disable a plugin without uninstalling it.
 - **Uninstall** — soft-uninstall the plugin. Revisions already used by runs and sessions are preserved so existing history stays reproducible. Uninstall is blocked while a live environment still pins one of the plugin's versions.
-
-## What MCPJam does not run
-
-Some component types found in OpenAI plugin bundles are not executed by MCPJam. These components are always preserved in the stored bundle for fidelity, but they are never run:
-
-- Lifecycle hooks (for example, `postinstall` scripts)
-- Browser extensions
-- Scheduled task templates
-- Any component type MCPJam does not recognize
-
-These components appear in the preview and in the expanded card under **Unsupported components**, always described as preserved rather than executable.
 
 ## Credential setup
 
@@ -113,4 +207,3 @@ When an eval run or swarm simulation executes against an environment that pins a
 
 - **Eval run detail** — a **Plugins** row below the environment label shows each pinned plugin's name and short bundle hash. See [Plugin provenance on runs](/inspector/evals#plugin-provenance-on-runs).
 - **Swarm session pane** — the transcript pane for a completed simulation shows the same plugin chips so you can tell which bundle produced that session's transcript.
-- **OpenAI submission report** — for runs that pinned a plugin, a **Submission report** button in the run header downloads a Markdown document formatted for OpenAI's plugin directory review. See [OpenAI submission report](/inspector/evals#openai-submission-report).
