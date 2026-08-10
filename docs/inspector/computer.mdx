@@ -116,6 +116,19 @@ Manage them from **Change** on the image strip.
   any one computer's disk — see [Data & persistence](#data-and-persistence).
 </Note>
 
+## Cloud sandboxes
+
+Several surfaces run computer commands in **MCPJam cloud sandboxes** — disposable machines that are provisioned on demand and torn down when the session ends. These sandboxes are always cloud-hosted, regardless of where the inspector itself runs.
+
+| Surface | Sandbox scope |
+|---|---|
+| **Chatboxes** (environment with pinned image) | Per conversation |
+| **Swarm sessions** | Per attempt |
+| **Eval iterations** | Per iteration |
+| **User Testing sessions** | Per conversation |
+
+Sandbox images (defined under **Computer → Images**) apply to all of these cloud runs. They never apply to the machine running the inspector itself.
+
 ## Chatbox sandbox
 
 When a chatbox is backed by an environment that has a pinned computer image,
