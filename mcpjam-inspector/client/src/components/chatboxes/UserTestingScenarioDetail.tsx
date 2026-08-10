@@ -68,9 +68,9 @@ import { cn } from "@/lib/utils";
  * the embed tags itself `?surface=preview` (so the session it starts is
  * labelled rather than passing for a tester's).
  *
- * Clusters are per-scenario for free — `ChatboxUsagePanel` is chatbox-scoped,
+ * Insights are per-scenario for free — `ChatboxUsagePanel` is chatbox-scoped,
  * so the topic map here only ever covers this scenario's own sessions. There is
- * deliberately no project-wide clusters view: aggregating across scenarios that
+ * deliberately no project-wide insights view: aggregating across scenarios that
  * point at different servers would produce themes nobody can act on.
  */
 interface UserTestingScenarioDetailProps {
@@ -88,7 +88,7 @@ const TAB_OPTIONS: ReadonlyArray<{
 }> = [
   { value: "edit", label: "Edit" },
   { value: "sessions", label: "Sessions" },
-  { value: "clusters", label: "Clusters" },
+  { value: "insights", label: "Insights" },
 ];
 
 export function UserTestingScenarioDetail({
@@ -332,7 +332,7 @@ export function UserTestingScenarioDetail({
   // Edit docks the live Preview beside the setup form. Preview embeds the
   // share link and starts a real guest session, so the whole Edit tree
   // (including the iframe) mounts only once Edit has been opened — then
-  // stays mounted and hidden when flipping to Sessions/Clusters so returning
+  // stays mounted and hidden when flipping to Sessions/Insights so returning
   // doesn't start a second session. Legacy `?tab=preview` parses as Edit.
   const [hasOpenedEdit, setHasOpenedEdit] = useState(tab === "edit");
   useEffect(() => {
@@ -544,7 +544,7 @@ export function UserTestingScenarioDetail({
             />
           </div>
         ) : null}
-        {tab === "clusters" ? (
+        {tab === "insights" ? (
           <div className="absolute inset-0">
             <ChatboxUsagePanel
               chatbox={chatbox}
@@ -558,6 +558,11 @@ export function UserTestingScenarioDetail({
                   }),
                   { replace: true },
                 );
+              }}
+              onOpenSessionsTab={() => {
+                navigate(buildUserTestingScenarioPath(chatbox.chatboxId), {
+                  replace: true,
+                });
               }}
             />
           </div>

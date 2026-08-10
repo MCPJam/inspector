@@ -1,8 +1,8 @@
 /**
  * Scenario detail. Two behaviours are load-bearing beyond layout:
  *
- *  - Clusters are per-scenario. The usage panel is chatbox-scoped, so the
- *    Clusters tab must be rendering against THIS scenario's chatboxId and not
+ *  - Insights are per-scenario. The usage panel is chatbox-scoped, so the
+ *    Insights tab must be rendering against THIS scenario's chatboxId and not
  *    some project-wide aggregate — that was the defect in the design PR this
  *    surface replaced.
  *  - The sub-tab lives in the URL and switches with `replace`, so the browser
@@ -235,8 +235,8 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.queryByText(/Share this with testers/i)).not.toBeInTheDocument();
   });
 
-  it("scopes Clusters to this scenario's chatbox", () => {
-    locationState.search = "?tab=clusters";
+  it("scopes Insights to this scenario's chatbox", () => {
+    locationState.search = "?tab=insights";
     renderDetail();
 
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
@@ -251,12 +251,12 @@ describe("UserTestingScenarioDetail", () => {
   it("switches tabs by replacing the URL, not pushing onto history", () => {
     renderDetail();
 
-    fireEvent.click(screen.getByRole("button", { name: "Clusters" }));
+    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
 
     // Addressed by chatbox id: the host it displays is not unique per
     // scenario once environments are in play.
     expect(navigateMock).toHaveBeenCalledWith(
-      "/user-testing/cb-1?tab=clusters",
+      "/user-testing/cb-1?tab=insights",
       { replace: true },
     );
   });

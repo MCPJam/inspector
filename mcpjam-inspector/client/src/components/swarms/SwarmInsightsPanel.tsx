@@ -1,38 +1,25 @@
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { toast } from "@/lib/toast";
-import {
-  EMPTY_USAGE_FILTER,
   chipKey,
   isSameSelection,
-  removeChipByKey,
-  removeChipsByKeys,
-  selectionChipsToAdd,
-  toggleChip,
   type InsightsSelection,
   type ThemeRef,
   type UsageFilterChip,
-  type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
+import {
+  useInsightsFlowController,
+  useInsightsRebuild,
+} from "@/hooks/useInsightsFlowController";
 import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { ChatboxInsightsSankey } from "@/components/chatboxes/ChatboxInsightsSankey";
 import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
 import { CriterionScorecard } from "@/components/swarms/CriterionScorecard";
-import { SwarmInsightsStatline } from "@/components/swarms/SwarmInsightsStatline";
-import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { InsightsStatline } from "@/components/shared/usage-insights/InsightsStatline";
+import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { cn } from "@/lib/utils";
-import { Network, Workflow, X } from "lucide-react";
+import { X } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-
-type InsightsView = "flow" | "clusters";
 
 interface SwarmInsightsPanelProps {
   projectId: string | null;
@@ -75,9 +62,9 @@ interface SwarmInsightsPanelProps {
  * and Clusters (topic map), scoped to a wave's journey-runs (or the project
  * when `journeyRunIds` is omitted).
  *
- * Shares the sankey, topic map, drill-down, and selection/chip mechanics with
- * the chatbox panel — goals are journeys (deterministic), and there is no
- * feedback calibration (synthetic sessions).
+ * Shares flow/selection/rebuild orchestration with User Testing via
+ * `useInsightsFlowController` — goals are journeys (deterministic), and there
+ * is no feedback calibration (synthetic sessions).
  */
 export function SwarmInsightsPanel({
   projectId,
@@ -111,121 +98,23 @@ export function SwarmInsightsPanel({
     [projectId, stableJourneyRunIds],
   );
 
-  const [view, setView] = useState<InsightsView>("flow");
-  const [filter, setFilter] = useState<UsageFilterState>(EMPTY_USAGE_FILTER);
-  const [flowSelection, setFlowSelection] = useState<InsightsSelection | null>(
-    null,
-  );
-  // The chips the flow actually ADDED — ownership, not implication — mirroring
-  // the chatbox panel's contract so teardown never deletes a chip another
-  // writer put there.
-  const [flowOwnedKeys, setFlowOwnedKeys] = useState<string[]>([]);
-  const flowSelectionRef = useRef<InsightsSelection | null>(null);
-  const filterRef = useRef<UsageFilterState>(EMPTY_USAGE_FILTER);
-  const flowOwnedKeysRef = useRef<string[]>([]);
-  flowSelectionRef.current = flowSelection;
-  filterRef.current = filter;
-  flowOwnedKeysRef.current = flowOwnedKeys;
-  const [rebuildBusy, setRebuildBusy] = useState(false);
-  const rebuildInFlightRef = useRef(false);
-  // One-shot topic-map backfill per project. Server queueSwarmClusterRebuild
-  // also dedupes in-flight runs; this ref is hygiene before Convex reflects
-  // queued (Strict Mode / remount).
-  const topicMapBackfillKeyRef = useRef<string | null>(null);
+  const cohortKey = `${projectId ?? ""}\0${journeyRunIdsKey}`;
 
-  // Reset on project / wave switches: a selected flow node names a cluster
-  // belonging to the previous cohort.
-  const prevCohortKeyRef = useRef(`${projectId ?? ""}\0${journeyRunIdsKey}`);
-  useEffect(() => {
-    const nextKey = `${projectId ?? ""}\0${journeyRunIdsKey}`;
-    if (prevCohortKeyRef.current === nextKey) return;
-    prevCohortKeyRef.current = nextKey;
-    setFilter(EMPTY_USAGE_FILTER);
-    setFlowSelection(null);
-    setFlowOwnedKeys([]);
-    setView("flow");
-    rebuildInFlightRef.current = false;
-    setRebuildBusy(false);
-    onSelectionChange?.(null);
-  }, [projectId, journeyRunIdsKey, onSelectionChange]);
-
-  // The selection's own chips must not reach the breakdown query — they are
-  // the diagram's own output, and feeding them back collapses the diagram to
-  // the selected path. Same ownership subtraction as the chatbox panel.
-  const breakdownFilter = useMemo(
-    () => removeChipsByKeys(filter, flowOwnedKeys),
-    [filter, flowOwnedKeys],
-  );
+  const flow = useInsightsFlowController({
+    cohortKey,
+    onSelectionChange,
+  });
 
   const { breakdown, rebuild } = useUsageInsights({
     scope,
-    filters: breakdownFilter,
+    filters: flow.breakdownFilter,
     threadsEnabled: false,
     breakdownEnabled: scope !== null,
   });
 
-  const commitSelection = useCallback(
-    (
-      next: InsightsSelection | null,
-      opts?: { silent?: boolean },
-    ) => {
-      const currentFlowSelection = flowSelectionRef.current;
-      const currentFilter = filterRef.current;
-      const currentOwnedKeys = flowOwnedKeysRef.current;
-      if (next === null) {
-        setFilter((prev) => removeChipsByKeys(prev, currentOwnedKeys));
-        setFlowSelection(null);
-        setFlowOwnedKeys([]);
-        if (!opts?.silent) onSelectionChange?.(null);
-        return;
-      }
-      const isAlreadyOpen = isSameSelection(currentFlowSelection, next);
-      const cleared = removeChipsByKeys(currentFilter, currentOwnedKeys);
-      if (isAlreadyOpen) {
-        setFilter(cleared);
-        setFlowSelection(null);
-        setFlowOwnedKeys([]);
-        if (!opts?.silent) onSelectionChange?.(null);
-        return;
-      }
-      const added = selectionChipsToAdd(cleared, next);
-      setFilter({ ...cleared, chips: [...cleared.chips, ...added] });
-      setFlowSelection(next);
-      setFlowOwnedKeys(added.map(chipKey));
-      if (!opts?.silent) onSelectionChange?.(next.themes);
-    },
-    [onSelectionChange],
-  );
-
-  const handleSelectFlow = useCallback(
-    (next: InsightsSelection) => commitSelection(next),
-    [commitSelection],
-  );
-
-  // Criterion chips are ORDINARY filter chips, not flow-owned: they are the
-  // user's own narrowing, so they feed the breakdown query and narrow the
-  // sankey. Only the flow's self-generated chips are subtracted above.
-  const handleToggleChip = useCallback(
-    (chip: UsageFilterChip) => setFilter((prev) => toggleChip(prev, chip)),
-    [],
-  );
-  const handleClearChip = useCallback(
-    (key: string) => setFilter((prev) => removeChipByKey(prev, key)),
-    [],
-  );
-
-  // The chips shown as dismissible pills — everything EXCEPT the ones the flow
-  // put there. Those are already expressed by the selected path in the
-  // diagram, and offering a second way to remove them would let the pill and
-  // the diagram disagree about what is selected.
-  const dismissibleChips = useMemo(() => {
-    const owned = new Set(flowOwnedKeys);
-    return filter.chips.filter((chip) => !owned.has(chipKey(chip)));
-  }, [filter.chips, flowOwnedKeys]);
-
-  const handleCloseFlow = useCallback(
-    () => commitSelection(null),
-    [commitSelection],
+  const { rebuildBusy, handleRebuild, handleApplyTuning } = useInsightsRebuild(
+    rebuild,
+    cohortKey,
   );
 
   const urlSelectionKey = urlSelection
@@ -251,76 +140,33 @@ export function SwarmInsightsPanel({
   useEffect(() => {
     if (urlSelection === undefined) return;
     if (resolvedUrlSelection === null) {
-      if (flowSelectionRef.current !== null) {
-        commitSelection(null, { silent: true });
+      if (flow.flowSelectionRef.current !== null) {
+        flow.commitSelection(null, { silent: true });
       }
       return;
     }
-    if (isSameSelection(flowSelectionRef.current, resolvedUrlSelection)) {
+    if (isSameSelection(flow.flowSelectionRef.current, resolvedUrlSelection)) {
       // The URL identity is unchanged, but the Sankey may just have supplied
       // labels for a selection restored before the breakdown loaded.
-      setFlowSelection(resolvedUrlSelection);
+      flow.setFlowSelection(resolvedUrlSelection);
       return;
     }
-    commitSelection(resolvedUrlSelection, { silent: true });
+    flow.commitSelection(resolvedUrlSelection, { silent: true });
   }, [
     urlSelectionKey,
     resolvedUrlSelection,
-    commitSelection,
+    urlSelection,
+    flow.commitSelection,
+    flow.setFlowSelection,
+    flow.flowSelectionRef,
   ]);
 
+  // One-shot topic-map backfill per project. Server queueSwarmClusterRebuild
+  // also dedupes in-flight runs; this ref is hygiene before Convex reflects
+  // queued (Strict Mode / remount).
+  const topicMapBackfillKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!flowSelection) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        commitSelection(null);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [flowSelection, commitSelection]);
-
-  const handleRebuild = useCallback(
-    async (args?: { tuning?: ClusterTuning; force?: boolean }) => {
-      if (rebuildInFlightRef.current) return;
-      rebuildInFlightRef.current = true;
-      setRebuildBusy(true);
-      try {
-        const result = await rebuild(args);
-        const { tone, message } = rebuildFeedback(result);
-        toast[tone](message);
-      } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Rebuild failed. Try again in a few minutes.",
-        );
-      } finally {
-        rebuildInFlightRef.current = false;
-        setRebuildBusy(false);
-      }
-    },
-    [rebuild],
-  );
-
-  const handleApplyTuning = useCallback(
-    (tuning: ClusterTuning, opts?: { force?: boolean }) => {
-      void handleRebuild({ tuning, ...opts });
-    },
-    [handleRebuild],
-  );
-
-  // Preemptive topic-map backfill for legacy projects: Sankey themes exist but
-  // the map blob was never written. Trigger reads latestRun from useUsageInsights
-  // (breakdown); the map panel reads the same concept from getSwarmTopicMapSnapshot
-  // via useTopicMap. Momentary disagreement is harmless — server dedupe absorbs
-  // a double-fire. Do not thread one into the other.
-  //
-  // Full rebuild (themes may shift once); cache hits keep OpenRouter near zero.
-  // Silent — no toast; user-initiated rebuilds go through handleRebuild.
-  useEffect(() => {
-    if (view !== "clusters" || !projectId) return;
+    if (flow.view !== "clusters" || !projectId) return;
     const latestRun = breakdown?.latestRun;
     if (!latestRun) return;
     if (latestRun.status !== "done" || latestRun.topicMapReady) return;
@@ -330,7 +176,7 @@ export function SwarmInsightsPanel({
       // Leave the panel's failed/empty CTA to surface retry; avoid toast noise.
       topicMapBackfillKeyRef.current = null;
     });
-  }, [view, projectId, breakdown?.latestRun, rebuild]);
+  }, [flow.view, projectId, breakdown?.latestRun, rebuild]);
 
   if (!scope) {
     return (
@@ -341,47 +187,17 @@ export function SwarmInsightsPanel({
   }
 
   const viewToggle = (
-    <div
-      role="group"
-      aria-label="Insights view"
-      className="flex items-center divide-x divide-border rounded-md border border-border"
-      data-testid="swarm-insights-view-toggle"
-    >
-      <button
-        type="button"
-        aria-pressed={view === "flow"}
-        onClick={() => setView("flow")}
-        className={cn(
-          "inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors",
-          view === "flow"
-            ? "bg-muted/50 text-foreground"
-            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-        )}
-      >
-        <Workflow className="h-3 w-3" />
-        Session flow
-      </button>
-      <button
-        type="button"
-        aria-pressed={view === "clusters"}
-        onClick={() => setView("clusters")}
-        className={cn(
-          "inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors",
-          view === "clusters"
-            ? "bg-muted/50 text-foreground"
-            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-        )}
-      >
-        <Network className="h-3 w-3" />
-        Clusters
-      </button>
-    </div>
+    <InsightsViewToggle
+      view={flow.view}
+      onChange={flow.setView}
+      testId="swarm-insights-view-toggle"
+    />
   );
 
   const chipRow =
-    dismissibleChips.length > 0 ? (
+    flow.dismissibleChips.length > 0 ? (
       <div className="flex flex-wrap items-center gap-1.5 px-5 py-2">
-        {dismissibleChips.map((chip) => {
+        {flow.dismissibleChips.map((chip: UsageFilterChip) => {
           const key = chipKey(chip);
           const label =
             chip.kind === "cluster"
@@ -391,7 +207,7 @@ export function SwarmInsightsPanel({
             <button
               key={key}
               type="button"
-              onClick={() => handleClearChip(key)}
+              onClick={() => flow.handleClearChip(key)}
               className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs hover:bg-muted"
             >
               <span>{label}</span>
@@ -411,9 +227,9 @@ export function SwarmInsightsPanel({
       <div className={cn(fillViewport && "min-h-0 flex-1 overflow-hidden")}>
         <ChatboxInsightsSankey
           breakdown={breakdown}
-          selection={flowSelection}
-          onSelectNode={handleSelectFlow}
-          onSelectLink={handleSelectFlow}
+          selection={flow.flowSelection}
+          onSelectNode={flow.handleSelectFlow}
+          onSelectLink={flow.handleSelectFlow}
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
           onApplyTuning={handleApplyTuning}
@@ -433,9 +249,9 @@ export function SwarmInsightsPanel({
         <ChatboxTopicMapPanel
           scope={scope}
           journeyRunIds={stableJourneyRunIds}
-          filter={filter}
-          onToggleChip={handleToggleChip}
-          onClearChip={handleClearChip}
+          filter={flow.filter}
+          onToggleChip={flow.handleToggleChip}
+          onClearChip={flow.handleClearChip}
           onRebuild={() => void handleRebuild()}
           rebuildBusy={rebuildBusy}
           onOpenSession={onOpenSession}
@@ -448,55 +264,56 @@ export function SwarmInsightsPanel({
   const scorecardBlock = (
     <CriterionScorecard
       facets={breakdown?.criterionBreakdown}
-      filter={filter}
-      onToggleChip={handleToggleChip}
+      filter={flow.filter}
+      onToggleChip={flow.handleToggleChip}
     />
   );
 
   const drilldownBlock = (
     <ChatboxGoalOutcomeDrilldown
       scope={scope}
-      selection={flowSelection}
-      filter={filter}
-      onClose={handleCloseFlow}
+      selection={flow.flowSelection}
+      filter={flow.filter}
+      onClose={flow.handleCloseFlow}
       onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
     />
   );
 
   if (fillViewport) {
-    const selectionOpen = flowSelection !== null;
+    const selectionOpen = flow.flowSelection !== null;
     return (
       <div
         className="flex h-full min-h-0 flex-col gap-2 overflow-hidden"
         data-testid="swarm-insights-panel"
       >
-        <SwarmInsightsStatline
+        <InsightsStatline
           breakdown={breakdown}
-          filter={filter}
-          flowSelection={flowSelection}
-          onSelectFlow={handleSelectFlow}
-          onToggleChip={handleToggleChip}
+          filter={flow.filter}
+          flowSelection={flow.flowSelection}
+          onSelectFlow={flow.handleSelectFlow}
+          onToggleChip={flow.handleToggleChip}
           onOpenSessionsTab={onOpenSessionsTab}
-          personasSlot={personasSlot}
+          leadingSlot={personasSlot}
           strugglesSlot={strugglesSlot}
           checksExtras={checksExtras}
           trailing={viewToggle}
+          testId="swarm-insights-statline"
         />
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           <div className="min-w-0 flex-1 overflow-hidden">
-            {view === "clusters" ? clustersBlock : sankeyBlock}
+            {flow.view === "clusters" ? clustersBlock : sankeyBlock}
           </div>
-          {view === "flow" && selectionOpen ? (
+          {flow.view === "flow" && selectionOpen ? (
             <div
               className="absolute inset-0 z-10 bg-background sm:static sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
               data-testid="swarm-insights-drill-panel"
             >
               <ChatboxGoalOutcomeDrilldown
                 scope={scope}
-                selection={flowSelection}
-                filter={filter}
+                selection={flow.flowSelection}
+                filter={flow.filter}
                 variant="panel"
-                onClose={handleCloseFlow}
+                onClose={flow.handleCloseFlow}
                 onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
                 footer={
                   onOpenSessionsTab ? (
@@ -518,7 +335,7 @@ export function SwarmInsightsPanel({
   }
 
   const body =
-    view === "clusters" ? (
+    flow.view === "clusters" ? (
       clustersBlock
     ) : (
       <>

@@ -123,12 +123,12 @@ export function buildHostComparePath(
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
 /** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
-export type UserTestingDetailTab = "edit" | "sessions" | "clusters";
+export type UserTestingDetailTab = "edit" | "sessions" | "insights";
 
 const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
   "edit",
   "sessions",
-  "clusters",
+  "insights",
 ]);
 
 /**
@@ -156,9 +156,10 @@ export function parseUserTestingDetailTab(
   search: string
 ): UserTestingDetailTab {
   const tab = new URLSearchParams(search).get("tab");
-  // Legacy slugs for Edit: `share` (pre-rename) and `preview` (when Preview
-  // was its own tab — Preview now docks beside Edit).
+  // Legacy slugs: `share` / `preview` → Edit (Preview docks beside Edit);
+  // `clusters` → Insights (label aligned with Swarm run detail).
   if (tab === "share" || tab === "preview") return "edit";
+  if (tab === "clusters") return "insights";
   return tab && USER_TESTING_DETAIL_TABS.has(tab)
     ? (tab as UserTestingDetailTab)
     : "sessions";
