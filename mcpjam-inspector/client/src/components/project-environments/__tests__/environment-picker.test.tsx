@@ -6,7 +6,7 @@
  * extraction ADDED: the controlled contract (the component never persists) and
  * single-select mode, which the Playground will use in Phase 2.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -294,5 +294,12 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
     await userEvent.keyboard(key);
 
     expect(onFooterAction).toHaveBeenCalledTimes(1);
+    // …and the close still happens, just AFTER the action: keyboard activation
+    // has to dismiss the popover exactly like a pointer click does.
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("picker-footer-action")
+      ).not.toBeInTheDocument()
+    );
   });
 });

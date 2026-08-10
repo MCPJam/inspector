@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { copyToClipboard } from "../clipboard";
 
 const originalClipboard = navigator.clipboard;
+const originalExecCommand = document.execCommand;
 
 function stubClipboard(writeText: (text: string) => Promise<void>) {
   Object.defineProperty(navigator, "clipboard", {
@@ -18,14 +19,30 @@ function stubClipboard(writeText: (text: string) => Promise<void>) {
   });
 }
 
+function stubExecCommand(impl: () => boolean) {
+  const execCommand = vi.fn(impl);
+  Object.defineProperty(document, "execCommand", {
+    configurable: true,
+    value: execCommand,
+  });
+  return execCommand;
+}
+
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
+// Both stubs are installed with defineProperty rather than vi.spyOn (jsdom
+// leaves `execCommand` undefined), so restoreAllMocks does not undo them —
+// they have to be put back by hand or they leak into later tests.
 afterEach(() => {
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
     value: originalClipboard,
+  });
+  Object.defineProperty(document, "execCommand", {
+    configurable: true,
+    value: originalExecCommand,
   });
   vi.restoreAllMocks();
 });
@@ -41,11 +58,7 @@ describe("copyToClipboard", () => {
 
   it("reports success when the execCommand fallback copies", async () => {
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
-    const execCommand = vi.fn().mockReturnValue(true);
-    Object.defineProperty(document, "execCommand", {
-      configurable: true,
-      value: execCommand,
-    });
+    const execCommand = stubExecCommand(() => true);
 
     await expect(copyToClipboard("text")).resolves.toBe(true);
     expect(execCommand).toHaveBeenCalledWith("copy");
@@ -55,10 +68,7 @@ describe("copyToClipboard", () => {
 
   it("reports FAILURE when the execCommand fallback returns false", async () => {
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
-    Object.defineProperty(document, "execCommand", {
-      configurable: true,
-      value: vi.fn().mockReturnValue(false),
-    });
+    stubExecCommand(() => false);
 
     // Regression: this used to resolve `true`, so callers showed "Link copied"
     // for a copy the browser had refused.
@@ -68,13 +78,12 @@ describe("copyToClipboard", () => {
 
   it("reports failure when the fallback throws", async () => {
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
-    Object.defineProperty(document, "execCommand", {
-      configurable: true,
-      value: vi.fn(() => {
-        throw new Error("no execCommand");
-      }),
+    stubExecCommand(() => {
+      throw new Error("no execCommand");
     });
 
     await expect(copyToClipboard("text")).resolves.toBe(false);
+    // A throw must not strand the scratch textarea in the document either.
+    expect(document.querySelector("textarea")).toBeNull();
   });
 });
