@@ -586,6 +586,7 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         chatbox={chatbox}
+        isAuthenticated={effectiveAuth}
         onBack={goOverview}
         onDeleted={goOverview}
       />

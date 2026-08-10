@@ -123,7 +123,13 @@ export function buildHostComparePath(
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
 /** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
-export type UserTestingDetailTab = "sessions" | "clusters";
+export type UserTestingDetailTab = "sessions" | "clusters" | "preview";
+
+const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
+  "sessions",
+  "clusters",
+  "preview",
+]);
 
 /**
  * Build a path to one User Testing scenario. `scenarioId` is the scenario's
@@ -149,8 +155,9 @@ export function buildUserTestingScenarioPath(
 export function parseUserTestingDetailTab(
   search: string
 ): UserTestingDetailTab {
-  return new URLSearchParams(search).get("tab") === "clusters"
-    ? "clusters"
+  const tab = new URLSearchParams(search).get("tab");
+  return tab && USER_TESTING_DETAIL_TABS.has(tab)
+    ? (tab as UserTestingDetailTab)
     : "sessions";
 }
 

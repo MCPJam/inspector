@@ -18,6 +18,8 @@ const {
   locationState,
   usagePanelMock,
   deleteChatboxMock,
+  previewPaneMock,
+  hostState,
   updateChatboxMock,
   environmentState,
   flagState,
@@ -26,6 +28,8 @@ const {
   locationState: { search: "" },
   usagePanelMock: vi.fn(),
   deleteChatboxMock: vi.fn().mockResolvedValue(undefined),
+  previewPaneMock: vi.fn(),
+  hostState: { host: null as unknown, isLoading: false },
   updateChatboxMock: vi.fn().mockResolvedValue(undefined),
   // What `useProjectEnvironment` answers with: `undefined` = loading,
   // `null` = not visible, a row = loaded. Mutable per test.
@@ -96,6 +100,20 @@ vi.mock("@/components/chatboxes/ChatboxUsagePanel", () => ({
   },
 }));
 
+// Stubbed so jsdom never mounts the real iframe — it would try to fetch the
+// share URL, and the point of these specs is WHEN the pane exists, not what
+// it renders (see ChatboxPreviewPane.test.tsx for that).
+vi.mock("@/components/chatboxes/ChatboxPreviewPane", () => ({
+  ChatboxPreviewPane: (props: Record<string, unknown>) => {
+    previewPaneMock(props);
+    return <div data-testid="stub-preview" />;
+  },
+}));
+
+vi.mock("@/hooks/useClients", () => ({
+  useHost: () => hostState,
+}));
+
 import { UserTestingScenarioDetail } from "../UserTestingScenarioDetail";
 
 const chatbox = {
@@ -116,14 +134,17 @@ const chatbox = {
   link: { token: "tok", path: "/t/tok", url: "u", rotatedAt: 0, updatedAt: 0 },
 } as unknown as ChatboxSettings;
 
+const detail = (over: Partial<ChatboxSettings> = {}) => (
+  <UserTestingScenarioDetail
+    chatbox={{ ...chatbox, ...over } as ChatboxSettings}
+    isAuthenticated
+    onBack={vi.fn()}
+    onDeleted={vi.fn()}
+  />
+);
+
 const renderDetail = (over: Partial<ChatboxSettings> = {}) =>
-  render(
-    <UserTestingScenarioDetail
-      chatbox={{ ...chatbox, ...over } as ChatboxSettings}
-      onBack={vi.fn()}
-      onDeleted={vi.fn()}
-    />,
-  );
+  render(detail(over));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -132,6 +153,8 @@ beforeEach(() => {
   deleteChatboxMock.mockResolvedValue(undefined);
   updateChatboxMock.mockResolvedValue(undefined);
   locationState.search = "";
+  hostState.host = { config: { mcpProfile: undefined } };
+  hostState.isLoading = false;
   environmentState.row = undefined;
   flagState.environmentsEnabled = true;
 });
@@ -343,5 +366,93 @@ describe("UserTestingScenarioDetail", () => {
         description: "New copy",
       });
     });
+  });
+});
+
+/**
+ * Preview embeds the live share link, which bootstraps a real guest session.
+ * When it mounts is therefore a behaviour, not an implementation detail: too
+ * eager and every visit to a scenario pollutes its own Sessions list.
+ */
+describe("UserTestingScenarioDetail — preview", () => {
+  it("does not embed anything until the Preview tab is opened", () => {
+    renderDetail();
+
+    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1?tab=preview", {
+      replace: true,
+    });
+  });
+
+  it("embeds this scenario's share link when opened", () => {
+    locationState.search = "?tab=preview";
+    renderDetail();
+
+    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
+    expect(previewPaneMock).toHaveBeenCalledWith(
+      expect.objectContaining({ publishLink: "https://mcpjam.link/t/tok" }),
+    );
+  });
+
+  it("hides the preview instead of unmounting it when you switch away", () => {
+    locationState.search = "?tab=preview";
+    const { rerender } = renderDetail();
+
+    locationState.search = "";
+    rerender(detail());
+
+    // Still mounted — remounting would abandon the running tester session and
+    // start a second one on the way back.
+    expect(screen.getByTestId("stub-usage-sessions")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-preview").parentElement).toHaveClass(
+      "hidden",
+    );
+    expect(previewPaneMock.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("passes the host's mcp profile through for the iframe permissions", () => {
+    const mcpProfile = { apps: { sandbox: { permissions: { mode: "deny-all" } } } };
+    hostState.host = { config: { mcpProfile } };
+    locationState.search = "?tab=preview";
+    renderDetail();
+
+    expect(previewPaneMock).toHaveBeenCalledWith(
+      expect.objectContaining({ mcpProfile }),
+    );
+  });
+
+  it("waits for the host config rather than embedding with default permissions", () => {
+    hostState.isLoading = true;
+    hostState.host = null;
+    locationState.search = "?tab=preview";
+    renderDetail();
+
+    // `allow` only applies at mount, and its no-config default is permissive.
+    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
+    expect(screen.getByText(/Loading preview/i)).toBeInTheDocument();
+  });
+
+  it("refuses to embed a scenario whose environment can't resolve", () => {
+    locationState.search = "?tab=preview";
+    renderDetail({
+      environmentId: "env-1",
+      environmentName: "Checkout flow",
+      environmentError: {
+        code: "ENV_ARCHIVED",
+        message: "Environment “Checkout flow” is archived.",
+      },
+    });
+
+    // The link doesn't open for testers either — framing it would show them
+    // the same failure with less explanation.
+    expect(previewPaneMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        publishLink: null,
+        emptyTitle: "This scenario can't be previewed",
+      }),
+    );
   });
 });
