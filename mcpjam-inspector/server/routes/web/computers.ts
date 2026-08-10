@@ -33,6 +33,7 @@ import { z } from "zod";
 import { executionScopeSchema } from "../../utils/execution-scope.js";
 import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
 import { resolveComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
+import { isLocalComputerEngineAvailable } from "../../utils/computers/local-machine.js";
 import {
   MAX_COMMAND_TIMEOUT_S,
   e2bRunner,
@@ -66,7 +67,42 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
       resolveComputersLocalConfigured(),
       resolveComputersRemoteDataPlaneUrl(),
     ]);
-    return c.json({ localConfigured, remoteDataPlaneUrl });
+    const localEngine = isLocalComputerEngineAvailable();
+    // The capability SPLIT is the point of this shape: `remoteDataPlaneUrl`
+    // delegates only PERSONAL-computer exec/terminal, so a remote-only
+    // inspector can drive a personal Computer yet cannot execute one
+    // disposable-sandbox command. Cloud-only surfaces (swarms/evals/user
+    // testing) preflight on `ephemeralCloudAvailable`; a single "cloud
+    // available" bit would lie to exactly those surfaces.
+    const personalCloudAvailable = localConfigured || remoteDataPlaneUrl !== null;
+    return c.json({
+      // Legacy pair, verbatim — older clients read only these.
+      localConfigured,
+      remoteDataPlaneUrl,
+      engines: {
+        local: {
+          available: localEngine.available,
+          // PR 8 (node-pty) wires the real probe; until then the local
+          // engine is bash-only and the client shows the terminal-off state.
+          terminalAvailable: false,
+          // This endpoint is OPEN (no bearer), so only the tilde display
+          // root ever leaves the server — never an absolute home path or OS
+          // username. The client renders `${workspaceDisplayRoot}/<projectId>`;
+          // the server independently validates and resolves the real path at
+          // exec time.
+          workspaceDisplayRoot: localEngine.available
+            ? "~/.mcpjam/computer"
+            : null,
+          ...(localEngine.available ? {} : { reason: localEngine.reason }),
+        },
+        cloud: { available: personalCloudAvailable },
+      },
+      capabilities: {
+        personalCloudAvailable,
+        ephemeralCloudAvailable: localConfigured,
+      },
+      defaultEngine: localEngine.available ? "local" : "cloud",
+    });
   });
 
   computers.post("/exec", async (c) =>
