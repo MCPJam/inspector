@@ -14,6 +14,7 @@
  */
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import type { SandboxNoticeReason } from "@/shared/sandbox-notice";
 import { logger } from "./logger.js";
 import type {
   McpToolResultImageRenderingPolicy,
@@ -168,6 +169,64 @@ export function readComputerSandboxMode(
   if (!raw || typeof raw !== "object") return null;
   const mode = (raw as { mode?: unknown }).mode;
   return mode === "ephemeral" || mode === "unavailable" ? mode : null;
+}
+
+export interface ChatboxSandboxPlan {
+  /**
+   * `provision` — reserve the per-conversation box, then bind bash to it.
+   * `suppress`  — drop the computer resource for this turn; bash is not
+   *               advertised. `suppressReason` says why (the caller picks the
+   *               matching log line).
+   * `none`      — nothing to do: legacy marker-absent config, or a turn that
+   *               never asked for bash.
+   */
+  action: "provision" | "suppress" | "none";
+  suppressReason?:
+    | "sandbox_mode_unavailable"
+    | "not_a_data_plane"
+    | "no_chat_session_id";
+  /** Set when the suppression should be narrated to the tester (SSE notice). */
+  notice?: SandboxNoticeReason;
+}
+
+/**
+ * Decide what the chatbox turn does about its ephemeral sandbox BEFORE any
+ * call that spends money.
+ *
+ * The load-bearing branch is `not_a_data_plane`: `provisionChatboxSandbox` is
+ * bearer-authed and succeeds from ANY inspector, but executing in the box
+ * requires this process to hold the E2B credentials (`sandbox-bash` has no
+ * remote delegation). Provisioning without them used to strand a BILLABLE box
+ * whose every command failed opaquely — so the capability check must come
+ * before the reserve, not after.
+ *
+ * Checked before `no_chat_session_id` on purpose: on a non-data-plane server
+ * the missing-session case would otherwise suppress silently, and the tester
+ * deserves the explanation either way.
+ */
+export function planChatboxSandbox(args: {
+  mode: "ephemeral" | "unavailable" | null;
+  bashRequested: boolean;
+  ephemeralCloudAvailable: boolean;
+  hasChatSessionId: boolean;
+}): ChatboxSandboxPlan {
+  if (args.mode === "unavailable") {
+    return { action: "suppress", suppressReason: "sandbox_mode_unavailable" };
+  }
+  if (args.mode !== "ephemeral" || !args.bashRequested) {
+    return { action: "none" };
+  }
+  if (!args.ephemeralCloudAvailable) {
+    return {
+      action: "suppress",
+      suppressReason: "not_a_data_plane",
+      notice: "sandbox_unavailable",
+    };
+  }
+  if (!args.hasChatSessionId) {
+    return { action: "suppress", suppressReason: "no_chat_session_id" };
+  }
+  return { action: "provision" };
 }
 
 export type ChatboxRuntimeConfigResult =

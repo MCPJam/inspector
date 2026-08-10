@@ -208,7 +208,7 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
 
 // User-facing copy for a chatbox ephemeral-sandbox notice, keyed by reason.
 //
-// Both are shown. A reset is the sharper one: the model may have written files
+// All are shown. A reset is the sharper one: the model may have written files
 // in an earlier turn and will otherwise reason confidently about a filesystem
 // that no longer exists, so silence is worse than an interruption.
 const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
@@ -216,6 +216,8 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
     "This conversation's sandbox was reset after being idle — files and shell state from earlier turns are gone.",
   stale_image:
     "This conversation is still running on the computer image it started with; a newer build is available and will be used by your next conversation.",
+  sandbox_unavailable:
+    "This conversation's bash runs in a disposable cloud sandbox, but this inspector can't execute disposable sandboxes. The conversation continues without bash.",
 };
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by

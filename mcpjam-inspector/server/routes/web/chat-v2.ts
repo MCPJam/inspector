@@ -61,6 +61,7 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import {
   fetchChatboxRuntimeConfig,
+  planChatboxSandbox,
   readChatboxEnvironment,
   readComputerSandboxMode,
   type ChatboxEnvironmentRuntime,
@@ -102,6 +103,7 @@ import {
 } from "../../utils/built-in-tools/registry.js";
 import {
   ackChatboxSandboxNotices,
+  isComputersDataPlaneConfigured,
   provisionChatboxSandbox,
 } from "../../utils/computers/control-plane-client.js";
 import {
@@ -1102,96 +1104,107 @@ chatV2.post("/", async (c) => {
     let ackSandboxNotices:
       | ((delivered: SandboxNoticeReason[]) => void)
       | undefined;
-    // Drop the personal-computer resource for this turn, so `bash` is not
-    // advertised at all rather than falling back to the member's own box —
-    // which is precisely the behaviour this feature replaces.
-    //
-    // Set for BOTH marker states, not just the one that provisions:
-    //   - `ephemeral` + no box  → we asked and failed; no fallback.
-    //   - `unavailable`         → the backend has already dropped `computer`,
+    // Drop the personal-computer resource for every suppressing plan, so
+    // `bash` is not advertised at all rather than falling back to the member's
+    // own box — which is precisely the behaviour this feature replaces:
+    //   - `ephemeral` + no box   → we asked and failed; no fallback.
+    //   - `not_a_data_plane`     → we never ask: `provisionChatboxSandbox` is
+    //     bearer-authed and would SUCCEED from a server that cannot exec in
+    //     the box (`sandbox-bash` has no remote delegation), stranding a
+    //     billable sandbox whose every command fails. The tester gets a
+    //     notice instead of an opaque broken shell.
+    //   - `unavailable`          → the backend has already dropped `computer`,
     //     but that is its promise, not ours to depend on. Enforcing the marker
     //     locally means a payload that ever carried both (a backend regression,
     //     a proxy that merges configs) still cannot expose the member's
     //     personal shell to a share-link-reachable chatbox turn.
-    let suppressComputerResource = computerSandboxMode === "unavailable";
-    if (
-      computerSandboxMode === "ephemeral" &&
-      chatboxId &&
-      (resolvedExecution.builtInToolIds ?? []).includes(BASH_TOOL_NAME)
-    ) {
-      if (!body.chatSessionId) {
-        // The conversation id IS the isolation boundary (`scopeKey =
-        // chatbox:<chatSessionId>`). Without one there is nothing to key a box
-        // to, and binding anyway would put every session that omits it on one
-        // shared box. No shell beats the wrong shell.
+    const sandboxPlan = planChatboxSandbox({
+      mode: computerSandboxMode,
+      bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
+        BASH_TOOL_NAME
+      ),
+      ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
+      hasChatSessionId: Boolean(body.chatSessionId),
+    });
+    let suppressComputerResource = sandboxPlan.action === "suppress";
+    if (sandboxPlan.suppressReason === "no_chat_session_id") {
+      // The conversation id IS the isolation boundary (`scopeKey =
+      // chatbox:<chatSessionId>`). Without one there is nothing to key a box
+      // to, and binding anyway would put every session that omits it on one
+      // shared box. No shell beats the wrong shell.
+      logger.warn(
+        "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
+        { chatboxId }
+      );
+    } else if (sandboxPlan.suppressReason === "not_a_data_plane") {
+      logger.warn(
+        "[chat-v2] ephemeral chatbox sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",
+        { chatboxId }
+      );
+      if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
+    }
+    if (sandboxPlan.action === "provision" && chatboxId && body.chatSessionId) {
+      const provisioned = await provisionChatboxSandbox({
+        bearer: bearerToken,
+        chatboxId,
+        chatSessionId: body.chatSessionId,
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (provisioned.ok) {
+        sandboxBinding = {
+          sandboxId: provisioned.value.sandboxId,
+          ...(provisioned.value.workdir
+            ? { workdir: provisioned.value.workdir }
+            : {}),
+          // Tell the model the truth about the box's lifetime. The default
+          // (`run`) copy says it is destroyed after this session — a chatbox
+          // box is not, and a model that believes otherwise won't build work
+          // up across turns, which is the whole point of a persistent shell.
+          lifetime: "conversation",
+        };
+        const notices = (provisioned.value.notices ?? []).filter(
+          isSandboxNoticeReason
+        );
+        if (notices.length > 0) sandboxNotices = notices;
+        // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
+        // over WITHOUT consuming it and waits for us to confirm it reached
+        // the wire, because the SSE writer does not exist yet — provisioning
+        // happens here, streaming starts several steps later. Anything that
+        // throws in between used to destroy the notice, and did so exactly
+        // when a reset was most likely to have happened (flaky setup and "the
+        // box was idle long enough to be reaped" share a cause).
+        //
+        // Unacked ⇒ re-delivered next turn. That makes duplicate display the
+        // worst case instead of silent loss, which is the right way round for
+        // "earlier files are gone": a repeated toast is noise, a missing one
+        // makes the model confabulate about a filesystem it can't see.
+        //
+        // `noticeAckPending: false` means the backend already consumed them
+        // (a deploy that predates #829) — leave `ackSandboxNotices` unset and
+        // behave exactly as before.
+        const sandboxRowId = provisioned.value.sandboxRowId;
+        if (provisioned.value.noticeAckPending && notices.length > 0) {
+          ackSandboxNotices = (delivered) => {
+            void ackChatboxSandboxNotices({
+              bearer: bearerToken,
+              sandboxRowId,
+              notices: delivered,
+            });
+          };
+        }
+      } else {
+        // Degrade to a turn with no shell rather than failing the turn: the
+        // conversation is still useful, and 503 (at capacity / a sibling call
+        // still booting) resolves on its own by the next turn.
         logger.warn(
-          "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
-          { chatboxId }
+          "[chat-v2] chatbox sandbox provision failed; running without bash",
+          {
+            chatboxId,
+            status: provisioned.status,
+            error: provisioned.error,
+          }
         );
         suppressComputerResource = true;
-      } else {
-        const provisioned = await provisionChatboxSandbox({
-          bearer: bearerToken,
-          chatboxId,
-          chatSessionId: body.chatSessionId,
-          signal: c.req.raw.signal as AbortSignal | undefined,
-        });
-        if (provisioned.ok) {
-          sandboxBinding = {
-            sandboxId: provisioned.value.sandboxId,
-            ...(provisioned.value.workdir
-              ? { workdir: provisioned.value.workdir }
-              : {}),
-            // Tell the model the truth about the box's lifetime. The default
-            // (`run`) copy says it is destroyed after this session — a chatbox
-            // box is not, and a model that believes otherwise won't build work
-            // up across turns, which is the whole point of a persistent shell.
-            lifetime: "conversation",
-          };
-          const notices = (provisioned.value.notices ?? []).filter(
-            isSandboxNoticeReason
-          );
-          if (notices.length > 0) sandboxNotices = notices;
-          // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
-          // over WITHOUT consuming it and waits for us to confirm it reached
-          // the wire, because the SSE writer does not exist yet — provisioning
-          // happens here, streaming starts several steps later. Anything that
-          // throws in between used to destroy the notice, and did so exactly
-          // when a reset was most likely to have happened (flaky setup and "the
-          // box was idle long enough to be reaped" share a cause).
-          //
-          // Unacked ⇒ re-delivered next turn. That makes duplicate display the
-          // worst case instead of silent loss, which is the right way round for
-          // "earlier files are gone": a repeated toast is noise, a missing one
-          // makes the model confabulate about a filesystem it can't see.
-          //
-          // `noticeAckPending: false` means the backend already consumed them
-          // (a deploy that predates #829) — leave `ackSandboxNotices` unset and
-          // behave exactly as before.
-          const sandboxRowId = provisioned.value.sandboxRowId;
-          if (provisioned.value.noticeAckPending && notices.length > 0) {
-            ackSandboxNotices = (delivered) => {
-              void ackChatboxSandboxNotices({
-                bearer: bearerToken,
-                sandboxRowId,
-                notices: delivered,
-              });
-            };
-          }
-        } else {
-          // Degrade to a turn with no shell rather than failing the turn: the
-          // conversation is still useful, and 503 (at capacity / a sibling call
-          // still booting) resolves on its own by the next turn.
-          logger.warn(
-            "[chat-v2] chatbox sandbox provision failed; running without bash",
-            {
-              chatboxId,
-              status: provisioned.status,
-              error: provisioned.error,
-            }
-          );
-          suppressComputerResource = true;
-        }
       }
     }
 
@@ -1253,9 +1266,13 @@ chatV2.post("/", async (c) => {
     // TURN-INJECTED, never persisted: `persist.systemPrompt` keeps the raw host
     // prompt, so a resumed turn does not replay a stale "your sandbox was
     // reset" long after the fact. Same rule as the blueprint image block above.
+    // Notices exist in exactly two states: derived from a provisioned box
+    // (binding present) or minted by the preflight that refused to provision
+    // (binding absent, `sandbox_unavailable`). Both carry model-facing copy in
+    // the exhaustive SANDBOX_NOTICE_MODEL_CONTEXT record, so no binding gate.
     const effectiveSystemPrompt = appendSandboxNoticeContext(
       withEnvironmentContext,
-      sandboxBinding ? sandboxNotices : undefined
+      sandboxNotices
     );
 
     try {

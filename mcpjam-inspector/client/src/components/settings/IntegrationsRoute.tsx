@@ -3,6 +3,7 @@ import { useConvexAuth } from "convex/react";
 import { ChevronRight, Github, MessageSquare, Slack } from "lucide-react";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { ErrorCard } from "@/components/ui/error-card";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsPageShell } from "./SettingsPageShell";
@@ -249,11 +250,21 @@ export function IntegrationsRoute({
       </p>
 
       <div className="space-y-2">
-        <ErrorBoundary fallback={null}>
+        <ErrorBoundary
+          name="integrations_github_checks"
+          fallback={({ error, reset }) => (
+            <ErrorCard error={error} onRetry={reset} />
+          )}
+        >
           <GithubChecksCard activeOrganizationId={activeOrganizationId} />
         </ErrorBoundary>
 
-        <ErrorBoundary fallback={null}>
+        <ErrorBoundary
+          name="integrations_slack"
+          fallback={({ error, reset }) => (
+            <ErrorCard error={error} onRetry={reset} />
+          )}
+        >
           <SlackIntegrationCard activeOrganizationId={activeOrganizationId} />
         </ErrorBoundary>
 

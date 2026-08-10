@@ -22,7 +22,7 @@ import {
   minimalBundle,
 } from "./fixtures.js";
 
-const MANIFEST = ".codex-plugin/plugin.json";
+const MANIFEST = "plugin.json";
 
 async function expectPathAttackFails(
   files: Record<string, string>,
