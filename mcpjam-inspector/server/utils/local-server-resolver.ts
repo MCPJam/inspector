@@ -167,9 +167,13 @@ function hasNonEmptyStringRecord(value: unknown): boolean {
  * Returns the full server config for each requested serverId, including
  * STDIO command/args/env. Hosted-only fields (share/chatbox tokens) are not
  * accepted by this endpoint by design.
+ *
+ * `c` is only a request-log sink; callers without a live Hono context (the
+ * web-route stdio divert inside `createAuthorizedManager`, whose caller
+ * already logged attribution from the hosted batch) pass `null` and skip it.
  */
 export async function authorizeBatchLocal(
-  c: Context,
+  c: Context | null,
   bearerToken: string,
   projectId: string,
   serverIds: string[]
@@ -252,7 +256,7 @@ export async function authorizeBatchLocal(
   );
   const sourceCtx = successful.find(([, r]) => r.internalLogContext)?.[1]
     .internalLogContext;
-  if (sourceCtx) {
+  if (sourceCtx && c) {
     const partial = mapInternalToRequestContext(sourceCtx);
     if (successful.length > 1) {
       // Multi-server batch: a single per-server identifier on the request log
@@ -289,7 +293,7 @@ export async function authorizeBatchLocal(
  * payload directly. Throws WebRouteError for any non-ok result.
  */
 export async function authorizeServerLocal(
-  c: Context,
+  c: Context | null,
   bearerToken: string,
   projectId: string,
   serverId: string
@@ -750,6 +754,177 @@ export function toMCPServerConfig(
 }
 
 /**
+ * Runtime resolution shared by every local connect surface, applied AFTER
+ * authorization and BEFORE the SDK config is built:
+ *
+ *   1. Vault-backed runtime secrets — fill in env (stdio) / headers (http)
+ *      the authorize batch deliberately omitted (`hasEnv` / `hasHeaders`
+ *      with no values).
+ *   2. Plugin bundle materialization — stdio components whose config still
+ *      carries the SDK's `${PLUGIN_ROOT}` placeholders (the parser preserves
+ *      them verbatim; substitution belongs at spawn) resolve against the
+ *      verified local bundle cache, so a launch can never inherit a stale
+ *      root and a component whose plugin was just disabled fails closed
+ *      instead of running from cached files.
+ *
+ * Order matters: materialization substitutes over the COMPLETE env, so
+ * secrets must land first.
+ */
+async function applyLocalRuntimeResolution<
+  T extends LocalAuthorizeBatchSuccess
+>(
+  result: T,
+  args: {
+    bearerToken: string;
+    projectId: string;
+    serverId: string;
+    serverDisplayName?: string;
+  }
+): Promise<T> {
+  const { bearerToken, projectId, serverId } = args;
+  const needsRuntimeSecrets =
+    (result.serverConfig.transportType === "stdio" &&
+      result.serverConfig.hasEnv === true &&
+      !hasNonEmptyStringRecord(result.serverConfig.env)) ||
+    (result.serverConfig.transportType === "http" &&
+      result.serverConfig.hasHeaders === true &&
+      !hasNonEmptyStringRecord(result.serverConfig.headers));
+  if (needsRuntimeSecrets) {
+    const secrets = await fetchRuntimeServerSecrets({
+      bearerToken,
+      projectId,
+      serverId,
+    });
+    result = {
+      ...result,
+      serverConfig:
+        result.serverConfig.transportType === "stdio"
+          ? {
+              ...result.serverConfig,
+              env: secrets.env ?? result.serverConfig.env ?? {},
+            }
+          : {
+              ...result.serverConfig,
+              headers: {
+                ...(result.serverConfig.headers ?? {}),
+                ...(secrets.headers ?? {}),
+              },
+            },
+    };
+  }
+
+  if (result.serverConfig.transportType === "stdio") {
+    const stdioConfig = result.serverConfig;
+    const materialized = await materializePluginStdioForConnect({
+      // Lazy: an ordinary stdio server must not pay a Convex read — or
+      // require Convex configuration at all — to connect.
+      createClient: () => createPluginRuntimeConvexClient(bearerToken),
+      projectId,
+      serverId,
+      serverName: args.serverDisplayName ?? serverId,
+      spec: {
+        command: stdioConfig.command,
+        args: stdioConfig.args ?? [],
+        env: stdioConfig.env ?? {},
+        // A plugin component's declared cwd rides the config as a
+        // `${PLUGIN_ROOT}`-rooted template; substitution happens with the
+        // rest of the launch spec.
+        ...(stdioConfig.cwd !== undefined
+          ? { workingDirectory: stdioConfig.cwd }
+          : {}),
+      },
+    });
+    if (materialized) {
+      logger.debug("[plugin-stdio] materialized bundle for launch", {
+        serverId,
+        pluginId: materialized.origin.pluginId,
+        bundleHash: materialized.origin.bundleHash,
+      });
+      result = {
+        ...result,
+        serverConfig: {
+          ...stdioConfig,
+          command: materialized.command,
+          args: materialized.args,
+          env: materialized.env,
+          ...(materialized.workingDirectory !== undefined
+            ? { cwd: materialized.workingDirectory }
+            : {}),
+        },
+      };
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Resolve ONE stdio server to a connectable SDK config for a web-route
+ * surface running as the LOCAL binary (`createAuthorizedManager`'s stdio
+ * divert). The hosted authorize batch strips `command`/`args`/`env` by
+ * contract, so this re-reads the full config through
+ * `/web/authorize-batch-local` — with the same bearer, so authorization is
+ * re-checked, not assumed — then applies runtime secrets, materializes
+ * plugin bundles, and builds the stdio `MCPServerConfig` exactly as the
+ * /api/mcp connect path would.
+ *
+ * Refuses an http row rather than silently building one: the caller routes
+ * http servers through the hosted mint path (OAuth/XAA), so a transport
+ * mismatch between the two authorize reads means the row changed
+ * mid-request — connecting either way would race the edit.
+ */
+export async function resolveLocalStdioServerConfig(
+  bearerToken: string,
+  projectId: string,
+  serverId: string,
+  options?: {
+    timeoutMs?: number;
+    clientCapabilities?: Record<string, unknown>;
+    serverDisplayName?: string;
+    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+    supportedProtocolVersions?: string[];
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    xaaPolicy?: XaaEnterprisePolicy;
+  }
+): Promise<MCPServerConfig> {
+  let result = await authorizeServerLocal(
+    null,
+    bearerToken,
+    projectId,
+    serverId
+  );
+  if (result.serverConfig.transportType !== "stdio") {
+    throw new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      `Server "${
+        options?.serverDisplayName ?? serverId
+      }" changed transport while the request was in flight. Retry the request.`,
+      { serverId }
+    );
+  }
+  result = await applyLocalRuntimeResolution(result, {
+    bearerToken,
+    projectId,
+    serverId,
+    serverDisplayName: options?.serverDisplayName,
+  });
+  return toMCPServerConfig(result, {
+    timeoutMs: options?.timeoutMs,
+    clientCapabilities: options?.clientCapabilities,
+    clientInfo: options?.clientInfo,
+    supportedProtocolVersions: options?.supportedProtocolVersions,
+    firstPageOnly: options?.firstPageOnly,
+    supportsMrtr: options?.supportsMrtr,
+    // Advertises the EMA extension host-wide on stdio too, matching the
+    // /api/mcp path; stdio never gets OAuth/XAA hooks, so no
+    // refreshContext / xaaUnauthorizedHandler here.
+    xaaPolicy: options?.xaaPolicy,
+  });
+}
+
+/**
  * Single-call convenience: authorize a serverId and return both the raw
  * response (for OAuth token plumbing) and a ready-to-pass MCPServerConfig.
  * Throws WebRouteError for unauthorized / not found / OAuth-required cases.
@@ -981,85 +1156,12 @@ export async function resolveLocalServerForConnect(
     };
   }
 
-  const needsRuntimeSecrets =
-    (result.serverConfig.transportType === "stdio" &&
-      result.serverConfig.hasEnv === true &&
-      !hasNonEmptyStringRecord(result.serverConfig.env)) ||
-    (result.serverConfig.transportType === "http" &&
-      result.serverConfig.hasHeaders === true &&
-      !hasNonEmptyStringRecord(result.serverConfig.headers));
-  if (needsRuntimeSecrets) {
-    const secrets = await fetchRuntimeServerSecrets({
-      bearerToken,
-      projectId,
-      serverId,
-    });
-    result = {
-      ...result,
-      serverConfig:
-        result.serverConfig.transportType === "stdio"
-          ? {
-              ...result.serverConfig,
-              env: secrets.env ?? result.serverConfig.env ?? {},
-            }
-          : {
-              ...result.serverConfig,
-              headers: {
-                ...(result.serverConfig.headers ?? {}),
-                ...(secrets.headers ?? {}),
-              },
-            },
-    };
-  }
-
-  // Plugin components reach this path as ordinary stdio servers whose
-  // command/args/env still carry the SDK's `${PLUGIN_ROOT}` placeholders (the
-  // parser preserves them verbatim; substitution belongs at spawn). Resolve
-  // them against the verified local bundle cache HERE — after authorization,
-  // after secrets, immediately before the SDK config is built — so a launch
-  // can never inherit a stale root and a component whose plugin was just
-  // disabled fails closed instead of running from cached files.
-  if (result.serverConfig.transportType === "stdio") {
-    const stdioConfig = result.serverConfig;
-    const materialized = await materializePluginStdioForConnect({
-      // Lazy: an ordinary stdio server must not pay a Convex read — or
-      // require Convex configuration at all — to connect.
-      createClient: () => createPluginRuntimeConvexClient(bearerToken),
-      projectId,
-      serverId,
-      serverName: options?.serverDisplayName ?? serverId,
-      spec: {
-        command: stdioConfig.command,
-        args: stdioConfig.args ?? [],
-        env: stdioConfig.env ?? {},
-        // A plugin component's declared cwd rides the config as a
-        // `${PLUGIN_ROOT}`-rooted template; substitution happens with the
-        // rest of the launch spec.
-        ...(stdioConfig.cwd !== undefined
-          ? { workingDirectory: stdioConfig.cwd }
-          : {}),
-      },
-    });
-    if (materialized) {
-      logger.debug("[plugin-stdio] materialized bundle for launch", {
-        serverId,
-        pluginId: materialized.origin.pluginId,
-        bundleHash: materialized.origin.bundleHash,
-      });
-      result = {
-        ...result,
-        serverConfig: {
-          ...stdioConfig,
-          command: materialized.command,
-          args: materialized.args,
-          env: materialized.env,
-          ...(materialized.workingDirectory !== undefined
-            ? { cwd: materialized.workingDirectory }
-            : {}),
-        },
-      };
-    }
-  }
+  result = await applyLocalRuntimeResolution(result, {
+    bearerToken,
+    projectId,
+    serverId,
+    serverDisplayName: options?.serverDisplayName,
+  });
 
   const config = toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs,

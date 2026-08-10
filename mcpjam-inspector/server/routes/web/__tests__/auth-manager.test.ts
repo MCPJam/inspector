@@ -156,6 +156,101 @@ describe("web auth manager batching", () => {
     );
   });
 
+  it("diverts stdio servers to the local resolver in local mode (mixed batch)", async () => {
+    // This suite runs with HOSTED_MODE unset (local). The hosted authorize
+    // batch answers for BOTH servers but strips the stdio row's
+    // command/args/env by contract; the divert re-reads that one server
+    // through /web/authorize-batch-local with the same bearer and builds a
+    // spawnable stdio config, while the http sibling stays on the hosted
+    // mint path untouched.
+    global.fetch = vi.fn(async (input, init) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-http": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://srv-http.example.com/mcp",
+                  headers: { "X-Test": "yes" },
+                },
+              },
+              "srv-stdio": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "stdio",
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/authorize-batch-local")) {
+        expect(
+          (init?.headers as Record<string, string>).Authorization
+        ).toBe("Bearer bearer-token");
+        expect(JSON.parse(init?.body as string)).toEqual({
+          projectId: "project-1",
+          serverIds: ["srv-stdio"],
+        });
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-stdio": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "stdio",
+                  command: "node",
+                  args: ["plugin-server.js"],
+                  env: { FOO: "bar" },
+                  cwd: "/srv/plugin-root",
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["srv-http", "srv-stdio"],
+      10_000
+    );
+
+    expect(mcpClientManagerMock).toHaveBeenCalledWith(
+      {
+        "srv-http": expect.objectContaining({
+          url: "https://srv-http.example.com/mcp",
+        }),
+        "srv-stdio": expect.objectContaining({
+          command: "node",
+          args: ["plugin-server.js"],
+          env: { FOO: "bar" },
+          cwd: "/srv/plugin-root",
+          timeout: 10_000,
+        }),
+      },
+      expect.any(Object)
+    );
+  });
+
   it("attaches hosted OAuth onUnauthorized and force-refreshes through Convex", async () => {
     global.fetch = vi.fn(async (input, init) => {
       const url = fetchUrl(input);

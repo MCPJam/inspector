@@ -4,6 +4,7 @@ import {
   executeLocalServerConnect,
   parseConnectionDefaults,
   resolveLocalServerForConnect,
+  resolveLocalStdioServerConfig,
   toMCPServerConfig,
 } from "../local-server-resolver.js";
 
@@ -1218,5 +1219,101 @@ describe("toMCPServerConfig — malformed protocol versions fail closed", () => 
       mcpProtocolVersion: "2025-11-52" as any,
     });
     expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+});
+
+describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  function localBatchResponse(serverConfig: Record<string, unknown>) {
+    return new Response(
+      JSON.stringify({
+        results: {
+          "srv-stdio": {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig,
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  it("builds a stdio SDK config from authorize-batch-local, threading cwd/timeout/capabilities", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return localBatchResponse({
+          transportType: "stdio",
+          command: "node",
+          args: ["server.js"],
+          env: { FOO: "bar" },
+          cwd: "/srv/plugin-root",
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const config: any = await resolveLocalStdioServerConfig(
+      "bearer-xyz",
+      "proj-1",
+      "srv-stdio",
+      {
+        timeoutMs: 12_345,
+        clientCapabilities: { sampling: {} },
+        serverDisplayName: "Stdio Server",
+      }
+    );
+
+    expect(config).toMatchObject({
+      command: "node",
+      args: ["server.js"],
+      env: { FOO: "bar" },
+      cwd: "/srv/plugin-root",
+      timeout: 12_345,
+    });
+    expect(config.url).toBeUndefined();
+    expect(config.capabilities).toMatchObject({ sampling: {} });
+    // The bearer is re-checked against the LOCAL endpoint — one call, no
+    // secret/plugin reads for a plain stdio server.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(String(calledUrl)).toContain("/web/authorize-batch-local");
+    expect((calledInit.headers as Record<string, string>).Authorization).toBe(
+      "Bearer bearer-xyz"
+    );
+  });
+
+  it("refuses an http row instead of silently building one", async () => {
+    const fetchMock = vi.fn(async () =>
+      localBatchResponse({
+        transportType: "http",
+        url: "https://hosted.example.com/mcp",
+        headers: {},
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalStdioServerConfig("bearer-xyz", "proj-1", "srv-stdio")
+    ).rejects.toMatchObject({ status: 409, code: "CONFLICT" });
   });
 });

@@ -35,6 +35,7 @@ import {
 } from "../../utils/effective-auth.js";
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -893,6 +894,8 @@ function resolveEffectiveInitializePinsForServer(
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
       mirrorToolParamHeaders?: boolean;
+      firstPageOnly?: boolean;
+      supportsMrtr?: boolean;
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -1251,6 +1254,54 @@ export async function createAuthorizedManager(
       const effectiveAuth = effectiveAuthByServerId.get(
         serverId
       ) as EffectiveAuthMethod;
+
+      const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
+        serverId,
+        options?.initializePins,
+        options?.mcpProtocolVersionsByServerId
+      );
+      // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
+      // swarm runner) wins over the batch-uniform host default. Guard against a
+      // malformed snapshot value falling through to a non-positive timeout.
+      const perServerTimeout = options?.requestTimeoutByServerId?.[serverId];
+      const effectiveTimeoutMs =
+        typeof perServerTimeout === "number" &&
+        Number.isFinite(perServerTimeout) &&
+        perServerTimeout > 0
+          ? perServerTimeout
+          : timeoutMs;
+
+      // LOCAL RUNTIME stdio divert. When this /api/web deployment IS the
+      // local binary (npx/desktop), a stdio server — an ordinary one or a
+      // plugin's local component — CAN spawn here: this is the same process
+      // the /api/mcp engine spawns stdio children from. The hosted authorize
+      // batch strips command/args/env by contract, so the local resolver
+      // re-reads the full config through /web/authorize-batch-local (same
+      // bearer — authorization is re-checked, not assumed), applies runtime
+      // secrets, and materializes plugin bundles before building the SDK
+      // config. HOSTED deployments keep the `toHttpConfig` 400 below: there
+      // is genuinely no local process to spawn into (until stdio-in-computer
+      // execution lands).
+      if (auth.serverConfig.transportType !== "http" && !HOSTED_MODE) {
+        const config = await resolveLocalStdioServerConfig(
+          bearerToken,
+          projectId,
+          serverId,
+          {
+            timeoutMs: effectiveTimeoutMs,
+            clientCapabilities,
+            serverDisplayName: displayServerName,
+            clientInfo: effectiveInitializePins?.clientInfo,
+            supportedProtocolVersions:
+              effectiveInitializePins?.supportedProtocolVersions,
+            firstPageOnly: effectiveInitializePins?.firstPageOnly,
+            supportsMrtr: effectiveInitializePins?.supportsMrtr,
+            xaaPolicy: options?.xaaPolicy,
+          }
+        );
+        return [serverId, config] as const;
+      }
+
       const usesOAuthFlow = effectiveAuth === "oauth";
       // "discover" (non-XAA auto) rides the OAuth rails only when a stored
       // token exists; tokenless discover connects unauthenticated instead of
@@ -1401,21 +1452,6 @@ export async function createAuthorizedManager(
         };
       }
 
-      const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
-        serverId,
-        options?.initializePins,
-        options?.mcpProtocolVersionsByServerId
-      );
-      // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
-      // swarm runner) wins over the batch-uniform host default. Guard against a
-      // malformed snapshot value falling through to a non-positive timeout.
-      const perServerTimeout = options?.requestTimeoutByServerId?.[serverId];
-      const effectiveTimeoutMs =
-        typeof perServerTimeout === "number" &&
-        Number.isFinite(perServerTimeout) &&
-        perServerTimeout > 0
-          ? perServerTimeout
-          : timeoutMs;
       const authForConfig =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
