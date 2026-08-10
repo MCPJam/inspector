@@ -478,8 +478,11 @@ function resolveSlug(error: unknown): {
  */
 const CREDENTIAL_OWNED_SLUGS: ReadonlySet<string> = new Set([
   "auth/http_401",
+  "auth/http_403",
   "auth/missing_bearer",
   "auth/oauth_refresh_failed",
+  "oauth/invalid_client",
+  "oauth/invalid_grant",
   "provider/auth_error",
   "provider/quota",
 ]);
@@ -499,8 +502,25 @@ export type DescribeContext = {
  * payloads cross versions (an older server's normalized error has no origin
  * at all), and `ambiguous` is the safe reading — visible, but not paging.
  */
-export function originOf(value: { origin?: ErrorOrigin } | null | undefined): ErrorOrigin {
-  return value?.origin ?? "ambiguous";
+const VALID_ERROR_ORIGINS: ReadonlySet<ErrorOrigin> = new Set([
+  "user_server",
+  "user_config",
+  "mcpjam",
+  "ambiguous",
+]);
+
+function isErrorOrigin(value: unknown): value is ErrorOrigin {
+  return (
+    typeof value === "string" &&
+    VALID_ERROR_ORIGINS.has(value as ErrorOrigin)
+  );
+}
+
+export function originOf(
+  value: { origin?: unknown } | null | undefined,
+): ErrorOrigin {
+  const origin = value?.origin;
+  return isErrorOrigin(origin) ? origin : "ambiguous";
 }
 
 function applyOriginContext(

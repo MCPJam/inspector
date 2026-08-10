@@ -33,7 +33,7 @@ describe("origin — catalog coverage", () => {
 
   it("classifies something into every bucket", () => {
     const seen = new Set(
-      Object.values(ERROR_CATALOG).map((entry) => entry.origin),
+      Object.values(ERROR_CATALOG).map((entry) => entry.origin)
     );
     for (const origin of ORIGINS) {
       expect(seen, `no slug is ${origin}`).toContain(origin);
@@ -43,12 +43,18 @@ describe("origin — catalog coverage", () => {
 
 describe("origin — the decisions that carry consequences", () => {
   const CASES: Array<[string, ErrorOrigin]> = [
-    // Reached their server; the answer was the problem.
+    // Explicit server-side failure.
     ["jsonrpc/internal_error", "user_server"],
-    ["jsonrpc/parse_error", "user_server"],
-    ["transport/socket_hang_up", "user_server"],
-    // The tool name came from the user's server, so renaming happens there.
-    ["provider/invalid_tool_name", "user_server"],
+    // Direction-dependent protocol and transport signals.
+    ["jsonrpc/parse_error", "ambiguous"],
+    ["jsonrpc/method_not_found", "ambiguous"],
+    ["jsonrpc/invalid_params", "ambiguous"],
+    ["jsonrpc/unsupported_protocol_version", "ambiguous"],
+    ["transport/socket_hang_up", "ambiguous"],
+    // Provider rejection can be caused by host-side name rewriting or
+    // cross-server collisions, not only by the server's tool definition.
+    ["provider/invalid_tool_name", "ambiguous"],
+    ["oauth/well_known_unreachable", "ambiguous"],
     // Wrong address / missing or bad credentials.
     ["transport/econnrefused", "user_config"],
     ["transport/enotfound", "user_config"],
@@ -93,6 +99,27 @@ describe("origin — credential ownership override", () => {
     expect(originOf(normalized)).toBe("mcpjam");
   });
 
+  it("moves a 403 to MCPJam when MCPJam holds the credential", () => {
+    const normalized = describeError(makeError("HTTP 403 Forbidden"), {
+      credentialOwner: "mcpjam",
+    });
+
+    expect(normalized.slug).toBe("auth/http_403");
+    expect(originOf(normalized)).toBe("mcpjam");
+  });
+
+  it("moves a structured OAuth invalid_grant to MCPJam when it owns the credential", () => {
+    const normalized = describeError(
+      makeError("OAuth token request failed", {
+        body: { error: "invalid_grant" },
+      }),
+      { credentialOwner: "mcpjam" }
+    );
+
+    expect(normalized.slug).toBe("oauth/invalid_grant");
+    expect(originOf(normalized)).toBe("mcpjam");
+  });
+
   it("leaves an explicit user owner alone", () => {
     const normalized = describeError(makeError("HTTP 401 Unauthorized"), {
       credentialOwner: "user",
@@ -108,7 +135,7 @@ describe("origin — credential ownership override", () => {
       makeError("connect ECONNREFUSED 127.0.0.1:9999", {
         code: "ECONNREFUSED",
       }),
-      { credentialOwner: "mcpjam" },
+      { credentialOwner: "mcpjam" }
     );
 
     expect(normalized.slug).toBe("transport/econnrefused");
@@ -123,8 +150,15 @@ describe("origin — credential ownership override", () => {
       originOf(
         describeAsSlug("provider/auth_error", undefined, {
           credentialOwner: "mcpjam",
-        }),
-      ),
+        })
+      )
+    ).toBe("mcpjam");
+    expect(
+      originOf(
+        describeAsSlug("oauth/invalid_grant", undefined, {
+          credentialOwner: "mcpjam",
+        })
+      )
     ).toBe("mcpjam");
   });
 });
@@ -140,11 +174,16 @@ describe("originOf — reading across versions", () => {
     expect(originOf({ origin: "mcpjam" })).toBe("mcpjam");
   });
 
+  it("defaults unknown origin values to ambiguous", () => {
+    expect(originOf({ origin: "future-origin" })).toBe("ambiguous");
+    expect(originOf({ origin: 42 })).toBe("ambiguous");
+  });
+
   it("accepts a normalized error that predates the field", () => {
     // An older server's payload has no `origin`. It must still pass the wire
     // guard — requiring the field there would reject every such response.
     const { origin: _dropped, ...withoutOrigin } = describeError(
-      makeError("boom"),
+      makeError("boom")
     );
 
     expect(isNormalizedError(withoutOrigin)).toBe(true);

@@ -66,23 +66,26 @@ const DOCS_BASE = "/troubleshooting/error-codes";
  */
 const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // --- The server answered, and the answer was the problem -----------------
-  // We completed a round trip. Whatever went wrong is on the other end.
-  "jsonrpc/parse_error": "user_server",
+  // This is a server-side error only when the wire evidence identifies the
+  // server as the failing boundary. Keep protocol codes that can also be
+  // caused by the client or transport out of this bucket.
   "jsonrpc/internal_error": "user_server",
-  "jsonrpc/method_not_found": "user_server",
-  // -32602 is about the CALL's arguments — a missing field, a type the tool
-  // schema did not match, or a validator stricter than the published schema.
-  // The fix is in the schema or the arguments; neither is MCPJam plumbing.
-  "jsonrpc/invalid_params": "user_server",
-  "jsonrpc/unsupported_protocol_version": "user_server",
-  // The provider rejected a tool NAME that came from the user's server
-  // ("rename the offending tool on the server").
-  "provider/invalid_tool_name": "user_server",
-  // Their authorization server, or the issuer URL it advertised, is not
-  // answering. Reaching it is not something the user configures directly.
-  "oauth/well_known_unreachable": "user_server",
-  // We connected, then the peer hung up mid-response.
-  "transport/socket_hang_up": "user_server",
+  // Parse errors, missing methods, invalid params, and unsupported versions
+  // are direction-dependent protocol signals. A client can send malformed
+  // JSON, call an unadvertised method, or request a version the server does
+  // not support, so the slug alone cannot identify who must act.
+  "jsonrpc/parse_error": "ambiguous",
+  "jsonrpc/method_not_found": "ambiguous",
+  "jsonrpc/invalid_params": "ambiguous",
+  "jsonrpc/unsupported_protocol_version": "ambiguous",
+  // A provider may reject a server-supplied name, but a host-side namespace
+  // collision or sanitization bug is MCPJam's responsibility.
+  "provider/invalid_tool_name": "ambiguous",
+  // Discovery can fail because of server metadata, a wrong configured issuer,
+  // CORS, or the network. The slug does not settle that boundary.
+  "oauth/well_known_unreachable": "ambiguous",
+  // A peer, proxy, or local transport can all produce this symptom.
+  "transport/socket_hang_up": "ambiguous",
 
   // --- What we were told to connect to, or with, was wrong -----------------
   "transport/econnrefused": "user_config",
@@ -161,11 +164,12 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   "jsonrpc/parse_error": entry(
     "jsonrpc/parse_error",
     "Parse error (-32700)",
-    "The server returned a payload the client could not parse as JSON-RPC.",
+    "The MCP wire contained JSON the inspector could not parse as JSON-RPC.",
     [
-      "Server emitted invalid JSON on the response channel.",
+      "The server emitted invalid JSON on the response channel.",
       "A proxy or middleware mangled the response body.",
       "Server emitted log output on stdout instead of stderr (STDIO transport).",
+      "The inspector sent malformed JSON and the server returned a parse error.",
     ],
     [
       "Check the server's stdout/stderr for unintended log output.",
