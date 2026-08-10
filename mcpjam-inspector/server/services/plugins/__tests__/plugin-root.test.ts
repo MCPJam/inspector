@@ -36,6 +36,18 @@ describe("plugin root substitution", () => {
     ).toBe("${PLUGIN_DATA}/a");
   });
 
+  it("substitutes in a single pass — inserted values are never re-scanned", () => {
+    // A root that happens to CONTAIN a literal placeholder token must land
+    // verbatim; sequential per-token replacement would substitute it again.
+    const weirdRoot = "/tmp/${PLUGIN_DATA}/cache";
+    expect(
+      substitutePluginPlaceholders("${PLUGIN_ROOT}/a", {
+        root: weirdRoot,
+        dataDir: DATA,
+      })
+    ).toBe(`${weirdRoot}/a`);
+  });
+
   it("substitutes every occurrence, not just the first", () => {
     expect(
       substitutePluginRoot("${PLUGIN_ROOT}:${PLUGIN_ROOT}", ROOT)

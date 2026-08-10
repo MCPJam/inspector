@@ -75,11 +75,12 @@ export function substitutePluginPlaceholders(
   value: string,
   roots: { root: string; dataDir?: string }
 ): string {
-  let out = substitutePluginRoot(value, roots.root);
-  if (roots.dataDir !== undefined) {
-    out = out.split("${PLUGIN_DATA}").join(roots.dataDir);
-  }
-  return out;
+  // Single pass over the ORIGINAL value: sequential per-token replacement
+  // would re-scan earlier substitutions, so a substituted path that happened
+  // to contain a literal placeholder token would be substituted again.
+  return value.replace(/\$\{PLUGIN_ROOT\}|\$\{PLUGIN_DATA\}/g, (token) =>
+    token === "${PLUGIN_ROOT}" ? roots.root : (roots.dataDir ?? token)
+  );
 }
 
 /**

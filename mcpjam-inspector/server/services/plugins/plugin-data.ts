@@ -43,6 +43,9 @@ export async function ensurePluginDataDir(args: {
     args.projectId,
     args.pluginId
   );
-  await mkdir(dir, { recursive: true });
+  // Owner-only regardless of umask: persisted plugin state (caches, auth
+  // artifacts a component chooses to write) must not be readable by other
+  // local users. Applies on creation; an existing directory keeps its mode.
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   return dir;
 }

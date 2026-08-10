@@ -224,8 +224,68 @@ describe("plugin stdio origin resolution", () => {
     const expectedDataDir = join(dataRoot, PROJECT_ID, PLUGIN_ID);
     expect(prepared.launch.args[1]).toBe(`--cache=${expectedDataDir}/cache.db`);
     expect(prepared.launch.env.PLUGIN_DATA).toBe(expectedDataDir);
-    await expect(stat(expectedDataDir)).resolves.toMatchObject({});
+    const dirStat = await stat(expectedDataDir);
+    if (process.platform !== "win32") {
+      // Owner-only regardless of umask: persisted plugin state must not be
+      // readable by other local users.
+      expect(dirStat.mode & 0o777).toBe(0o700);
+    }
     prepared.release();
+  });
+
+  it("reports a filesystem problem as plugin_data_unavailable, never a bundle problem", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    // A FILE where the data root must be a directory: mkdir fails.
+    const blockedRoot = join(cacheRoot, "blocked-data-root");
+    await appendFile(blockedRoot, "not a directory");
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: PLACEHOLDER_SPEC,
+      leaseId: SERVER_ID,
+      dataRoot: blockedRoot,
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "plugin_data_unavailable",
+    });
+    expect(cache.activeEntries()).toEqual([]);
+  });
+
+  it("fails closed on a placeholder this build does not implement", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        // A future spec placeholder: the generic guard must refuse the
+        // spawn and report only the bare token.
+        args: ["${PLUGIN_ROOT}/server/index.js", "--x=${PLUGIN_CACHE}/db"],
+      },
+      leaseId: SERVER_ID,
+      dataRoot: join(cacheRoot, "plugin-data"),
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "unsupported_placeholder",
+      placeholder: "${PLUGIN_CACHE}",
+    });
+    expect(cache.activeEntries()).toEqual([]);
   });
 
   it.each([
