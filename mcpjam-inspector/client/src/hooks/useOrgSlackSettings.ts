@@ -16,8 +16,20 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * empty.
  */
 
+/**
+ * Which chat surface a call is about.
+ *
+ * The server takes this as an OPTIONAL argument defaulting to Slack, because
+ * the backend deploys ahead of this client. Passing it explicitly is still
+ * correct against that older deployment for Slack (same value it would have
+ * defaulted to) but NOT for Discord, which a pre-deploy backend rejects as an
+ * unknown literal — so the Discord surface stays behind its feature flag until
+ * the backend carrying `surfaceKind` is live.
+ */
+export type SurfaceKind = "slack" | "discord";
+
 export interface SlackConnectedWorkspace {
-  surfaceKind: "slack";
+  surfaceKind: SurfaceKind;
   surfaceTenantId: string;
   name: string;
   /** False when the org's members use a workspace the app is not installed in. */
@@ -29,7 +41,7 @@ export interface SlackConnectedWorkspace {
 
 export interface SlackChannelBinding {
   _id: string;
-  surfaceKind: "slack";
+  surfaceKind: SurfaceKind;
   surfaceTenantId: string;
   channelId: string;
   projectId: string;
@@ -133,15 +145,29 @@ function useOrgScopedWrite(organizationId: string | null): {
 }
 
 export function useOrgSlackSettings(
-  organizationId: string | null
+  organizationId: string | null,
+  /**
+   * Omitted means Slack, matching the server's own default. Callers that
+   * predate Discord therefore keep reading exactly the rows they always did —
+   * the argument is not even sent.
+   */
+  surfaceKind: SurfaceKind = "slack"
 ): UseOrgSlackSettingsResult {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const enabled = Boolean(organizationId) && isAuthenticated && isUserReady;
 
+  // Only sent for a non-default surface. Omitting it for Slack keeps this
+  // client compatible with a backend deployed before `surfaceKind` existed,
+  // which is the ordering during the rollout window.
+  const surfaceArg = useMemo(
+    () => (surfaceKind === "slack" ? {} : { surfaceKind }),
+    [surfaceKind]
+  );
+
   const connections = useQuery(
     "slackAgentSettings:getConnections" as any,
-    enabled ? ({ organizationId } as any) : "skip"
+    enabled ? ({ organizationId, ...surfaceArg } as any) : "skip"
   ) as SlackConnections | undefined;
 
   const setDefault = useMutation(
@@ -165,12 +191,13 @@ export function useOrgSlackSettings(
       await run(() =>
         setDefault({
           organizationId,
+          ...surfaceArg,
           surfaceTenantId: args.surfaceTenantId,
           ...(args.projectId ? { projectId: args.projectId } : {}),
         } as any)
       );
     },
-    [organizationId, run, setDefault]
+    [organizationId, run, setDefault, surfaceArg]
   );
 
   const createChannelBinding = useCallback(
@@ -180,9 +207,11 @@ export function useOrgSlackSettings(
       projectId: string;
     }) => {
       if (!organizationId) return;
-      await run(() => createBinding({ organizationId, ...args } as any));
+      await run(() =>
+        createBinding({ organizationId, ...surfaceArg, ...args } as any)
+      );
     },
-    [createBinding, organizationId, run]
+    [createBinding, organizationId, run, surfaceArg]
   );
 
   const removeChannelBinding = useCallback(

@@ -101,7 +101,9 @@ async function mintDelegatedToken(
       ErrorCode.SERVER_UNREACHABLE,
       isAbort
         ? `Delegated token exchange timed out after ${MINT_TIMEOUT_MS}ms`
-        : `Failed to reach delegated token exchange: ${parseErrorMessage(error)}`
+        : `Failed to reach delegated token exchange: ${parseErrorMessage(
+            error
+          )}`
     );
   } finally {
     clearTimeout(timeoutId);
@@ -117,9 +119,7 @@ async function mintDelegatedToken(
   if (!response.ok || !body?.ok || typeof body.token !== "string") {
     throw new WebRouteError(
       response.status === 403 ? 403 : 502,
-      response.status === 403
-        ? ErrorCode.FORBIDDEN
-        : ErrorCode.INTERNAL_ERROR,
+      response.status === 403 ? ErrorCode.FORBIDDEN : ErrorCode.INTERNAL_ERROR,
       `Delegated token exchange failed (${response.status})`
     );
   }
@@ -130,6 +130,30 @@ async function mintDelegatedToken(
         ? body.expiresAt
         : Date.now() + FALLBACK_TTL_MS,
   };
+}
+
+/**
+ * The auth methods whose caller has NO Convex-verifiable bearer of their own,
+ * so the gateway mints a delegated org-scoped JWT for them.
+ *
+ * One set, two consumers. `getConvexBearerForRequest` and
+ * `getConvexBearerThunkForRequest` used to spell this out separately, once
+ * positively and once negatively — and the drift is silent in the direction
+ * that matters: add a fourth service credential to only one, and that caller
+ * still gets a bearer, it just stops REFRESHING partway through a multi-hour
+ * run. Tested on the LABEL rather than on the presence of the identity vars,
+ * because a JWT caller can carry those vars too and minting for them would
+ * swap a user's own bearer for a delegated one.
+ */
+const DELEGATED_AUTH_METHODS = new Set([
+  "workos_api_key",
+  "slack_service",
+  "discord_service",
+]);
+
+function usesDelegatedToken(c: Context): boolean {
+  const authMethod = c.get("authMethod");
+  return typeof authMethod === "string" && DELEGATED_AUTH_METHODS.has(authMethod);
 }
 
 /**
@@ -151,16 +175,42 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
   // `authMethod` rather than on the presence of the delegation context vars
   // is deliberate: a JWT caller can carry those vars too, and minting for
   // them would swap a user's own bearer for a delegated one.
-  const authMethod = c.get("authMethod");
-  if (
-    authMethod !== "workos_api_key" &&
-    authMethod !== "slack_service" &&
-    authMethod !== "discord_service"
-  ) {
+  if (!usesDelegatedToken(c)) {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);
   return getConvexBearerForDelegation(workosUserId, organizationId);
+}
+
+/**
+ * A RE-RESOLVING bearer for work that outlives the request.
+ *
+ * `getConvexBearerForRequest` hands back a string, which is right for anything
+ * that finishes inside the request. A swarm run does not: it detaches after a
+ * 202 and can fan out for hours, while a delegated JWT lives ~2h. A captured
+ * string simply stops working partway through, and every later call — attempt
+ * claims, terminal reports, transcript persists — fails on a run that looks
+ * half-finished.
+ *
+ * Call this WHILE THE CONTEXT IS LIVE: it reads the delegation identity now
+ * and closes over the ids, so the returned thunk never touches `c`. Each call
+ * re-mints (or returns the cached token, which `getConvexBearerForDelegation`
+ * already refreshes near expiry).
+ *
+ * For a session/guest JWT caller there is nothing to re-mint — the token's
+ * lifetime is the browser session's and we cannot extend it — so the thunk is
+ * constant. That is not a gap this can close; a run whose launching tab closed
+ * is what the backend's stale-run sweep is for.
+ */
+export function getConvexBearerThunkForRequest(
+  c: Context
+): () => Promise<string> {
+  if (usesDelegatedToken(c)) {
+    const { workosUserId, organizationId } = delegationContext(c);
+    return () => getConvexBearerForDelegation(workosUserId, organizationId);
+  }
+  const bearer = assertBearerToken(c);
+  return async () => bearer;
 }
 
 /**

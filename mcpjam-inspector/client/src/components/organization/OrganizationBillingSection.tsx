@@ -43,6 +43,7 @@ import { type ComparePlanCell } from "@/components/organization/compare-plan-mar
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { ErrorCard } from "@/components/ui/error-card";
 import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlow";
 
 const PLAN_ORDER: OrganizationPlan[] = ["free", "team", "enterprise"];
@@ -891,7 +892,12 @@ export function OrganizationBillingSection({
       </Dialog>
 
       {showCredits ? (
-        <ErrorBoundary fallback={null}>
+        <ErrorBoundary
+          name="org_billing_credit_balance"
+          fallback={({ error, reset }) => (
+            <ErrorCard error={error} onRetry={reset} />
+          )}
+        >
           <CreditBalanceCard
             organizationId={organizationId}
             canManageCredits={canManageCredits}
@@ -921,7 +927,12 @@ export function OrganizationBillingSection({
       )}
 
       {showCredits || (showPlanBilling && billingStatus?.canManageBilling) ? (
-        <ErrorBoundary fallback={null}>
+        <ErrorBoundary
+          name="org_billing_payments_history"
+          fallback={({ error, reset }) => (
+            <ErrorCard error={error} onRetry={reset} />
+          )}
+        >
           <PaymentsHistorySection
             organizationId={organizationId}
             canViewHistory={showCredits && canManageCredits}

@@ -82,7 +82,6 @@ function handle(request) {
             type: "text",
             text: JSON.stringify({
               pluginRoot: process.env.PLUGIN_ROOT ?? null,
-              codexPluginRoot: process.env.CODEX_PLUGIN_ROOT ?? null,
               scriptPath: process.argv[1],
               dataFileArg: process.argv[2] ?? null,
             }),
@@ -107,14 +106,17 @@ process.stdin.resume();
 /** Bundle-relative path → content. Mirrors what a folder import would upload. */
 export function fixtureBundleFiles(): Record<string, string> {
   return {
-    ".codex-plugin/plugin.json": JSON.stringify({
+    "plugin.json": JSON.stringify({
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
       name: "fixture-plugin",
       version: "1.0.0",
       description: "Fixture plugin with one local stdio component.",
     }),
-    ".mcp.json": JSON.stringify({
-      mcp_servers: {
+    "mcp.json": JSON.stringify({
+      $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+      mcpServers: {
         "fixture-local": {
+          type: "stdio",
           command: "node",
           args: ["${PLUGIN_ROOT}/server/index.js", "${PLUGIN_ROOT}/data.txt"],
         },

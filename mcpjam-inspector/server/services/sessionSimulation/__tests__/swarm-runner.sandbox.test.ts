@@ -222,8 +222,7 @@ function baseOpts(
     sessionsPerTarget,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
-    bearer: "token",
-    authHeader: "Bearer token",
+    getBearer: async () => "token",
     managerFactory: async () => ({
       manager: {
         hasServer: () => false,

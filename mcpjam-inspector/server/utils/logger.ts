@@ -13,14 +13,43 @@ const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
 const shouldLog = () => isVerbose() || isDev();
 
-const axiom =
-  process.env.AXIOM_TOKEN && process.env.AXIOM_DATASET
-    ? new Axiom({ token: process.env.AXIOM_TOKEN })
-    : null;
+/**
+ * The same opt-out `server/sentry.ts` and `server/utils/analytics.ts` honor.
+ * Checked here too: `DO_NOT_TRACK` means no telemetry, and log shipping is
+ * telemetry. Without this the startup notice ("error reporting disabled")
+ * would be true of Sentry and false of Axiom.
+ *
+ * Read at INGEST time, not module load. `server/index.ts` statically imports
+ * this module, so its body evaluates before `loadInspectorEnv()` — a
+ * `DO_NOT_TRACK=1` coming from `.env` would be invisible to a module-load
+ * read, and Axiom would keep shipping while Sentry and PostHog (which both
+ * read it at call time) correctly went quiet. Same trap that made the old
+ * import-time `Sentry.init` a no-op. `analytics.ts` reads it lazily for this
+ * reason too.
+ */
+function isTrackingDisabled(): boolean {
+  const dnt = process.env.DO_NOT_TRACK;
+  return dnt === "1" || dnt === "true";
+}
 
-const dataset = process.env.AXIOM_DATASET ?? "";
+// The client is constructed lazily for the same reason: at module load the
+// AXIOM_* credentials may not be in the environment yet either.
+let axiomClient: Axiom | null | undefined;
 
-const environment = process.env.ENVIRONMENT ?? "unknown";
+function getAxiom(): Axiom | null {
+  if (isTrackingDisabled()) return null;
+  if (axiomClient === undefined) {
+    axiomClient =
+      process.env.AXIOM_TOKEN && process.env.AXIOM_DATASET
+        ? new Axiom({ token: process.env.AXIOM_TOKEN })
+        : null;
+  }
+  return axiomClient;
+}
+
+const dataset = () => process.env.AXIOM_DATASET ?? "";
+
+const environment = () => process.env.ENVIRONMENT ?? "unknown";
 
 /**
  * Sentry capture for typed events is **opt-in**: pass `{ sentry: true }` at the
@@ -35,8 +64,11 @@ function ingestToAxiom(
   message: string,
   context?: Record<string, unknown>,
 ) {
+  const axiom = getAxiom();
   if (!axiom) return;
-  axiom.ingest(dataset, [{ ...context, level, message, environment }]);
+  axiom.ingest(dataset(), [
+    { ...context, level, message, environment: environment() },
+  ]);
 }
 
 /**
@@ -47,6 +79,10 @@ function ingestToAxiom(
 export const logger = {
   /**
    * Log an error. Always sends to Sentry and Axiom, only prints to console in dev/verbose mode.
+   *
+   * This is the server's single Sentry capture path for free-form errors —
+   * `Hono.onError` routes through here, so route handlers never call
+   * `captureException` themselves and nothing double-counts.
    *
    * NOTE: For new production diagnostics in `server/routes/web/`, prefer `logger.event()` —
    * free-form messages are not queryable in Axiom. Legacy callers (CLI, system code,
@@ -68,15 +104,21 @@ export const logger = {
   },
 
   /**
-   * Log a warning. Always sends to Sentry and Axiom, only prints to console in dev/verbose mode.
+   * Log a warning. Sends to Axiom, only prints to console in dev/verbose mode.
+   *
+   * Deliberately does NOT capture to Sentry. Every `logger.warn` in the tree
+   * used to become a Sentry event, which across thousands of self-hosted
+   * installs is the single largest quota-spike vector we have — and a warning
+   * is by definition something we chose not to treat as a failure. Axiom is
+   * the right home for it: queryable, cheap, no issue-tracker noise. A warning
+   * that genuinely needs a Sentry issue should be an explicit
+   * `logger.event(..., { error, sentry: true })` at the callsite that owns it.
    *
    * NOTE: For new production diagnostics in `server/routes/web/`, prefer `logger.event()` —
    * free-form messages are not queryable in Axiom. Legacy callers (CLI, system code,
    * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
    */
   warn(message: string, context?: Record<string, unknown>) {
-    Sentry.captureMessage(message, { level: "warning", extra: context });
-
     ingestToAxiom("warn", message, context);
 
     if (shouldLog()) {
@@ -113,7 +155,7 @@ export const logger = {
    * Flush pending Axiom events. Call before process exit.
    */
   async flush() {
-    await axiom?.flush();
+    await getAxiom()?.flush();
   },
 
   event<E extends keyof RequestEventMap>(
@@ -201,8 +243,9 @@ function emit(
     timestamp: new Date().toISOString(),
   }) as Record<string, unknown>;
 
+  const axiom = getAxiom();
   if (axiom) {
-    axiom.ingest(dataset, [fullPayload]);
+    axiom.ingest(dataset(), [fullPayload]);
   }
 
   if (options?.sentry === true) {

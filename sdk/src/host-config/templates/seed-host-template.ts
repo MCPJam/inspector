@@ -587,6 +587,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches what real claude.ai publishes.
           clientInfo: { name: "claude-ai", version: "0.1.0" },
@@ -842,6 +843,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches what real ChatGPT publishes.
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
@@ -1316,6 +1318,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches Cursor's outer-IDE identity.
           clientInfo: { name: "cursor-vscode", version: "1.0.0" },
@@ -1492,6 +1495,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent during MCP `initialize`.
           // Matches Microsoft's "ms-copilot" identity convention. The
           // name is an emulation convention and 1.0.1 labels MCPJam's
