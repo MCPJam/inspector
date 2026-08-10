@@ -84,14 +84,7 @@ const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
 const hostedRunTestCaseSchema = RunTestCaseRequestSchema.omit({
   serverIds: true,
   convexAuthToken: true,
-})
-  .extend(hostedBatchSchema.shape)
-  .extend({
-    // Same relaxation as `hostedRunEvalsSchema`, for the same reason: an
-    // environment quick-run arrives with no server ids and the route primes the
-    // batch from the authoritative resolution before this schema runs.
-    serverIds: z.array(z.string().min(1)),
-  });
+}).extend(hostedBatchSchema.shape);
 
 const hostedGenerateTestsSchema = GenerateTestsRequestSchema.omit({
   serverIds: true,
@@ -136,56 +129,46 @@ const hostedTraceRepairStopSchema = z.object({
   jobId: z.string().min(1),
 });
 
-/**
- * Environment runs carry no browser serverIds — the browser never knows an
- * environment's closed execution set. Prime the hosted connection batch from the
- * authoritative resolution so the manager connects exactly that set, and return
- * the SAME resolution for the runner to reuse, so what executes is what was
- * connected (and, for suite runs, so `expectedEnvironmentRevision` describes it:
- * an environment edit after this preflight then fails the run-start revision
- * check instead of being missed).
- *
- * Shared by the suite-run and single-case routes: a quick run that connected a
- * different set than the full run would is not a preview of anything.
- */
-async function primeHostedEnvironmentBatch(
-  c: Parameters<typeof getConvexBearerForRequest>[0],
-  rawBody: Record<string, unknown>,
-): Promise<ResolvedEnvironmentForLaunch | undefined> {
-  if (
-    typeof rawBody.environmentId !== "string" ||
-    !rawBody.environmentId ||
-    typeof rawBody.projectId !== "string" ||
-    !rawBody.projectId
-  ) {
-    return undefined;
-  }
-  // Convert an `sk_` API-key bearer to the short-lived delegated JWT the Convex
-  // query surface requires (same conversion the hosted connection uses); the raw
-  // key would 401 the resolver for API-key callers.
-  const bearer = await getConvexBearerForRequest(c);
-  const resolved = await resolveEnvironmentForLaunch(createConvexClient(bearer), {
-    projectId: rawBody.projectId,
-    environmentId: rawBody.environmentId,
-  });
-  // Live-healed server IDs (not the raw closed set) so the batch we
-  // authorize/connect matches the IDs `resolveServerIdsOrThrow` later looks up —
-  // a server deleted and re-added under the same name resolves to its current id
-  // in both.
-  rawBody.serverIds = environmentServerIds(resolved);
-  const serverNames = environmentServerNames(resolved);
-  if (serverNames.length) {
-    rawBody.serverNames = serverNames;
-  }
-  return resolved;
-}
-
 evals.post("/run", async (c) =>
   handleRoute(
     c,
     async () => {
       const rawBody = await readJsonBody<Record<string, unknown>>(c);
-      const preflightEnvironment = await primeHostedEnvironmentBatch(c, rawBody);
+      // Environment launches carry no browser serverIds (the browser never
+      // knows an environment's closed execution set). Prime the hosted
+      // connection batch from the authoritative resolution so the manager
+      // connects exactly that set, then hand the SAME resolution to
+      // `prepareEvalRun` so `expectedEnvironmentRevision` describes what the
+      // manager connected — an environment edit after this preflight then
+      // fails the run-start revision check instead of being missed.
+      let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
+      if (
+        typeof rawBody.environmentId === "string" &&
+        rawBody.environmentId &&
+        typeof rawBody.projectId === "string" &&
+        rawBody.projectId
+      ) {
+        // Convert an `sk_` API-key bearer to the short-lived delegated JWT the
+        // Convex query surface requires (same conversion the hosted connection
+        // uses); the raw key would 401 the resolver for API-key callers.
+        const bearer = await getConvexBearerForRequest(c);
+        preflightEnvironment = await resolveEnvironmentForLaunch(
+          createConvexClient(bearer),
+          {
+            projectId: rawBody.projectId,
+            environmentId: rawBody.environmentId,
+          },
+        );
+        // Prime the ephemeral manager with the live-healed server IDs (not the
+        // raw closed set) so the batch we authorize/connect matches the IDs
+        // `resolveServerIdsOrThrow` later looks up — a server deleted and
+        // re-added under the same name resolves to its current id in both.
+        rawBody.serverIds = environmentServerIds(preflightEnvironment);
+        const serverNames = environmentServerNames(preflightEnvironment);
+        if (serverNames.length) {
+          rawBody.serverNames = serverNames;
+        }
+      }
       const connection = await createManualHostedConnection(
         c,
         rawBody,
@@ -237,36 +220,23 @@ evals.post("/run", async (c) =>
   ),
 );
 
-evals.post("/run-test-case", async (c) => {
-  // Assigned by `prepareBody` below, which runs before the handler.
-  let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
-  return withEphemeralConnection(
+evals.post("/run-test-case", async (c) =>
+  withEphemeralConnection(
     c,
     hostedRunTestCaseSchema,
     (manager, body) =>
       runEvalTestCaseWithManager(manager, {
         ...body,
         convexAuthToken: assertBearerToken(c),
-        ...(preflightEnvironment
-          ? { resolvedEnvironment: preflightEnvironment }
-          : {}),
       }),
-    {
-      rpcLogs: false,
-      prepareBody: async (rawBody) => {
-        preflightEnvironment = await primeHostedEnvironmentBatch(c, rawBody);
-      },
-    },
-  );
-});
+    { rpcLogs: false },
+  ),
+);
 
 evals.post("/stream-test-case", async (c) => {
   const bearerToken = assertBearerToken(c);
   const rawBody = await readJsonBody<Record<string, unknown>>(c);
   const WEB_CALL_TIMEOUT_MS = 60_000;
-  // Before parsing: the batch's serverIds are what `createAuthorizedManager`
-  // connects below, and an environment run has none until this resolves them.
-  const preflightEnvironment = await primeHostedEnvironmentBatch(c, rawBody);
 
   const body = parseWithSchema(hostedRunTestCaseSchema, rawBody) as z.infer<
     typeof hostedRunTestCaseSchema
@@ -327,9 +297,6 @@ evals.post("/stream-test-case", async (c) => {
           serverIds: string[];
         }),
         convexAuthToken: bearerToken,
-        ...(preflightEnvironment
-          ? { resolvedEnvironment: preflightEnvironment }
-          : {}),
       },
       {
         onStreamComplete: () => manager.disconnectAllServers(),

@@ -403,14 +403,9 @@ export const RunTestCaseRequestSchema = z.object({
   provider: z.string(),
   compareRunId: z.string().optional(),
   skipLastMessageRunUpdate: z.boolean().optional(),
-  /**
-   * Empty is legal ONLY alongside `environmentId`, whose resolved closed set
-   * replaces this list. Enforced in the handler rather than here, for the same
-   * reason `RunEvalsRequestSchema` does it: Zod cannot see the other field's
-   * meaning, and a `.min(1)` here would make an environment quick-run
-   * unexpressible.
-   */
-  serverIds: z.array(z.string()),
+  serverIds: z
+    .array(z.string())
+    .min(1, { message: "At least one server must be selected" }),
   chatboxId: z.string().optional(),
   accessVersion: z.number().int().nonnegative().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
@@ -476,25 +471,6 @@ export const RunTestCaseRequestSchema = z.object({
    */
   namedHostId: z.string().optional(),
   /**
-   * Project environment to run this case in, resolved server-side exactly as a
-   * Run-all fan-out resolves each of its environments. Singular because a quick
-   * run is one execution: the client sends the suite's FIRST attached
-   * environment (attach order is run order).
-   *
-   * Present ⇒ `serverIds` is ignored in favour of the environment's closed set.
-   * Requires `projectId`.
-   *
-   * Must be declared explicitly on every Zod boundary in the wire path;
-   * unknown keys are stripped silently.
-   */
-  environmentId: z.string().optional(),
-  /**
-   * Required with `environmentId`; environments are project-scoped. Nullable
-   * because the local quick-run path already sends `null` for a direct guest,
-   * who by construction never has an environment to run.
-   */
-  projectId: z.string().nullish(),
-  /**
    * One-off hostConfig override for this single-case run. Subset of
    * `HostConfigInputV2`; recorded on the iteration snapshot so the trace
    * shows which config the run actually used. Does NOT mutate the suite
@@ -521,13 +497,6 @@ export const RunTestCaseRequestSchema = z.object({
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
 type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
-  /**
-   * Pre-resolved environment from the caller's manager-priming preflight, for
-   * the same reason `RunEvalsWithManagerRequest` carries one: the hosted routes
-   * resolve the environment once to connect its closed set, and reusing that
-   * resolution keeps the set we execute equal to the set we connected.
-   */
-  resolvedEnvironment?: ResolvedEnvironmentForLaunch;
 };
 
 export const MAX_TOTAL_LLM_CALLS = 300;
@@ -2011,54 +1980,6 @@ export type RunEvalTestCaseWithManagerOptions = {
   skipLastMessageRunUpdate?: boolean;
 };
 
-/**
- * The server set a single-case run executes against.
- *
- * Environment runs resolve their closed set server-side and IGNORE the
- * caller's `serverIds`, exactly as `prepareEvalRun` does for a Run-all fan-out
- * — a quick run has to execute against what the full run would, or it is not a
- * preview of anything. Shared by the run and stream entry points so the two can
- * never disagree about what a case ran against.
- */
-async function resolveTestCaseServerIds(
-  clientManager: MCPClientManager,
-  request: RunTestCaseWithManagerRequest,
-  convexClient: ConvexHttpClient
-): Promise<string[]> {
-  const { environmentId, projectId, serverIds, resolvedEnvironment } = request;
-  if (!environmentId) {
-    if (serverIds.length === 0) {
-      // Legacy quick-runs keep the ≥1-server contract the Zod schema used to
-      // carry; environment runs legitimately send none.
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "At least one server must be selected"
-      );
-    }
-    return resolveServerIdsOrThrow(serverIds, clientManager);
-  }
-  if (!projectId) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "projectId is required for environment runs"
-    );
-  }
-  // Reuse the caller's preflight resolution when it is for THIS environment —
-  // the hosted routes resolve once to prime the ephemeral manager, so reusing it
-  // means the set we execute is the set we connected.
-  const launch =
-    resolvedEnvironment &&
-    resolvedEnvironment.environmentRef.environmentId === environmentId
-      ? resolvedEnvironment
-      : await resolveEnvironmentForLaunch(convexClient, {
-          projectId,
-          environmentId,
-        });
-  return resolveServerIdsOrThrow(environmentServerIds(launch), clientManager);
-}
-
 export async function runEvalTestCaseWithManager(
   clientManager: MCPClientManager,
   request: RunTestCaseWithManagerRequest,
@@ -2082,12 +2003,8 @@ export async function runEvalTestCaseWithManager(
     hostConfigOverride,
   } = request;
 
+  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
-  const resolvedServerIds = await resolveTestCaseServerIds(
-    clientManager,
-    request,
-    convexClient
-  );
 
   const testCase = await convexClient.query("testSuites:getTestCase" as any, {
     testCaseId,
@@ -2468,12 +2385,8 @@ export async function streamEvalTestCaseWithManager(
     hostConfigOverride,
   } = request;
 
+  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
-  const resolvedServerIds = await resolveTestCaseServerIds(
-    clientManager,
-    request,
-    convexClient
-  );
 
   const testCase = await convexClient.query("testSuites:getTestCase" as any, {
     testCaseId,

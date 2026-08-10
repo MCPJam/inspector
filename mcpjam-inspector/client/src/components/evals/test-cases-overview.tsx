@@ -183,9 +183,9 @@ export function TestCasesOverview({
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
-  // Environment suites CAN quick-run, but their closed server set is resolved
-  // server-side, so the browser cannot price one — cost estimates stay
-  // suppressed rather than showing a number for a different set of servers.
+  // Environment suites route single-case runs to "Run all" (the quick-run path
+  // can't resolve an environment's closed server set), so their per-case Run
+  // controls never spend — no estimate belongs beside them.
   const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
   const canShowByHost = hostAttachmentCount >= 2;
@@ -735,11 +735,7 @@ export function TestCasesOverview({
                     rowTone === "diverge" && "bg-amber-500/[0.05]",
                     rowTone === "allfail" && "bg-destructive/[0.05]",
                   );
-                  // An environment suite has no local server list — the server
-                  // resolves its closed set — so an empty one is not a reason to
-                  // disable the run.
-                  const hasConfiguredSuiteServers =
-                    isEnvironmentSuite || suiteServers.length > 0;
+                  const hasConfiguredSuiteServers = suiteServers.length > 0;
                   const missingServers =
                     connectedServerNames == null
                       ? []

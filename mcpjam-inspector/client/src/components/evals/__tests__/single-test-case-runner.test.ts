@@ -110,34 +110,6 @@ describe("single-test-case-runner", () => {
     });
   });
 
-  it("sends the environment instead of servers for an environment suite", async () => {
-    const prepared = await prepareSingleTestCaseRun({
-      projectId: "project-1",
-      // Two attached: a quick run is ONE execution, so it takes the first —
-      // attach order is the order Run all fans out in.
-      suite: { ...suite, environmentIds: ["env-first", "env-second"] },
-      testCase,
-      getAccessToken: vi.fn().mockResolvedValue("token-123"),
-    });
-
-    expect(prepared.request.environmentId).toBe("env-first");
-    // Empty on purpose: the server substitutes the environment's resolved
-    // closed set, and sending the local list would be the wrong servers.
-    expect(prepared.request.serverIds).toEqual([]);
-  });
-
-  it("leaves a legacy suite's request untouched", async () => {
-    const prepared = await prepareSingleTestCaseRun({
-      projectId: "project-1",
-      suite,
-      testCase,
-      getAccessToken: vi.fn().mockResolvedValue("token-123"),
-    });
-
-    expect(prepared.request).not.toHaveProperty("environmentId");
-    expect(prepared.request.serverIds).toEqual(["asana"]);
-  });
-
   it("uses the explicitly selected model when provided", async () => {
     const prepared = await prepareSingleTestCaseRun({
       projectId: "project-1",

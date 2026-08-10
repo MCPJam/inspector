@@ -269,51 +269,6 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
   });
 });
 
-describe("RunTestCaseRequestSchema environmentId boundary", () => {
-  it("accepts AND preserves environmentId + projectId (guards the silent strip)", () => {
-    const base = buildTestCaseRequest() as Record<string, unknown>;
-    const result = RunTestCaseRequestSchema.safeParse({
-      ...base,
-      serverIds: [],
-      environmentId: "env_123",
-      projectId: "proj_1",
-    });
-    expect(result.success).toBe(true);
-    expect(result.success && result.data.environmentId).toBe("env_123");
-    expect(result.success && result.data.projectId).toBe("proj_1");
-  });
-
-  it("accepts an environment quick-run with NO server ids", () => {
-    // The ≥1-server rule moved to the handler, which can see that an
-    // environment supplies the set instead.
-    const base = buildTestCaseRequest() as Record<string, unknown>;
-    const result = RunTestCaseRequestSchema.safeParse({
-      ...base,
-      serverIds: [],
-      environmentId: "env_123",
-      projectId: "proj_1",
-    });
-    expect(result.success).toBe(true);
-    expect(result.success && result.data.serverIds).toEqual([]);
-  });
-
-  it("tolerates the null projectId the guest quick-run path already sends", () => {
-    const base = buildTestCaseRequest() as Record<string, unknown>;
-    const result = RunTestCaseRequestSchema.safeParse({
-      ...base,
-      projectId: null,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("leaves a legacy quick-run unchanged", () => {
-    const result = RunTestCaseRequestSchema.safeParse(buildTestCaseRequest());
-    expect(result.success).toBe(true);
-    expect(result.success && result.data.serverIds).toEqual(["srv_1"]);
-    expect(result.success && result.data.environmentId).toBeUndefined();
-  });
-});
-
 describe("RunTestCaseRequestSchema runs cap", () => {
   it("accepts testCaseOverrides.runs up to 10", () => {
     const result = RunTestCaseRequestSchema.safeParse(buildTestCaseRequest(10));

@@ -1943,14 +1943,6 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     timeoutMs?: number;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
-    /**
-     * Runs after the body is read and BEFORE the connection is made, so a route
-     * can rewrite the batch it is about to connect — priming an environment's
-     * closed server set, for instance, which the browser never knows. Mutate
-     * `rawBody`; capture anything the handler also needs in a closure. Errors
-     * thrown here take the same mapped-error path as the rest of the route.
-     */
-    prepareBody?: (rawBody: Record<string, unknown>) => Promise<void>;
   }
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -1958,7 +1950,6 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   try {
     // Read body once — Hono streams can only be consumed once
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
-    await options?.prepareBody?.(rawBody);
     if (options?.rpcLogs !== false) {
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }

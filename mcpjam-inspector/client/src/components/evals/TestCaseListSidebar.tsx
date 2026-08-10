@@ -124,13 +124,11 @@ export function TestCaseListSidebar({
   // Effective list = legacy `environment.servers` merged with any host
   // attachments' `resolvedServerNames`. Without the merge, sidebar Run
   // buttons stay disabled on attachment-only suites.
-  // Environment suites resolve their servers server-side, so the local list is
-  // empty for them and says nothing about whether a case can run. Cost
-  // estimates stay suppressed: the closed set (and so the spend) isn't known
-  // here, and a number beside a run that spends something else is a lie.
+  // Environment suites route single-case runs to "Run all", so this control
+  // never spends for them — and an estimate beside a non-running control lies.
   const isEnvironmentSuite = (suite?.environmentIds?.length ?? 0) > 0;
   const suiteServers = suite ? getEffectiveSuiteServers(suite) : [];
-  const hasConfiguredSuiteServers = isEnvironmentSuite || suiteServers.length > 0;
+  const hasConfiguredSuiteServers = suiteServers.length > 0;
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames?.has(serverName),
   );
