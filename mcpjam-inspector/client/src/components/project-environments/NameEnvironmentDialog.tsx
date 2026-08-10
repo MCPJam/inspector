@@ -138,6 +138,8 @@ export function NameEnvironmentDialog({
               placeholder="e.g. ChatGPT · staging servers"
               value={name}
               disabled={isSaving}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? "name-environment-error" : undefined}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && canSubmit) {
@@ -168,7 +170,11 @@ export function NameEnvironmentDialog({
             />
           </div>
           {error ? (
+            // The rejection is the dialog's principal feedback channel —
+            // `role="alert"` so assistive tech announces it on arrival.
             <p
+              id="name-environment-error"
+              role="alert"
               className="text-sm text-destructive"
               data-testid="name-environment-error"
             >

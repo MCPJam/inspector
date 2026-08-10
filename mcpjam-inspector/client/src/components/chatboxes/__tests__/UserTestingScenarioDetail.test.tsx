@@ -9,7 +9,7 @@
  *    back button goes from a scenario to the list rather than walking back
  *    through every tab the user tried.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 
@@ -20,6 +20,7 @@ const {
   deleteChatboxMock,
   updateChatboxMock,
   environmentState,
+  flagState,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   locationState: { search: "" },
@@ -29,6 +30,7 @@ const {
   // What `useProjectEnvironment` answers with: `undefined` = loading,
   // `null` = not visible, a row = loaded. Mutable per test.
   environmentState: { row: undefined as unknown },
+  flagState: { environmentsEnabled: true },
 }));
 
 vi.mock("react-router", () => ({
@@ -67,6 +69,10 @@ vi.mock("@/hooks/useChatboxes", () => ({
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironment: (projectId: string | null, envId: string | null) =>
     projectId && envId ? environmentState.row : null,
+}));
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => flagState.environmentsEnabled,
 }));
 
 vi.mock("@/components/project-environments/NameEnvironmentDialog", () => ({
@@ -127,6 +133,7 @@ beforeEach(() => {
   updateChatboxMock.mockResolvedValue(undefined);
   locationState.search = "";
   environmentState.row = undefined;
+  flagState.environmentsEnabled = true;
 });
 
 describe("UserTestingScenarioDetail", () => {
@@ -250,6 +257,29 @@ describe("UserTestingScenarioDetail", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("hides it for a row this member cannot see (null, fail closed)", () => {
+      // Distinct from loading: the backend answered, and the answer was no.
+      environmentState.row = null;
+      renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
+
+      expect(
+        screen.queryByTestId("user-testing-name-environment"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("hides it when project-environments is flag-off", () => {
+      // Promotion's payoff is "manage it from Environments" — a surface the
+      // flag gates. Offering it flag-off would mutate a row the user then
+      // has no page to see.
+      flagState.environmentsEnabled = false;
+      environmentState.row = adhocRow;
+      renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
+
+      expect(
+        screen.queryByTestId("user-testing-name-environment"),
+      ).not.toBeInTheDocument();
+    });
+
     it("hides it for a named environment", () => {
       environmentState.row = {
         ...adhocRow,
@@ -284,10 +314,18 @@ describe("UserTestingScenarioDetail", () => {
       fireEvent.change(input, { target: { value: "Payments GA" } });
       fireEvent.keyDown(input, { key: "Enter" });
 
-      expect(updateChatboxMock).toHaveBeenCalledWith({
-        chatboxId: "cb-1",
-        name: "Payments GA",
-      });
+      // Settle the save inside act: EditableTitle's setState after the await
+      // would otherwise land after the test body returns.
+      await waitFor(() =>
+        expect(updateChatboxMock).toHaveBeenCalledWith({
+          chatboxId: "cb-1",
+          name: "Payments GA",
+        }),
+      );
+      // Edit mode exits and the CONTROLLED value re-renders — still the old
+      // name here, because the mocked chatbox never updates. The new name
+      // arriving is the reactive envelope's job, not EditableTitle's.
+      await screen.findByText("Payments beta");
     });
 
     it("persists the description on blur, only when it changed", () => {

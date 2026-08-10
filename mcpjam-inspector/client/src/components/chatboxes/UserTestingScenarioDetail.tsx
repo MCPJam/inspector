@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
@@ -24,6 +24,7 @@ import {
   type ChatboxSettings,
 } from "@/hooks/useChatboxes";
 import { useProjectEnvironment } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { isAdhocEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
 import {
@@ -80,12 +81,16 @@ export function UserTestingScenarioDetail({
 
   // The environment row itself — for `origin` and `revision`, which the
   // chatbox settings envelope deliberately doesn't carry. Host-backed
-  // scenarios (no environmentId) skip the query entirely. NOTE:
+  // scenarios (no environmentId) skip the query entirely, and so does a
+  // project without `project-environments-enabled`: promotion's whole payoff
+  // is "now manage it from Environments", a surface that flag gates — offering
+  // it flag-off would mutate a row the user then has no page to see. NOTE:
   // `chatbox.environmentName` is non-null even for an ad-hoc row (the backend
   // synthesizes a label from the client name), so ad-hoc-ness must come from
   // this row, never from name presence on the envelope.
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environment = useProjectEnvironment(
-    chatbox.environmentId ? chatbox.projectId : null,
+    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
     chatbox.environmentId ?? null,
   );
   // Fail closed: `undefined` (loading) and `null` (not visible) both hide the
@@ -96,11 +101,18 @@ export function UserTestingScenarioDetail({
 
   // Draft state for the description, persisted on blur. Reseeded whenever the
   // reactive envelope changes so another member's edit doesn't get silently
-  // overwritten by a stale draft on the next blur.
+  // overwritten by a stale draft on the next blur — but NOT while the field
+  // holds focus. Two races live in that exception: our own save echoing back
+  // after the user has already refocused and started the next edit, and a
+  // collaborator's edit landing mid-sentence; both would otherwise replace
+  // in-progress typing without a trace. The remote value skipped during focus
+  // is picked up on blur instead (see `persistDescription`).
   const [descriptionDraft, setDescriptionDraft] = useState(
     chatbox.description ?? "",
   );
+  const descriptionFocusedRef = useRef(false);
   useEffect(() => {
+    if (descriptionFocusedRef.current) return;
     setDescriptionDraft(chatbox.description ?? "");
   }, [chatbox.description]);
 
@@ -115,8 +127,14 @@ export function UserTestingScenarioDetail({
   };
 
   const persistDescription = async () => {
+    descriptionFocusedRef.current = false;
     const next = descriptionDraft.trim();
-    if (next === (chatbox.description ?? "").trim()) return;
+    if (next === (chatbox.description ?? "").trim()) {
+      // No-op blur: resync the draft with the envelope, which also adopts any
+      // remote value the focused-guard above deliberately skipped.
+      setDescriptionDraft(chatbox.description ?? "");
+      return;
+    }
     try {
       await updateChatbox({
         chatboxId: chatbox.chatboxId,
@@ -271,6 +289,9 @@ export function UserTestingScenarioDetail({
               data-testid="user-testing-description"
               value={descriptionDraft}
               onChange={(e) => setDescriptionDraft(e.target.value)}
+              onFocus={() => {
+                descriptionFocusedRef.current = true;
+              }}
               onBlur={() => void persistDescription()}
               minRows={1}
               maxRows={4}
