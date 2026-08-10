@@ -20,6 +20,13 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
+const cloudState = vi.hoisted(() => ({
+  ephemeralAvailable: true as boolean | undefined,
+}));
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
+}));
+
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => null,
 }));
@@ -77,6 +84,7 @@ describe("SuiteHeader", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    cloudState.ephemeralAvailable = true;
     mockIsHostedMode.mockReturnValue(false);
   });
 
@@ -347,6 +355,72 @@ describe("SuiteHeader", () => {
     expect(runAll).toBeEnabled();
     await user.click(runAll);
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
+  });
+
+  it("blocks every run action when the suite pins a sandbox image this inspector can't run", () => {
+    // A pinned image provisions a disposable MCPJam cloud box per iteration;
+    // from a non-data-plane inspector every run would fail its computer
+    // setup, so launch is disabled up front instead of inviting the failure.
+    cloudState.ephemeralAvailable = false;
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        suite={{
+          ...baseSuite,
+          environment: { servers: ["asana"], computerEnvironmentId: "img-1" },
+        }}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Run all cases in this suite/i })
+    ).toBeDisabled();
+  });
+
+  it("leaves runs alone when the pinned-image suite CAN reach cloud sandboxes", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        suite={{
+          ...baseSuite,
+          environment: { servers: ["asana"], computerEnvironmentId: "img-1" },
+        }}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Run all cases in this suite/i })
+    ).toBeEnabled();
   });
 
   it("keeps Run all disabled while the latest suite run is still running", async () => {

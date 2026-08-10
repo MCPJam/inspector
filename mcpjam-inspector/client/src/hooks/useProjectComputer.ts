@@ -148,6 +148,16 @@ export function useMintTerminalToken(): (args: {
 export interface ComputersDataPlaneConfig {
   localConfigured: boolean;
   remoteDataPlaneUrl: string | null;
+  /**
+   * Can this inspector EXECUTE in ephemeral (eval/swarm/chatbox) sandboxes?
+   * Distinct from personal-computer availability: `remoteDataPlaneUrl`
+   * delegates only personal bash/terminal, so a remote-only inspector can
+   * drive a personal Computer yet cannot run a single disposable-sandbox
+   * command. Read from the server's `capabilities.ephemeralCloudAvailable`
+   * when present; older servers omit it and the derivation falls back to
+   * `localConfigured` (creds present ⇔ ephemeral exec works).
+   */
+  ephemeralCloudAvailable?: boolean;
 }
 
 // One fetch per page load — the answer is env-derived and can't change
@@ -158,13 +168,37 @@ function parseDataPlaneConfig(value: unknown): ComputersDataPlaneConfig | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (typeof record.localConfigured !== "boolean") return null;
+  const capabilities =
+    record.capabilities && typeof record.capabilities === "object"
+      ? (record.capabilities as Record<string, unknown>)
+      : undefined;
   return {
     localConfigured: record.localConfigured,
     remoteDataPlaneUrl:
       typeof record.remoteDataPlaneUrl === "string"
         ? record.remoteDataPlaneUrl
         : null,
+    ...(typeof capabilities?.ephemeralCloudAvailable === "boolean"
+      ? { ephemeralCloudAvailable: capabilities.ephemeralCloudAvailable }
+      : {}),
   };
+}
+
+/**
+ * Preflight bit for the cloud-only surfaces (swarms / evals / user testing):
+ * `false` means a run that needs a disposable sandbox WILL fail to execute
+ * commands on this inspector, and the UI should say so before launch instead
+ * of after. `undefined` while the config is loading.
+ *
+ * Fail-open on transient /config failures (the per-mount fallback assumes a
+ * local data plane) — a flaky fetch must not paint scary banners on a
+ * perfectly configured deployment; a genuine `false` only comes from a real
+ * server answer.
+ */
+export function useEphemeralCloudAvailable(): boolean | undefined {
+  const config = useComputersDataPlaneConfig();
+  if (config === undefined) return undefined;
+  return config.ephemeralCloudAvailable ?? config.localConfigured;
 }
 
 /** `undefined` while loading. On fetch failure assumes a local data plane —

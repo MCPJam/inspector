@@ -44,6 +44,7 @@ import {
   SuiteAggregate,
 } from "./types";
 import { useMutation } from "convex/react";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { toast } from "sonner";
 
 import { CiMetadataDisplay } from "./ci-metadata-display";
@@ -168,7 +169,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onGenerateTestCases,
     canGenerateTestCases = false,
     generateTestCasesDisabledReason,
-    evalRunsDisabledReason = null,
+    evalRunsDisabledReason: evalRunsDisabledReasonProp = null,
     isGeneratingTestCases = false,
     onCreateTestCase,
     blockTestCaseRuns: _blockTestCaseRuns = false,
@@ -179,6 +180,19 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
   } = props;
+
+  // A suite that pins a sandbox image provisions a disposable MCPJam cloud
+  // box per iteration — from an inspector that can't execute in those boxes,
+  // every run would fail its computer setup. Fold that preflight into the
+  // same disabled-reason channel billing uses, so every run control (Run all,
+  // per-case, rerun) blocks with one consistent tooltip.
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  const evalRunsDisabledReason =
+    evalRunsDisabledReasonProp ??
+    (suite.environment?.computerEnvironmentId &&
+    ephemeralCloudAvailable === false
+      ? "This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
+      : null);
 
   const showTestCaseCtas =
     runsViewMode === "test-cases" ||

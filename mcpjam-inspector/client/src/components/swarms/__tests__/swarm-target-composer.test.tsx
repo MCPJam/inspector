@@ -31,6 +31,12 @@ vi.mock("@/hooks/useSandboxImages", () => ({
     },
   ],
 }));
+const cloudState = vi.hoisted(() => ({
+  ephemeralAvailable: true as boolean | undefined,
+}));
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
+}));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
     hosts: [{ hostId: "host-1", name: "Claude" }],
@@ -126,6 +132,7 @@ beforeEach(() => {
   flagState.skills = false;
   flagState.computers = false;
   flagState.environments = true;
+  cloudState.ephemeralAvailable = true;
 });
 
 describe("SwarmTargetComposer", () => {
@@ -209,5 +216,40 @@ describe("SwarmTargetComposer", () => {
     expect(screen.getByTestId("new-swarm-sandbox-image")).toHaveTextContent(
       /Computer · default/i
     );
+  });
+
+  it("labels computer execution as MCPJam cloud when computers are on", () => {
+    flagState.computers = true;
+    render(<Harness />);
+    expect(screen.getByTestId("new-swarm-cloud-run-badge")).toBeVisible();
+  });
+
+  it("shows no cloud badge when computers are off", () => {
+    render(<Harness />);
+    expect(
+      screen.queryByTestId("new-swarm-cloud-run-badge")
+    ).not.toBeInTheDocument();
+  });
+
+  it("blocks the sandbox-image opt-in when cloud sandboxes are unreachable", () => {
+    // `false` means a sandbox-backed session WOULD fail per-attempt — the
+    // composer must warn and disable the opt-in instead of inviting it.
+    flagState.computers = true;
+    cloudState.ephemeralAvailable = false;
+    render(<Harness />);
+    expect(screen.getByTestId("new-swarm-cloud-unreachable")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-sandbox-image")).toBeDisabled();
+  });
+
+  it("stays quiet while cloud availability is still loading", () => {
+    // Loading/fetch-failure must never paint the warning — only a real
+    // server `false` may.
+    flagState.computers = true;
+    cloudState.ephemeralAvailable = undefined;
+    render(<Harness />);
+    expect(
+      screen.queryByTestId("new-swarm-cloud-unreachable")
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-sandbox-image")).not.toBeDisabled();
   });
 });

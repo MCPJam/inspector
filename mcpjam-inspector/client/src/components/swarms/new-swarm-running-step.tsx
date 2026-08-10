@@ -716,7 +716,10 @@ export function NewSwarmRunningStep({
         if (!attempt.errorMessage) continue;
         return {
           kind: attempt.status,
-          info: humanizeSwarmAttemptError(attempt.errorMessage),
+          info: humanizeSwarmAttemptError(
+            attempt.errorMessage,
+            attempt.errorCode,
+          ),
         };
       }
     }

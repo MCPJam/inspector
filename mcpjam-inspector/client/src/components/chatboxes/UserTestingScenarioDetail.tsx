@@ -9,7 +9,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
@@ -62,6 +64,7 @@ export function UserTestingScenarioDetail({
 }: UserTestingScenarioDetailProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const computersEnabled = useComputersEnabled();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { deleteChatbox } = useChatboxMutations();
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -176,6 +179,12 @@ export function UserTestingScenarioDetail({
                   <span className="truncate">{chatbox.namedHostName}</span>
                 </>
               )}
+              {computersEnabled ? (
+                <CloudRunBadge
+                  tooltip="Tester computer commands run in per-conversation MCPJam cloud sandboxes — never on the machine serving this inspector."
+                  data-testid="user-testing-cloud-run-badge"
+                />
+              ) : null}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">

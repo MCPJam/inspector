@@ -4,6 +4,9 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
+import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
 import { toast } from "sonner";
@@ -402,6 +405,7 @@ export function SuiteIterationsView({
   const computerEnvironments = useSandboxImages(
     computersEnabled && projectId ? projectId : null
   );
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
   // Hosts available to attach in the header's "+ Attach host" picker. The
   // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
   // pure-props and renderable in test environments without a Convex provider.
@@ -1397,6 +1401,12 @@ export function SuiteIterationsView({
               {computersEnabled && projectId ? (
                 <SettingsSection
                   label="Computer environment"
+                  labelAccessory={
+                    <CloudRunBadge
+                      tooltip="Eval iterations run their computer commands in disposable MCPJam cloud sandboxes — never on the machine running this inspector."
+                      data-testid="suite-eval-cloud-run-badge"
+                    />
+                  }
                   layout="inline"
                   inlineSlot={
                     <select
@@ -1453,8 +1463,20 @@ export function SuiteIterationsView({
                     Each eval iteration boots a fresh sandbox from this image
                     and the agent gets a <span className="font-mono">bash</span>{" "}
                     tool in it. Build the environment before running, or the run
-                    fails fast.
+                    fails fast. Eval computer commands always run in MCPJam
+                    cloud sandboxes — never on the machine running this
+                    inspector.
                   </p>
+                  {suite.environment?.computerEnvironmentId &&
+                  ephemeralCloudAvailable === false ? (
+                    <div className="mt-2">
+                      <CloudUnreachableNotice
+                        data-testid="suite-eval-cloud-unreachable"
+                        message="This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
+                        detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
+                      />
+                    </div>
+                  ) : null}
                 </SettingsSection>
               ) : null}
 
