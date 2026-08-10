@@ -214,5 +214,20 @@ describe("MCPClientManager disableSseFallback", () => {
     const info = manager.getInitializationInfo("declared-on-sse-path");
     expect(info?.transport).toBe("streamable-http");
   }, 15000);
+
+  it("reports sse when the connection actually fell back to SSE", async () => {
+    // The mirror case: config says Streamable HTTP first, but the server is
+    // SSE-only and the fallback is allowed. Reporting the CONFIG here would
+    // record the transport that failed.
+    const server = await startSseOnlyServerOnPlainPath();
+    stops.push(server.stop);
+    const manager = new MCPClientManager();
+    managers.push(manager);
+
+    await manager.connectToServer("fell-back", { url: server.url });
+    expect(manager.getConnectionStatus("fell-back")).toBe("connected");
+    const info = manager.getInitializationInfo("fell-back");
+    expect(info?.transport).toBe("sse");
+  }, 15000);
 });
 

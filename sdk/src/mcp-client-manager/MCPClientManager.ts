@@ -574,17 +574,25 @@ export class MCPClientManager {
     if (this.isStdioConfig(config)) {
       transportType = "stdio";
     } else {
-      const url = new URL(config.url);
-      // Same nullish precedence the CONNECT path uses (`connectViaHttp`):
-      // an explicit `preferSSE: false` — how a plugin-declared
-      // streamable-http server pins its transport — must beat the `/sse`
-      // URL heuristic here too, or this reports "sse" for a connection that
-      // actually ran over Streamable HTTP, and that wrong value reaches
-      // snapshots, conformance output and hosted trace metadata.
-      transportType =
-        (config.preferSSE ?? url.pathname.endsWith("/sse"))
+      // Report the transport that ACTUALLY connected, not the one the config
+      // asked for. Deriving this from `config` is wrong in both directions:
+      // a declared streamable-http server at a `/sse` path reads as "sse"
+      // though it ran over Streamable HTTP, and a connection that fell back
+      // to SSE reads as "streamable-http" — the transport that failed. This
+      // value feeds snapshots, conformance output and hosted trace metadata,
+      // so it has to describe the live connection. The config heuristic
+      // stays only as the pre-connect fallback.
+      const activeTransport = liveState?.transport;
+      if (activeTransport instanceof SSEClientTransport) {
+        transportType = "sse";
+      } else if (activeTransport instanceof StreamableHTTPClientTransport) {
+        transportType = "streamable-http";
+      } else {
+        const url = new URL(config.url);
+        transportType = (config.preferSSE ?? url.pathname.endsWith("/sse"))
           ? "sse"
           : "streamable-http";
+      }
     }
 
     // Public negotiated-version accessor (upstream
