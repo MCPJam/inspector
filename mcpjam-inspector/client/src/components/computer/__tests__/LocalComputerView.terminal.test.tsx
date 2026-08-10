@@ -150,6 +150,33 @@ describe("LocalComputerView — terminal branch", () => {
     });
   });
 
+  it("counts a project switch as a new opened session", () => {
+    const { rerender } = render(
+      <LocalComputerView projectId="proj_1" engine={engineState()} />,
+    );
+    rerender(
+      <LocalComputerView projectId="proj_2" engine={engineState()} />,
+    );
+
+    // The pane remounts and starts a real new shell on the user's machine, so
+    // the metric has to reflect it even though THIS component didn't remount.
+    expect(
+      trackSpy.mock.calls.filter((c) => c[0] === "computer_terminal_opened"),
+    ).toHaveLength(2);
+  });
+
+  it("does not re-count an unrelated re-render", () => {
+    const { rerender } = render(
+      <LocalComputerView projectId="proj_1" engine={engineState()} />,
+    );
+    rerender(
+      <LocalComputerView projectId="proj_1" engine={engineState()} />,
+    );
+    expect(
+      trackSpy.mock.calls.filter((c) => c[0] === "computer_terminal_opened"),
+    ).toHaveLength(1);
+  });
+
   it("never mounts the pane before consent, whatever the probe says", () => {
     render(
       <LocalComputerView

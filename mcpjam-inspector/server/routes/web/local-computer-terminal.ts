@@ -69,22 +69,27 @@ const CLOSE_UNAVAILABLE = 4503;
 const livePtys = new Set<NodePtyProcess>();
 
 /**
- * Latched by `shutdownLocalComputerTerminals()`. A handshake can be mid-spawn
- * when shutdown runs — `createPtyWithCwd` is awaited — and that PTY would be
- * registered AFTER the live set was drained, outliving the inspector. The
- * open path re-checks this after every await and kills rather than registers.
- * Also refuses new handshakes outright.
+ * Latched by `shutdownLocalComputerTerminals()` only. A handshake can be
+ * mid-spawn when shutdown runs — `createPtyWithCwd` is awaited — and that PTY
+ * would be registered AFTER the live set was drained, outliving the process.
+ * The open path re-checks this after every await and kills rather than
+ * registers; new handshakes are refused outright.
+ *
+ * This is deliberately a ONE-WAY latch for a terminating process, which is why
+ * it is NOT set by `killLocalComputerTerminals()`.
  */
 let shuttingDown = false;
 
 /**
- * Kill every live local PTY. THE shutdown mechanism — called from
- * `server/index.ts`'s `shutdown()` (standalone) and `src/main.ts`'s
- * `before-quit` / `window-all-closed` (Electron). Safe to call repeatedly and
- * when none are open.
+ * Kill every live local PTY, WITHOUT latching shutdown.
+ *
+ * For paths where the server goes away but the process may keep running and
+ * come back — Electron's `window-all-closed` on macOS, which closes the server
+ * and then restarts it on dock activation. Latching there would leave
+ * `shuttingDown` true for the rest of the process lifetime and 4503 every
+ * terminal handshake after the user reopened the window.
  */
-export function shutdownLocalComputerTerminals(): void {
-  shuttingDown = true;
+export function killLocalComputerTerminals(): void {
   for (const pty of livePtys) {
     try {
       pty.kill();
@@ -93,6 +98,18 @@ export function shutdownLocalComputerTerminals(): void {
     }
   }
   livePtys.clear();
+}
+
+/**
+ * Kill every live local PTY and refuse further ones. THE shutdown mechanism for
+ * a TERMINATING process — `server/index.ts`'s `shutdown()` (standalone) and
+ * `src/main.ts`'s `before-quit` (Electron). Safe to call repeatedly.
+ *
+ * Use `killLocalComputerTerminals()` instead when the process will survive.
+ */
+export function shutdownLocalComputerTerminals(): void {
+  shuttingDown = true;
+  killLocalComputerTerminals();
 }
 
 /** Test seam: the shutdown latch is module state for the process lifetime. */

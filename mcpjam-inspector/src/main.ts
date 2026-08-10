@@ -82,6 +82,7 @@ let mainWindow: BrowserWindow | null = null;
 let server: any = null;
 let serverPort: number = 0;
 let shutdownLocalTerminals: (() => void) | null = null;
+let killLocalTerminals: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
 
@@ -339,10 +340,14 @@ async function startHonoServer(): Promise<number> {
       app: honoApp,
       injectWebSocket,
       shutdownLocalComputerTerminals,
+      killLocalComputerTerminals,
     } = await createHonoApp();
-    // Held for `before-quit`: killing live local PTYs is the ONLY thing that
-    // stops them — `server.close()` does not tear down established sockets.
+    // Held for teardown: killing live local PTYs is the ONLY thing that stops
+    // them — `server.close()` does not tear down established sockets. The
+    // latching variant is for a real quit; the plain kill is for
+    // `window-all-closed`, after which macOS may restart this same server.
     shutdownLocalTerminals = shutdownLocalComputerTerminals;
+    killLocalTerminals = killLocalComputerTerminals;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -809,10 +814,11 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   // Close the server when all windows are closed. On macOS the app stays alive
-  // here, so this is not a quit — but the server is going away, and a local PTY
-  // must not outlive it. (A destroyed renderer's socket usually closes and the
-  // WS teardown kills the PTY anyway; this makes it unconditional.)
-  shutdownLocalTerminals?.();
+  // here, so this is NOT a quit — the server restarts on dock activation. Kill
+  // live PTYs (a destroyed renderer's socket usually closes and the WS teardown
+  // does it anyway; this makes it unconditional) but do NOT latch shutdown, or
+  // every terminal handshake after reopening would be refused.
+  killLocalTerminals?.();
   if (server) {
     server.close?.();
     serverPort = 0;

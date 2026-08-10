@@ -65,22 +65,27 @@ export function LocalComputerView({
     [projectId, consentToken],
   );
 
-  // One `computer_terminal_opened` per mounted local pane (not per reconnect),
-  // and one `local_terminal_unavailable` per degraded mount — content-free
-  // either way.
+  // One `computer_terminal_opened` per opened SESSION (not per reconnect), and
+  // one `local_terminal_unavailable` per degraded state — content-free either
+  // way. The key includes `projectId` because the pane is keyed by it: a project
+  // switch remounts `ComputerTerminal`, minting a fresh nonce and starting a
+  // real new shell, which must be counted even though THIS component didn't
+  // remount.
   const showTerminal = consent.granted && localTerminalAvailable;
   const showDegraded = consent.granted && !localTerminalAvailable;
   const lastReportedRef = useRef<string | null>(null);
   useEffect(() => {
-    const key = showTerminal ? "open" : showDegraded ? "degraded" : null;
+    const state = showTerminal ? "open" : showDegraded ? "degraded" : null;
+    const key = state === null ? null : `${state}:${projectId}`;
     if (key === null || lastReportedRef.current === key) return;
     lastReportedRef.current = key;
-    if (key === "open") {
+    if (state === "open") {
       track("computer_terminal_opened", { location: "computer_tab_local" });
     } else {
       track("local_terminal_unavailable", { reason: "terminal_unavailable" });
     }
-  }, [showTerminal, showDegraded]);
+    // `projectId` is deliberately a dependency — see the key above.
+  }, [showTerminal, showDegraded, projectId]);
 
   const onAllow = async (): Promise<boolean> => {
     const ok = await consent.grant();

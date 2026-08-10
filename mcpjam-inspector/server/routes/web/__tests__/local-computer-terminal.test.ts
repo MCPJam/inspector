@@ -48,6 +48,7 @@ vi.mock("../../../utils/computers/local-consent.js", () => ({
 
 import {
   createLocalComputerTerminalWsHandler,
+  killLocalComputerTerminals,
   resetLocalTerminalShutdownForTests,
   resolveLocalShell,
   shutdownLocalComputerTerminals,
@@ -357,6 +358,27 @@ describe("local terminal WS — shutdown", () => {
     // close it here rather than leaving it for the server teardown.
     ws.close();
     await waitForClose(ws);
+  });
+
+  it("kill-only does NOT latch — the server can come back", async () => {
+    const first = mintNonce();
+    const ws = connect(server.port, first.nonce);
+    await waitForJson(ws, "ready");
+
+    // Electron's `window-all-closed` path: the server goes away but the process
+    // survives and restarts on dock activation. Latching here would 4503 every
+    // handshake for the rest of the process lifetime.
+    killLocalComputerTerminals();
+    expect(spawned[0]!.killed).toBe(true);
+    ws.close();
+    await waitForClose(ws);
+
+    const second = mintNonce();
+    const reopened = connect(server.port, second.nonce);
+    await waitForJson(reopened, "ready");
+    expect(spawned).toHaveLength(2);
+    reopened.close();
+    await waitForClose(reopened);
   });
 
   it("refuses NEW handshakes once shutdown has begun", async () => {

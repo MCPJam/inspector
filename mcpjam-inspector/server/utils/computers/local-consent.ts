@@ -135,6 +135,35 @@ export async function getLocalConsentFingerprint(): Promise<string | null> {
 }
 
 /**
+ * Verify a presented capability AND return the fingerprint it matched, from a
+ * SINGLE read of the consent file.
+ *
+ * Minting a terminal nonce needs both facts, and taking them from two separate
+ * reads is a real race: a re-grant landing between them would verify the OLD
+ * token and then hand back the NEW capability's fingerprint, so the old browser
+ * profile would get a nonce that survives the rotation it should have died to.
+ * One read makes the pair internally consistent — the returned fingerprint is
+ * always the very hash the token was checked against.
+ *
+ * Deliberately still lock-free, like `verifyLocalComputerConsent`: this is on
+ * the enforcement path and must never queue behind a mutation. A rotation that
+ * happens *after* this read is caught later, when the WebSocket re-checks the
+ * fingerprint against the live capability.
+ */
+export async function verifyAndFingerprintLocalConsent(
+  token: string | null | undefined
+): Promise<string | null> {
+  if (!token || token.length < 16 || token.length > 256) return null;
+  const persisted = await readPersistedConsent();
+  if (!persisted) return null;
+  const presented = Buffer.from(hashToken(token), "hex");
+  const stored = Buffer.from(persisted.tokenHash, "hex");
+  const matches =
+    presented.length === stored.length && timingSafeEqual(presented, stored);
+  return matches ? persisted.tokenHash : null;
+}
+
+/**
  * Revoke the persisted capability. When `token` is supplied the revoke is
  * SCOPED: it unlinks only if that token still matches the stored hash, so a
  * slow revoke request that lost a race to a newer grant cannot sever the

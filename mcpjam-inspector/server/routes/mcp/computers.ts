@@ -25,9 +25,9 @@ import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
   LOCAL_CONSENT_HEADER,
-  getLocalConsentFingerprint,
   grantLocalComputerConsent,
   revokeLocalComputerConsent,
+  verifyAndFingerprintLocalConsent,
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
 import { getLocalTerminalAvailability } from "../../utils/computers/local-pty.js";
@@ -103,20 +103,22 @@ computers.post("/local-consent/revoke", async (c) => {
  * workspace path, no shell, no username.
  */
 computers.post("/local-terminal-token", async (c) => {
-  const consentToken = c.req.header(LOCAL_CONSENT_HEADER);
-  if (!(await verifyLocalComputerConsent(consentToken))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
-  }
   const availability = await getLocalTerminalAvailability();
   if (!availability.available) {
     return c.json({ error: availability.reason }, 503);
   }
-  // Bind the nonce to the capability that authorized it. Without this the 60s
-  // TTL would outlive a revoke: a nonce minted a second before the user clicked
-  // "Forget & re-authorize" would still open a shell. The WS handler re-checks
-  // this fingerprint against the live capability, so a revoke OR a re-grant
-  // (which rotates it) kills anything already handed out.
-  const consentFingerprint = await getLocalConsentFingerprint();
+  // Verify the capability AND capture its fingerprint in ONE read — see
+  // `verifyAndFingerprintLocalConsent`. Two separate reads would let a
+  // concurrent re-grant verify the old token and then bind the nonce to the
+  // NEW capability, surviving the rotation it should have died to.
+  //
+  // Binding at all is what stops the 60s TTL outliving a revoke: a nonce minted
+  // a second before the user clicked "Forget & re-authorize" would otherwise
+  // still open a shell. The WS handler re-checks the fingerprint against the
+  // live capability, so revoke AND rotation both invalidate outstanding nonces.
+  const consentFingerprint = await verifyAndFingerprintLocalConsent(
+    c.req.header(LOCAL_CONSENT_HEADER)
+  );
   if (!consentFingerprint) {
     return c.json({ error: "Local computer consent is required" }, 403);
   }

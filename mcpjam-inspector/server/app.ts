@@ -78,6 +78,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal.js";
 import {
   createLocalComputerTerminalWsHandler,
+  killLocalComputerTerminals,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
@@ -578,8 +579,15 @@ export async function createHonoApp() {
 
   // Return `injectWebSocket` alongside the app so the caller (src/main.ts) can
   // attach the WS upgrade handler to its node server — same as server/index.ts.
-  // `shutdownLocalComputerTerminals` rides along for the same reason: the
-  // Electron entry owns this process's lifecycle and must kill live local PTYs
-  // on quit (server.close() does not close established sockets).
-  return { app, injectWebSocket, shutdownLocalComputerTerminals };
+  // The two PTY-cleanup hooks ride along for the same reason: the Electron entry
+  // owns this process's lifecycle and must kill live local PTYs itself
+  // (server.close() does not close established sockets). `shutdown…` latches
+  // and belongs on a real quit; `kill…` does not and belongs on
+  // `window-all-closed`, which on macOS is followed by a server RESTART.
+  return {
+    app,
+    injectWebSocket,
+    shutdownLocalComputerTerminals,
+    killLocalComputerTerminals,
+  };
 }
