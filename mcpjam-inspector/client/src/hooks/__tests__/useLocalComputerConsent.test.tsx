@@ -14,12 +14,17 @@ vi.mock("@/lib/config", () => ({
   },
 }));
 
+// FAITHFUL mock: the real module's grant persists a token AND
+// `clearStoredLocalComputerConsent` both reach `persist()`, which dispatches
+// the same-tab consent event SYNCHRONOUSLY. Reproducing that side effect is
+// what exercises the hook's re-entrant refresh — without it, a whole class of
+// self-supersede bugs passes silently.
 const lib = vi.hoisted(() => ({
   storedToken: "tok" as string | null,
+  grantToken: "granted-tok",
   verify: vi.fn(),
   grant: vi.fn(),
   revoke: vi.fn(),
-  clear: vi.fn(),
   subscribers: new Set<() => void>(),
   fireSubscribers() {
     for (const cb of this.subscribers) cb();
@@ -29,11 +34,18 @@ vi.mock("@/lib/local-computer-consent", () => ({
   loadStoredLocalComputerConsent: () =>
     lib.storedToken ? { token: lib.storedToken, grantedAt: "now" } : null,
   verifyStoredLocalComputerConsent: () => lib.verify(),
-  grantLocalComputerConsent: () => lib.grant(),
+  grantLocalComputerConsent: async () => {
+    const ok = await lib.grant();
+    if (ok) {
+      lib.storedToken = lib.grantToken; // persist
+      lib.fireSubscribers(); // persist()'s synchronous same-tab event
+    }
+    return ok;
+  },
   revokeLocalComputerConsent: () => lib.revoke(),
   clearStoredLocalComputerConsent: () => {
-    lib.storedToken = null;
-    lib.clear();
+    lib.storedToken = null; // persist(null)
+    lib.fireSubscribers(); // persist(null)'s synchronous same-tab event
   },
   subscribeLocalComputerConsent: (cb: () => void) => {
     lib.subscribers.add(cb);
@@ -47,10 +59,10 @@ describe("useLocalComputerConsent", () => {
   beforeEach(() => {
     hosted.value = false;
     lib.storedToken = "tok";
+    lib.grantToken = "granted-tok";
     lib.verify.mockReset();
     lib.grant.mockReset();
     lib.revoke.mockReset();
-    lib.clear.mockReset();
     lib.subscribers.clear();
   });
 
@@ -92,17 +104,26 @@ describe("useLocalComputerConsent", () => {
     expect(result.current.status).toBe("absent");
   });
 
-  it("grant success sets granted immediately", async () => {
+  it("grant succeeds despite its OWN persistence event (self-write guard)", async () => {
+    // The regression this pins: the real grant dispatches a same-tab event
+    // that re-enters refresh() and bumps the sequence. Without the self-write
+    // guard, grant classifies itself as superseded, clears its own token, and
+    // returns false — making consent impossible to grant.
+    lib.storedToken = null; // start ungranted
     lib.verify.mockResolvedValue(false);
     lib.grant.mockResolvedValue(true);
     const { result } = renderHook(() => useLocalComputerConsent());
     await waitFor(() => expect(result.current.status).toBe("absent"));
+    let ok = false;
     await act(async () => {
-      const ok = await result.current.grant();
-      expect(ok).toBe(true);
+      ok = await result.current.grant();
     });
+    expect(ok).toBe(true);
     expect(result.current.status).toBe("granted");
-    expect(result.current.token).toBe("tok");
+    expect(result.current.token).toBe("granted-tok");
+    // Its own persistence event must NOT have triggered a self-revoke.
+    expect(lib.revoke).not.toHaveBeenCalled();
+    expect(lib.storedToken).toBe("granted-tok");
   });
 
   it("a token rotation that keeps status 'granted' updates the returned token", async () => {

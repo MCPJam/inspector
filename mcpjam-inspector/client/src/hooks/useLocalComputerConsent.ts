@@ -55,6 +55,14 @@ export function useLocalComputerConsent(): LocalComputerConsent {
   // claim-before-await — is what makes a later revoke beat an earlier in-flight
   // grant, not merely a faster one.
   const opSeqRef = useRef(0);
+  // grant/revoke write storage, and `persist()` dispatches the same-tab
+  // consent event SYNCHRONOUSLY — so the subscription below would re-enter
+  // refresh() and bump the sequence mid-operation, making an op supersede
+  // itself. This depth counter marks writes WE cause: while it's non-zero the
+  // subscription ignores the notification (we set the resulting state
+  // directly). Genuinely external changes (cross-tab, or a sibling hook)
+  // still refresh.
+  const selfWriteDepthRef = useRef(0);
   const apply = useCallback((seq: number, next: ConsentSnapshot) => {
     if (seq !== opSeqRef.current) return;
     setSnapshot((prev) =>
@@ -85,6 +93,8 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     if (HOSTED_MODE) return;
     void refresh();
     return subscribeLocalComputerConsent(() => {
+      // Ignore the storage notification our own grant/revoke just caused.
+      if (selfWriteDepthRef.current > 0) return;
       void refresh();
     });
   }, [refresh]);
@@ -94,7 +104,13 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     // CLAIM before awaiting: a revoke that starts after this line gets a higher
     // sequence and wins, even if the grant request resolves later.
     const seq = ++opSeqRef.current;
-    const ok = await grantLocalComputerConsent();
+    selfWriteDepthRef.current += 1;
+    let ok = false;
+    try {
+      ok = await grantLocalComputerConsent();
+    } finally {
+      selfWriteDepthRef.current -= 1;
+    }
     if (!ok) return false;
     if (seq === opSeqRef.current) {
       apply(seq, {
@@ -103,9 +119,15 @@ export function useLocalComputerConsent(): LocalComputerConsent {
       });
       return true;
     }
-    // Superseded by a later op (a revoke). The grant already persisted a token;
-    // undo it so the later revoke stays final — including cross-tab.
-    clearStoredLocalComputerConsent();
+    // Superseded by a genuinely later op (a revoke). The grant already
+    // persisted a token; undo it so the later revoke stays final — cross-tab
+    // included. This undo is itself a self-write.
+    selfWriteDepthRef.current += 1;
+    try {
+      clearStoredLocalComputerConsent();
+    } finally {
+      selfWriteDepthRef.current -= 1;
+    }
     void revokeLocalComputerConsent();
     return false;
   }, [apply]);
@@ -117,7 +139,12 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     // sequence makes any in-flight grant/verify discard itself on resolve; the
     // server call is best-effort on top of the guaranteed local forget.
     const seq = ++opSeqRef.current;
-    clearStoredLocalComputerConsent();
+    selfWriteDepthRef.current += 1;
+    try {
+      clearStoredLocalComputerConsent();
+    } finally {
+      selfWriteDepthRef.current -= 1;
+    }
     apply(seq, { status: "absent", token: null });
     await revokeLocalComputerConsent();
   }, [apply]);
