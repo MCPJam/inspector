@@ -23,12 +23,14 @@ const compareSnowflakes = (a, b) =>
  * Two invariants are load-bearing here.
  *
  * 1. Normalization happens exactly once, in surface-core's turn runner. It is
- *    tempting to normalize here and hand back `{role, content}` — that is a
- *    correctness bug, not a redundancy. The core's second pass would see rows
- *    with no `isBot`/`authorId`/`timestampMs`, so every assistant message is
- *    silently re-attributed to `role:"user"` and the newer-than-trigger cutoff
- *    can never fire. Return the fields the core normalizer reads and let it own
- *    the mapping.
+ *    tempting to normalize here and hand back `{role, content}` — don't. The
+ *    core's second pass would see rows with no `isBot`/`authorId`, and until
+ *    that normalizer was made idempotent it re-attributed every assistant
+ *    message to `role:"user"`, erasing the bot's own turns from the history it
+ *    was given. It now preserves an existing `role`, so a double pass survives
+ *    — but `timestampMs` is still dropped on the way out, so the core's
+ *    newer-than-trigger cutoff would go blind. Return the fields the core
+ *    normalizer reads and let it own the mapping.
  *
  * 2. Rows come back sorted OLDEST-first. `messages.fetch()` returns newest-first
  *    and the core trims from the FRONT of the array (both `slice(-MAX_MESSAGES)`

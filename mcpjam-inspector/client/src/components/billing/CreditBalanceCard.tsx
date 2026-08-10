@@ -135,7 +135,14 @@ export function CreditBalanceCard({
             </p>
           </div>
           {canManageCredits ? (
-            <ErrorBoundary fallback={null}>
+            <ErrorBoundary
+              name="credit_balance_topup_button"
+              fallback={
+                <span className="self-center text-xs text-muted-foreground">
+                  Top up unavailable
+                </span>
+              }
+            >
               <TopupActionButton onClick={handleManualTopup} />
             </ErrorBoundary>
           ) : (
@@ -149,7 +156,14 @@ export function CreditBalanceCard({
         </div>
 
         {canManageCredits ? (
-          <ErrorBoundary fallback={null}>
+          <ErrorBoundary
+            name="credit_balance_pending_topups"
+            fallback={
+              <p className="text-xs text-muted-foreground">
+                Pending top-ups unavailable
+              </p>
+            }
+          >
             <PendingCreditTopupsBanner organizationId={organizationId} />
           </ErrorBoundary>
         ) : null}
