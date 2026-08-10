@@ -288,6 +288,40 @@ describe("plugin stdio origin resolution", () => {
     expect(cache.activeEntries()).toEqual([]);
   });
 
+  it("tolerates placeholder-shaped text in the machine's own paths", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    // The guard scans the SPEC, never the resolved launch: a data root that
+    // happens to contain a placeholder-shaped segment is the machine's own
+    // path, not an unresolved bundle input, and must not refuse the spawn.
+    const weirdDataRoot = join(cacheRoot, "${PLUGIN_DATA}-lookalike");
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({ bundleHash }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: {
+        ...PLACEHOLDER_SPEC,
+        args: [
+          "${PLUGIN_ROOT}/server/index.js",
+          "--cache=${PLUGIN_DATA}/cache.db",
+        ],
+      },
+      leaseId: SERVER_ID,
+      dataRoot: weirdDataRoot,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.launch.args[1]).toBe(
+      `--cache=${join(weirdDataRoot, PROJECT_ID, PLUGIN_ID)}/cache.db`
+    );
+    prepared.release();
+  });
+
   it.each([
     [
       "a plugin that no longer resolves",

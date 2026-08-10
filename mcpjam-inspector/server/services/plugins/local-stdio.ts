@@ -219,6 +219,39 @@ export async function preparePluginStdioLaunch(args: {
     return { ok: false, reason: "missing_bundle_hash", origin };
   }
 
+  // A placeholder the bundle declared that this build does not implement
+  // must not spawn — the literal would reach the child as an argv/env/cwd
+  // value. The scan runs on the ORIGINAL spec, never the resolved launch:
+  // the machine's own root/data paths may legitimately contain
+  // placeholder-shaped text, and substitution deliberately never re-scans
+  // inserted values — re-checking resolved output would refuse exactly the
+  // paths the single-pass substitution promises to preserve. The GENERIC
+  // token shape (minus the implemented set) is what makes this
+  // future-proof: `${PLUGIN_CACHE}` from a spec revision we haven't
+  // shipped trips it today. Only the bare token is reported — the
+  // containing value may embed an adjacent secret.
+  const implementedTokens = new Set(["${PLUGIN_ROOT}", "${PLUGIN_DATA}"]);
+  const specValues = [
+    args.spec.command,
+    ...args.spec.args,
+    ...Object.values(args.spec.env),
+    ...(args.spec.workingDirectory !== undefined
+      ? [args.spec.workingDirectory]
+      : []),
+  ];
+  for (const value of specValues) {
+    for (const match of value.matchAll(/\$\{PLUGIN_[A-Z0-9_]+\}/g)) {
+      if (!implementedTokens.has(match[0])) {
+        return {
+          ok: false,
+          reason: "unsupported_placeholder",
+          origin,
+          placeholder: match[0],
+        };
+      }
+    }
+  }
+
   // The writable per-plugin data directory (spec: created before launch,
   // preserved across updates — keyed by pluginId, NOT bundleHash, so a
   // version activation keeps the component's state). Created BEFORE the
@@ -302,37 +335,6 @@ export async function preparePluginStdioLaunch(args: {
   }
 
   const launch = resolvePluginStdioLaunch(args.spec, root, { dataDir });
-
-  // Defense in depth: anything STILL carrying a placeholder-shaped token
-  // after substitution (a future spec placeholder this build doesn't
-  // implement) must not spawn — the literal string would reach the child as
-  // an argv/env/cwd value. The GENERIC pattern (not the known-token list)
-  // is what makes this future-proof: `${PLUGIN_CACHE}` from a spec revision
-  // we haven't shipped trips it today. Only the placeholder TOKEN is
-  // reported: the containing string may embed an expanded cache path or an
-  // adjacent secret, and this reason surfaces in an error response.
-  const launchValues = [
-    launch.command,
-    ...launch.args,
-    ...Object.values(launch.env),
-    ...(launch.workingDirectory !== undefined ? [launch.workingDirectory] : []),
-  ];
-  let leftoverToken: string | undefined;
-  for (const value of launchValues) {
-    const match = value.match(/\$\{PLUGIN_[A-Z0-9_]+\}/);
-    if (match) {
-      leftoverToken = match[0];
-      break;
-    }
-  }
-  if (leftoverToken !== undefined) {
-    return {
-      ok: false,
-      reason: "unsupported_placeholder",
-      origin,
-      placeholder: leftoverToken,
-    };
-  }
 
   // Unique per call, not just per server: a reconnect acquires the new lease
   // BEFORE releasing the old one, and two holders sharing an id would make
