@@ -1,5 +1,3 @@
-// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
-// migrated off its slack-app twin; the marker tracks that remaining work.
 import { InstallationBackendError } from "./backend-client.js";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
@@ -58,11 +56,19 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
  * The direct-fetch mint, used by a caller with no `backend` client of its
- * own (today: discord-app). `backend.mintLink` goes through
- * `createBackendClient`'s `post()` instead, which already carries its own
- * timeout and error-code mapping — this one needed its own copy.
+ * own (today: discord-app, and slack-app for its own reasons — see `body`
+ * below). `backend.mintLink` goes through `createBackendClient`'s `post()`
+ * instead, which already carries its own timeout and error-code mapping —
+ * this one needed its own copy.
  *
- * @param {{baseUrl:string, token:string, path:string, surfaceKind?:string, tenantId?:string, actorId?:string, fetchImpl:typeof fetch, timeoutMs:number}} args
+ * `body`, if given, is sent VERBATIM instead of the generic
+ * `{surfaceKind, surfaceTenantId, surfaceUserId}` shape. This exists for
+ * slack-app: its connect-link endpoint (`/api/slack/link/session`) is an
+ * older, Slack-only route that expects `{teamId, slackUserId}` and is not
+ * going to be renamed to match a newer, generalized contract it predates.
+ * The generic shape stays the default so every other caller is unaffected.
+ *
+ * @param {{baseUrl:string, token:string, path:string, surfaceKind?:string, tenantId?:string, actorId?:string, body?:Record<string,unknown>, fetchImpl:typeof fetch, timeoutMs:number}} args
  */
 async function mintConnectUrlDirect({
 	baseUrl,
@@ -71,6 +77,7 @@ async function mintConnectUrlDirect({
 	surfaceKind,
 	tenantId,
 	actorId,
+	body,
 	fetchImpl,
 	timeoutMs,
 }) {
@@ -85,11 +92,13 @@ async function mintConnectUrlDirect({
 					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 				},
-				body: JSON.stringify({
-					surfaceKind,
-					surfaceTenantId: tenantId,
-					surfaceUserId: actorId,
-				}),
+				body: JSON.stringify(
+					body ?? {
+						surfaceKind,
+						surfaceTenantId: tenantId,
+						surfaceUserId: actorId,
+					},
+				),
 				signal: controller.signal,
 			},
 		);
@@ -122,7 +131,7 @@ async function mintConnectUrlDirect({
 	}
 }
 
-/** @param {{backend:any, ctx:any, origins?:string[], opts?:any}} args */
+/** @param {{backend?:any, ctx?:any, origins?:string[], opts?:any, baseUrl?:string, token?:string, path?:string, surfaceKind?:string, tenantId?:string, actorId?:string, body?:Record<string,unknown>, fetchImpl?:typeof fetch, timeoutMs?:number}} args */
 export async function mintConnectUrl({
 	backend,
 	ctx,
@@ -134,6 +143,7 @@ export async function mintConnectUrl({
 	surfaceKind,
 	tenantId,
 	actorId,
+	body,
 	fetchImpl = fetch,
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 }) {
@@ -152,6 +162,7 @@ export async function mintConnectUrl({
 			surfaceKind,
 			tenantId,
 			actorId,
+			body,
 			fetchImpl,
 			timeoutMs,
 		});

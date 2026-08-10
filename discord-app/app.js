@@ -6,7 +6,7 @@ import {
 	createEventClaims,
 	createTurnTargetResolver,
 	mintConnectUrl,
-	runTurn,
+	runTurnForEvent,
 	textContent,
 } from "@mcpjam/surface-core";
 import {
@@ -200,12 +200,6 @@ client.on(Events.MessageCreate, async (message) => {
 	)
 		return;
 
-	const dedupeKey = `${message.guildId}:${message.id}`;
-	if (claims.hasClaimBackend()) {
-		const claim = await claims.claimEvent(dedupeKey);
-		if (claim.outcome !== "claimed") return;
-	}
-
 	// THREAD IDENTITY. In a thread the conversation is the PARENT channel and
 	// the thread is the thread — not `threadId: message.id`, which gave every
 	// message its own thread id so no binding ever matched. See context.js.
@@ -225,138 +219,141 @@ client.on(Events.MessageCreate, async (message) => {
 				tenantId: message.guildId,
 				actorId: message.author.id,
 			});
-			const content = {
+			await delivery.deliver(ref, {
 				severity: "info",
 				parts: [
 					"Connect MCPJam before asking me to act: ",
 					{ link: { url, label: "open the connect link" } },
 				],
-			};
-			await delivery.deliver(ref, content);
-			if (claims.hasClaimBackend())
-				await claims.completeEvent(dedupeKey, content);
+			});
 			return;
 		}
 		if (target.mode === "needs_project") {
-			const content = textContent(
-				"Your account is connected, but no default MCPJam project is configured for this organization. Set one in MCPJam settings and mention me again.",
-				"warning",
+			await delivery.deliver(
+				ref,
+				textContent(
+					"Your account is connected, but no default MCPJam project is configured for this organization. Set one in MCPJam settings and mention me again.",
+					"warning",
+				),
 			);
-			await delivery.deliver(ref, content);
-			if (claims.hasClaimBackend())
-				await claims.completeEvent(dedupeKey, content);
 			return;
 		}
 
-		// Set below if the thread could not be bound; delivered AFTER the claim
-		// completes, so a failure to warn cannot undo a turn that succeeded.
-		let bindWarning;
-
 		ref.projectId = target.projectId;
-		const result = await runTurn({
-			ref,
-			// RAW rows — `runTurn` owns normalization, and `fetchHistory` used to
-			// normalize too, which erased the assistant's turns on the second pass.
-			// Fetching from `message.channel` (the THREAD, when in one) is what
-			// keeps history non-empty now that `conversationId` is the parent.
+
+		// Claim, dedupe, per-conversation serialization and redelivery-replay
+		// now live in the core's runTurnForEvent — the same durable-claim state
+		// machine slack-app runs on. `eventId: message.id` keeps the claim key
+		// close to what this file computed by hand before (Discord message ids
+		// are globally unique, so no extra components are needed).
+		await runTurnForEvent({
+			ctx: ref,
+			conversationId: context.conversationId,
+			threadId: context.threadId,
+			eventId: message.id,
+			triggerMessageId: message.id,
+			// The core derives no trigger id from `ctx`, so pass the snowflake's
+			// millisecond timestamp explicitly — it is what gives the
+			// newer-than-trigger cutoff its resolution.
+			triggerTimestampMs: Number(message.createdTimestamp),
+			botUserId: client.user.id,
+			fallbackText: message.content || "",
+			eventClaims: claims,
+			// RAW rows — the core owns normalization now, exactly once. Fetching
+			// from `message.channel` (the THREAD, when in one) is what keeps
+			// history non-empty now that `conversationId` is the parent.
 			fetchHistory: (args) =>
 				fetchHistory({
 					...args,
 					channel: message.channel,
-					// The core derives no trigger id from `ref`, so pass the snowflake
-					// explicitly: it is what gives the newer-than-trigger cutoff
-					// sub-millisecond resolution.
 					triggerMessageId: message.id,
 					botUserId: client.user.id,
 				}),
-			// Not `target` — that name is taken by the resolved turn target above,
-			// and shadowing it here reads as if the two were the same thing.
-			deliver: (deliverTarget, content) =>
-				delivery.deliver(deliverTarget, content),
-			turn: (history) =>
-				api
-					.runAgentTurn(history, ref, {
-						// The DERIVED conversation, not `message.channelId` — otherwise a
-						// thread turn is recorded against the thread while its binding
-						// lives on the parent.
-						conversationId: context.conversationId,
-						idempotencyKey: dedupeKey,
+			apiClient: {
+				runAgentTurn: (history, _coreCtx, opts) =>
+					api
+						.runAgentTurn(history, ref, {
+							// The DERIVED conversation, not `message.channelId` —
+							// otherwise a thread turn is recorded against the thread
+							// while its binding lives on the parent.
+							conversationId: context.conversationId,
+							idempotencyKey: opts.idempotencyKey,
+						})
+						.then((turnResult) => ({
+							...textContent(turnResult.reply || "", "info"),
+							proposedActions: turnResult.proposedActions || [],
+						})),
+			},
+			onResult: async (result) => {
+				await delivery.deliver(ref, result);
+
+				// BIND THE THREAD once the turn has actually succeeded in it.
+				// Binding earlier would persist a mapping for a conversation that
+				// never worked; binding on a channel-mode target would claim a
+				// thread the resolver did not decide, so this is limited to a
+				// user-mode target in a thread that is not already bound.
+				//
+				// Runs INSIDE onResult — the core completes the durable claim
+				// right after onResult returns, storing the TURN's own result
+				// either way, so the bind attempt (best-effort, its own failure
+				// only produces a warning) cannot rewrite what gets replayed on a
+				// redelivery. Slack refuses the turn outright when it cannot bind;
+				// Discord binds AFTER the turn has already run and replied, so
+				// refusing is not available — the honest equivalent is to say the
+				// thread is not pinned, which also tells the user that mentioning
+				// again will re-bind.
+				//
+				// `organizationId` is required by the backend, which checks it
+				// against the initiator's account link and rejects a mismatch. A
+				// user-mode target always carries one; the guard says so rather
+				// than sending undefined and taking a 400.
+				if (
+					!(
+						context.isThread &&
+						target.mode === "user" &&
+						!target.boundThread &&
+						target.organizationId &&
+						target.projectId &&
+						claims.hasClaimBackend()
+					)
+				)
+					return;
+				const bound = await claimBackend
+					.createThreadBinding(ref, context.conversationId, context.threadId, {
+						projectId: target.projectId,
+						organizationId: target.organizationId,
 					})
-					.then((turnResult) => ({
-						...textContent(turnResult.reply || "", "info"),
-						proposedActions: turnResult.proposedActions || [],
-					})),
-			triggerTimestampMs: Number(message.createdTimestamp),
+					.catch((error) => {
+						console.error(
+							`[discord] could not bind thread ${context.threadId}: ${
+								error?.message ?? error
+							}`,
+						);
+						return null;
+					});
+				if (bound) return;
+				await delivery
+					.deliver(
+						ref,
+						textContent(
+							"I answered, but I could not pin this thread to a project — later replies here will use whichever project the person speaking has selected. Mention me again to retry.",
+							"warning",
+						),
+					)
+					.catch((error) => {
+						console.warn(
+							`[discord] could not post the unpinned-thread warning for ${message.id} in ${context.conversationId}: ${
+								error?.message ?? error
+							}`,
+						);
+					});
+			},
+			// A redelivery of an event already answered: re-post the stored
+			// reply rather than re-running the turn.
+			onReplay: async (envelope) => {
+				await delivery.deliver(ref, envelope);
+			},
 		});
-
-		// BIND THE THREAD once a turn has actually succeeded in it. Binding
-		// earlier would persist a mapping for a conversation that never worked;
-		// binding on a channel-mode target would claim a thread the resolver did
-		// not decide, so this is limited to a user-mode target in a thread that
-		// is not already bound.
-		//
-		// AWAITED, and its failure is told to the user. An unbound thread is not
-		// a cosmetic loss: every later mention re-resolves against whoever spoke,
-		// so the next person's default project gets the work the initiator
-		// started. Slack refuses the turn outright when it cannot bind. Discord
-		// binds AFTER the turn has already run and replied, so refusing is not
-		// available — the honest equivalent is to say the thread is not pinned,
-		// which also tells the user that mentioning again will re-bind.
-		//
-		// `organizationId` is required by the backend, which checks it against
-		// the initiator's account link and rejects a mismatch. A user-mode target
-		// always carries one; the guard says so rather than sending undefined and
-		// taking a 400.
-		if (
-			context.isThread &&
-			target.mode === "user" &&
-			!target.boundThread &&
-			target.organizationId &&
-			target.projectId &&
-			claims.hasClaimBackend()
-		) {
-			const bound = await claimBackend
-				.createThreadBinding(ref, context.conversationId, context.threadId, {
-					projectId: target.projectId,
-					organizationId: target.organizationId,
-				})
-				.catch((error) => {
-					console.error(
-						`[discord] could not bind thread ${context.threadId}: ${
-							error?.message ?? error
-						}`,
-					);
-					return null;
-				});
-			bindWarning = bound
-				? undefined
-				: textContent(
-						"I answered, but I could not pin this thread to a project — later replies here will use whichever project the person speaking has selected. Mention me again to retry.",
-						"warning",
-					);
-		}
-
-		// COMPLETE THE CLAIM FIRST, with the turn's own result. The turn
-		// succeeded and was delivered; the binding is a separate concern and
-		// must not be able to rewrite that outcome.
-		if (claims.hasClaimBackend())
-			await claims.completeEvent(dedupeKey, result.envelope);
-
-		// The bind warning is best-effort and CONTAINED. Delivered inside the
-		// try, a transient Discord failure here would throw into the outer
-		// catch — which would then post an error message for a turn that
-		// actually worked, and (before the reorder above) skip the claim
-		// entirely, leaving the event to be retried against a channel that had
-		// already been answered.
-		if (bindWarning) {
-			await delivery.deliver(ref, bindWarning).catch((error) => {
-				console.warn(
-					`[discord] could not post the unpinned-thread warning for ${dedupeKey} in ${context.conversationId}: ${
-						error?.message ?? error
-					}`,
-				);
-			});
-		}
 	} catch (error) {
 		await delivery.deliver(
 			ref,
@@ -367,8 +364,6 @@ client.on(Events.MessageCreate, async (message) => {
 						"The agent could not complete this turn.",
 				),
 		);
-		if (claims.hasClaimBackend())
-			await claims.completeEvent(dedupeKey, { error: error.message });
 	}
 });
 
