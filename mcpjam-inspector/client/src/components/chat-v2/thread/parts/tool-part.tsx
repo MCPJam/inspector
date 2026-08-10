@@ -26,6 +26,7 @@ import {
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
 import { track } from "@/lib/analytics";
+import { useLocalComputerEnabled } from "@/hooks/useComputersEnabled";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -213,8 +214,13 @@ export function ToolPart({
   // server value) rather than `resultDisplayData` — the latter is the editable
   // Raw-tab value, which a user can rewrite, and provenance must not be
   // editable. Absent on old transcripts, hosted turns, and the ephemeral
-  // sandbox-bash tool, which is why nothing renders in that case.
-  const runLocation = readToolRunLocation(label, rawResultData);
+  // sandbox-bash tool, which is why nothing renders in that case. The pill is
+  // part of the local-engine dark launch: users outside the
+  // `local-computer-enabled` rollout see no run-location UI at all.
+  const localComputerEnabled = useLocalComputerEnabled();
+  const runLocation = localComputerEnabled
+    ? readToolRunLocation(label, rawResultData)
+    : null;
   const resultDisplayData =
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;

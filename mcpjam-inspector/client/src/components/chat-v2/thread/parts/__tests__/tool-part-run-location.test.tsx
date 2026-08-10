@@ -43,6 +43,12 @@ vi.mock("@/stores/widget-debug-store", () => ({
 }));
 
 const toolNameState = vi.hoisted(() => ({ name: "bash" }));
+// Dark-launch flag: the pill is part of the local-engine rollout. ON by
+// default so the pill rows test the pill; the flag-off row flips it.
+const flagState = vi.hoisted(() => ({ localComputerEnabled: true }));
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useLocalComputerEnabled: () => flagState.localComputerEnabled,
+}));
 vi.mock("../../thread-helpers", () => ({
   getToolNameFromType: () => toolNameState.name,
   getToolStateMeta: () => ({
@@ -151,6 +157,18 @@ describe("ToolPart run-location pill", () => {
   it("renders nothing when the result carries no engine (old transcript / hosted)", () => {
     renderBash({ stdout: "Linux", exitCode: 0 });
     expect(screen.queryByTestId("tool-run-location")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing while the `local-computer-enabled` flag is off — even on a stamped result", () => {
+    // Dark launch: users outside the rollout must see no run-location UI,
+    // including "cloud" pills and old dogfooding transcripts stamped "local".
+    flagState.localComputerEnabled = false;
+    try {
+      renderBash({ stdout: "Linux", exitCode: 0, engine: "local" });
+      expect(screen.queryByTestId("tool-run-location")).not.toBeInTheDocument();
+    } finally {
+      flagState.localComputerEnabled = true;
+    }
   });
 
   it("renders nothing for a non-bash tool", () => {
