@@ -25,13 +25,18 @@ describe("computer-engine-storage", () => {
   });
 
   it("reads garbage as no-preference, never a guess", () => {
-    localStorage.setItem("mcp-computer-engine", '"local"');
+    localStorage.setItem("mcp-computer-engine:p1", "warp-drive");
     expect(loadComputerEngine("p1")).toBeNull();
-    localStorage.setItem(
-      "mcp-computer-engine",
-      JSON.stringify({ p1: "warp-drive" }),
-    );
-    expect(loadComputerEngine("p1")).toBeNull();
+  });
+
+  it("per-key: a concurrent write to another project cannot clobber this one", () => {
+    // Simulate the shared-map race: two "tabs" read, then both write. With
+    // per-key storage each write touches only its own key, so nothing is lost.
+    saveComputerEngine("p1", "local");
+    // Another tab sets p2 without ever having seen p1.
+    saveComputerEngine("p2", "cloud");
+    expect(loadComputerEngine("p1")).toBe("local");
+    expect(loadComputerEngine("p2")).toBe("cloud");
   });
 
   it("notifies same-tab subscribers for the matching project only", () => {

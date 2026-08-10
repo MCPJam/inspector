@@ -10,8 +10,7 @@
  * Hosted mode short-circuits to `"absent"` forever: there is no local
  * machine to consent to, and the server routes don't exist there anyway.
  */
-import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   clearStoredLocalComputerConsent,
@@ -35,30 +34,32 @@ export interface LocalComputerConsent {
 }
 
 export function useLocalComputerConsent(): LocalComputerConsent {
-  const { getAccessToken } = useAuth();
   const [status, setStatus] = useState<LocalComputerConsentStatus>(
     HOSTED_MODE ? "absent" : "unknown",
+  );
+  // Monotonic sequence guarding every status write. Verify, grant, and revoke
+  // all resolve asynchronously and can complete out of order (mount + storage
+  // event + an explicit grant race routinely); only the LATEST-initiated
+  // operation may write status, so a slow stale verify can never restore
+  // `granted` after a revoke, nor "absent" after a fresh grant.
+  const opSeqRef = useRef(0);
+  const commit = useCallback(
+    (seq: number, next: LocalComputerConsentStatus) => {
+      if (seq === opSeqRef.current) setStatus(next);
+    },
+    [],
   );
 
   const refresh = useCallback(async (): Promise<void> => {
     if (HOSTED_MODE) return;
+    const seq = ++opSeqRef.current;
     if (!loadStoredLocalComputerConsent()) {
-      setStatus("absent");
+      commit(seq, "absent");
       return;
     }
-    let accessToken: string | undefined;
-    try {
-      accessToken = await getAccessToken?.();
-    } catch {
-      // Not signed in — the consent routes require a verified bearer.
-    }
-    if (!accessToken) {
-      setStatus("absent");
-      return;
-    }
-    const valid = await verifyStoredLocalComputerConsent(accessToken);
-    setStatus(valid ? "granted" : "absent");
-  }, [getAccessToken]);
+    const valid = await verifyStoredLocalComputerConsent();
+    commit(seq, valid ? "granted" : "absent");
+  }, [commit]);
 
   useEffect(() => {
     if (HOSTED_MODE) return;
@@ -70,39 +71,24 @@ export function useLocalComputerConsent(): LocalComputerConsent {
 
   const grant = useCallback(async (): Promise<boolean> => {
     if (HOSTED_MODE) return false;
-    let accessToken: string | undefined;
-    try {
-      accessToken = await getAccessToken?.();
-    } catch {
-      return false;
-    }
-    if (!accessToken) return false;
-    const ok = await grantLocalComputerConsent(accessToken);
-    // The persist inside grant fires the subscription → refresh → verified
-    // "granted"; set optimistically so the Allow click feels immediate.
-    if (ok) setStatus("granted");
+    const ok = await grantLocalComputerConsent();
+    // Claim the latest slot so an in-flight refresh can't overwrite this.
+    // grant's persist fired the subscription → a refresh will re-confirm
+    // "granted"; this just makes the Allow click feel immediate.
+    if (ok) commit(++opSeqRef.current, "granted");
     return ok;
-  }, [getAccessToken]);
+  }, [commit]);
 
   const revoke = useCallback(async (): Promise<void> => {
     if (HOSTED_MODE) return;
     // Forget the capability locally FIRST and unconditionally — this is the
-    // user's explicit revoke. If we skipped it when getAccessToken threw (a
-    // transient auth refresh), the still-valid stored token would survive and
-    // a later remount could re-verify it and silently restore consent. The
-    // server call is best-effort on top of the guaranteed local forget.
+    // user's explicit revoke — and claim the latest op slot so any in-flight
+    // verify (older seq) can't restore consent. The server call is best-effort
+    // on top of the guaranteed local forget.
     clearStoredLocalComputerConsent();
-    setStatus("absent");
-    let accessToken: string | undefined;
-    try {
-      accessToken = await getAccessToken?.();
-    } catch {
-      accessToken = undefined;
-    }
-    if (accessToken) {
-      await revokeLocalComputerConsent(accessToken);
-    }
-  }, [getAccessToken]);
+    commit(++opSeqRef.current, "absent");
+    await revokeLocalComputerConsent();
+  }, [commit]);
 
   return {
     status,

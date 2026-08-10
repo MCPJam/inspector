@@ -11,9 +11,14 @@
  * executing commands. The stored token is what later rides the
  * `X-MCPJam-Local-Consent` header on chat turns.
  *
- * Every server call goes through `authFetch` (inspector session header) with
- * an explicit WorkOS bearer — the routes mount `requireVerifiedAuth`, so a
- * guest or an unverified bearer can never mint or verify.
+ * Every server call goes through `authFetch`, which attaches BOTH the
+ * inspector session header AND the verified WorkOS bearer (the consent path
+ * is in `HOSTED_AUTH_PATH_PREFIXES`). We deliberately do NOT set the
+ * `Authorization` header ourselves: doing so trips authFetch's
+ * `callerProvidedAuthorization` guard and disables the on-401 session-token
+ * refresh, which would leave grant/verify/revoke stuck at 401 after a
+ * dev-server restart. The routes mount `requireVerifiedAuth`, so a guest or
+ * unverified bearer still can't mint or verify.
  */
 import { authFetch } from "@/lib/session-token";
 
@@ -78,25 +83,19 @@ export function subscribeLocalComputerConsent(callback: () => void): () => void 
 
 function consentRequest(
   path: "grant" | "verify" | "revoke",
-  accessToken: string,
   body?: unknown,
 ): Promise<Response> {
   return authFetch(`/api/mcp/computers/local-consent/${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { "Content-Type": "application/json" },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 }
 
 /** Mint + store a fresh capability. Returns whether the grant succeeded. */
-export async function grantLocalComputerConsent(
-  accessToken: string,
-): Promise<boolean> {
+export async function grantLocalComputerConsent(): Promise<boolean> {
   try {
-    const response = await consentRequest("grant", accessToken);
+    const response = await consentRequest("grant");
     if (!response.ok) return false;
     const json = (await response.json()) as {
       token?: unknown;
@@ -122,13 +121,11 @@ export async function grantLocalComputerConsent(
  * browser profile) CLEARS the stale token so the UI re-prompts; a network
  * failure returns false WITHOUT clearing (the capability may still be good).
  */
-export async function verifyStoredLocalComputerConsent(
-  accessToken: string,
-): Promise<boolean> {
+export async function verifyStoredLocalComputerConsent(): Promise<boolean> {
   const stored = loadStoredLocalComputerConsent();
   if (!stored) return false;
   try {
-    const response = await consentRequest("verify", accessToken, {
+    const response = await consentRequest("verify", {
       token: stored.token,
     });
     if (!response.ok) return false;
@@ -150,11 +147,9 @@ export async function verifyStoredLocalComputerConsent(
 }
 
 /** Revoke on the server AND forget locally (best-effort on the server side). */
-export async function revokeLocalComputerConsent(
-  accessToken: string,
-): Promise<void> {
+export async function revokeLocalComputerConsent(): Promise<void> {
   try {
-    await consentRequest("revoke", accessToken);
+    await consentRequest("revoke");
   } catch {
     // The local forget below still applies — a later verify fails closed.
   }

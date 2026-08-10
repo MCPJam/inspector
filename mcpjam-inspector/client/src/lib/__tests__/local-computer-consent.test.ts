@@ -29,23 +29,25 @@ describe("local-computer-consent client", () => {
     fetchMock.mockReset();
   });
 
-  it("grant stores the minted token and sends the verified bearer", async () => {
+  it("grant stores the token; does NOT set Authorization (authFetch owns it)", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "2026-08-09" }),
     );
-    expect(await grantLocalComputerConsent("workos-jwt")).toBe(true);
+    expect(await grantLocalComputerConsent()).toBe(true);
     expect(loadStoredLocalComputerConsent()?.token).toMatch(/^tok_/);
 
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe("/api/mcp/computers/local-consent/grant");
-    expect((init?.headers as Record<string, string>).Authorization).toBe(
-      "Bearer workos-jwt",
-    );
+    // A manual Authorization would trip authFetch's callerProvidedAuthorization
+    // guard and disable the on-401 session-token refresh.
+    expect(
+      (init?.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
   it("a failed grant stores nothing", async () => {
     fetchMock.mockResolvedValue(jsonResponse(401, { error: "unauthorized" }));
-    expect(await grantLocalComputerConsent("workos-jwt")).toBe(false);
+    expect(await grantLocalComputerConsent()).toBe(false);
     expect(loadStoredLocalComputerConsent()).toBeNull();
   });
 
@@ -53,10 +55,10 @@ describe("local-computer-consent client", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
     );
-    await grantLocalComputerConsent("workos-jwt");
+    await grantLocalComputerConsent();
 
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { valid: false }));
-    expect(await verifyStoredLocalComputerConsent("workos-jwt")).toBe(false);
+    expect(await verifyStoredLocalComputerConsent()).toBe(false);
     expect(loadStoredLocalComputerConsent()).toBeNull();
   });
 
@@ -64,10 +66,23 @@ describe("local-computer-consent client", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
     );
-    await grantLocalComputerConsent("workos-jwt");
+    await grantLocalComputerConsent();
 
     fetchMock.mockRejectedValueOnce(new Error("offline"));
-    expect(await verifyStoredLocalComputerConsent("workos-jwt")).toBe(false);
+    expect(await verifyStoredLocalComputerConsent()).toBe(false);
+    expect(loadStoredLocalComputerConsent()).not.toBeNull();
+  });
+
+  it("verify: a non-ok HTTP response (401/500) returns false WITHOUT clearing", async () => {
+    // A transient server/auth failure must not force a re-prompt by deleting a
+    // capability that may still be valid — only a definitive valid:false does.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
+    );
+    await grantLocalComputerConsent();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: "boom" }));
+    expect(await verifyStoredLocalComputerConsent()).toBe(false);
     expect(loadStoredLocalComputerConsent()).not.toBeNull();
   });
 
@@ -77,7 +92,7 @@ describe("local-computer-consent client", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tokA".padEnd(40, "a"), grantedAt: "now" }),
     );
-    await grantLocalComputerConsent("workos-jwt");
+    await grantLocalComputerConsent();
 
     let resolveVerify: (r: Response) => void = () => {};
     fetchMock.mockReturnValueOnce(
@@ -85,13 +100,13 @@ describe("local-computer-consent client", () => {
         resolveVerify = r;
       }),
     );
-    const verifyPromise = verifyStoredLocalComputerConsent("workos-jwt");
+    const verifyPromise = verifyStoredLocalComputerConsent();
 
     // Token B lands mid-flight.
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tokB".padEnd(40, "b"), grantedAt: "now" }),
     );
-    await grantLocalComputerConsent("workos-jwt");
+    await grantLocalComputerConsent();
 
     resolveVerify(jsonResponse(200, { valid: false }));
     expect(await verifyPromise).toBe(false);
@@ -99,7 +114,7 @@ describe("local-computer-consent client", () => {
   });
 
   it("verify without a stored token never calls the server", async () => {
-    expect(await verifyStoredLocalComputerConsent("workos-jwt")).toBe(false);
+    expect(await verifyStoredLocalComputerConsent()).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -113,7 +128,7 @@ describe("local-computer-consent client", () => {
         throw new Error("quota exceeded");
       });
     try {
-      expect(await grantLocalComputerConsent("workos-jwt")).toBe(false);
+      expect(await grantLocalComputerConsent()).toBe(false);
       expect(loadStoredLocalComputerConsent()).toBeNull();
     } finally {
       setItem.mockRestore();
@@ -124,10 +139,10 @@ describe("local-computer-consent client", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
     );
-    await grantLocalComputerConsent("workos-jwt");
+    await grantLocalComputerConsent();
 
     fetchMock.mockRejectedValueOnce(new Error("offline"));
-    await revokeLocalComputerConsent("workos-jwt");
+    await revokeLocalComputerConsent();
     expect(loadStoredLocalComputerConsent()).toBeNull();
   });
 
