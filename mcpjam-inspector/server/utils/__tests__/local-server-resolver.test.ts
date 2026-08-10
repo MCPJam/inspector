@@ -265,7 +265,25 @@ describe("toMCPServerConfig — declared httpVariant mapping", () => {
       },
     });
     expect(config.disableSseFallback).toBe(true);
-    expect(config.preferSSE).toBeUndefined();
+    // Explicitly false, not merely absent — see below.
+    expect(config.preferSSE).toBe(false);
+  });
+
+  it("pins preferSSE false so a /sse URL cannot override the declaration", () => {
+    // The SDK resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`.
+    // Leaving preferSSE undefined here would hand a DECLARED streamable-http
+    // server straight to SSE on URL shape alone, and `disableSseFallback`
+    // could not save it — it only guards the post-attempt fallback.
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: {
+        ...httpHeaderOnlyAuth.serverConfig,
+        url: "https://plugin.example.com/sse",
+        httpVariant: "streamable-http" as const,
+      },
+    });
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
   });
 
   it("sets neither flag when no transport was declared", () => {

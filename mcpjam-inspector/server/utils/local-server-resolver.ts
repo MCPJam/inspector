@@ -732,9 +732,17 @@ export function toMCPServerConfig(
   // Plugin-declared transports are authoritative: `sse` skips the Streamable
   // HTTP attempt, `streamable-http` rules out the silent SSE downgrade. Rows
   // without a declaration keep the SDK's URL-heuristic + fallback behavior.
+  //
+  // `preferSSE: false` is load-bearing on the streamable-http branch: the SDK
+  // resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`, so a
+  // DECLARED streamable-http server served at a `/sse` path would otherwise
+  // be routed straight to SSE by the URL heuristic and never attempt
+  // Streamable HTTP at all — `disableSseFallback` only guards the fallback
+  // AFTER an attempt, so it cannot rescue that case.
   if (serverConfig.httpVariant === "sse") {
     http.preferSSE = true;
   } else if (serverConfig.httpVariant === "streamable-http") {
+    http.preferSSE = false;
     http.disableSseFallback = true;
   }
   if (typeof timeout === "number") http.timeout = timeout;

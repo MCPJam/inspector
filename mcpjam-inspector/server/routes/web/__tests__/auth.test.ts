@@ -224,7 +224,28 @@ describe("toHttpConfig — declared httpVariant mapping", () => {
       1000
     );
     expect(config.disableSseFallback).toBe(true);
-    expect(config.preferSSE).toBeUndefined();
+    // Explicitly false, not merely absent — see below.
+    expect(config.preferSSE).toBe(false);
+  });
+
+  it("pins preferSSE false so a /sse URL cannot override the declaration", async () => {
+    // The SDK resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`,
+    // so an undefined preferSSE would let URL shape beat the declaration and
+    // route a declared streamable-http server to SSE without ever attempting
+    // Streamable HTTP.
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://plugin.example.com/sse",
+          httpVariant: "streamable-http",
+        },
+      },
+      1000
+    );
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
   });
 
   it("sets neither flag when no transport was declared", async () => {

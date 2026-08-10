@@ -848,11 +848,16 @@ export function toHttpConfig(
     // Streamable HTTP attempt, `streamable-http` rules out the silent SSE
     // downgrade. Rows without a declaration keep the SDK's URL-heuristic +
     // fallback behavior.
+    //
+    // `preferSSE: false` is load-bearing on the streamable-http branch — see
+    // the same mapping in `local-server-resolver.ts::toMCPServerConfig`: the
+    // SDK falls back to a `/sse` URL-path heuristic when `preferSSE` is
+    // undefined, which would bypass the Streamable HTTP attempt entirely.
     ...(authResponse.serverConfig.httpVariant === "sse"
       ? { preferSSE: true }
       : {}),
     ...(authResponse.serverConfig.httpVariant === "streamable-http"
-      ? { disableSseFallback: true }
+      ? { preferSSE: false, disableSseFallback: true }
       : {}),
     // mcpProfile.initialize.* pins, forwarded to the SDK's
     // `BaseServerConfig.clientInfo` / `.supportedProtocolVersions` per
