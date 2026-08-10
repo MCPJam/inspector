@@ -14,6 +14,7 @@
  */
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import type { SandboxNoticeReason } from "@/shared/sandbox-notice";
 import { logger } from "./logger.js";
 import type {
   McpToolResultImageRenderingPolicy,
@@ -63,6 +64,20 @@ export type ChatboxEnvironmentRuntime = {
     extraFrontmatter?: unknown;
     channels?: RuntimeSkillChannel[];
     files?: Array<{ path: string; size: number; url: string | null }>;
+  }>;
+  /**
+   * Phase 6.1: the environment's pinned plugin versions, mirrored from the
+   * resolution the backend already performed for this payload. Same shape as
+   * `ResolvedEnvironmentRuntime.pluginVersions`, so the chatbox branch can
+   * feed the attribution probe the environment target uses. ABSENT on every
+   * backend that predates the field — absence degrades to "no plugin origin
+   * reported", never to a guess from `connectable[].source`.
+   */
+  pluginVersions?: Array<{
+    pluginId: string;
+    pluginVersionId: string;
+    name: string;
+    bundleHash?: string;
   }>;
 };
 
@@ -170,9 +185,71 @@ export function readComputerSandboxMode(
   return mode === "ephemeral" || mode === "unavailable" ? mode : null;
 }
 
+export interface ChatboxSandboxPlan {
+  /**
+   * `provision` — reserve the per-conversation box, then bind bash to it.
+   * `suppress`  — drop the computer resource for this turn; bash is not
+   *               advertised. `suppressReason` says why (the caller picks the
+   *               matching log line).
+   * `none`      — nothing to do: legacy marker-absent config, or a turn that
+   *               never asked for bash.
+   */
+  action: "provision" | "suppress" | "none";
+  suppressReason?:
+    | "sandbox_mode_unavailable"
+    | "not_a_data_plane"
+    | "no_chat_session_id";
+  /** Set when the suppression should be narrated to the tester (SSE notice). */
+  notice?: SandboxNoticeReason;
+}
+
+/**
+ * Decide what the chatbox turn does about its ephemeral sandbox BEFORE any
+ * call that spends money.
+ *
+ * The load-bearing branch is `not_a_data_plane`: `provisionChatboxSandbox` is
+ * bearer-authed and succeeds from ANY inspector, but executing in the box
+ * requires this process to hold the E2B credentials (`sandbox-bash` has no
+ * remote delegation). Provisioning without them used to strand a BILLABLE box
+ * whose every command failed opaquely — so the capability check must come
+ * before the reserve, not after.
+ *
+ * Checked before `no_chat_session_id` on purpose: on a non-data-plane server
+ * the missing-session case would otherwise suppress silently, and the tester
+ * deserves the explanation either way.
+ */
+export function planChatboxSandbox(args: {
+  mode: "ephemeral" | "unavailable" | null;
+  bashRequested: boolean;
+  ephemeralCloudAvailable: boolean;
+  hasChatSessionId: boolean;
+}): ChatboxSandboxPlan {
+  if (args.mode === "unavailable") {
+    return { action: "suppress", suppressReason: "sandbox_mode_unavailable" };
+  }
+  if (args.mode !== "ephemeral" || !args.bashRequested) {
+    return { action: "none" };
+  }
+  if (!args.ephemeralCloudAvailable) {
+    return {
+      action: "suppress",
+      suppressReason: "not_a_data_plane",
+      notice: "sandbox_unavailable",
+    };
+  }
+  if (!args.hasChatSessionId) {
+    return { action: "suppress", suppressReason: "no_chat_session_id" };
+  }
+  return { action: "provision" };
+}
+
 export type ChatboxRuntimeConfigResult =
   | { ok: true; config: ChatboxRuntimeConfig }
-  | { ok: false; status: number; error: string };
+  // `code` carries the backend's machine-readable denial reason —
+  // CHATBOX_ACCESS_STALE above all, which is the difference between "this
+  // caller must re-redeem and retry" and "this caller is out". Callers that
+  // only render the message can keep ignoring it.
+  | { ok: false; status: number; error: string; code?: string };
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -185,6 +262,13 @@ function getConvexHttpUrl(): string {
 export async function fetchChatboxRuntimeConfig(args: {
   chatboxId: string;
   bearer: string;
+  /**
+   * The caller's cached access version. Sending it opts this request into
+   * backend version enforcement: a value behind the chatbox's current one
+   * comes back 409 CHATBOX_ACCESS_STALE instead of being silently served a
+   * config the caller no longer has a current view of. Omitted ⇒ unchecked.
+   */
+  accessVersion?: number;
   signal?: AbortSignal;
 }): Promise<ChatboxRuntimeConfigResult> {
   const url = new URL(
@@ -203,7 +287,12 @@ export async function fetchChatboxRuntimeConfig(args: {
         "content-type": "application/json",
         authorization,
       },
-      body: JSON.stringify({ chatboxId: args.chatboxId }),
+      body: JSON.stringify({
+        chatboxId: args.chatboxId,
+        ...(typeof args.accessVersion === "number"
+          ? { accessVersion: args.accessVersion }
+          : {}),
+      }),
       signal: args.signal,
     });
   } catch (err) {
@@ -234,6 +323,7 @@ export async function fetchChatboxRuntimeConfig(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Chatbox runtime-config failed (${response.status})`,
+      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
 
@@ -378,6 +468,31 @@ export function readChatboxEnvironment(
       })
     : undefined;
 
+  // Additive like `connectable`/`skills`: a malformed entry (or a torn id)
+  // drops to nothing — losing a provenance LABEL, never a capability.
+  const pluginVersions = Array.isArray(raw.pluginVersions)
+    ? raw.pluginVersions.flatMap((entry) => {
+        if (
+          !isRecord(entry) ||
+          typeof entry.pluginId !== "string" ||
+          typeof entry.pluginVersionId !== "string" ||
+          typeof entry.name !== "string"
+        ) {
+          return [];
+        }
+        return [
+          {
+            pluginId: entry.pluginId,
+            pluginVersionId: entry.pluginVersionId,
+            name: entry.name,
+            ...(typeof entry.bundleHash === "string"
+              ? { bundleHash: entry.bundleHash }
+              : {}),
+          },
+        ];
+      })
+    : undefined;
+
   return {
     kind: "present",
     environment: {
@@ -391,6 +506,7 @@ export function readChatboxEnvironment(
         ...(connectable ? { connectable } : {}),
       },
       ...(skills ? { skills } : {}),
+      ...(pluginVersions ? { pluginVersions } : {}),
     },
   };
 }

@@ -104,3 +104,49 @@ describe("humanizeSwarmAttemptError", () => {
     expect(info.canTopUp).toBeUndefined();
   });
 });
+
+describe("humanizeSwarmAttemptError — sandbox error codes", () => {
+  it("maps each sandbox code to a cloud-framed sentence", () => {
+    for (const code of [
+      "sandbox_unavailable",
+      "sandbox_at_capacity",
+      "sandbox_error",
+    ]) {
+      const info = humanizeSwarmAttemptError("whatever was stored", code);
+      expect(info.code).toBe(code);
+      expect(info.message).toMatch(/MCPJam cloud|cloud sandbox/i);
+      expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
+    }
+  });
+
+  it("prefers the code over the stored operator-framed message", () => {
+    // The stored sentence talks about data planes — accurate for operators,
+    // opaque for the user whose swarm didn't run.
+    const info = humanizeSwarmAttemptError(
+      "This server is not configured to provision disposable sandboxes (the computers data plane is unavailable), so this session cannot run the shell its target requires.",
+      "sandbox_unavailable"
+    );
+    expect(info.message).not.toMatch(/data plane/i);
+    expect(info.message).toMatch(/MCPJam cloud/i);
+  });
+
+  it("ignores unknown codes and falls back to message parsing", () => {
+    const info = humanizeSwarmAttemptError(
+      '{"error":"Daily limit reached"}',
+      "spend_cap_exceeded"
+    );
+    expect(info.message).toBe("Daily limit reached");
+  });
+
+  it("maps a recognized code even with no stored message at all", () => {
+    const info = humanizeSwarmAttemptError(undefined, "sandbox_at_capacity");
+    expect(info.message).toMatch(/at capacity/i);
+    expect(info.code).toBe("sandbox_at_capacity");
+  });
+
+  it("stays idempotent-compatible when no code is passed", () => {
+    const info = humanizeSwarmAttemptError("Could not provision a sandbox.");
+    expect(info.message).toBe("Could not provision a sandbox.");
+    expect(info.code).toBeUndefined();
+  });
+});

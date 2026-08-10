@@ -35,6 +35,24 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_project_server: { command: "projects server remove" },
   show_servers: { command: "projects status" },
 
+  // ── Journeys (the Swarms product) ───────────────────────────────────────
+  // Flag-gated beta. Bound normally rather than excluded: the server returns a
+  // clean "not currently available for your organization" when the flag is off,
+  // which is a better answer than a command that does not exist. Same shape as
+  // `environments` and `images` for an org that lacks those.
+  list_journeys: { command: "journeys list" },
+  list_journey_runs: { command: "journeys runs" },
+  get_journey_run: { command: "journeys status" },
+  list_journey_run_sessions: { command: "journeys sessions" },
+  launch_journey_run: { command: "journeys run" },
+  cancel_journey_run: { command: "journeys cancel" },
+
+  // ── Scenarios (user testing) ────────────────────────────────────────────
+  // Supersedes the `chatboxes` group below, which is the same product under
+  // its older name.
+  publish_scenario: { command: "scenarios publish" },
+  unpublish_scenario: { command: "scenarios unpublish" },
+
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "eval list" },
   create_eval_suite: { command: "eval create" },
@@ -73,6 +91,14 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_project_environment: { command: "environments update" },
   archive_project_environment: { command: "environments archive" },
   restore_project_environment: { command: "environments restore" },
+  list_project_plugins: {
+    excluded:
+      "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
+  },
+  get_plugin_version: {
+    excluded:
+      "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
+  },
   list_sandbox_images: { command: "images list" },
   get_sandbox_image: { command: "images get" },
   create_sandbox_image: { command: "images create" },

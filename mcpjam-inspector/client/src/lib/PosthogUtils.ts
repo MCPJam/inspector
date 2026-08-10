@@ -1,4 +1,5 @@
 import { getCachedGuestSession } from "./guest-session";
+import { HOSTED_MODE } from "./config";
 
 export const VITE_PUBLIC_POSTHOG_KEY =
   "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
@@ -15,7 +16,13 @@ export function getPostHogApiHost(): string {
     typeof window !== "undefined" &&
     window.location?.origin?.startsWith("http")
   ) {
-    return `${window.location.origin}/relay`;
+    // `/tlm`, not `/relay`: Railway's edge in front of the hosted app 403s
+    // GETs under `/relay/static/*` and `/relay/array/*` (block is scoped to
+    // the /relay prefix — verified with decoy-prefix probes), which starved
+    // posthog-js of its remote config and kept session recording `disabled`.
+    // The server mounts the same proxy on both prefixes; see
+    // RELAY_MOUNT_PREFIXES in server/routes/relay.ts.
+    return `${window.location.origin}/tlm`;
   }
   // Non-browser context (tests) — no relay origin to derive.
   return VITE_PUBLIC_POSTHOG_HOST;
@@ -90,6 +97,136 @@ export const LANDING_ANALYTICS_HOSTS = new Set([
   "www.score.mcpjam.com",
 ]);
 
+// Check if PostHog should be disabled
+export const isPostHogDisabled =
+  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
+
+/**
+ * Whether this surface records session replays and captures exceptions.
+ *
+ * Hosted (app.mcpjam.com) and the packaged desktop app only. npx/Docker
+ * installs run on someone else's machine against their own MCP servers —
+ * recording those sessions is not ours to do, and the volume from every OSS
+ * install would swamp the quota that makes hosted replay useful.
+ */
+export function isErrorCaptureSurface(): boolean {
+  return HOSTED_MODE || isPackagedDesktop();
+}
+
+/**
+ * A *shipped* desktop build, as opposed to `electron-forge start`.
+ *
+ * `src/preload.ts` exposes `isElectron: true` unconditionally, so it cannot
+ * tell a packaged app from a developer's local run. `import.meta.env.PROD`
+ * can: the dev renderer is served by the vite dev server, the packaged one is
+ * a `vite build` output. Without this check every `electron-forge start`
+ * session would stream renderer DOM and text into the production Sentry and
+ * PostHog projects — and the boundary this file documents is *packaged*
+ * desktop, not "anything with a preload attached".
+ *
+ * `HOSTED_MODE` needs no equivalent: it comes from `VITE_MCPJAM_HOSTED_MODE`,
+ * which only the deployed bundle's config sets.
+ */
+function isPackagedDesktop(): boolean {
+  return (
+    import.meta.env.PROD &&
+    typeof window !== "undefined" &&
+    (window as unknown as { isElectron?: boolean }).isElectron === true
+  );
+}
+
+/**
+ * Replay masking.
+ *
+ * `maskAllInputs` covers every `<input>`. The inspector also renders secrets
+ * as TEXT — OAuth access/refresh tokens in the flow logger, the one-time API
+ * key reveal, the SDK quickstart snippet — which no input-level masking can
+ * reach. Those already carry this repo's `ph-no-capture rr-block` +
+ * `data-ph-no-capture` convention for autocapture, so `maskTextSelector`
+ * points at the SAME attribute rather than introducing a second thing to
+ * remember: annotate a credential surface once and it is opted out of
+ * autocapture AND masked in replay.
+ */
+export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
+
+export const SESSION_RECORDING_OPTIONS = {
+  maskAllInputs: true,
+  maskInputOptions: { password: true },
+  maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
+} as const;
+
+/**
+ * `/results/<token>` is a bearer-credential URL — the token IS the auth. We
+ * already redact it out of event properties (`scrubSensitiveUrl`), but a
+ * replay of that page would capture the address bar's contents in the DOM
+ * snapshot regardless. Don't record there at all.
+ */
+export function isCredentialBearingPath(
+  pathname: string | undefined = typeof window === "undefined"
+    ? undefined
+    : window.location?.pathname
+): boolean {
+  return !!pathname && pathname.startsWith("/results/");
+}
+
+export function shouldRecordSession(): boolean {
+  return isErrorCaptureSurface() && !isCredentialBearingPath();
+}
+
+/**
+ * Enforce the credential-path carve-out at RUNTIME.
+ *
+ * `disable_session_recording` is an init-time option, so it only covers a
+ * session that *loads* on `/results/<token>`. `/results/:runToken` is an
+ * in-app route: a user who lands anywhere else and then follows a results
+ * link already has an active recorder, and rrweb snapshots the address bar.
+ * Call this on navigation so the token-bearing page is never in a replay.
+ *
+ * Never throws — this is a privacy guard on a render path, and posthog-js may
+ * be ad-blocked or uninitialized.
+ */
+let recordingStoppedByGuard = false;
+
+export function syncSessionRecordingForPath(
+  posthogClient: {
+    startSessionRecording?: () => void;
+    stopSessionRecording?: () => void;
+    sessionRecordingStarted?: () => boolean;
+  },
+  pathname: string,
+): void {
+  try {
+    if (!isErrorCaptureSurface()) return;
+    if (isCredentialBearingPath(pathname)) {
+      // Arm the resume only if the recorder was ACTUALLY running. The build
+      // flag is not a proxy for that: PostHog's own project-side sampling can
+      // decline a session, and resuming one it declined would both break
+      // sampling and cost quota.
+      //
+      // Never DISARM here — `stop()` makes the probe read false, so
+      // `/results/a` → `/results/b` would otherwise forget that this guard is
+      // what stopped the recorder and the exit would never resume it.
+      // `stop()` itself stays unconditional: it is idempotent, and an SDK
+      // build without the probe must still stop on a credential path.
+      if (posthogClient.sessionRecordingStarted?.()) {
+        recordingStoppedByGuard = true;
+      }
+      posthogClient.stopSessionRecording?.();
+      return;
+    }
+    // Resume ONLY what this guard itself stopped. Starting on every
+    // non-credential path would undo `VITE_DISABLE_POSTHOG_LOCAL` on the first
+    // navigation — silently recording in a build documented as having it off —
+    // and would force a recorder on for a session sampling never selected.
+    if (recordingStoppedByGuard) {
+      recordingStoppedByGuard = false;
+      posthogClient.startSessionRecording?.();
+    }
+  } catch {
+    // A failed guard must not break the render. Recording stays as-is.
+  }
+}
+
 export function getPageviewCaptureOptions(
   hostname: string | undefined = typeof window === "undefined"
     ? undefined
@@ -112,19 +249,60 @@ export const options = {
   person_profiles: "always" as const,
   sanitize_properties: sanitizeAnalyticsProperties,
 
+  // Rageclick's quieter sibling: a click on something that looks
+  // interactive and does nothing. Cheap (no extra network calls) and safe
+  // on every platform, so it is not gated like replay/exceptions.
+  capture_dead_clicks: true,
+
+  // Getters, not eager calls. `options` is a module-scope literal, so calling
+  // these at literal-creation time made merely IMPORTING this module read
+  // `HOSTED_MODE` — which broke every test that partially mocks
+  // `@/lib/config` (62 files do). Getters defer the read to property access,
+  // which is when posthog-js actually reads config.
+
+  // Uncaught errors and unhandled rejections -> `$exception`, which is what
+  // feeds PostHog Error Tracking. Boundary-caught errors reach it through
+  // lib/error-reporting.ts instead, so there is no double-count.
+  get capture_exceptions() {
+    return isErrorCaptureSurface();
+  },
+  get disable_session_recording() {
+    return !shouldRecordSession();
+  },
+  session_recording: SESSION_RECORDING_OPTIONS,
+
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
       version: __APP_VERSION__,
+      // OSS self-hosted installs (including ones that never touch
+      // app.mcpjam.com, e.g. airgapped lab VMs) share this project's key
+      // with the hosted app. `deployment` is the clean discriminator between
+      // the two going forward — see PosthogUtils.ts module docs for the
+      // relay rationale that put every install in the same project.
+      deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+      // Symmetric with the server-side `source: "server"` stamp
+      // (convex/posthog.ts, server/utils/analytics.ts) — client events
+      // previously carried no `source` at all.
+      source: "client",
+    });
+    // Super properties ride EVENTS; `/flags` evaluates PERSON properties, so a
+    // registered `deployment` is invisible to flag targeting. This makes the
+    // same discriminator usable in a flag rule (e.g. rolling the local computer
+    // engine out to the self-hosted signed-in cohort) from the first request of
+    // the session, before any identify has run.
+    // Guarded: `loaded` also runs against partial posthog stand-ins (tests, and
+    // any host that pins an older posthog-js without this method). Flag
+    // targeting degrading to "no person properties" is acceptable; throwing
+    // inside `loaded` would take out the whole analytics init.
+    posthog.setPersonPropertiesForFlags?.({
+      deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+      platform: detectPlatform(),
     });
   },
 };
-
-// Check if PostHog should be disabled
-export const isPostHogDisabled =
-  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
 /** Normalize PostHog boolean flags (`useFeatureFlagEnabled` may not be strict `true` in dev). */
 export function isPostHogBooleanFlagOn(value: unknown): boolean {
@@ -150,11 +328,27 @@ export const getPostHogOptions = () =>
         ...getPostHogBootstrap(),
         ...getPageviewCaptureOptions(),
         person_profiles: "always" as const,
+        // Explicitly off in the opt-out branch too. `opt_out_capturing_by_default`
+        // suppresses event SENDING but the recorder and the exception handlers
+        // still load — which in dev means fetching /relay/static/recorder.js on
+        // every page load for events that are then discarded.
+        disable_session_recording: true,
+        capture_exceptions: false,
         // Disable event capture but keep /decide enabled for feature flag evaluation.
         // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
+        // This branch keeps /decide ON for flag evaluation, so it needs the flag
+        // PERSON properties too — otherwise a `deployment = self_hosted` rule
+        // targets nobody in exactly the local build someone would use to test
+        // that rollout.
+        loaded: (posthog: any) => {
+          posthog.setPersonPropertiesForFlags?.({
+            deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+            platform: detectPlatform(),
+          });
+        },
       }
     : options;
 
@@ -193,13 +387,30 @@ export function detectPlatform() {
 }
 
 export function detectEnvironment() {
-  return import.meta.env.ENVIRONMENT;
+  // Vite's envPrefix is "VITE_" (vite.renderer.config.mts), so the
+  // unprefixed `ENVIRONMENT` from .env.production is never replaced into
+  // the client bundle and this always read as undefined — silently
+  // clobbering the registered `environment` super-property on every
+  // track() call (see standardEventProps below). `VITE_ENVIRONMENT` is the
+  // client-visible counterpart; it stays unset for ordinary dev/prod builds
+  // (MODE already covers that split) and is set explicitly for builds that
+  // need a finer-grained label (e.g. staging).
+  return import.meta.env.VITE_ENVIRONMENT;
 }
 
-export function standardEventProps(location: string) {
+export function standardEventProps(location: string): {
+  location: string;
+  platform: string;
+  environment?: string;
+} {
+  const environment = detectEnvironment();
   return {
     location,
     platform: detectPlatform(),
-    environment: detectEnvironment(),
+    // Omit rather than send `environment: undefined` — an explicit
+    // undefined key still overrides the registered super-property when
+    // merged into the captured event, which is exactly the bug this
+    // guards against.
+    ...(environment !== undefined ? { environment } : {}),
   };
 }

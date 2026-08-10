@@ -9,8 +9,7 @@
     "chat-ui",
     "widget-react",
     "soundcheck",
-    "quality-labeler",
-    "mcp",
+        "mcp",
     "slack-app",
     "surface-core",
     "discord-app"
@@ -20,7 +19,7 @@
     "build:packages": "npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
     "build:inspector": "npm run build -w @mcpjam/inspector",
     "typecheck": "npm run typecheck -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run typecheck -w @mcpjam/cli && npm run typecheck -w @mcpjam/design-system && npm run typecheck -w @mcpjam/chat-ui && npm run typecheck -w @mcpjam/widget-react && npm run typecheck -w @mcpjam/mcp",
-    "check:mcp-v1-runtime-imports": "! rg -n '@modelcontextprotocol/sdk' sdk/src cli/src mcpjam-inspector/client/src mcpjam-inspector/server -g '!**/dist/**' -g '!**/*.bundled.ts' -g '!**/*.generated.ts'",
+    "check:mcp-v1-runtime-imports": "! rg -n '@modelcontextprotocol/sdk' sdk/src cli/src mcpjam-inspector/client/src mcpjam-inspector/server mcp/src -g '!**/dist/**' -g '!**/*.bundled.ts' -g '!**/*.generated.ts' -g '!mcp/src/ui/**'",
     "check:bundled-runtime-paths": "node scripts/check-bundled-runtime-paths.mjs",
     "check:platform-runtime-safety": "! rg -n '[\"\\x27]node:|process\\.env' sdk/src/platform",
     "check:platform-runtime-safety:dist": "test -d sdk/dist/platform && ! rg -n '[\"\\x27]node:|process\\.env' sdk/dist/platform -g '!*.map'",

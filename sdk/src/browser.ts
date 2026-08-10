@@ -456,6 +456,7 @@ export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
 

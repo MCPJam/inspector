@@ -44,6 +44,13 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
+  PlatformJourney,
+  PlatformJourneyRun,
+  PlatformJourneyRunSession,
+  PlatformJourneyRunCanceled,
+  PlatformJourneyRunLaunched,
+  PlatformScenario,
+  PlatformScenarioDeleted,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -57,6 +64,8 @@ import type {
   PlatformPage,
   PlatformMe,
   PlatformModel,
+  PlatformPlugin,
+  PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
   PlatformTunnelGrant,
@@ -3721,6 +3730,84 @@ export const restoreEnvironmentOperation: PlatformOperation<
   },
 };
 
+// ── Agent Plugins ────────────────────────────────────────────────────────────
+//
+// Read-only. Import, activate, enable/disable and uninstall stay in the app —
+// no plugin write belongs on an unattended surface.
+
+const listProjectPluginsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListProjectPluginsInput = z.infer<typeof listProjectPluginsInput>;
+
+export type ListProjectPluginsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformPlugin[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listProjectPluginsOperation: PlatformOperation<
+  ListProjectPluginsInput,
+  ListProjectPluginsResult
+> = {
+  name: "list_project_plugins",
+  title: "List MCPJam project plugins",
+  description:
+    "List the live (installed, non-uninstalled) Agent Plugins in an MCPJam project. Each plugin names its active version id — pass that to get_plugin_version for the version's servers and skills. Disabled plugins are listed too, marked `enabled: false`.",
+  readOnly: true,
+  inputSchema: listProjectPluginsInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listProjectPlugins(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const getPluginVersionInput = z.object({
+  pluginVersionId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Plugin version ID — a plugin's `activeVersionId` from list_project_plugins, or a pinned id from an environment's `pluginVersionIds`."
+    ),
+});
+export type GetPluginVersionInput = z.infer<typeof getPluginVersionInput>;
+
+export const getPluginVersionOperation: PlatformOperation<
+  GetPluginVersionInput,
+  PlatformPluginVersion
+> = {
+  name: "get_plugin_version",
+  title: "Show an MCPJam plugin version",
+  description:
+    "Show one imported Agent Plugin version: its status, component counts, and per-component summaries (declared MCP servers with placement and auth timing, declared skills with their namespaced model refs). Requires membership of the version's project; historical versions of uninstalled plugins stay readable.",
+  readOnly: true,
+  inputSchema: getPluginVersionInput,
+  async execute(input, { client, signal }) {
+    return client.getPluginVersion(
+      { pluginVersionId: input.pluginVersionId },
+      { signal }
+    );
+  },
+};
+
 // ── Sandbox images ───────────────────────────────────────────────────────────
 
 const IMAGE_SELECTOR_DESCRIPTION = "Sandbox image name or ID.";
@@ -4237,6 +4324,407 @@ export const deleteProjectServerOperation: PlatformOperation<
 /** Any catalog operation with its input/output types erased. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
 
+// ── Journeys (the Swarms product) ───────────────────────────────────────────
+//
+// "Swarm" is not a resource noun in this API. A swarm is a container users
+// author in the UI; a JOURNEY (a persona pursuing a goal against one or more
+// environments) is what executes, and a JOURNEY RUN is what it produces. The
+// marketing name appears in help text, where it belongs.
+//
+// BETA (`sandboxes-enabled`), gated server-side per organization — but only on
+// the exposure-CREATING writes: launch and authoring. Those answer a structured
+// FEATURE_UNAVAILABLE to an unflagged caller.
+//
+// The reads here need project membership and nothing more, and
+// `cancel_journey_run` is ungated for the same reason: an organization that has
+// lost the flag with a run already in flight must still be able to see it and
+// stop it. Losing the feature is when stopping it matters most.
+
+const listJourneysInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListJourneysInput = z.infer<typeof listJourneysInput>;
+
+export type ListJourneysResult = {
+  project: SelectedProjectInfo;
+  items: PlatformJourney[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listJourneysOperation: PlatformOperation<
+  ListJourneysInput,
+  ListJourneysResult
+> = {
+  name: "list_journeys",
+  title: "List MCPJam journeys",
+  description:
+    "List the journeys in an MCPJam project. A journey is one persona pursuing a goal against one or more environments — the unit that Swarms actually executes. Use the returned id with list_journey_runs.",
+  readOnly: true,
+  inputSchema: listJourneysInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listJourneys(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const journeyRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  journey: z.string().trim().min(1).describe("Journey id, from list_journeys."),
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListJourneyRunsInput = z.infer<typeof journeyRunsInput>;
+
+export type ListJourneyRunsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformJourneyRun[];
+  nextCursor?: string;
+};
+
+export const listJourneyRunsOperation: PlatformOperation<
+  ListJourneyRunsInput,
+  ListJourneyRunsResult
+> = {
+  name: "list_journey_runs",
+  title: "List runs of an MCPJam journey",
+  description:
+    "List a journey's runs, newest first, with each run's status and pass/fail rollup. A run someone STOPPED reports status 'failed' with canceled: true — check that flag before calling a run a failure.",
+  readOnly: true,
+  inputSchema: journeyRunsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listJourneyRuns(
+      {
+        projectId: project.id,
+        journeyId: input.journey,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const journeyRunSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z.string().trim().min(1).describe("Journey run id."),
+});
+export type GetJourneyRunInput = z.infer<typeof journeyRunSelectorInput>;
+
+export type GetJourneyRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformJourneyRun;
+};
+
+export const getJourneyRunOperation: PlatformOperation<
+  GetJourneyRunInput,
+  GetJourneyRunResult
+> = {
+  name: "get_journey_run",
+  title: "Get one MCPJam journey run",
+  description:
+    "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled.",
+  readOnly: true,
+  inputSchema: journeyRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.getJourneyRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const journeyRunSessionsInput = journeyRunSelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListJourneyRunSessionsInput = z.infer<
+  typeof journeyRunSessionsInput
+>;
+
+export type ListJourneyRunSessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformJourneyRunSession[];
+  nextCursor?: string;
+};
+
+export const listJourneyRunSessionsOperation: PlatformOperation<
+  ListJourneyRunSessionsInput,
+  ListJourneyRunSessionsResult
+> = {
+  name: "list_journey_run_sessions",
+  title: "List the sessions a journey run produced",
+  description:
+    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness, goal scores and a first-message preview. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+  readOnly: true,
+  inputSchema: journeyRunSessionsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listJourneyRunSessions(
+      {
+        projectId: project.id,
+        runId: input.run,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+export type CancelJourneyRunInput = z.infer<typeof journeyRunSelectorInput>;
+
+export type CancelJourneyRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformJourneyRunCanceled;
+};
+
+const launchJourneyRunInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  journey: z.string().trim().min(1).describe("Journey id to launch."),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the journey twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run."
+    ),
+  waveId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe("Opaque id linking the sibling runs of one co-launched batch."),
+  environmentIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Fan out across these project environments instead of the journey's authored targets."
+    ),
+});
+export type LaunchJourneyRunInput = z.infer<typeof launchJourneyRunInput>;
+
+export type LaunchJourneyRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformJourneyRunLaunched;
+};
+
+export const launchJourneyRunOperation: PlatformOperation<
+  LaunchJourneyRunInput,
+  LaunchJourneyRunResult
+> = {
+  name: "launch_journey_run",
+  title: "Launch an MCPJam journey run",
+  description:
+    "Start a journey run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_journey_run, or list_journey_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the journey twice. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  inputSchema: launchJourneyRunInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.launchJourneyRun(
+      {
+        projectId: project.id,
+        journeyId: input.journey,
+        ...(input.waveId ? { waveId: input.waveId } : {}),
+        ...(input.environmentIds?.length
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+export const cancelJourneyRunOperation: PlatformOperation<
+  CancelJourneyRunInput,
+  CancelJourneyRunResult
+> = {
+  name: "cancel_journey_run",
+  title: "Stop a running MCPJam journey run",
+  description:
+    "Stop a journey run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+  readOnly: false,
+  inputSchema: journeyRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.cancelJourneyRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+// ── Scenarios (user testing) ────────────────────────────────────────────────
+//
+// A scenario is a project environment published for people outside the project
+// to talk to. Internally these are `chatboxes` rows and will stay that way;
+// "scenario" is the public noun. The older `list_chatboxes` / `get_chatbox`
+// operations still work and still point at the old routes until GA.
+//
+// Both operations need project ADMIN. Publishing is additionally behind the
+// `sandboxes-enabled` beta flag; unpublishing deliberately is not.
+
+const scenarioSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Project environment id to publish (or unpublish). One scenario per environment."
+    ),
+});
+export type PublishScenarioInput = z.infer<typeof scenarioSelectorInput>;
+
+export type PublishScenarioResult = {
+  project: SelectedProjectInfo;
+  scenario: PlatformScenario;
+};
+
+export const publishScenarioOperation: PlatformOperation<
+  PublishScenarioInput,
+  PublishScenarioResult
+> = {
+  name: "publish_scenario",
+  title: "Publish a project environment as a user-testing scenario",
+  description:
+    "Publish a project environment so people outside the project can talk to it through a share link. IDEMPOTENT — publishing an already-published environment returns the existing scenario rather than creating a second one; `created` tells you which happened. Requires project admin.",
+  readOnly: false,
+  inputSchema: scenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const scenario = await client.publishScenario(
+      { projectId: project.id, environmentId: input.environment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), scenario };
+  },
+};
+
+export type UnpublishScenarioInput = z.infer<typeof scenarioSelectorInput>;
+
+export type UnpublishScenarioResult = {
+  project: SelectedProjectInfo;
+  result: PlatformScenarioDeleted;
+};
+
+export const unpublishScenarioOperation: PlatformOperation<
+  UnpublishScenarioInput,
+  UnpublishScenarioResult
+> = {
+  name: "unpublish_scenario",
+  title: "Take a user-testing scenario down",
+  description:
+    "Unpublish an environment's scenario, invalidating its share link and any live guest sessions. Idempotent — an environment with no scenario reports `deleted: false` rather than failing. Requires project admin.",
+  readOnly: false,
+  inputSchema: scenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const result = await client.unpublishScenario(
+      { projectId: project.id, environmentId: input.environment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
 /**
  * The complete operation catalog, in append order.
  *
@@ -4289,6 +4777,14 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+  listJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
   listHostsOperation,
   getHostOperation,
   createHostOperation,
@@ -4303,6 +4799,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   updateEnvironmentOperation,
   archiveEnvironmentOperation,
   restoreEnvironmentOperation,
+  listProjectPluginsOperation,
+  getPluginVersionOperation,
   listImagesOperation,
   getImageOperation,
   createImageOperation,

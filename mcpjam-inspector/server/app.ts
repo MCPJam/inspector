@@ -39,8 +39,8 @@ import {
   getSessionToken,
 } from "./services/session-token.js";
 import {
-  isAllowedHost,
   mayServeGuestBootstrap,
+  mayServeSessionToken,
 } from "./utils/localhost-check.js";
 import { getActiveTunnelDomains } from "./services/tunnel-registry.js";
 import {
@@ -76,6 +76,11 @@ import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal.js";
+import {
+  createLocalComputerTerminalWsHandler,
+  killLocalComputerTerminals,
+  shutdownLocalComputerTerminals,
+} from "./routes/web/local-computer-terminal.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -280,6 +285,14 @@ export async function createHonoApp() {
     "/api/web/computers/terminal",
     createComputerTerminalWsHandler(upgradeWebSocket)
   );
+  // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted.
+  // Mirror of the mount in server/index.ts.
+  if (!HOSTED_MODE) {
+    app.get(
+      "/api/web/computers/local-terminal",
+      createLocalComputerTerminalWsHandler(upgradeWebSocket)
+    );
+  }
   app.post(
     "/api/web/computers/upload",
     bodyLimit({
@@ -338,8 +351,13 @@ export async function createHonoApp() {
   // catch-all only skips /api/* and would otherwise swallow /relay GETs
   // with index.html. Mirror of the mount in server/index.ts — both
   // production entries must wire this up.
+  // Mounted on BOTH prefixes — see RELAY_MOUNT_PREFIXES in routes/relay.ts:
+  // /tlm is the alias new clients use because Railway's edge 403s GETs under
+  // /relay/static and /relay/array on hosted; /relay stays for old builds.
   app.use("/relay/*", relayBodyLimit());
   app.route("/relay", relayRoutes);
+  app.use("/tlm/*", relayBodyLimit());
+  app.route("/tlm", relayRoutes);
 
   // XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
   // target authorization server fetches it anonymously) and mounted before
@@ -394,10 +412,26 @@ export async function createHonoApp() {
     }
 
     const host = c.req.header("Host");
+    const forwardedHost = c.req.header("X-Forwarded-Host");
 
-    if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+    // SECURITY INVARIANT: tunnel hosts never receive the session token, even
+    // if a tunnel domain is ever allowlisted — see mayServeSessionToken. This
+    // used to call `isAllowedHost` directly, which is the same allowlist
+    // WITHOUT the tunnel veto, so `index.ts` and this file disagreed about the
+    // one rule they must not disagree about.
+    if (
+      !mayServeSessionToken({
+        host,
+        forwardedHost,
+        allowedHosts: ALLOWED_HOSTS,
+        hostedMode: HOSTED_MODE,
+        activeTunnelDomains: getActiveTunnelDomains(),
+      })
+    ) {
       appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${host}`
+        `[Security] Token request denied - Host not allowed: ${
+          forwardedHost || host
+        }`
       );
       return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
@@ -443,7 +477,20 @@ export async function createHonoApp() {
         const host = c.req.header("Host");
         const forwardedHost = c.req.header("X-Forwarded-Host");
 
-        if (isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+        // Same invariant as the /api/session-token route above, and the same
+        // bug: this path already captured `forwardedHost` for the guest
+        // bootstrap below but did not consult it here, so a request arriving
+        // through the relay edge — which puts the real tunnel host in
+        // X-Forwarded-Host — got the token injected into its document.
+        if (
+          mayServeSessionToken({
+            host,
+            forwardedHost,
+            allowedHosts: ALLOWED_HOSTS,
+            hostedMode: HOSTED_MODE,
+            activeTunnelDomains: getActiveTunnelDomains(),
+          })
+        ) {
           const token = getSessionToken();
           const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
           html = html.replace("</head>", `${tokenScript}</head>`);
@@ -532,5 +579,15 @@ export async function createHonoApp() {
 
   // Return `injectWebSocket` alongside the app so the caller (src/main.ts) can
   // attach the WS upgrade handler to its node server — same as server/index.ts.
-  return { app, injectWebSocket };
+  // The two PTY-cleanup hooks ride along for the same reason: the Electron entry
+  // owns this process's lifecycle and must kill live local PTYs itself
+  // (server.close() does not close established sockets). `shutdown…` latches
+  // and belongs on a real quit; `kill…` does not and belongs on
+  // `window-all-closed`, which on macOS is followed by a server RESTART.
+  return {
+    app,
+    injectWebSocket,
+    shutdownLocalComputerTerminals,
+    killLocalComputerTerminals,
+  };
 }

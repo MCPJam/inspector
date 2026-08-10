@@ -90,12 +90,30 @@ export const SWARM_ACTIONS = {
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
 /** Terminal + in-flight states a journey run can surface in the UI. */
+/**
+ * A run's status AS DISPLAYED. Not identical to the stored one.
+ *
+ * The backend stores five statuses (`running` … `rate_limited`) and records
+ * two special endings as a MARKER on `error` rather than as a status:
+ * `canceled` (someone stopped it) and `stale_runner` (the runner went silent
+ * and the watchdog settled it). Both leave `status: "failed"`.
+ *
+ * That is a deliberate backend decision — a status literal would have to be
+ * threaded through `recomputeRunSummaries` and every exhaustive switch, for a
+ * distinction only presentation cares about — but it means a UI reading
+ * `status` alone paints a deliberate stop bright red as a failure. `stale` was
+ * already in this union and NOTHING ever produced it: the chip's `case "stale"`
+ * has been dead since it was written. Use `journeyRunDisplayStatus` to get one
+ * of these from a run.
+ */
 export type JourneyRunStatus =
   | "running"
   | "completed"
   | "partial"
   | "failed"
   | "rate_limited"
+  // Display-only, derived from the `error` marker. See above.
+  | "canceled"
   | "stale";
 
 export interface JourneyRunSummary {
@@ -191,6 +209,11 @@ export interface JourneyRunAttempt {
 export interface JourneyRun {
   _id: string;
   status: JourneyRunStatus | string;
+  /**
+   * Free-form ending marker. `"canceled"` and `"stale_runner"` are the two
+   * that change how a run should be PRESENTED — see `JourneyRunStatus`.
+   */
+  error?: string;
   summary: JourneyRunSummary;
   hostSummaries: JourneyHostSummary[];
   /** Per-attempt outcomes. Absent on runs read before the field shipped. */
@@ -683,12 +706,10 @@ export function groupSwarmSessionsByGoal(
 /**
  * `chatSessionPromote:getChatSessionPromoteDetail` result — the promote
  * dialog's session-servers detail for any promotable sourceType.
- * `usedServerIds` is derived server-side from the stored transcript;
- * `hostId` is the session row's authoritative host attribution (used to
- * pre-seed the new-suite client attachment). The action THROWS on
- * unauthorized access, non-promotable sourceTypes, incomplete swarm run
- * attempts, and unreadable transcripts — adapters surface that as the
- * dialog's detail error.
+ * `usedServerIds` is derived server-side from the stored transcript. The
+ * action THROWS on unauthorized access, non-promotable sourceTypes,
+ * incomplete swarm run attempts, and unreadable transcripts — adapters
+ * surface that as the dialog's detail error.
  */
 export interface SwarmSessionPromoteDetail {
   sessionId: string;
@@ -700,7 +721,26 @@ export interface SwarmSessionPromoteDetail {
   messageCount: number;
   usedServerIds: string[];
   selectedServers: string[];
+  /**
+   * The session row's recorded host attribution. Display/compat — prefer
+   * `suggestedHostAttachment.namedHostId` when seeding, because on
+   * environment-backed chatboxes this records the PUBLISH-TIME host while
+   * the environment may since have been re-pointed.
+   */
   hostId: string | null;
+  /**
+   * Backend-resolved attachment for the new-suite branch: the host the
+   * session actually executes against plus its server set, already
+   * environment-aware. Null when the session has no id-shaped selection to
+   * donate (transcript-name surfaces), when its host is outside the suite's
+   * project, or when the selection is empty. Optional on the wire so the
+   * client keeps working against a backend that predates the field.
+   */
+  suggestedHostAttachment?: {
+    namedHostId: string;
+    selectedServerIds: string[];
+    serverNames: string[];
+  } | null;
 }
 
 /**

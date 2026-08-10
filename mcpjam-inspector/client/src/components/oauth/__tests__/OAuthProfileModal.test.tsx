@@ -1,6 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import {
+  MCP_PROTOCOL_VERSIONS,
+  protocolVersionLabel,
+} from "@mcpjam/sdk/browser";
 import { OAuthProfileModal } from "../OAuthProfileModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -135,6 +139,24 @@ describe("OAuthProfileModal", () => {
     const payload = onSave.mock.calls[0][0];
     expect(payload.formData.oauthProtocolMode).toBe("2026-07-28");
     expect(payload.profile.protocolVersion).toBe("2026-07-28");
+  });
+
+  it("marks only the newest known revision as Latest", () => {
+    // The dialog used to hardcode "(Draft)" on 2026-07-28 while 2025-11-25 held
+    // "(Latest)", telling testers the newer revision was unreleased. Asserted
+    // against MCP_PROTOCOL_VERSIONS rather than a pinned string so the next
+    // revision fails here instead of re-arming the same bug.
+    const latest = MCP_PROTOCOL_VERSIONS[MCP_PROTOCOL_VERSIONS.length - 1];
+    renderModal();
+
+    expect(
+      screen.getAllByText(protocolVersionLabel(latest)).length,
+    ).toBeGreaterThan(0);
+    for (const version of MCP_PROTOCOL_VERSIONS) {
+      if (version === latest) continue;
+      expect(screen.queryByText(`Latest (${version})`)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText(/\(Draft\)/)).not.toBeInTheDocument();
   });
 
   it("blocks a second submit while the first save is still in flight", async () => {

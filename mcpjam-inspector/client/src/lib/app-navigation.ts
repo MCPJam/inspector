@@ -15,11 +15,43 @@ import type { EvalRoutePrefix } from "./eval-route-url";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
 
+/**
+ * Every organization settings section.
+ *
+ * A runtime list rather than a bare union so the route-coverage test can walk
+ * it. `buildOrganizationPath` below is the only thing that decides these URLs,
+ * and nothing used to check that the paths it produced were actually
+ * registered — the Discord section shipped that way and was unreachable: the
+ * nav sent you to `/organizations/:id/discord`, no route matched, and the
+ * router's `"*"` wildcard rendered Servers instead. Adding a member here now
+ * fails the test until the route table, the element map and the surface
+ * manifest all know about it.
+ */
+export const ORGANIZATION_ROUTE_SECTIONS = [
+  "overview",
+  "billing",
+  "models",
+  "slack",
+  "discord",
+] as const;
+
 export type OrganizationRouteSection =
-  | "overview"
-  | "billing"
-  | "models"
-  | "slack";
+  (typeof ORGANIZATION_ROUTE_SECTIONS)[number];
+
+/**
+ * Third path segment → section. "overview" is the section with no segment, so
+ * an unknown segment lands there too; that is what makes an unregistered
+ * section fail quietly rather than 404, and why the coverage test exists.
+ */
+export function parseOrganizationSection(
+  segment: string | undefined
+): OrganizationRouteSection {
+  if (segment === "billing") return "billing";
+  if (segment === "models") return "models";
+  if (segment === "slack") return "slack";
+  if (segment === "discord") return "discord";
+  return "overview";
+}
 
 /** Typed canonical paths used across the app. */
 export const routePaths = {
@@ -91,7 +123,13 @@ export function buildHostComparePath(
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
 /** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
-export type UserTestingDetailTab = "sessions" | "clusters";
+export type UserTestingDetailTab = "edit" | "sessions" | "insights";
+
+const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
+  "edit",
+  "sessions",
+  "insights",
+]);
 
 /**
  * Build a path to one User Testing scenario. `scenarioId` is the scenario's
@@ -117,8 +155,13 @@ export function buildUserTestingScenarioPath(
 export function parseUserTestingDetailTab(
   search: string
 ): UserTestingDetailTab {
-  return new URLSearchParams(search).get("tab") === "clusters"
-    ? "clusters"
+  const tab = new URLSearchParams(search).get("tab");
+  // Legacy slugs: `share` / `preview` → Edit (Preview docks beside Edit);
+  // `clusters` → Insights (label aligned with Swarm run detail).
+  if (tab === "share" || tab === "preview") return "edit";
+  if (tab === "clusters") return "insights";
+  return tab && USER_TESTING_DETAIL_TABS.has(tab)
+    ? (tab as UserTestingDetailTab)
     : "sessions";
 }
 
@@ -218,6 +261,9 @@ export function buildOrganizationPath(
   // them out of the path means the nav, the surface manifest and the route
   // table each gain exactly one entry.
   if (section === "slack") return `/organizations/${orgId}/slack`;
+  // Discord has no sub-tabs at all (see DiscordAgentSettingsSection), so it
+  // needs even less than Slack does — one segment, no `?tab=`.
+  if (section === "discord") return `/organizations/${orgId}/discord`;
   return `/organizations/${orgId}`;
 }
 
@@ -479,15 +525,7 @@ export function useCurrentOrgRoute(): CurrentOrgRoute | null {
   if (segments[0] !== "organizations") return null;
   const orgId = segments[1];
   if (!orgId) return null;
-  const sectionSegment = segments[2];
-  const orgSection: OrganizationRouteSection =
-    sectionSegment === "billing"
-      ? "billing"
-      : sectionSegment === "models"
-      ? "models"
-      : sectionSegment === "slack"
-      ? "slack"
-      : "overview";
+  const orgSection = parseOrganizationSection(segments[2]);
   return { orgId: decodePathSegment(orgId), orgSection };
 }
 
@@ -593,6 +631,14 @@ export function captureCurrentReturnPath(): string | null {
   return `${pathname}${search}`;
 }
 
+/**
+ * Where a manual project switch should land, if anywhere.
+ *
+ * As with `shouldSnapToServersOnActiveProjectChange`, callers must resolve
+ * `activeTab` from the live pathname rather than a routing hook: a switch that
+ * resolves after the caller has already navigated would otherwise be judged
+ * against the page the user left.
+ */
 export function getProjectSwitchNavigationTarget({
   activeTab,
   activeOrganizationId,
@@ -651,6 +697,14 @@ export function getInvalidOrganizationRouteNavigationTarget({
  * org-scoped, not project-scoped, so snapping there would bounce the user right
  * back off the settings they just opened.
  *
+ * Project settings is exempt for the same reason: it renders whichever project
+ * is active, so it is still correct after the switch, and the switcher's
+ * per-row gear reaches it by switching project and navigating as one gesture.
+ *
+ * Callers must resolve `activeTab` from the live pathname, not from a routing
+ * hook — the router commits navigations in a transition, so a hook-derived tab
+ * can still name the page the user is leaving when this runs.
+ *
  * The initial hydration (no previous id) and the local-default `"none"`
  * placeholder are never treated as real switches.
  */
@@ -672,7 +726,7 @@ export function shouldSnapToServersOnActiveProjectChange({
     return false;
   }
 
-  if (activeTab === "organizations") {
+  if (activeTab === "organizations" || activeTab === "project-settings") {
     return false;
   }
 

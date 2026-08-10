@@ -573,6 +573,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  launch_journey_run:
+    "Pre-GA product, held out with the rest of the journey surface. (It is also the one journey operation that SPENDS — at GA it wants a tier that requires approval, not one that lets the agent start a fan-out unattended.)",
+  cancel_journey_run:
+    "Pre-GA product, held out with the rest of the journey surface — NOT a per-call judgement about cancellation. (`EXCLUDED_FROM_AGENT` means the agent cannot even PROPOSE it for approval, so a rationale about proposing would describe the opposite of what this does. At GA it should register as a gated write, like the eval cancellation it mirrors.)",
+  // Scenarios (user testing).
+  publish_scenario:
+    "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",
+  unpublish_scenario:
+    "Tears down a live scenario and every guest session on it — destructive, and the agent proposes authoring rather than destruction.",
+
+  // Journeys (the Swarms product). Excluded WHOLESALE while the
+  // `sandboxes-enabled` beta flag is on: what we advertise must match what we
+  // enforce, and the flag is enforced per organization server-side. Advertising
+  // these to every caller would mean most of them get a FEATURE_UNAVAILABLE
+  // error from a tool we told them they had. Revisit at GA.
+  list_journeys: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+  list_journey_runs: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+  get_journey_run: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+  list_journey_run_sessions:
+    "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+
   // Identity and catalogs the agent turn is already scoped by. Re-offering them
   // as tools would let the model shop for a different project mid-turn.
   get_me:
@@ -621,6 +642,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Attachment changes silently redirect every later run of the suite.",
   resolve_project_environment:
     "Resolution detail the agent has no use for; get_environment suffices.",
+
+  // Agent Plugins. Read-only inventory, shipped for the MCP catalog surface
+  // first; registering them here is a deliberate widening of the public
+  // agent's brief, to be made when plugin questions become a turn concern.
+  list_project_plugins:
+    "Plugin inventory is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+  get_plugin_version:
+    "Plugin version detail is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
 
   // Sandbox images and computers: minutes-long builds and billable compute.
   list_sandbox_images:

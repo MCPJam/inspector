@@ -153,6 +153,20 @@ describe("shouldSnapToServersOnActiveProjectChange", () => {
     ).toBe(false);
   });
 
+  it("does NOT snap while on project settings", () => {
+    // Regression: the switcher's per-row gear switches project and opens that
+    // project's settings as one gesture. Snapping here flashed the settings
+    // page and bounced the user to Servers. Project settings renders whichever
+    // project is active, so it is still correct after the switch.
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "p1",
+        nextActiveProjectId: "p2",
+        activeTab: "project-settings",
+      }),
+    ).toBe(false);
+  });
+
   it("does not snap on initial hydration (no previous project id)", () => {
     expect(
       shouldSnapToServersOnActiveProjectChange({
@@ -259,12 +273,23 @@ describe("organization route sections", () => {
     expect(buildOrganizationPath("org_1", "slack")).toBe(
       "/organizations/org_1/slack",
     );
+    expect(buildOrganizationPath("org_1", "discord")).toBe(
+      "/organizations/org_1/discord",
+    );
   });
 
   it("parses the slack section off the URL", () => {
     window.history.replaceState({}, "", "/organizations/org_1/slack");
     const { result } = renderHook(() => useCurrentOrgRoute());
     expect(result.current).toEqual({ orgId: "org_1", orgSection: "slack" });
+  });
+
+  it("parses the discord section off the URL", () => {
+    // Its own section rather than a `?tab=` on Slack's: they are two
+    // integrations, not two views of one.
+    window.history.replaceState({}, "", "/organizations/org_1/discord");
+    const { result } = renderHook(() => useCurrentOrgRoute());
+    expect(result.current).toEqual({ orgId: "org_1", orgSection: "discord" });
   });
 
   it("keeps the sub-tab in the query string, not the path", () => {

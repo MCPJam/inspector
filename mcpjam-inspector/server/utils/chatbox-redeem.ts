@@ -68,6 +68,15 @@ export type ChatboxRedeemFailure = {
   ok: false;
   status: number;
   error: string;
+  /**
+   * The backend's DOMAIN code, when it sent one — today that means an `ENV_*`
+   * environment-resolution failure (mcpjam-backend #890): the link and the
+   * access check both passed, and only the environment behind the scenario is
+   * unavailable. Carried separately from the HTTP status because "archived on
+   * purpose" and "temporarily unresolvable" share a 4xx but read very
+   * differently to the visitor.
+   */
+  code?: string;
 };
 
 export type ChatboxRedeemResult = ChatboxRedeemSuccess | ChatboxRedeemFailure;
@@ -139,6 +148,7 @@ export async function redeemChatboxToken(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Chatbox redeem failed (${response.status})`,
+      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
 
