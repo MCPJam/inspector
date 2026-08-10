@@ -73,6 +73,29 @@ describe("e2bPluginBoxConnector — startShim", () => {
     expect(command.kill).toHaveBeenCalledTimes(1);
   });
 
+  it("retains no deadline timer after a synchronous ready line", async () => {
+    // The vendor delivers `onStdout` synchronously inside `commands.run(...)`,
+    // so the promise settles BEFORE the deadline timer is created and the
+    // settle path has nothing to clear. Every successful start would otherwise
+    // hold a 30s timer.
+    vi.useFakeTimers();
+    const { e2bPluginBoxConnector } = await import("../plugin-box.js");
+    const command = makeCommandHandle();
+    runMock.mockImplementation(async (_cmd: string, opts: any) => {
+      opts.onStdout('{"event":"listening","host":"0.0.0.0","port":41234}\n');
+      return command;
+    });
+
+    const handle = await e2bPluginBoxConnector(BOX);
+    await handle.startShim({
+      scriptPath: "/home/user/.mcpjam/shim/shim.mjs",
+      env: {},
+      readyTimeoutMs: 30_000,
+    });
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("kills the shim when it never reports listening", async () => {
     const { e2bPluginBoxConnector } = await import("../plugin-box.js");
     const command = makeCommandHandle();

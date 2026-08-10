@@ -47,6 +47,7 @@ import {
   type PluginBundleCache,
 } from "./local-stdio.js";
 import { needsPluginRoot, type PluginStdioLaunchSpec } from "./plugin-root.js";
+import { assertSafePathSegments } from "./path-segments.js";
 import {
   PLUGIN_SHIM_SOURCE,
   PLUGIN_SHIM_VERSION,
@@ -145,24 +146,6 @@ export type PluginBoxConnector = (
 const BOX_MCPJAM_ROOT = "/home/user/.mcpjam";
 
 /**
- * The same floor `ensurePluginDataDir` applies to the local `${PLUGIN_DATA}`
- * path. `remotePlacement` skips that call, so without this the guard would
- * vanish exactly where a path is composed by hand — and `${BOX_MCPJAM_ROOT}/shim`
- * (which holds the file `startShim` executes) is a reachable `..` target. The
- * ids are backend-issued, so nothing steers this today; it costs one regex and
- * removes the question.
- */
-function assertSafeSegments(segments: Record<string, string>): void {
-  for (const [label, value] of Object.entries(segments)) {
-    if (!/^[A-Za-z0-9._-]+$/.test(value) || value === "." || value === "..") {
-      throw new Error(
-        `plugin box path refuses an unsafe ${label} segment: "${value}"`
-      );
-    }
-  }
-}
-
-/**
  * Content-addressed, exactly like the local cache: a re-push of the same hash
  * is a no-op and a changed bundle is a different directory, so a running child
  * never has its files edited underneath it.
@@ -172,7 +155,7 @@ function boxBundleRoot(args: {
   pluginVersionId: string;
   bundleHash: string;
 }): string {
-  assertSafeSegments({
+  assertSafePathSegments({
     "project id": args.projectId,
     "plugin version id": args.pluginVersionId,
     "bundle hash": args.bundleHash,
@@ -182,7 +165,7 @@ function boxBundleRoot(args: {
 
 /** Keyed by LOGICAL plugin identity so state survives a version activation. */
 function boxDataDir(args: { projectId: string; pluginId: string }): string {
-  assertSafeSegments({
+  assertSafePathSegments({
     "project id": args.projectId,
     "plugin id": args.pluginId,
   });
@@ -528,11 +511,74 @@ export async function ensurePluginStdioRuntime(args: {
       ...(args.signal ? { signal: args.signal } : {}),
     });
     if (!sessionId) {
-      // A shim is listening, and we still refuse: without the record nothing
-      // can supersede or reap it, and admitting an unrecorded runtime would
-      // make the gate advisory. Which is exactly why it must be reaped HERE —
-      // "nothing can find it" is a reason to stop it, not to walk away from it,
-      // and every retry would otherwise leave another one running.
+      // A shim is listening and we have no sessionId — but "no sessionId" is
+      // not the same as "no row". `recordPluginRuntimeSession` answers `null`
+      // for a LOST RESPONSE too, and that write may well have committed. So
+      // ask before acting.
+      //
+      // THE INVARIANT: a row and a live shim are only ever created or destroyed
+      // TOGETHER. Reaping a shim whose row committed poisons that row — the
+      // backend's liveness check validates the bundle, the shim version and the
+      // box, none of which notice a dead process, so every later connect would
+      // be handed a dead port until the idle sweep. Admitting a shim no row
+      // names is the mirror failure, and is what the gate exists to prevent.
+      const confirmed = await lookupPluginRuntimeSession({
+        serverId: args.serverId,
+        expectedBundleHash: bundleHash,
+        shimVersion: PLUGIN_SHIM_VERSION,
+        ...(args.signal ? { signal: args.signal } : {}),
+      });
+
+      if (!confirmed.reachable) {
+        // Unanswered, so both "the row exists" and "it does not" are live
+        // possibilities. Leave the process alone: a leaked shim costs one
+        // process and the next connect supersedes it, while reaping a
+        // committed row's shim breaks this server until the sweep. Under
+        // genuine uncertainty the recoverable failure wins.
+        logger.warn(
+          "[plugin-computer] could not confirm the session record; leaving the shim alone",
+          { serverId: args.serverId }
+        );
+        return {
+          ok: false,
+          reason: "session_not_recorded",
+          message:
+            "The plugin's server started but could not be registered, so it was not used.",
+        };
+      }
+
+      if (confirmed.session && sessionMatchesBox(confirmed.session, args.box)) {
+        const isOurs =
+          confirmed.session.shimPort === port &&
+          confirmed.session.shimToken === token;
+        if (!isOurs) {
+          // A concurrent starter recorded after us and REPLACED our row, so
+          // nothing names our shim any more. Theirs is the current gate.
+          await stopShim();
+        }
+        logger.info(
+          "[plugin-computer] recovered a session whose record response was lost",
+          { serverId: args.serverId, reusedConcurrentStarter: !isOurs }
+        );
+        return {
+          ok: true,
+          reused: !isOurs,
+          runtime: {
+            sessionId: confirmed.session.sessionId,
+            url: `${handle.publicOrigin(confirmed.session.shimPort)}/mcp`,
+            token: confirmed.session.shimToken,
+            shimPort: confirmed.session.shimPort,
+            shimVersion: confirmed.session.shimVersion,
+            bundleHash: confirmed.session.bundleHash,
+            pluginId: prepared.origin.pluginId,
+            pluginVersionId: prepared.origin.pluginVersionId,
+          },
+        };
+      }
+
+      // Answered, and no row names this shim: the write genuinely did not
+      // commit. Reaping is now the correct half of the invariant — otherwise
+      // every retry leaves another listening process nothing can supersede.
       await stopShim();
       return {
         ok: false,

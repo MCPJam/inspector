@@ -164,19 +164,38 @@ function makeFakeBox(options?: {
  *  admitted rather than only what was returned. */
 function stubBackend(options?: {
   lookup?: unknown;
+  /**
+   * Per-call lookup answers, in order (the last one repeats). Entries may be
+   * thunks, so a test can answer with values — like the token the pipeline just
+   * minted — that only exist once the call is in flight. `"unreachable"` makes
+   * the route fail at the transport, which is the case that must NOT be read as
+   * "there is no session".
+   */
+  lookups?: Array<unknown | (() => unknown) | "unreachable">;
   /** `null` makes `record` answer without a sessionId. */
   sessionId?: string | null;
 }) {
   const calls: Array<{ path: string; body: any }> = [];
+  let lookupCount = 0;
   const fetchMock = vi.fn(async (input: any, init: any) => {
     const path = new URL(String(input)).pathname;
     const body = JSON.parse(String(init.body));
     calls.push({ path, body });
     if (path === "/plugin-runtime/session/lookup") {
-      return new Response(
-        JSON.stringify(options?.lookup ?? { session: null }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
+      const sequence = options?.lookups;
+      let answer: unknown = options?.lookup ?? { session: null };
+      if (sequence && sequence.length > 0) {
+        const entry = sequence[Math.min(lookupCount, sequence.length - 1)];
+        answer = typeof entry === "function" ? (entry as () => unknown)() : entry;
+      }
+      lookupCount += 1;
+      if (answer === "unreachable") {
+        throw new TypeError("fetch failed");
+      }
+      return new Response(JSON.stringify(answer), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     if (path === "/plugin-runtime/session/record") {
       const sessionId =
@@ -416,7 +435,100 @@ describe("ensurePluginStdioRuntime", () => {
     expect(box.stops).toBe(1);
   });
 
-  it("leaves no shim running after a successful start it did admit", async () => {
+  // `record` answers `null` for a LOST RESPONSE as well as for a genuine
+  // failure, so the shim it started may or may not have a committed row. A row
+  // and a live shim are only ever created or destroyed together: reaping a
+  // committed row's shim poisons that row (the backend's liveness check reads
+  // the bundle, the shim version and the box — never the process), and
+  // admitting an unrecorded shim would make the gate advisory.
+  describe("when the record response is lost", () => {
+    it("admits the session when the write actually committed", async () => {
+      const box = makeFakeBox({ port: 40500 });
+      stubBackend({
+        sessionId: null,
+        lookups: [
+          // Cold start: nothing yet.
+          { session: null },
+          // The confirm: the row IS there, naming the shim we just started.
+          () => ({
+            session: {
+              sessionId: "session-committed",
+              boxKind: "computer",
+              computerId: COMPUTER_ID,
+              sandboxRowId: null,
+              shimPort: 40500,
+              shimToken: box.starts[0].env.MCPJAM_SHIM_TOKEN,
+              shimVersion: PLUGIN_SHIM_VERSION,
+              bundleHash,
+            },
+          }),
+        ],
+      });
+
+      const result = await ensure(box);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.runtime.sessionId).toBe("session-committed");
+      expect(result.runtime.url).toBe(`https://40500-${SANDBOX_ID}.e2b.app/mcp`);
+      // The shim the row names must survive: killing it would leave a row
+      // pointing at a dead port until the idle sweep.
+      expect(box.stops).toBe(0);
+    });
+
+    it("reaps its own shim and uses the row a concurrent starter recorded", async () => {
+      const box = makeFakeBox({ port: 40500 });
+      stubBackend({
+        sessionId: null,
+        lookups: [
+          { session: null },
+          // A different port and token: someone else recorded after us and
+          // REPLACED our row, so nothing names our shim any more.
+          {
+            session: {
+              sessionId: "session-theirs",
+              boxKind: "computer",
+              computerId: COMPUTER_ID,
+              sandboxRowId: null,
+              shimPort: 40600,
+              shimToken: "z".repeat(43),
+              shimVersion: PLUGIN_SHIM_VERSION,
+              bundleHash,
+            },
+          },
+        ],
+      });
+
+      const result = await ensure(box);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.runtime.sessionId).toBe("session-theirs");
+      expect(result.runtime.shimPort).toBe(40600);
+      expect(box.stops).toBe(1);
+    });
+
+    it("leaves the shim alone when the control plane cannot be asked", async () => {
+      const box = makeFakeBox();
+      stubBackend({
+        sessionId: null,
+        lookups: [{ session: null }, "unreachable"],
+      });
+
+      const result = await ensure(box);
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: "session_not_recorded",
+      });
+      // Unanswered is not "no row". A leaked process costs one process and the
+      // next connect supersedes it; reaping a committed row's shim breaks this
+      // server until the sweep, so the recoverable failure wins.
+      expect(box.stops).toBe(0);
+    });
+  });
+
+  it("does not reap an admitted shim — it is the one serving the session", async () => {
     stubBackend();
     const box = makeFakeBox();
 

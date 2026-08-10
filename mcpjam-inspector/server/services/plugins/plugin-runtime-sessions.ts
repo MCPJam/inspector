@@ -41,6 +41,17 @@ export interface PluginRuntimeSessionRecord {
 }
 
 export interface PluginRuntimeSessionLookup {
+  /**
+   * Did the control plane actually ANSWER? `false` means the question is
+   * unanswered (no config, transport failure, non-2xx, unparseable body), which
+   * is different from an answered "there is no session".
+   *
+   * For ADMISSION the two are the same and deliberately so — neither one
+   * admits. They differ only where the answer decides whether a shim may be
+   * REAPED: destroying a process because we could not reach the control plane
+   * would be acting on an assumption, and the row it belongs to might exist.
+   */
+  reachable: boolean;
   session: PluginRuntimeSessionRecord | null;
   stale?: PluginRuntimeSessionStale;
 }
@@ -175,9 +186,10 @@ export async function lookupPluginRuntimeSession(args: {
     },
     args.signal
   );
-  if (!isRecord(raw)) return { session: null };
+  if (!isRecord(raw)) return { reachable: false, session: null };
   const stale = raw.stale;
   return {
+    reachable: true,
     session: parseSession(raw.session),
     ...(stale === "bundle_changed" ||
     stale === "shim_outdated" ||

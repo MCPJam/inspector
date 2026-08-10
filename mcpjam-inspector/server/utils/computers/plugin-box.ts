@@ -216,6 +216,10 @@ export const e2bPluginBoxConnector: PluginBoxConnector = async (box) => {
               ),
             readyTimeoutMs
           );
+          // A ready line delivered synchronously from `onStdout` settles this
+          // promise BEFORE the timer above exists, so `finish` had nothing to
+          // clear — leaving a successful start holding a 30s deadline timer.
+          if (settled) clearTimeout(timer);
         }
       ),
 
