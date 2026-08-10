@@ -191,6 +191,13 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        // /tlm is the same relay on its edge-safe alias prefix (see
+        // RELAY_MOUNT_PREFIXES in server/routes/relay.ts).
+        "/tlm": {
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
+          changeOrigin: true,
+          secure: false,
+        },
         ...(() => {
           const siteUrlFromEnv = env.VITE_CONVEX_SITE_URL;
           const cloudUrl = env.VITE_CONVEX_URL || "";

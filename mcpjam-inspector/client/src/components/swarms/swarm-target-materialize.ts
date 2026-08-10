@@ -10,8 +10,8 @@ import {
 } from "@/components/swarms/journey-environments";
 import {
   stackFieldsEqual,
-  type SwarmLegoStack,
-} from "@/components/swarms/swarm-target-types";
+  type EnvironmentStack,
+} from "@/components/environment-composer/environment-stack";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
@@ -30,7 +30,7 @@ export type MaterializeSwarmTargetsArgs = {
   projectId: string;
   /** Draft / stack name prefix → `{stackName} · {clientName}`. */
   stackName: string;
-  legos: SwarmLegoStack;
+  legos: EnvironmentStack;
   /** Host id → display name for auto-naming. Missing → truncated id. */
   hostName: (hostId: string) => string;
   liveEnvironments: ProjectEnvironmentView[];
@@ -58,7 +58,7 @@ export class SwarmTargetMaterializeError extends Error {
 export function findMatchingLiveEnvironment(
   hostId: string,
   stack: Pick<
-    SwarmLegoStack,
+    EnvironmentStack,
     "serverAttachmentId" | "skillSelection" | "computerEnvironmentId"
   >,
   liveEnvironments: ProjectEnvironmentView[]
@@ -290,7 +290,7 @@ export async function materializeSwarmTargets(
 export async function resolveSwarmJourneyPayload(args: {
   compose: boolean;
   castleIds: string[];
-  legos: SwarmLegoStack;
+  legos: EnvironmentStack;
   liveEnvironments: ProjectEnvironmentView[];
   materialize: MaterializeSwarmTargetsArgs;
 }): Promise<{

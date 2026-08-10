@@ -25,8 +25,9 @@ import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
 
 // Caps on what the model sees; the Convex log stores its own (smaller)
-// preview and full-output archival is a backend follow-up.
-const MODEL_OUTPUT_CAP = 16_000;
+// preview and full-output archival is a backend follow-up. Exported so the
+// local-machine engine applies identical clamps (one truth, not a mirror).
+export const MODEL_OUTPUT_CAP = 16_000;
 export const DEFAULT_COMMAND_TIMEOUT_S = 120;
 export const MAX_COMMAND_TIMEOUT_S = 600;
 
@@ -39,9 +40,19 @@ export interface ComputerExecOutput {
   exitCode: number;
   /** Device-flow/login URLs detected in the output, for clickable rendering. */
   authUrls?: string[];
+  /**
+   * Where this command executed — "local" (the user's machine) or "cloud"
+   * (e2b/delegated both read as cloud). Stamped by the bash tool on
+   * NON-HOSTED turns only, so hosted model-visible output and persisted
+   * transcripts stay byte-identical to before the engine existed. Frozen
+   * truth for the transcript's run-location badge.
+   */
+  engine?: "local" | "cloud";
 }
 
-export type RunComputerCommandResult = ComputerExecOutput | { error: string };
+export type RunComputerCommandResult =
+  | ComputerExecOutput
+  | { error: string; engine?: "local" | "cloud" };
 
 export type BashRunner = (args: {
   sandboxId: string;
@@ -94,7 +105,7 @@ export const e2bRunner: BashRunner = async ({
   }
 };
 
-function truncate(text: string, cap: number): string {
+export function truncate(text: string, cap: number): string {
   if (text.length <= cap) return text;
   return `${text.slice(0, cap)}\n…[truncated ${text.length - cap} chars]`;
 }

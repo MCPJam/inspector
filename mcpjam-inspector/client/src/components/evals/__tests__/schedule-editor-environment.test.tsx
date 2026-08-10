@@ -12,11 +12,27 @@ const { mockSetSuiteSchedule, mockUseProjectEnvironments } = vi.hoisted(() => ({
 
 vi.mock("convex/react", () => ({
   useMutation: () => mockSetSuiteSchedule,
+  useConvexAuth: () => ({ isAuthenticated: true }),
 }));
 
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: (projectId: string | null) =>
     projectId ? mockUseProjectEnvironments() : undefined,
+}));
+
+// Pin labels route through `environmentLabel`, which needs the project's host
+// and image names to label a NAMELESS (ad-hoc) row by its client.
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({
+    hosts: [{ hostId: "host-1", name: "Claude" }],
+    isLoading: false,
+  }),
+}));
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useComputersEnabled: () => false,
+}));
+vi.mock("@/hooks/useSandboxImages", () => ({
+  useSandboxImages: () => undefined,
 }));
 
 // The environment pin is flag-gated; these cases exercise the enabled path.

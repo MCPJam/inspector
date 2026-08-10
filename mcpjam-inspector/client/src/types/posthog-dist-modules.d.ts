@@ -7,3 +7,4 @@ declare module "posthog-js/dist/posthog-recorder";
 declare module "posthog-js/dist/surveys";
 declare module "posthog-js/dist/exception-autocapture";
 declare module "posthog-js/dist/dead-clicks-autocapture";
+declare module "posthog-js/dist/web-vitals";

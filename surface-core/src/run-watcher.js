@@ -1,5 +1,3 @@
-import { formatRunOutcome } from "./copy.js";
-
 export const TERMINAL_STATUSES = new Set([
 	"completed",
 	"failed",
@@ -33,12 +31,22 @@ export function isFailedOutcome(run) {
 /**
  * Polling is surface-neutral because the adapter owns the edit operation and
  * returns the exact status handle that can be edited.
- * @param {{apiClient:any,delivery:any,ref?:any,statusHandle:any,ctx:any,runId:string,url:string,actorId:string,pollIntervalMs?:number,maxMs?:number,logger?:any,formatOutcome?:(run:any,url:string,actorId:string)=>any,onTerminal?:(run:any)=>Promise<void>}} args
+ *
+ * `formatOutcome` is REQUIRED, not defaulted. It used to fall back to
+ * `copy.js`'s `formatRunOutcome`, which returns a `StructuredContent` object
+ * — a caller whose `delivery.edit` expects a string (not every adapter
+ * stringifies defensively the way discord-app's `plainText()` does) would
+ * silently print `[object Object]` on every terminal run instead of getting
+ * a type error at the call site. Every surface has an opinion on this copy
+ * anyway (Slack's own mrkdwn-emoji version has never used the default), so
+ * there is no "reasonable default" to fall back to — only a per-surface one.
+ *
+ * @param {{apiClient:any,delivery:any,ref?:any,statusHandle:any,ctx:any,runId:string,url:string,actorId:string,pollIntervalMs?:number,maxMs?:number,logger?:any,formatOutcome:(run:any,url:string,actorId:string)=>any,onTerminal?:(run:any)=>Promise<void>}} args
  */
 export async function watchRunUntilDone(args) {
 	const interval = args.pollIntervalMs ?? 10_000;
 	const deadline = Date.now() + (args.maxMs ?? 15 * 60_000);
-	const formatOutcome = args.formatOutcome ?? formatRunOutcome;
+	const formatOutcome = args.formatOutcome;
 	while (Date.now() < deadline) {
 		await new Promise((resolve) => {
 			const timer = setTimeout(resolve, interval);
