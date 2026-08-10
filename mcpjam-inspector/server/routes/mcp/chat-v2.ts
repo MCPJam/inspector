@@ -1415,6 +1415,9 @@ chatV2.post("/", async (c) => {
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
+                ...(!isChatboxSession && body.rewind
+                  ? { rewind: body.rewind }
+                  : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
                 ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
@@ -1519,6 +1522,9 @@ chatV2.post("/", async (c) => {
                 runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
+              ...(!isChatboxSession && body.rewind
+                ? { rewind: body.rewind }
+                : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
@@ -1723,6 +1729,9 @@ chatV2.post("/", async (c) => {
               modelSource: "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
+              ...(!isChatboxSession && body.rewind
+                ? { rewind: body.rewind }
+                : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
