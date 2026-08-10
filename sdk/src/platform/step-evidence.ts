@@ -60,7 +60,9 @@ export function collectStepScreenshots(
   if (options.limit !== undefined && options.limit <= 0) return [];
   const seen = new Set<string>();
   const found: StepScreenshot[] = [];
-  const ordered = [...steps].sort((left, right) => left.stepIndex - right.stepIndex);
+  const ordered = [...steps].sort(
+    (left, right) => left.stepIndex - right.stepIndex
+  );
   for (const step of ordered) {
     if (options.failedOnly && step.status !== "fail") continue;
     const url = step.evidence?.screenshotUrl;

@@ -1,6 +1,6 @@
 /**
- * In-memory `PluginFileSource` fixtures for the plugin-bundle parser tests.
- * Fixture bundles are plain path→content records; attack fixtures can
+ * In-memory `PluginFileSource` fixtures for the Agent Plugins 1.0 parser
+ * tests. Fixture bundles are plain path→content records; attack fixtures can
  * override the listed entries (link kinds, lying sizes) independently of the
  * stored content, mirroring what a hostile archive can declare.
  */
@@ -16,6 +16,11 @@ import {
 } from "../../src/plugin-bundle/index.js";
 
 const encoder = new TextEncoder();
+
+export const PLUGIN_SCHEMA_URL =
+  "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+export const MCP_SCHEMA_URL =
+  "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 
 export function encode(text: string): Uint8Array {
   return encoder.encode(text);
@@ -68,11 +73,17 @@ export class InMemoryPluginFileSource implements PluginFileSource {
 
 export function manifestJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
+    $schema: PLUGIN_SCHEMA_URL,
     name: "demo-plugin",
     version: "1.2.3",
     description: "A demo plugin for parser tests.",
     ...overrides,
   });
+}
+
+/** A valid root `mcp.json` document around the given server map. */
+export function mcpJson(servers: Record<string, unknown>): string {
+  return JSON.stringify({ $schema: MCP_SCHEMA_URL, mcpServers: servers });
 }
 
 export function bundle(
@@ -82,13 +93,13 @@ export function bundle(
   return new InMemoryPluginFileSource(files, options);
 }
 
-/** Minimal valid bundle: manifest only, plus any extra files. */
+/** Minimal valid bundle: root manifest only, plus any extra files. */
 export function minimalBundle(
   extra: Record<string, string | Uint8Array> = {},
   manifestOverrides: Record<string, unknown> = {}
 ): InMemoryPluginFileSource {
   return bundle({
-    ".codex-plugin/plugin.json": manifestJson(manifestOverrides),
+    "plugin.json": manifestJson(manifestOverrides),
     ...extra,
   });
 }
@@ -107,20 +118,20 @@ export function skillMd(name: string, description = "A test skill."): string {
   return `---\nname: ${name}\ndescription: ${description}\n---\n\nInstructions for ${name}.\n`;
 }
 
-export const MCP_JSON_DIRECT = JSON.stringify({
+export const MCP_JSON_HTTP = mcpJson({
   "demo-server": {
+    type: "streamable-http",
     url: "https://mcp.example.com/mcp",
     headers: { Authorization: "${DEMO_TOKEN}" },
   },
 });
 
-export const MCP_JSON_STDIO = JSON.stringify({
-  mcp_servers: {
-    "local-server": {
-      command: "node",
-      args: ["${PLUGIN_ROOT}/server/index.js"],
-      env: { DEMO_API_KEY: "${DEMO_API_KEY}" },
-    },
+export const MCP_JSON_STDIO = mcpJson({
+  "local-server": {
+    type: "stdio",
+    command: "node",
+    args: ["${PLUGIN_ROOT}/server/index.js"],
+    env: { DEMO_API_KEY: "${DEMO_API_KEY}" },
   },
 });
 
