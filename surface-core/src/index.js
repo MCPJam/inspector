@@ -6,7 +6,6 @@ export * from "./copy.js";
 export * from "./event-claims.js";
 export * from "./run-evidence.js";
 export * from "./run-watcher.js";
-export * from "./thread-binding-cache.js";
 export * from "./thread-context-store.js";
 export * from "./turn-runner.js";
 export * from "./turn-target.js";

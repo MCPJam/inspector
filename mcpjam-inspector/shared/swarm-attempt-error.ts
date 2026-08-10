@@ -87,15 +87,44 @@ function compose(headline: string, details?: string): string {
 }
 
 /**
+ * Cloud-sandbox failure codes (`journeyRunAttempts.errorCode`, written by the
+ * runner's sandbox path) → user-facing sentences. Framed around "MCPJam
+ * cloud" because the stored messages talk about data planes and control
+ * planes — accurate for operators, opaque for the person whose swarm just
+ * didn't run. Keyed by the exact literals the runner reports
+ * (`swarm-runner.ts` / `swarm-sandbox.ts`).
+ */
+const SANDBOX_ERROR_CODE_MESSAGES: Record<string, string> = {
+  sandbox_unavailable:
+    "This session needed an MCPJam cloud sandbox for its computer commands, but this inspector can't run cloud sandboxes — the session could not execute commands.",
+  sandbox_at_capacity:
+    "MCPJam cloud is at capacity right now — try the run again in a few minutes.",
+  sandbox_error:
+    "The cloud sandbox for this session hit an error while starting — try the run again.",
+};
+
+/**
  * Extract a clean message + structured hints from whatever the runner caught.
  *
  * Never throws and never returns an empty message — an unparseable input is
  * scrubbed and passed through, because a slightly ugly real error beats a
  * confident "Unknown error".
+ *
+ * `errorCode` is the attempt row's structured code, when the caller has one.
+ * A recognized sandbox code wins over the stored message: those messages are
+ * operator-framed ("not configured to provision disposable sandboxes"), and
+ * the code says precisely what a user can act on.
  */
 export function humanizeSwarmAttemptError(
-  raw: string | undefined | null
+  raw: string | undefined | null,
+  errorCode?: string | null
 ): SwarmAttemptErrorInfo {
+  const sandboxMessage = errorCode
+    ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]
+    : undefined;
+  if (sandboxMessage && errorCode) {
+    return { message: sandboxMessage, code: errorCode };
+  }
   const input = (raw ?? "").trim();
   if (!input) return { message: "The session failed for an unknown reason." };
 

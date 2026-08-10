@@ -52,6 +52,11 @@ import {
   WEB_SEARCH_TOOL_NAME,
 } from "./exa-web-search.js";
 import { buildBashTool, BASH_TOOL_NAME } from "./bash.js";
+import {
+  coercePersonalEngineForActor,
+  resolvePersonalComputerEngine,
+  type ComputerEngine,
+} from "../computers/engine.js";
 import { buildSandboxBashTool } from "./sandbox-bash.js";
 import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
 
@@ -121,6 +126,19 @@ export interface BuiltInToolContext {
    * {@link sandboxBinding} — see the `bash` gate below.
    */
   isJourneySession?: boolean;
+  /**
+   * Resolved personal-computer engine for this turn (`computers/engine.ts`),
+   * set by routes that parse the Local⇄Cloud preference. ABSENT ⇒ the legacy
+   * cloud-family fork. Whatever arrives here is re-coerced fail-closed for
+   * the actor before any tool is built — `local` is only ever honored for a
+   * signed-in member's own direct turn.
+   */
+  computerEngine?: ComputerEngine;
+  /**
+   * The request EXPLICITLY (and validly) asked for the local engine. Only
+   * used to pick the honest unavailable-error message inside the bash tool.
+   */
+  localComputerRequested?: boolean;
   /**
    * An ephemeral sandbox this turn already owns. Present ⇒ `bash` binds to that
    * disposable box instead of resolving the acting member's personal computer.
@@ -302,6 +320,32 @@ export function resolveHostTools(
         );
         continue;
       }
+      // Engine coercion — the SECOND, independent layer under the route-level
+      // parse gates: whatever engine the route resolved, `local` survives
+      // only for a signed-in member's own direct turn. Everything else
+      // (guest, chatbox session, journey, swarm scope) re-resolves to the
+      // cloud family right here at the chokepoint.
+      const requestedEngine =
+        ctx.computerEngine ??
+        resolvePersonalComputerEngine({ localConsentValid: false });
+      const engine = coercePersonalEngineForActor(requestedEngine, {
+        isGuest: Boolean(ctx.isGuest),
+        isChatboxSession: Boolean(ctx.isChatboxSession),
+        isJourneySession: Boolean(ctx.isJourneySession),
+        executionScopeKind: ctx.executionScope?.kind,
+      });
+      if (engine !== requestedEngine) {
+        logger.warn(
+          "[built-in-tools] local computer engine downgraded for an ineligible actor",
+          {
+            projectId: ctx.projectId,
+            requestedEngine,
+            engine,
+            isGuest: Boolean(ctx.isGuest),
+            isChatboxSession: Boolean(ctx.isChatboxSession),
+          }
+        );
+      }
       out[BASH_TOOL_NAME] = buildBashTool({
         authHeader,
         projectId: ctx.projectId,
@@ -309,8 +353,12 @@ export function resolveHostTools(
         // call re-resolves live access (per-swarm isolation/caps). Absent ⇒
         // legacy projectId reserve.
         ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
+        // E2B `/home/user` semantics — the local engine ignores it and uses
+        // its own workspace dir (see local-machine.ts).
         workdir: computer.workdir,
         requireToolApproval: ctx.requireToolApproval,
+        engine,
+        localEngineRequested: ctx.localComputerRequested === true,
       });
       continue;
     }

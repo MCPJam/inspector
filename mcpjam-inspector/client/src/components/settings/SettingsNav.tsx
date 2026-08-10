@@ -1,5 +1,5 @@
-import { cn } from "@/lib/utils";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
+import { SectionTab } from "./SectionTab";
 
 export type SettingsNavSection =
   | "general"
@@ -22,39 +22,11 @@ interface TabDescriptor {
   path: string;
 }
 
-function SettingsNavTab({
-  tab,
-  active,
-  onSelect,
-}: {
-  tab: TabDescriptor;
-  active: SettingsNavSection;
-  onSelect: (path: string) => void;
-}) {
-  const isActive = active === tab.id;
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        if (!isActive) onSelect(tab.path);
-      }}
-      aria-current={isActive ? "page" : undefined}
-      className={cn(
-        "-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-        isActive
-          ? "border-primary text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground"
-      )}
-    >
-      {tab.label}
-    </button>
-  );
-}
-
 /**
  * Top-level Settings sections, shared across `/settings`,
  * `/settings/api-keys`, and the organization page so they read as one
- * Settings surface. Styling mirrors the org page's section tabs.
+ * Settings surface. Render it through `SettingsPageShell` rather than
+ * directly, so the strip lands in the same place on every section.
  */
 export function SettingsNav({
   active,
@@ -89,27 +61,26 @@ export function SettingsNav({
       }
     : null;
 
+  // The tabs never shrink, so on a phone they overflow the column rather than
+  // wrapping — four of them need ~380px against the ~343px a 375px viewport
+  // leaves. Scrolling the strip keeps every section reachable. The border stays
+  // on the nav so it scrolls with the tabs, and `w-max min-w-full` lets the nav
+  // grow past the scroller while still spanning it when the tabs fit.
   return (
-    <nav
-      aria-label="Settings sections"
-      className="flex items-end gap-1 border-b border-border/60"
-    >
-      {tabs.map((tab) => (
-        <SettingsNavTab
-          key={tab.id}
-          tab={tab}
-          active={active}
-          onSelect={appNavigate}
-        />
-      ))}
-
-      {organizationTab ? (
-        <SettingsNavTab
-          tab={organizationTab}
-          active={active}
-          onSelect={appNavigate}
-        />
-      ) : null}
-    </nav>
+    <div className="overflow-x-auto scrollbar-hidden">
+      <nav
+        aria-label="Settings sections"
+        className="flex w-max min-w-full items-end gap-1 border-b border-border/60"
+      >
+        {(organizationTab ? [...tabs, organizationTab] : tabs).map((tab) => (
+          <SectionTab
+            key={tab.id}
+            label={tab.label}
+            isActive={active === tab.id}
+            onSelect={() => appNavigate(tab.path)}
+          />
+        ))}
+      </nav>
+    </div>
   );
 }

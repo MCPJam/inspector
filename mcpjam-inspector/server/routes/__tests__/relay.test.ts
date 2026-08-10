@@ -7,14 +7,16 @@ import { sessionAuthMiddleware } from "../../middleware/session-auth.js";
 
 const ORIGINAL_FETCH = global.fetch;
 
-// Mount via app.route("/relay", ...) exactly like both production entries so
-// the tests exercise the mounted-path behavior: inside the sub-app
-// c.req.path still includes the /relay prefix, and the route must strip it
-// before forwarding.
+// Mount on BOTH prefixes exactly like both production entries so the tests
+// exercise the mounted-path behavior: inside the sub-app c.req.path still
+// includes the mount prefix (/relay or its edge-safe alias /tlm), and the
+// route must strip whichever one it was reached through before forwarding.
 function createTestApp() {
   const app = new Hono();
   app.use("/relay/*", relayBodyLimit());
   app.route("/relay", relayRoutes);
+  app.use("/tlm/*", relayBodyLimit());
+  app.route("/tlm", relayRoutes);
   return app;
 }
 
@@ -69,7 +71,33 @@ describe("posthog relay proxy", () => {
     expect(new Headers(init.headers).get("content-type")).toBe("text/plain");
   });
 
-  it("routes /static and /array to the assets host and /flags to the ingest host", async () => {
+  it("serves the /tlm alias identically: prefix stripped, static/array/ingest routing intact", async () => {
+    const app = createTestApp();
+    vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+
+    await app.request("http://localhost:6274/tlm/static/recorder.js");
+    await app.request("http://localhost:6274/tlm/array/phc_x/config");
+    await app.request("http://localhost:6274/tlm/i/v0/e/?compression=gzip-js", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: "batch",
+    });
+
+    // PostHog must receive the bare subpaths — never /tlm/... — and the
+    // remote-config path must hit the INGEST host (the assets host 403s our
+    // production egress; see the routing comment in relay.ts).
+    expect(mockedFetchUrl(0)).toBe(
+      "https://us-assets.i.posthog.com/static/recorder.js",
+    );
+    expect(mockedFetchUrl(1)).toBe(
+      "https://us.i.posthog.com/array/phc_x/config",
+    );
+    expect(mockedFetchUrl(2)).toBe(
+      "https://us.i.posthog.com/i/v0/e/?compression=gzip-js",
+    );
+  });
+
+  it("routes /static to the assets host and /array + /flags to the ingest host", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValue(upstreamResponse());
 
@@ -83,8 +111,11 @@ describe("posthog relay proxy", () => {
     expect(mockedFetchUrl(0)).toBe(
       "https://us-assets.i.posthog.com/static/recorder.js",
     );
+    // Remote config deliberately targets the ingest host, matching what
+    // posthog-js does unproxied — the assets host rejects our production
+    // egress (relay.ts routing comment).
     expect(mockedFetchUrl(1)).toBe(
-      "https://us-assets.i.posthog.com/array/phc_x/config.js",
+      "https://us.i.posthog.com/array/phc_x/config.js",
     );
     expect(mockedFetchUrl(2)).toBe("https://us.i.posthog.com/flags/?v=2");
   });

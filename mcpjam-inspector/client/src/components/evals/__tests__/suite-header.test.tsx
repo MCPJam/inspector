@@ -20,6 +20,16 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
+// Consumed by the RunDetailPlaygroundActions child (replay snapshot gate);
+// pinned `true` so header tests never see a cloud-gated state they didn't ask
+// for. The derivation itself lives in suite-iterations-view, not here.
+const cloudState = vi.hoisted(() => ({
+  ephemeralAvailable: true as boolean | undefined,
+}));
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
+}));
+
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => null,
 }));
@@ -77,6 +87,7 @@ describe("SuiteHeader", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    cloudState.ephemeralAvailable = true;
     mockIsHostedMode.mockReturnValue(false);
   });
 
@@ -347,6 +358,37 @@ describe("SuiteHeader", () => {
     expect(runAll).toBeEnabled();
     await user.click(runAll);
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
+  });
+
+  it("blocks Run all when the parent-derived evalRunsDisabledReason is set", () => {
+    // The cloud-sandbox preflight is derived in suite-iterations-view (the
+    // owner of every run control) and arrives here as a plain prop — this
+    // pins that the header honors it.
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        evalRunsDisabledReason="This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes."
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Run all cases in this suite/i })
+    ).toBeDisabled();
   });
 
   it("keeps Run all disabled while the latest suite run is still running", async () => {
