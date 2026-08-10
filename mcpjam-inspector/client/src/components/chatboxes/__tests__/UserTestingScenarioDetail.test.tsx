@@ -13,13 +13,23 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 
-const { navigateMock, locationState, usagePanelMock, deleteChatboxMock } =
-  vi.hoisted(() => ({
-    navigateMock: vi.fn(),
-    locationState: { search: "" },
-    usagePanelMock: vi.fn(),
-    deleteChatboxMock: vi.fn().mockResolvedValue(undefined),
-  }));
+const {
+  navigateMock,
+  locationState,
+  usagePanelMock,
+  deleteChatboxMock,
+  updateChatboxMock,
+  environmentState,
+} = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  locationState: { search: "" },
+  usagePanelMock: vi.fn(),
+  deleteChatboxMock: vi.fn().mockResolvedValue(undefined),
+  updateChatboxMock: vi.fn().mockResolvedValue(undefined),
+  // What `useProjectEnvironment` answers with: `undefined` = loading,
+  // `null` = not visible, a row = loaded. Mutable per test.
+  environmentState: { row: undefined as unknown },
+}));
 
 vi.mock("react-router", () => ({
   useNavigate: () => navigateMock,
@@ -47,7 +57,21 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({
-  useChatboxMutations: () => ({ deleteChatbox: deleteChatboxMock }),
+  useChatboxMutations: () => ({
+    deleteChatbox: deleteChatboxMock,
+    updateChatbox: updateChatboxMock,
+  }),
+}));
+
+// Mandatory: the real hook calls `useConvexAuth`, which has no provider here.
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironment: (projectId: string | null, envId: string | null) =>
+    projectId && envId ? environmentState.row : null,
+}));
+
+vi.mock("@/components/project-environments/NameEnvironmentDialog", () => ({
+  NameEnvironmentDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="stub-name-environment-dialog" /> : null,
 }));
 
 vi.mock("@/components/chatboxes/ChatboxShareSection", () => ({
@@ -97,7 +121,12 @@ const renderDetail = (over: Partial<ChatboxSettings> = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears calls but NOT implementations — reinstate the
+  // resolved defaults so a per-test rejection can't leak into later cases.
+  deleteChatboxMock.mockResolvedValue(undefined);
+  updateChatboxMock.mockResolvedValue(undefined);
   locationState.search = "";
+  environmentState.row = undefined;
 });
 
 describe("UserTestingScenarioDetail", () => {
@@ -185,5 +214,96 @@ describe("UserTestingScenarioDetail", () => {
 
     expect(screen.getByTestId("stub-delete-dialog")).toBeInTheDocument();
     expect(deleteChatboxMock).not.toHaveBeenCalled();
+  });
+
+  describe("naming the backing ad-hoc environment", () => {
+    const adhocRow = {
+      environmentId: "env-1",
+      projectId: "p1",
+      origin: "adhoc",
+      hostId: "host-1",
+      revision: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+
+    it("offers it for an ad-hoc row, and opens the dialog", () => {
+      environmentState.row = adhocRow;
+      // The label is synthesized from the client for ad-hoc rows — its
+      // presence must NOT read as "named".
+      renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
+
+      const button = screen.getByTestId("user-testing-name-environment");
+      fireEvent.click(button);
+
+      expect(
+        screen.getByTestId("stub-name-environment-dialog"),
+      ).toBeInTheDocument();
+    });
+
+    it("hides it while the environment row is still loading (fail closed)", () => {
+      environmentState.row = undefined;
+      renderDetail({ environmentId: "env-1", environmentName: "ChatGPT" });
+
+      expect(
+        screen.queryByTestId("user-testing-name-environment"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("hides it for a named environment", () => {
+      environmentState.row = {
+        ...adhocRow,
+        origin: "named",
+        name: "Checkout flow",
+      };
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      expect(
+        screen.queryByTestId("user-testing-name-environment"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("hides it for a host-backed scenario (no environment at all)", () => {
+      renderDetail();
+
+      expect(
+        screen.queryByTestId("user-testing-name-environment"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("editing the scenario itself", () => {
+    it("renames via updateChatbox from the header title", async () => {
+      renderDetail();
+
+      fireEvent.click(screen.getByText("Payments beta"));
+      const input = screen.getByDisplayValue("Payments beta");
+      fireEvent.change(input, { target: { value: "Payments GA" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(updateChatboxMock).toHaveBeenCalledWith({
+        chatboxId: "cb-1",
+        name: "Payments GA",
+      });
+    });
+
+    it("persists the description on blur, only when it changed", () => {
+      renderDetail({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      // Blur with no edit: no write.
+      fireEvent.blur(textarea);
+      expect(updateChatboxMock).not.toHaveBeenCalled();
+
+      fireEvent.change(textarea, { target: { value: "New copy" } });
+      fireEvent.blur(textarea);
+      expect(updateChatboxMock).toHaveBeenCalledWith({
+        chatboxId: "cb-1",
+        description: "New copy",
+      });
+    });
   });
 });
