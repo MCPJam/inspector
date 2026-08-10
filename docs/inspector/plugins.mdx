@@ -102,7 +102,7 @@ Problems are contained at the narrowest boundary the format defines:
 | One invalid server entry (unknown `type`, unknown field, placeholder in `command`, escaping path) | Only that entry is **skipped**; sibling servers import |
 | One non-conforming skill | Only that skill is skipped; sibling skills import |
 
-A **skip** in the import preview means exactly this: the component was declared but did not conform, so it is absent from the imported revision. Each skip appears in the preview's warnings as a `COMPONENT_SKIPPED` entry naming the component and the reason. A skipped server is a bundle problem to fix and re-import — not a runtime failure.
+A **skip** means the component was declared but did not conform, so it is absent from the imported revision. The import preview shows a **Skipped components** warning block — always visible before the commit buttons — listing each skipped component's type, key, and reason. A skipped server is a bundle problem to fix and re-import, not a runtime failure. This block is distinct from the Unsupported components section: unsupported components are preserved by design; skipped ones failed validation and are not installed at all.
 
 ### Credential values are never imported
 
