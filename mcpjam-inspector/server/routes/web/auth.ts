@@ -40,6 +40,7 @@ import {
   resolvePluginStdioHttpTarget,
   type PluginStdioHttpTarget,
 } from "../../services/plugins/hosted-stdio-connect.js";
+import type { ExecutionScope } from "../../utils/execution-scope.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -1140,6 +1141,14 @@ export async function createAuthorizedManager(
     mrtrInputCollectorForServer?: (
       serverId: string,
     ) => MrtrInputCollector | undefined;
+    /**
+     * The turn's execution scope, forwarded to the computer reservation that
+     * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
+     * meaningful on hosted deployments that can colocate; absent falls back to
+     * the legacy project-only reserve, which on a host-funded swarm or guest
+     * turn would resolve a DIFFERENT machine than the one the turn is using.
+     */
+    executionScope?: ExecutionScope;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -1428,6 +1437,16 @@ export async function createAuthorizedManager(
             accessScope: options?.accessScope,
             chatboxId: options?.chatboxId,
             accessVersion: options?.accessVersion,
+            // From THIS batch's own authorize response, not from the request:
+            // it is what decides whether the caller has a membership the spec
+            // reread can run under.
+            isAnonymous: batch.isAnonymous,
+            // The turn's scope, so the computer reservation resolves the SAME
+            // box the rest of the turn runs on. Without it a host-funded swarm
+            // or guest turn would fall back to a project-only reserve and could
+            // wake a second, unrelated machine purely because a plugin was
+            // pinned.
+            executionScope: options?.executionScope,
             workosApiKeyActingAs:
               caller.authMethod === "workos_api_key" &&
               caller.workosUserId &&

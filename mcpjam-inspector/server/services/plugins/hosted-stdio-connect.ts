@@ -46,6 +46,11 @@ export async function resolvePluginStdioHttpTarget(args: {
   chatboxId?: string;
   accessVersion?: number;
   workosApiKeyActingAs?: WorkosApiKeyActingAs;
+  /**
+   * `false` when the hosted authorize batch resolved a signed-in actor. See the
+   * chatbox note below for why only the anonymous case is refused here.
+   */
+  isAnonymous?: boolean;
   executionScope?: ExecutionScope;
   signal?: AbortSignal;
   /** Test seam for the vendor boundary; defaults to real E2B. */
@@ -53,19 +58,42 @@ export async function resolvePluginStdioHttpTarget(args: {
 }): Promise<PluginStdioHttpTarget | null> {
   if (!canColocatePluginStdio()) return null;
 
+  // The plugin-runtime reads ride the Convex QUERY protocol (a user JWT via
+  // setAuth), which the service-token acting-as exchange cannot authenticate —
+  // a delegated caller's bearer is deliberately empty. Refuse BEFORE the spec
+  // read: this caller can never proceed, and the read costs a backend authorize
+  // round trip plus a secret reveal.
+  if (args.workosApiKeyActingAs) return null;
+
+  // SHARE-LINK CHATBOX GUEST. The spec reread goes through
+  // `/web/authorize-batch-local`, which authorizes under the caller's OWN
+  // identity and explicitly rejects `chatboxId` ("chatbox handles are not
+  // supported in local mode"), so a chatbox grant cannot carry it. A signed-in
+  // member re-reads fine under their membership; an anonymous share-link
+  // visitor has no membership to re-read under and would collect a confusing
+  // 403 several calls deeper. Name the limitation here instead.
+  if (args.accessScope === "chat_v2" && args.isAnonymous !== false) {
+    logger.info(
+      "[plugin-computer] plugin stdio is not available to share-link chatbox visitors",
+      { serverId: args.serverId }
+    );
+    return null;
+  }
+
   try {
     const spec = await readAuthorizedStdioLaunchSpec({
       bearerToken: args.bearerToken,
       projectId: args.projectId,
       serverId: args.serverId,
       serverDisplayName: args.serverDisplayName,
+      // The SECRET REVEAL still honors the caller's scope — it is the same
+      // Convex route the hosted mint path uses and it does accept a chatbox
+      // handle. Only the authorize reread underneath cannot, which is what the
+      // guard above is about.
       ...(args.accessScope ? { accessScope: args.accessScope } : {}),
       ...(args.chatboxId ? { chatboxId: args.chatboxId } : {}),
       ...(args.accessVersion !== undefined
         ? { accessVersion: args.accessVersion }
-        : {}),
-      ...(args.workosApiKeyActingAs
-        ? { workosApiKeyActingAs: args.workosApiKeyActingAs }
         : {}),
     });
 
@@ -75,12 +103,6 @@ export async function resolvePluginStdioHttpTarget(args: {
     // and a backend pin. An arbitrary user-authored command has neither, and
     // colocating it would turn "run a plugin" into "run anything in my VM".
     if (!needsPluginRoot(spec)) return null;
-
-    // The plugin-runtime reads ride the Convex QUERY protocol (a user JWT via
-    // setAuth), which the service-token acting-as exchange cannot authenticate
-    // — a delegated caller's bearer is deliberately empty. Refuse rather than
-    // run those reads unauthenticated.
-    if (args.workosApiKeyActingAs) return null;
 
     const box = await resolveColocatedPluginBox({
       bearer: args.bearerToken,

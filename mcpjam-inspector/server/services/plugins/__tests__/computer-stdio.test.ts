@@ -103,6 +103,8 @@ interface FakeBox {
   files: Map<string, Uint8Array>;
   commands: string[];
   starts: Array<{ scriptPath: string; env: Record<string, string> }>;
+  /** How many times a started shim was asked to stop. */
+  stops: number;
 }
 
 function makeFakeBox(options?: {
@@ -111,11 +113,14 @@ function makeFakeBox(options?: {
   port?: number;
   /** Pre-existing files, e.g. a marker from an earlier push. */
   seed?: Map<string, Uint8Array>;
+  /** Exit code for `mkdir -p` (default 0). */
+  mkdirExitCode?: number;
 }): FakeBox {
   const files = options?.seed ?? new Map<string, Uint8Array>();
   const commands: string[] = [];
   const starts: Array<{ scriptPath: string; env: Record<string, string> }> = [];
-  const handle: PluginBoxHandle = {
+  const box = { files, commands, starts, stops: 0 } as FakeBox;
+  box.handle = {
     writeFiles: async (entries) => {
       for (const entry of entries) files.set(entry.path, entry.bytes);
     },
@@ -129,6 +134,13 @@ function makeFakeBox(options?: {
           exitCode: files.has(match[1].split(`'\\''`).join("'")) ? 0 : 1,
         };
       }
+      if (command.startsWith("mkdir -p ")) {
+        return {
+          stdout: "",
+          stderr: "",
+          exitCode: options?.mkdirExitCode ?? 0,
+        };
+      }
       return { stdout: "", stderr: "", exitCode: 0 };
     },
     startShim: async ({ scriptPath, env }) => {
@@ -136,11 +148,16 @@ function makeFakeBox(options?: {
       if (options?.neverReady) {
         throw new Error("the plugin shim did not report listening");
       }
-      return { port: options?.port ?? 41234 };
+      return {
+        port: options?.port ?? 41234,
+        stop: async () => {
+          box.stops += 1;
+        },
+      };
     },
     publicOrigin: (port) => `https://${port}-${SANDBOX_ID}.e2b.app`,
   };
-  return { handle, files, commands, starts };
+  return box;
 }
 
 /** The `/plugin-runtime/*` backend, recorded so the tests can assert what was
@@ -393,6 +410,156 @@ describe("ensurePluginStdioRuntime", () => {
     // The shim genuinely started — the refusal is the missing GATE, not a
     // failed launch.
     expect(box.starts).toHaveLength(1);
+    // ...and precisely BECAUSE nothing can find it, it must be reaped here.
+    // Left running it would sit in the user's durable computer forever, and
+    // every retry would add another.
+    expect(box.stops).toBe(1);
+  });
+
+  it("leaves no shim running after a successful start it did admit", async () => {
+    stubBackend();
+    const box = makeFakeBox();
+
+    const result = await ensure(box);
+
+    expect(result.ok).toBe(true);
+    expect(box.stops).toBe(0);
+  });
+
+  it("refuses before starting a shim when the data directory cannot be created", async () => {
+    const backend = stubBackend();
+    const box = makeFakeBox({ mkdirExitCode: 1 });
+
+    const result = await ensure(box);
+
+    expect(result).toMatchObject({ ok: false, reason: "shim_unavailable" });
+    // `run` reports a bad exit rather than throwing, so an unchecked call would
+    // have launched the child against a `${PLUGIN_DATA}` that does not exist.
+    expect(box.starts).toHaveLength(0);
+    expect(
+      backend.calls.some(
+        (call) => call.path === "/plugin-runtime/session/record"
+      )
+    ).toBe(false);
+  });
+
+  it("refuses when the pinned version moves between the two origin reads", async () => {
+    const backend = stubBackend();
+    const box = makeFakeBox();
+    // The preparation re-resolves the origin. A version activation landing in
+    // that window would otherwise publish the NEW bytes under the OLD
+    // content-addressed path and record a hash the running shim is not serving.
+    // The activated version's bundle is materializable (in production it would
+    // be downloadable), so preparation SUCCEEDS and the pin check is what
+    // refuses — rather than the materializer failing closed for an unrelated
+    // reason and hiding the window this test is about.
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: "version-2", bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+    let previewReads = 0;
+    const drifting = {
+      async query(name: string) {
+        if (name === "plugins:listProjectPlugins") {
+          return [
+            {
+              pluginId: PLUGIN_ID,
+              name: "fixture-plugin",
+              enabled: true,
+              activeVersionId: previewReads === 0 ? VERSION_ID : "version-2",
+            },
+          ];
+        }
+        if (name === "plugins:resolvePluginRuntimePreview") {
+          const drifted = previewReads > 0;
+          previewReads += 1;
+          const versionId = drifted ? "version-2" : VERSION_ID;
+          return {
+            pluginVersions: [
+              {
+                pluginVersionId: versionId,
+                pluginId: PLUGIN_ID,
+                name: "fixture-plugin",
+                bundleHash,
+              },
+            ],
+            effectiveServerIds: [SERVER_ID],
+            serverComponents: [
+              {
+                pluginVersionId: versionId,
+                componentKey: "server:fixture-local",
+                placement: "local",
+                authenticationPolicy: "on_use",
+                materializedServerId: SERVER_ID,
+              },
+            ],
+            pluginSkills: [],
+          };
+        }
+        throw new Error(`unexpected query: ${name}`);
+      },
+    } as unknown as ConvexHttpClient;
+
+    const result = await ensure(box, drifting);
+
+    expect(result).toMatchObject({ ok: false, reason: "pin_moved" });
+    // Refused at the last point where refusing is still free: nothing uploaded,
+    // nothing started, nothing recorded.
+    expect(box.files.size).toBe(0);
+    expect(box.starts).toHaveLength(0);
+    expect(
+      backend.calls.some(
+        (call) => call.path === "/plugin-runtime/session/record"
+      )
+    ).toBe(false);
+  });
+
+  it("omits `cwd` entirely for a component that declares no working directory", async () => {
+    stubBackend();
+    const box = makeFakeBox();
+
+    const result = await ensurePluginStdioRuntime({
+      client: stubClient(bundleHash),
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      // No `workingDirectory`: the shim rejects unknown launch keys, so an
+      // absent one must be absent rather than present-and-undefined.
+      spec: { command: "node", args: ["${PLUGIN_ROOT}/server/index.js"], env: {} },
+      box: BOX,
+      connect: async () => box.handle,
+      cache,
+    });
+
+    expect(result.ok).toBe(true);
+    const launch = JSON.parse(box.starts[0].env.MCPJAM_SHIM_LAUNCH);
+    expect("cwd" in launch).toBe(false);
+    expect(launch).toEqual({
+      command: "node",
+      args: [`${boxBundleRoot()}/server/index.js`],
+      env: { PLUGIN_ROOT: boxBundleRoot(), PLUGIN_DATA: boxDataDir() },
+    });
+  });
+
+  it("refuses an id that would not compose into a safe in-box path", async () => {
+    stubBackend();
+    const box = makeFakeBox();
+
+    const result = await ensurePluginStdioRuntime({
+      client: stubClient(bundleHash),
+      // `${BOX_MCPJAM_ROOT}/shim` holds the file the box executes, so a
+      // traversing segment is a reachable target. Backend ids never look like
+      // this; the guard is what keeps that from being load-bearing.
+      projectId: "../../shim",
+      serverId: SERVER_ID,
+      spec: SPEC,
+      box: BOX,
+      connect: async () => box.handle,
+      cache,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "unsafe_identity" });
+    expect(box.files.size).toBe(0);
+    expect(box.starts).toHaveLength(0);
   });
 
   it("refuses when the shim never reports listening", async () => {

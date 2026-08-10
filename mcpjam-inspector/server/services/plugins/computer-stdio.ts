@@ -88,6 +88,13 @@ export type PluginStdioRuntimeFailure =
   | "missing_bundle_hash"
   /** The verified bundle could not be produced on this machine. */
   | "bundle_unavailable"
+  /**
+   * The pinned version moved between the origin read and the materialization,
+   * so what we verified is not what we looked a session up for.
+   */
+  | "pin_moved"
+  /** A backend id would not compose into a safe in-box path. */
+  | "unsafe_identity"
   /** The scope has no colocatable box — hosted's refusal stands. */
   | "no_box"
   /** Files could not be placed in the box, or the shim never reported ready. */
@@ -110,15 +117,20 @@ export interface PluginBoxHandle {
     options?: { timeoutMs?: number }
   ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
   /**
-   * Start the shim detached and resolve with the port from its ready line.
-   * Rejects if the shim exits or stays silent past `readyTimeoutMs` — a
-   * started-but-not-listening process is not a runtime.
+   * Start the shim detached and resolve with the port from its ready line, plus
+   * the `stop` that reaps it. Rejects if the shim exits or stays silent past
+   * `readyTimeoutMs` — a started-but-not-listening process is not a runtime —
+   * and reaps the process itself on that path.
+   *
+   * `stop` is what the caller owes a shim it started but will not admit: this
+   * process runs with no vendor timeout inside a DURABLE computer, so nothing
+   * else will ever reap it.
    */
   startShim(args: {
     scriptPath: string;
     env: Record<string, string>;
     readyTimeoutMs: number;
-  }): Promise<{ port: number }>;
+  }): Promise<{ port: number; stop: () => Promise<void> }>;
   /** Public origin forwarding to a listening port inside the box. */
   publicOrigin(port: number): string;
 }
@@ -133,6 +145,24 @@ export type PluginBoxConnector = (
 const BOX_MCPJAM_ROOT = "/home/user/.mcpjam";
 
 /**
+ * The same floor `ensurePluginDataDir` applies to the local `${PLUGIN_DATA}`
+ * path. `remotePlacement` skips that call, so without this the guard would
+ * vanish exactly where a path is composed by hand — and `${BOX_MCPJAM_ROOT}/shim`
+ * (which holds the file `startShim` executes) is a reachable `..` target. The
+ * ids are backend-issued, so nothing steers this today; it costs one regex and
+ * removes the question.
+ */
+function assertSafeSegments(segments: Record<string, string>): void {
+  for (const [label, value] of Object.entries(segments)) {
+    if (!/^[A-Za-z0-9._-]+$/.test(value) || value === "." || value === "..") {
+      throw new Error(
+        `plugin box path refuses an unsafe ${label} segment: "${value}"`
+      );
+    }
+  }
+}
+
+/**
  * Content-addressed, exactly like the local cache: a re-push of the same hash
  * is a no-op and a changed bundle is a different directory, so a running child
  * never has its files edited underneath it.
@@ -142,11 +172,20 @@ function boxBundleRoot(args: {
   pluginVersionId: string;
   bundleHash: string;
 }): string {
+  assertSafeSegments({
+    "project id": args.projectId,
+    "plugin version id": args.pluginVersionId,
+    "bundle hash": args.bundleHash,
+  });
   return `${BOX_MCPJAM_ROOT}/plugins/${args.projectId}/${args.pluginVersionId}/${args.bundleHash}`;
 }
 
 /** Keyed by LOGICAL plugin identity so state survives a version activation. */
 function boxDataDir(args: { projectId: string; pluginId: string }): string {
+  assertSafeSegments({
+    "project id": args.projectId,
+    "plugin id": args.pluginId,
+  });
   return `${BOX_MCPJAM_ROOT}/plugin-data/${args.projectId}/${args.pluginId}`;
 }
 
@@ -288,17 +327,26 @@ export async function ensurePluginStdioRuntime(args: {
     };
   }
   const bundleHash = origin.bundleHash;
-  const placement = {
-    pluginRoot: boxBundleRoot({
-      projectId: args.projectId,
-      pluginVersionId: origin.pluginVersionId,
-      bundleHash,
-    }),
-    dataDir: boxDataDir({
-      projectId: args.projectId,
-      pluginId: origin.pluginId,
-    }),
-  };
+  let placement: { pluginRoot: string; dataDir: string };
+  try {
+    placement = {
+      pluginRoot: boxBundleRoot({
+        projectId: args.projectId,
+        pluginVersionId: origin.pluginVersionId,
+        bundleHash,
+      }),
+      dataDir: boxDataDir({
+        projectId: args.projectId,
+        pluginId: origin.pluginId,
+      }),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "unsafe_identity",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   const existing = await lookupPluginRuntimeSession({
     serverId: args.serverId,
@@ -307,7 +355,23 @@ export async function ensurePluginStdioRuntime(args: {
     ...(args.signal ? { signal: args.signal } : {}),
   });
   if (existing.session && sessionMatchesBox(existing.session, args.box)) {
-    const handle = await args.connect(args.box);
+    let handle: PluginBoxHandle;
+    try {
+      handle = await args.connect(args.box);
+    } catch (error) {
+      // Same structured answer the cold-start path gives: this function's
+      // contract is a refusal, and a vendor outage on reuse is no more of an
+      // exception than one on a fresh start.
+      logger.warn("[plugin-computer] could not attach to the box", {
+        serverId: args.serverId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        ok: false,
+        reason: "no_box",
+        message: "The computer for this turn could not be reached.",
+      };
+    }
     await touchPluginRuntimeSession({
       sessionId: existing.session.sessionId,
       ...(args.signal ? { signal: args.signal } : {}),
@@ -354,6 +418,31 @@ export async function ensurePluginStdioRuntime(args: {
     };
   }
 
+  // The preparation re-resolves the origin, so an activation between the two
+  // reads would have it materialize the NEW bytes while `placement` still names
+  // the OLD content-addressed directory — publishing new content under a path
+  // that claims the old hash, and recording a hash the running shim is not
+  // serving. Refuse instead: the pin moved under this attempt, and a fresh
+  // connect resolves the new one cleanly. Checked BEFORE anything is uploaded
+  // or recorded, which is the only point where refusing is still free.
+  if (
+    prepared.origin.pluginVersionId !== origin.pluginVersionId ||
+    prepared.origin.bundleHash !== bundleHash
+  ) {
+    prepared.release();
+    logger.info("[plugin-computer] pin moved mid-launch; refusing", {
+      serverId: args.serverId,
+      expectedVersionId: origin.pluginVersionId,
+      resolvedVersionId: prepared.origin.pluginVersionId,
+    });
+    return {
+      ok: false,
+      reason: "pin_moved",
+      message:
+        "This plugin was updated while its server was starting. Reconnect to run the new version.",
+    };
+  }
+
   try {
     let handle: PluginBoxHandle;
     try {
@@ -372,6 +461,7 @@ export async function ensurePluginStdioRuntime(args: {
 
     const token = mintShimToken();
     let port: number;
+    let stopShim: () => Promise<void>;
     try {
       await pushBundleIntoBox({
         handle,
@@ -380,10 +470,19 @@ export async function ensurePluginStdioRuntime(args: {
         bundleHash,
       });
       await pushShimIntoBox(handle);
-      // The spec REQUIRES this directory to exist before launch; the child owns
-      // its contents and MCPJam never reads them back.
-      await handle.run(`mkdir -p ${shellQuote(placement.dataDir)}`);
-      ({ port } = await handle.startShim({
+      // The spec REQUIRES this directory to exist before launch. `run` reports a
+      // non-zero exit rather than throwing, so an unchecked call would hand the
+      // child a `${PLUGIN_DATA}` that does not exist and let it fail later with
+      // a message naming neither the directory nor the cause.
+      const madeDataDir = await handle.run(
+        `mkdir -p ${shellQuote(placement.dataDir)}`
+      );
+      if (madeDataDir.exitCode !== 0) {
+        throw new Error(
+          `the plugin data directory could not be created in the box (exit ${madeDataDir.exitCode})`
+        );
+      }
+      ({ port, stop: stopShim } = await handle.startShim({
         scriptPath: boxShimPath(PLUGIN_SHIM_VERSION),
         env: {
           MCPJAM_SHIM_PORT: "0",
@@ -431,7 +530,10 @@ export async function ensurePluginStdioRuntime(args: {
     if (!sessionId) {
       // A shim is listening, and we still refuse: without the record nothing
       // can supersede or reap it, and admitting an unrecorded runtime would
-      // make the gate advisory.
+      // make the gate advisory. Which is exactly why it must be reaped HERE —
+      // "nothing can find it" is a reason to stop it, not to walk away from it,
+      // and every retry would otherwise leave another one running.
+      await stopShim();
       return {
         ok: false,
         reason: "session_not_recorded",

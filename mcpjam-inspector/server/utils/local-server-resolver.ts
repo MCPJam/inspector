@@ -973,6 +973,12 @@ async function applyLocalRuntimeResolution<
  *
  * Refuses an http row for the same reason the local resolver does: a transport
  * mismatch between the two authorize reads means the row changed mid-request.
+ *
+ * Takes NO delegated-identity (WorkOS API key) option, unlike its siblings: the
+ * one caller refuses those callers outright before reaching here, because the
+ * plugin-runtime reads that follow ride the Convex query protocol and cannot be
+ * authenticated by the service-token exchange. A threaded-but-unreachable knob
+ * would only suggest otherwise.
  */
 export async function readAuthorizedStdioLaunchSpec(args: {
   bearerToken: string;
@@ -982,14 +988,12 @@ export async function readAuthorizedStdioLaunchSpec(args: {
   accessScope?: "project_member" | "chat_v2";
   chatboxId?: string;
   accessVersion?: number;
-  workosApiKeyActingAs?: WorkosApiKeyActingAs;
 }): Promise<PluginStdioLaunchSpec> {
   const result = await authorizeServerLocal(
     null,
     args.bearerToken,
     args.projectId,
-    args.serverId,
-    args.workosApiKeyActingAs
+    args.serverId
   );
   if (result.serverConfig.transportType !== "stdio") {
     throw new WebRouteError(
@@ -1015,7 +1019,6 @@ export async function readAuthorizedStdioLaunchSpec(args: {
             accessScope: args.accessScope,
             chatboxId: args.chatboxId,
             accessVersion: args.accessVersion,
-            workosApiKeyActingAs: args.workosApiKeyActingAs,
           })
         ).env ?? config.env ?? {}
       : config.env ?? {};

@@ -106,76 +106,118 @@ export const e2bPluginBoxConnector: PluginBoxConnector = async (box) => {
     },
 
     startShim: async ({ scriptPath, env, readyTimeoutMs }) =>
-      new Promise<{ port: number }>((resolve, reject) => {
-        let settled = false;
-        let carry = "";
-        let timer: ReturnType<typeof setTimeout> | undefined;
+      new Promise<{ port: number; stop: () => Promise<void> }>(
+        (resolve, reject) => {
+          let settled = false;
+          /**
+           * Settled UNSUCCESSFULLY. Distinct from `settled` because the ready
+           * line arrives on `onStdout`, which the vendor can call before the
+           * start promise resolves — so "already settled" on arrival is the
+           * normal SUCCESS case, and reaping on it would kill the shim we just
+           * admitted.
+           */
+          let failed = false;
+          let carry = "";
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          /** Set once the vendor confirms the start; the only handle that can
+           *  reap this process. */
+          let started: { kill: () => Promise<boolean> } | undefined;
 
-        const finish = (outcome: { port: number } | Error) => {
-          if (settled) return;
-          settled = true;
-          if (timer) clearTimeout(timer);
-          if (outcome instanceof Error) reject(outcome);
-          else resolve(outcome);
-        };
+          const kill = async () => {
+            try {
+              await started?.kill();
+            } catch {
+              // Already gone, or the box is unreachable — either way there is
+              // nothing further this side can do about it.
+            }
+          };
 
-        // Secrets travel in `envs`, never in the command line: argv is visible
-        // to every process in the box (and to the vendor's command log), and
-        // the token is the shim's whole access control.
-        void sandbox.commands
-          .run(`node ${JSON.stringify(scriptPath)}`, {
-            background: true,
-            envs: env,
-            timeoutMs: NO_COMMAND_TIMEOUT,
-            onStdout: (chunk: string) => {
-              if (settled) return;
-              carry += chunk;
-              let index: number;
-              while ((index = carry.indexOf("\n")) >= 0) {
-                const line = carry.slice(0, index);
-                carry = carry.slice(index + 1);
-                const ready = parseReadyLine(line);
-                if (ready) finish({ port: ready.port });
+          const finish = (outcome: { port: number } | Error) => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            if (outcome instanceof Error) {
+              failed = true;
+              // The command runs with NO timeout, so the vendor will never reap
+              // it: an unsuccessful start that left a process listening would
+              // sit in the user's DURABLE computer with no session row able to
+              // find, touch or supersede it, and every retry would add another.
+              void kill();
+              reject(outcome);
+            } else {
+              resolve({ ...outcome, stop: kill });
+            }
+          };
+
+          // Secrets travel in `envs`, never in the command line: argv is visible
+          // to every process in the box (and to the vendor's command log), and
+          // the token is the shim's whole access control.
+          void sandbox.commands
+            .run(`node ${JSON.stringify(scriptPath)}`, {
+              background: true,
+              envs: env,
+              timeoutMs: NO_COMMAND_TIMEOUT,
+              onStdout: (chunk: string) => {
+                if (settled) return;
+                carry += chunk;
+                let index: number;
+                while ((index = carry.indexOf("\n")) >= 0) {
+                  const line = carry.slice(0, index);
+                  carry = carry.slice(index + 1);
+                  const ready = parseReadyLine(line);
+                  if (ready) finish({ port: ready.port });
+                }
+              },
+              // Deliberately not captured: the shim forwards the CHILD's stderr
+              // here, which is plugin-authored output and may quote credentials.
+              // Its startup failures are visible as an early exit below.
+            })
+            .then((command) => {
+              started = command;
+              // The ready deadline can expire while the start is still in
+              // flight, and `finish` could not have killed a handle it did not
+              // have yet. Reap it here instead of leaking the process. Gated on
+              // `failed`, not `settled`: a successful start commonly settles
+              // from `onStdout` before this resolves.
+              if (failed) {
+                void kill();
+                return;
               }
-            },
-            // Deliberately not captured: the shim forwards the CHILD's stderr
-            // here, which is plugin-authored output and may quote credentials.
-            // Its startup failures are visible as an early exit below.
-          })
-          .then((command) => {
-            // A shim that exits before it reports listening never bound: exit 2
-            // is an invalid launch spec, exit 1 a port it could not take.
-            void command
-              .wait()
-              .then(() =>
-                finish(new Error("the plugin shim exited before listening"))
-              )
-              .catch((error) =>
-                finish(
-                  new Error(
-                    `the plugin shim exited before listening (${
-                      error instanceof CommandExitError
-                        ? `code ${error.exitCode}`
-                        : "unknown"
-                    })`
-                  )
+              // A shim that exits before it reports listening never bound:
+              // exit 2 is an invalid launch spec, exit 1 a port it could not
+              // take.
+              void command
+                .wait()
+                .then(() =>
+                  finish(new Error("the plugin shim exited before listening"))
                 )
-              );
-          })
-          .catch((error) =>
-            finish(error instanceof Error ? error : new Error(String(error)))
-          );
+                .catch((error) =>
+                  finish(
+                    new Error(
+                      `the plugin shim exited before listening (${
+                        error instanceof CommandExitError
+                          ? `code ${error.exitCode}`
+                          : "unknown"
+                      })`
+                    )
+                  )
+                );
+            })
+            .catch((error) =>
+              finish(error instanceof Error ? error : new Error(String(error)))
+            );
 
-        timer = setTimeout(
-          () =>
-            finish(
-              new Error(
-                `the plugin shim did not report listening within ${readyTimeoutMs}ms`
-              )
-            ),
-          readyTimeoutMs
-        );
-      }),
+          timer = setTimeout(
+            () =>
+              finish(
+                new Error(
+                  `the plugin shim did not report listening within ${readyTimeoutMs}ms`
+                )
+              ),
+            readyTimeoutMs
+          );
+        }
+      ),
 
     publicOrigin: (port) => `https://${sandbox.getHost(port)}`,
   };

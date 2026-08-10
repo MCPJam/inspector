@@ -1052,6 +1052,10 @@ chatV2.post("/", async (c) => {
                 mrtrBridge.mrtrInputCollectorForServer,
             }
           : {}),
+        // Same scope the bash tool reserves under, so a plugin's stdio
+        // component colocates into THIS turn's machine rather than waking the
+        // member's personal one alongside it.
+        ...(executionScope ? { executionScope } : {}),
       }
     );
     oauthServerUrls = urls;

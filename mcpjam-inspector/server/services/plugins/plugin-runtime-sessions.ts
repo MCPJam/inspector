@@ -72,6 +72,11 @@ async function postServiceAuthorized(
   const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
   if (!base || !serviceToken) return null;
 
+  // `addEventListener("abort")` never fires on a signal that already aborted,
+  // so a connect abandoned before this call started would otherwise run to the
+  // 10s timeout.
+  if (signal?.aborted) return null;
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort();
@@ -123,6 +128,11 @@ function parseSession(raw: unknown): PluginRuntimeSessionRecord | null {
     (boxKind !== "computer" && boxKind !== "sandbox") ||
     typeof shimPort !== "number" ||
     !Number.isInteger(shimPort) ||
+    // A port composes a reachable endpoint, so it is as load-bearing as the
+    // token below. `0` is a valid ASK (the shim resolves it to a real port) but
+    // never a valid ANSWER to store.
+    shimPort < 1 ||
+    shimPort > 65535 ||
     typeof shimToken !== "string" ||
     shimToken.length === 0 ||
     typeof shimVersion !== "string" ||
