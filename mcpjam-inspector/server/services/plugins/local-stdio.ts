@@ -35,10 +35,13 @@ import {
   PLUGIN_PLACEHOLDERS,
   type PluginFileSource,
 } from "@mcpjam/sdk/plugin-bundle";
+import { createZipPluginFileSource } from "./bundle-file-sources.js";
+import { MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES } from "../../../shared/plugin-bundle-limits.js";
 
 export { PluginBundleCache, PluginBundleCacheError };
 
 const LIST_PLUGINS_FUNCTION_REF = "plugins:listProjectPlugins" as const;
+const BUNDLE_DOWNLOAD_FUNCTION_REF = "plugins:getBundleDownloadUrl" as const;
 
 let leaseSequence = 0;
 
@@ -102,6 +105,44 @@ export async function resolvePluginOriginForServer(
   // without an attested origin there is no bundle hash to materialize against.
   const origin = attribution?.serverOrigins.get(args.serverId);
   return origin ? { ...origin } : null;
+}
+
+/**
+ * Fetch a version's bundle bytes from the backend's authorized read
+ * (`plugins:getBundleDownloadUrl`, Phase 0.4) as a parseable source.
+ *
+ * Every failure returns `null` rather than throwing: a backend without the
+ * endpoint yet, revoked access, a network error, an over-cap body, or a
+ * non-archive response all fall back to the historical "re-import on this
+ * device" remedy. Integrity is NOT judged here — the verified cache
+ * re-hashes whatever this returns against the pinned bundleHash.
+ */
+async function downloadBundleSource(
+  client: ConvexHttpClient,
+  pluginVersionId: string
+): Promise<PluginFileSource | null> {
+  let url: string;
+  try {
+    const raw: unknown = await client.query(
+      BUNDLE_DOWNLOAD_FUNCTION_REF as any,
+      { pluginVersionId } as any
+    );
+    if (!isRecord(raw) || typeof raw.url !== "string" || raw.url.length === 0) {
+      return null;
+    }
+    url = raw.url;
+  } catch {
+    return null;
+  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES) return null;
+    return await createZipPluginFileSource(new Uint8Array(buffer));
+  } catch {
+    return null;
+  }
 }
 
 export type PluginStdioPreparationFailure =
@@ -180,15 +221,49 @@ export async function preparePluginStdioLaunch(args: {
   } catch (error) {
     const code =
       error instanceof PluginBundleCacheError ? error.code : "invalid_bundle";
-    return {
-      ok: false,
-      reason:
-        code === "not_cached"
-          ? "bundle_not_materialized"
-          : "bundle_verification_failed",
-      origin,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    if (code !== "not_cached" || args.source !== undefined) {
+      return {
+        ok: false,
+        reason:
+          code === "not_cached"
+            ? "bundle_not_materialized"
+            : "bundle_verification_failed",
+        origin,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    // Cache miss with no caller-supplied content: fetch the backend's stored
+    // bundle (the version's own bytes, re-stored at commit). The cache
+    // re-parses the download through the SDK parser and compares the
+    // computed hash against the pinned `bundleHash`, so the URL grants
+    // CONTENT, never trust — wrong bytes surface as verification failures
+    // below and never materialize.
+    const downloaded = await downloadBundleSource(
+      args.client,
+      origin.pluginVersionId
+    );
+    if (downloaded === null) {
+      return {
+        ok: false,
+        reason: "bundle_not_materialized",
+        origin,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    try {
+      const materialized = await args.cache.materialize(identity, {
+        source: downloaded,
+      });
+      root = materialized.root;
+    } catch (retryError) {
+      return {
+        ok: false,
+        reason: "bundle_verification_failed",
+        origin,
+        message:
+          retryError instanceof Error ? retryError.message : String(retryError),
+      };
+    }
   }
 
   const launch = resolvePluginStdioLaunch(args.spec, root);
@@ -339,7 +414,7 @@ function pluginStdioFailureToRouteError(
       return new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        `Plugin "${failure.origin.name}" is not materialized on this machine. Re-import the plugin from its folder on this device to run its local component.`,
+        `Plugin "${failure.origin.name}" is not materialized on this machine and its bundle could not be downloaded from MCPJam. Re-import the plugin from its folder on this device to run its local component.`,
         {
           reason: failure.reason,
           serverName,

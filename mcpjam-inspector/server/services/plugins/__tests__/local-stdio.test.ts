@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,8 +10,10 @@ import {
   resolvePluginOriginForServer,
 } from "../local-stdio.js";
 import {
+  fixtureBundleFiles,
   fixtureBundleHash,
   fixtureBundleSource,
+  fixtureBundleZip,
   makeCacheRoot,
 } from "./fixture-bundle.js";
 import { WebRouteError } from "../../../routes/web/errors.js";
@@ -30,6 +32,8 @@ function stubClient(options?: {
   enabled?: boolean;
   available?: boolean;
   bundleHash?: string | null;
+  /** When set, `plugins:getBundleDownloadUrl` answers with this URL. */
+  downloadUrl?: string;
 }): ConvexHttpClient {
   const enabled = options?.enabled ?? true;
   const available = options?.available ?? true;
@@ -37,6 +41,12 @@ function stubClient(options?: {
     options?.bundleHash === undefined ? "hash-pending" : options.bundleHash;
   return {
     async query(name: string) {
+      if (name === "plugins:getBundleDownloadUrl") {
+        if (options?.downloadUrl === undefined) {
+          throw new Error("no downloadable bundle");
+        }
+        return { url: options.downloadUrl, bundleHash };
+      }
       if (name === "plugins:listProjectPlugins") {
         return [
           {
@@ -87,6 +97,7 @@ describe("plugin stdio origin resolution", () => {
 
   afterEach(async () => {
     releasePluginLease(SERVER_ID);
+    vi.unstubAllGlobals();
     await cleanup();
   });
 
@@ -235,6 +246,68 @@ describe("plugin stdio origin resolution", () => {
       ok: false,
       reason: "bundle_not_materialized",
     });
+  });
+
+  it("downloads the backend bundle on a cache miss and materializes it", async () => {
+    // Nothing pre-seeded in the cache — the historical dead end. The
+    // download endpoint serves the fixture bytes; the verified cache
+    // re-hashes them against the pinned bundleHash before anything spawns.
+    const zipBytes = await fixtureBundleZip();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(zipBytes as unknown as BodyInit))
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({
+        bundleHash,
+        downloadUrl: "https://convex.example/storage/fixture-bundle",
+      }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: PLACEHOLDER_SPEC,
+      leaseId: SERVER_ID,
+    });
+
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.launch.args[0]).toBe(
+      `${prepared.pluginRoot}/server/index.js`
+    );
+    expect(cache.activeEntries()).toEqual([prepared.pluginRoot]);
+    prepared.release();
+  });
+
+  it("fails closed when the downloaded content does not hash to the pinned bundle", async () => {
+    // A valid archive with the WRONG content: the cache's re-parse computes
+    // a different bundleHash than the pin, so nothing materializes.
+    const tamperedZip = await fixtureBundleZip({
+      ...fixtureBundleFiles(),
+      "data.txt": "tampered payload\n",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(tamperedZip as unknown as BodyInit))
+    );
+
+    const prepared = await preparePluginStdioLaunch({
+      client: stubClient({
+        bundleHash,
+        downloadUrl: "https://convex.example/storage/tampered-bundle",
+      }),
+      cache,
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      spec: PLACEHOLDER_SPEC,
+      leaseId: SERVER_ID,
+    });
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      reason: "bundle_verification_failed",
+    });
+    expect(cache.activeEntries()).toEqual([]);
   });
 });
 
