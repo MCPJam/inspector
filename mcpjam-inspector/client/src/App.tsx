@@ -63,7 +63,7 @@ import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigC
 import { CaniuseCapabilityPage } from "./components/hosts/comparison/CaniuseCapabilityPage";
 import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
-import { ComputerView } from "./components/computer/ComputerView";
+import { ComputerTabView } from "./components/computer/ComputerTabView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
 import { useSkillsEnabledState } from "./hooks/useSkillsEnabled";
 import { motion } from "framer-motion";
@@ -1108,7 +1108,7 @@ export function ComputerRoute() {
   }
 
   const computerView = (
-    <ComputerView
+    <ComputerTabView
       projectId={convexProjectId}
       isSignedInMember={isSignedInMember}
     />

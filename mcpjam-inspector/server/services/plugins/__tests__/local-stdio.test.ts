@@ -491,6 +491,42 @@ describe("materializePluginStdioForConnect", () => {
     expect(cache.activeEntries()).toEqual([]);
   });
 
+  // Ephemeral web-route managers: each concurrent turn holds its OWN lease
+  // via onLease — the registry's replace-on-retain must not apply, or turn B
+  // would unpin turn A's still-running child.
+  it("hands the lease to the caller via onLease, bypassing the registry", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const held: Array<() => void> = [];
+    const materializeHeld = () =>
+      materializePluginStdioForConnect({
+        createClient: () => stubClient({ bundleHash }),
+        projectId: PROJECT_ID,
+        serverId: SERVER_ID,
+        serverName: SERVER_ID,
+        onLease: (release) => held.push(release),
+        spec: PLACEHOLDER_SPEC,
+        cache,
+        dataRoot: join(cacheRoot, "plugin-data"),
+      });
+
+    const first = await materializeHeld();
+    const second = await materializeHeld();
+    expect(held).toHaveLength(2);
+    expect(cache.activeEntries()).toEqual([first?.pluginRoot]);
+
+    // The registry never saw these leases: releasing by serverName is a
+    // no-op, and dropping one held lease keeps the other's pin alive.
+    releasePluginLease(SERVER_ID);
+    held.pop()!();
+    expect(cache.activeEntries()).toEqual([second?.pluginRoot]);
+    held.pop()!();
+    expect(cache.activeEntries()).toEqual([]);
+  });
+
   it("throws an actionable 409 when the cached bundle was tampered with", async () => {
     const { root } = await cache.materialize(
       { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },

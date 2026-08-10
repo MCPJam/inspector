@@ -14,7 +14,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
 import {
   buildSwarmPath,
@@ -232,30 +232,28 @@ export function SwarmRunDetail({
       data-testid="swarm-run-detail"
       data-swarm-id={swarmWaveRouteId(wave)}
     >
-      <div className="relative shrink-0 border-b border-border/40 px-8 pt-2.5 pb-0">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <DetailBackLink onBack={() => navigate(routePaths.swarms)} />
-            <div
-              className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
-              aria-hidden="true"
-            />
-            <div className="flex min-w-0 items-baseline gap-x-2.5">
-              <h1
-                className="truncate text-xl font-bold tracking-tight text-foreground"
-                data-testid="swarm-run-detail-title"
-              >
-                {title}
-              </h1>
-              <span
-                className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                data-testid="swarm-run-detail-time"
-              >
-                {formatSwarmAbsoluteTime(wave.createdAt)}
-              </span>
-            </div>
+      <DetailPageHeader
+        backLabel="Swarms"
+        onBack={() => navigate(routePaths.swarms)}
+        backTestId="swarm-run-detail-back"
+        title={
+          <div className="flex min-w-0 items-baseline gap-x-2.5">
+            <h1
+              className="truncate text-xl font-bold tracking-tight text-foreground"
+              data-testid="swarm-run-detail-title"
+            >
+              {title}
+            </h1>
+            <span
+              className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+              data-testid="swarm-run-detail-time"
+            >
+              {formatSwarmAbsoluteTime(wave.createdAt)}
+            </span>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+        }
+        actions={
+          <>
             <Button
               type="button"
               size="sm"
@@ -279,17 +277,16 @@ export function SwarmRunDetail({
               ) : null}
               Run again
             </Button>
-          </div>
-        </div>
-        <ViewModeSelector
-          value={tab}
-          ariaLabel="Swarm run view"
-          indicatorId="swarm-run-detail"
-          onChange={handleTabChange}
-          options={DETAIL_TAB_OPTIONS}
-          className="-ml-3 justify-start overflow-x-visible md:w-auto [&_button]:min-h-9 [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-sm sm:[&_button]:min-h-9 sm:[&_button]:px-3.5 sm:[&_button]:text-sm md:[&_button]:min-h-9 lg:[&_button]:px-4"
-        />
-      </div>
+          </>
+        }
+        tabs={{
+          value: tab,
+          options: DETAIL_TAB_OPTIONS,
+          onChange: handleTabChange,
+          ariaLabel: "Swarm run view",
+          indicatorId: "swarm-run-detail",
+        }}
+      />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "insights" ? (
@@ -350,19 +347,6 @@ export function SwarmRunDetail({
         ) : null}
       </div>
     </div>
-  );
-}
-
-function DetailBackLink({ onBack }: { onBack: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onBack}
-      className="shrink-0 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-      data-testid="swarm-run-detail-back"
-    >
-      ← Swarms
-    </button>
   );
 }
 

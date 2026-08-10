@@ -15,7 +15,9 @@
  * grant  → mints + persists (hash-only) a device capability, returns the
  *          plaintext ONCE. Called only from the explicit Allow action.
  * verify → lets a returning client validate its stored capability.
- * revoke → clears the persisted capability.
+ * revoke → clears the persisted capability; scoped to the presented token
+ *          when one is supplied (a delayed revoke must not sever a newer
+ *          grant's rotated capability), unconditional otherwise.
  */
 import { Hono } from "hono";
 import { LOCAL_COMPUTER_ENABLED } from "../../config.js";
@@ -54,7 +56,11 @@ computers.post("/local-consent/verify", async (c) => {
 });
 
 computers.post("/local-consent/revoke", async (c) => {
-  await revokeLocalComputerConsent();
+  const body = (await c.req.json().catch(() => null)) as {
+    token?: unknown;
+  } | null;
+  const token = typeof body?.token === "string" ? body.token : null;
+  await revokeLocalComputerConsent(token);
   return c.json({ ok: true });
 });
 
