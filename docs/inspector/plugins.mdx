@@ -86,10 +86,10 @@ Two placeholders are defined by the format, both resolved by MCPJam at launch ti
 
 | Placeholder | Resolves to |
 |-------------|-------------|
-| `${PLUGIN_ROOT}` | The read-only root of the materialized bundle |
+| `${PLUGIN_ROOT}` | The verified, content-addressed root of the materialized bundle |
 | `${PLUGIN_DATA}` | A writable per-plugin data directory, preserved across plugin updates |
 
-Placeholders expand **only in `args`, `env` values, and `cwd`** — a placeholder in `command` invalidates that server entry. Commands are single executable tokens: a `./`-prefixed command resolves against the plugin root with containment enforced, so `./bin/server` runs the binary shipped in the bundle and `./bin/../../outside` invalidates the entry. `cwd` must start with `./`, `${PLUGIN_ROOT}`, or `${PLUGIN_DATA}`. A bundle's `env` may not define `PLUGIN_ROOT` or `PLUGIN_DATA` — those variables are client-controlled.
+Placeholders expand **only in `args`, `env` values, and `cwd`** — a placeholder in `command` invalidates that server entry. Commands are single executable tokens: a `./`-prefixed command resolves against the plugin root with containment enforced, so `./bin/server` points at the file shipped in the bundle and `./bin/../../outside` invalidates the entry. Materialization does not carry archive permission bits, so on macOS and Linux a shipped binary is written without its executable bit and will not spawn — prefer an interpreter command (`node`, `python`) with the script passed in `args`. `cwd` must start with `./`, `${PLUGIN_ROOT}`, or `${PLUGIN_DATA}`. A bundle's `env` may not define `PLUGIN_ROOT` or `PLUGIN_DATA` — those variables are client-controlled.
 
 ### Failure isolation
 

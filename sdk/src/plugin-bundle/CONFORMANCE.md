@@ -105,14 +105,15 @@ tested in the inspector's local plugin runtime,
 - **Bare commands resolve through platform executable search rules** — the
   local stdio materializer (`local-stdio.ts`).
 - **`PLUGIN_DATA` created before launch and preserved across plugin
-  updates** — `plugin-data.ts` (see deviation 10 for hosted boxes).
+  updates** — `plugin-data.ts` (see deviation 10 for hosted boxes, and the
+  placeholder-free gap below for the entries this path never reaches).
 - **Continue loading when one server fails to start/connect/authenticate** —
   per-server failure isolation in `run-plugin-servers.ts`; authentication
   failure is a connection failure, not invalid package configuration.
 - **Materialized-bundle boundary enforcement** — extraction and cache
   containment in `bundle-cache.ts` / `bundle-file-sources.ts`.
 
-## Known gaps (runtime MUSTs not yet met)
+## Known gaps (runtime MUSTs not yet met, and guarantees not enforced)
 
 - **`cwd` does not default to the plugin root.** The spec says an entry that
   omits `cwd` runs with the plugin root as its working directory.
@@ -125,6 +126,39 @@ tested in the inspector's local plugin runtime,
   prefixed commands, which resolve to absolute paths. Fixing this is a
   behavior change to the launch path and is deliberately not bundled into
   this docs-and-tests PR.
+
+- **Placeholder-free entries never reach the plugin launch path.**
+  `materializePluginStdioForConnect` gates on `needsPluginRoot(spec)`
+  (`local-stdio.ts`), which is true only when a literal `${PLUGIN_ROOT}` or
+  `${PLUGIN_DATA}` survives into `command`, `args`, an `env` value, or `cwd`.
+  A conforming entry that references neither — `node` with a bare `args`
+  script, or a component that reads `process.env.PLUGIN_DATA` at runtime —
+  returns `null` and spawns through the ordinary stdio path, so
+  `preparePluginStdioLaunch` never runs: the data directory is not created
+  and the `PLUGIN_ROOT`/`PLUGIN_DATA` aliases are not injected. The spec makes
+  both unconditional for plugin-origin servers. Routing every plugin-origin
+  server through preparation regardless of placeholder use is the fix, and is
+  a launch-path behavior change out of scope here.
+
+- **Archive permission bits are not preserved.** `extractInto`
+  (`bundle-cache.ts`) writes every entry with a bare
+  `writeFile(destination, bytes)` and the file-source contract carries no mode,
+  so extracted files land at the process umask default (typically `0644`) and
+  no `chmod` follows. A bundle shipping its own executable and declaring
+  `command: "./bin/server"` therefore fails to spawn with `EACCES` on POSIX;
+  the conformance test only asserts that the command rewrites to a
+  `${PLUGIN_ROOT}` path, not that the target is runnable. Interpreter commands
+  (`node`, `python`) with the script in `args` are unaffected. Carrying mode
+  bits through the file-source contract is an extraction behavior change, not
+  a docs change.
+
+- **`${PLUGIN_ROOT}` is not permission-enforced read-only.** The cache creates
+  its directories and files with ordinary `mkdir`/`writeFile` permissions and
+  spawns components under the same OS account, so a component can write to or
+  delete its own content-addressed cache entry. Containment and content
+  addressing are enforced; immutability is not. Documented here rather than
+  claimed, since the spec's package boundary is about *escape*, not about
+  hardening the root against the plugin itself.
 
 ## Out of scope (per the spec's portable vs client-owned split)
 
