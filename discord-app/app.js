@@ -5,6 +5,7 @@ import {
 	createChannelBindingCache,
 	createEventClaims,
 	createTurnTargetResolver,
+	EventDedupe,
 	mintConnectUrl,
 	runTurnForEvent,
 	textContent,
@@ -23,6 +24,7 @@ import { buildInteractionRef, buildMessageRef } from "./context.js";
 import { createDiscordDelivery } from "./delivery.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
+import { toDeliverableResult, toReplayContent } from "./turn-result.js";
 import { watchDiscordRun } from "./watcher.js";
 
 if (!config.botToken) throw new Error("DISCORD_BOT_TOKEN is required");
@@ -74,6 +76,17 @@ const claims = createEventClaims({
 	backend: claimBackend,
 	surfaceKind: "discord",
 });
+// The "connect your account" / "pick a project" prompts happen BEFORE
+// runTurnForEvent's own durable claim (they return before a target is ever
+// resolved into a turn), so a Gateway redelivery of the same mention while
+// the user is still unlinked would otherwise re-post the prompt. In-memory
+// only, and deliberately NOT the durable claim backend: taking that here
+// too would collide with runTurnForEvent's own claim on the same
+// `guildId:messageId` key once the user IS linked, silently dropping the
+// turn (the inner claim would see "inflight" against a claim this code
+// already opened and never completed). A prompt is cheap to resend and
+// short-TTL in-memory suppression is all the redelivery case needs.
+const promptDedupe = new EventDedupe();
 // Every mention asks whether its channel is bound, which put a Convex round
 // trip on the hot path of every single message with no caching at all.
 // Channel bindings are written by an admin through a separate settings flow,
@@ -214,28 +227,33 @@ client.on(Events.MessageCreate, async (message) => {
 			threadId: context.threadId,
 		});
 
-		if (target.mode === "unlinked") {
-			const url = await connectUrlFor({
-				tenantId: message.guildId,
-				actorId: message.author.id,
-			});
-			await delivery.deliver(ref, {
-				severity: "info",
-				parts: [
-					"Connect MCPJam before asking me to act: ",
-					{ link: { url, label: "open the connect link" } },
-				],
-			});
-			return;
-		}
-		if (target.mode === "needs_project") {
-			await delivery.deliver(
-				ref,
-				textContent(
-					"Your account is connected, but no default MCPJam project is configured for this organization. Set one in MCPJam settings and mention me again.",
-					"warning",
-				),
-			);
+		if (target.mode === "unlinked" || target.mode === "needs_project") {
+			// One message may redeliver on a Gateway resume; without this a
+			// redelivery while still unlinked/unconfigured re-posts the same
+			// prompt. See promptDedupe's own comment for why this is NOT the
+			// durable claim.
+			if (!promptDedupe.claim(message.id)) return;
+			if (target.mode === "unlinked") {
+				const url = await connectUrlFor({
+					tenantId: message.guildId,
+					actorId: message.author.id,
+				});
+				await delivery.deliver(ref, {
+					severity: "info",
+					parts: [
+						"Connect MCPJam before asking me to act: ",
+						{ link: { url, label: "open the connect link" } },
+					],
+				});
+			} else {
+				await delivery.deliver(
+					ref,
+					textContent(
+						"Your account is connected, but no default MCPJam project is configured for this organization. Set one in MCPJam settings and mention me again.",
+						"warning",
+					),
+				);
+			}
 			return;
 		}
 
@@ -279,10 +297,7 @@ client.on(Events.MessageCreate, async (message) => {
 							conversationId: context.conversationId,
 							idempotencyKey: opts.idempotencyKey,
 						})
-						.then((turnResult) => ({
-							...textContent(turnResult.reply || "", "info"),
-							proposedActions: turnResult.proposedActions || [],
-						})),
+						.then(toDeliverableResult),
 			},
 			onResult: async (result) => {
 				await delivery.deliver(ref, result);
@@ -349,9 +364,10 @@ client.on(Events.MessageCreate, async (message) => {
 					});
 			},
 			// A redelivery of an event already answered: re-post the stored
-			// reply rather than re-running the turn.
+			// reply rather than re-running the turn. See turn-result.js for why
+			// this needs its own rebuild rather than delivering the envelope raw.
 			onReplay: async (envelope) => {
-				await delivery.deliver(ref, envelope);
+				await delivery.deliver(ref, toReplayContent(envelope));
 			},
 		});
 	} catch (error) {
