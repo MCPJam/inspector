@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Layers,
   Link2,
+  PenLine,
   Trash2,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -16,11 +17,18 @@ import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection"
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { ChatboxPreviewPane } from "@/components/chatboxes/ChatboxPreviewPane";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
+import { EditableTitle } from "@/components/evals/EditableTitle";
+import { NameEnvironmentDialog } from "@/components/project-environments/NameEnvironmentDialog";
+import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
   useChatboxMutations,
   type ChatboxSettings,
 } from "@/hooks/useChatboxes";
 import { useHost } from "@/hooks/useClients";
+import { useProjectEnvironment } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { isAdhocEnvironment } from "@/lib/environment-label";
+import { convexErrMessage } from "@/lib/convex-error";
 import {
   getChatboxHostLabel,
   getChatboxHostLogo,
@@ -78,9 +86,77 @@ export function UserTestingScenarioDetail({
   const location = useLocation();
   const computersEnabled = useComputersEnabled();
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { deleteChatbox } = useChatboxMutations();
+  const { deleteChatbox, updateChatbox } = useChatboxMutations();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [nameEnvironmentOpen, setNameEnvironmentOpen] = useState(false);
+
+  // The environment row itself — for `origin` and `revision`, which the
+  // chatbox settings envelope deliberately doesn't carry. Host-backed
+  // scenarios (no environmentId) skip the query entirely, and so does a
+  // project without `project-environments-enabled`: promotion's whole payoff
+  // is "now manage it from Environments", a surface that flag gates — offering
+  // it flag-off would mutate a row the user then has no page to see. NOTE:
+  // `chatbox.environmentName` is non-null even for an ad-hoc row (the backend
+  // synthesizes a label from the client name), so ad-hoc-ness must come from
+  // this row, never from name presence on the envelope.
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const environment = useProjectEnvironment(
+    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
+    chatbox.environmentId ?? null,
+  );
+  // Fail closed: `undefined` (loading) and `null` (not visible) both hide the
+  // promote affordance rather than guessing.
+  const environmentIsAdhoc = Boolean(
+    environment && isAdhocEnvironment(environment),
+  );
+
+  // Draft state for the description, persisted on blur. Reseeded whenever the
+  // reactive envelope changes so another member's edit doesn't get silently
+  // overwritten by a stale draft on the next blur — but NOT while the field
+  // holds focus. Two races live in that exception: our own save echoing back
+  // after the user has already refocused and started the next edit, and a
+  // collaborator's edit landing mid-sentence; both would otherwise replace
+  // in-progress typing without a trace. The remote value skipped during focus
+  // is picked up on blur instead (see `persistDescription`).
+  const [descriptionDraft, setDescriptionDraft] = useState(
+    chatbox.description ?? "",
+  );
+  const descriptionFocusedRef = useRef(false);
+  useEffect(() => {
+    if (descriptionFocusedRef.current) return;
+    setDescriptionDraft(chatbox.description ?? "");
+  }, [chatbox.description]);
+
+  const handleRename = async (name: string) => {
+    try {
+      await updateChatbox({ chatboxId: chatbox.chatboxId, name } as any);
+    } catch (err) {
+      toast.error(convexErrMessage(err, "Failed to rename the scenario"));
+      // Rethrow so EditableTitle reverts to the persisted name.
+      throw err;
+    }
+  };
+
+  const persistDescription = async () => {
+    descriptionFocusedRef.current = false;
+    const next = descriptionDraft.trim();
+    if (next === (chatbox.description ?? "").trim()) {
+      // No-op blur: resync the draft with the envelope, which also adopts any
+      // remote value the focused-guard above deliberately skipped.
+      setDescriptionDraft(chatbox.description ?? "");
+      return;
+    }
+    try {
+      await updateChatbox({
+        chatboxId: chatbox.chatboxId,
+        description: next,
+      } as any);
+    } catch (err) {
+      toast.error(convexErrMessage(err, "Failed to save the description"));
+      setDescriptionDraft(chatbox.description ?? "");
+    }
+  };
 
   // The URL is the stash for both the tab and the opened session: the gates
   // above remount this route during a cold boot, so state captured on first
@@ -177,10 +253,16 @@ export function UserTestingScenarioDetail({
           User Testing
         </button>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold tracking-tight">
-              {chatbox.name}
-            </h1>
+          <div className="min-w-0 flex-1">
+            <EditableTitle
+              value={chatbox.name}
+              onSave={handleRename}
+              variant="h1"
+              fullWidth
+              placeholder="Scenario name"
+              className="-ml-2 px-2 text-xl font-semibold tracking-tight"
+              inputClassName="text-xl font-semibold tracking-tight"
+            />
             <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
               {environmentName ? (
                 // Environment-backed: the environment IS the scenario's
@@ -191,6 +273,22 @@ export function UserTestingScenarioDetail({
                   <span className="truncate font-medium text-foreground">
                     {environmentName}
                   </span>
+                  {environmentIsAdhoc ? (
+                    // The row behind this label is ad-hoc: content-addressed,
+                    // immutable, and labeled by its client rather than a name.
+                    // Naming it (in place, same id) is what makes it — and
+                    // therefore this scenario's execution config — editable.
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 shrink-0 px-2 text-xs text-muted-foreground"
+                      onClick={() => setNameEnvironmentOpen(true)}
+                      data-testid="user-testing-name-environment"
+                    >
+                      <PenLine className="mr-1 size-3" />
+                      Name environment
+                    </Button>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -221,6 +319,25 @@ export function UserTestingScenarioDetail({
                 />
               ) : null}
             </div>
+            <TextareaAutosize
+              aria-label="Scenario description"
+              data-testid="user-testing-description"
+              value={descriptionDraft}
+              onChange={(e) => setDescriptionDraft(e.target.value)}
+              onFocus={() => {
+                descriptionFocusedRef.current = true;
+              }}
+              onBlur={() => void persistDescription()}
+              minRows={1}
+              maxRows={4}
+              maxLength={2000}
+              placeholder="Add a description…"
+              className={cn(
+                "mt-1 min-h-0 resize-none border-0 bg-transparent px-0 py-0 text-sm",
+                "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
+                "focus-visible:border-0 focus-visible:ring-0",
+              )}
+            />
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {publishLink ? (
@@ -369,6 +486,15 @@ export function UserTestingScenarioDetail({
         isDeleting={isDeleting}
         onConfirm={handleDelete}
       />
+
+      {environment ? (
+        <NameEnvironmentDialog
+          open={nameEnvironmentOpen}
+          onOpenChange={setNameEnvironmentOpen}
+          projectId={chatbox.projectId}
+          environment={environment}
+        />
+      ) : null}
     </div>
   );
 }
