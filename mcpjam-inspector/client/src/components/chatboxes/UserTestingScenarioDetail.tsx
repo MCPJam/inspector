@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
@@ -14,11 +14,13 @@ import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
+import { ChatboxPreviewPane } from "@/components/chatboxes/ChatboxPreviewPane";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import {
   useChatboxMutations,
   type ChatboxSettings,
 } from "@/hooks/useChatboxes";
+import { useHost } from "@/hooks/useClients";
 import {
   getChatboxHostLabel,
   getChatboxHostLogo,
@@ -41,9 +43,17 @@ import { cn } from "@/lib/utils";
  * so the topic map here only ever covers this scenario's own sessions. There is
  * deliberately no project-wide clusters view: aggregating across scenarios that
  * point at different servers would produce themes nobody can act on.
+ *
+ * Preview embeds the live share link, which means opening that tab starts a
+ * REAL guest session against this scenario — it shows up in Sessions and in
+ * guest analytics like any tester's. That's why it mounts lazily (opening a
+ * scenario costs nothing) and why the embed tags itself `?surface=preview`
+ * (so the session it starts is labelled rather than passing for a tester's).
  */
 interface UserTestingScenarioDetailProps {
   chatbox: ChatboxSettings;
+  /** Gates the host query behind Preview's iframe permissions. */
+  isAuthenticated: boolean;
   onBack: () => void;
   /** Parent returns to the list. */
   onDeleted: () => void;
@@ -55,10 +65,12 @@ const TAB_OPTIONS: ReadonlyArray<{
 }> = [
   { value: "sessions", label: "Sessions" },
   { value: "clusters", label: "Clusters" },
+  { value: "preview", label: "Preview" },
 ];
 
 export function UserTestingScenarioDetail({
   chatbox,
+  isAuthenticated,
   onBack,
   onDeleted,
 }: UserTestingScenarioDetailProps) {
@@ -89,6 +101,29 @@ export function UserTestingScenarioDetail({
     ? buildChatboxLink(chatbox.link.token, chatbox.name)
     : null;
   const displayLink = publishLink?.replace(/^https?:\/\//, "") ?? null;
+
+  // Preview embeds the live share link, so it starts a real guest session.
+  // Mount it only once the tab has been opened — and then keep it mounted
+  // (hidden) so flipping back to Sessions and returning doesn't start a
+  // second one. A deep link straight to `?tab=preview` opens it immediately.
+  const [hasOpenedPreview, setHasOpenedPreview] = useState(tab === "preview");
+  useEffect(() => {
+    if (tab === "preview") setHasOpenedPreview(true);
+  }, [tab]);
+
+  // The host config decides which browser features the preview iframe may
+  // pass through to the mcp-apps renderer inside it. The `allow` attribute
+  // only takes effect at mount, and its no-config default is permissive, so
+  // a deny-all host would get the wrong frame if we mounted before this
+  // resolved. `useHost` reports a SKIPPED query as loading forever — treat it
+  // as pending only when it can actually resolve.
+  const previewHostId = chatbox.namedHostId ?? null;
+  const { host: previewHost, isLoading: previewHostLoading } = useHost({
+    isAuthenticated,
+    hostId: previewHostId,
+  });
+  const isPreviewProfilePending =
+    isAuthenticated && Boolean(previewHostId) && previewHostLoading;
 
   const goToTab = (next: UserTestingDetailTab) => {
     // Replace, not push: flipping a sub-tab shouldn't put a stop on the back
@@ -268,29 +303,62 @@ export function UserTestingScenarioDetail({
         </nav>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {tab === "sessions" ? (
-          <ChatboxUsagePanel
-            chatbox={chatbox}
-            section="sessions"
-            initialThreadId={sessionDeepLinkThreadId}
-          />
-        ) : (
-          <ChatboxUsagePanel
-            chatbox={chatbox}
-            section="insights"
-            onOpenSession={(threadId) => {
-              // Stash the target in the URL, then flip the tab — the same
-              // reason the tab itself lives there.
-              navigate(
-                buildUserTestingScenarioPath(chatbox.chatboxId, {
-                  session: threadId,
-                }),
-                { replace: true },
-              );
-            }}
-          />
-        )}
+          <div className="absolute inset-0">
+            <ChatboxUsagePanel
+              chatbox={chatbox}
+              section="sessions"
+              initialThreadId={sessionDeepLinkThreadId}
+            />
+          </div>
+        ) : null}
+        {tab === "clusters" ? (
+          <div className="absolute inset-0">
+            <ChatboxUsagePanel
+              chatbox={chatbox}
+              section="insights"
+              onOpenSession={(threadId) => {
+                // Stash the target in the URL, then flip the tab — the same
+                // reason the tab itself lives there.
+                navigate(
+                  buildUserTestingScenarioPath(chatbox.chatboxId, {
+                    session: threadId,
+                  }),
+                  { replace: true },
+                );
+              }}
+            />
+          </div>
+        ) : null}
+        {hasOpenedPreview ? (
+          // Hidden rather than unmounted: re-mounting would abandon the
+          // tester session already running in the frame and start another.
+          <div
+            className={cn("absolute inset-0", tab === "preview" ? "" : "hidden")}
+          >
+            {isPreviewProfilePending ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Loading preview…
+              </div>
+            ) : (
+              <ChatboxPreviewPane
+                publishLink={environmentError ? null : publishLink}
+                mcpProfile={previewHost?.config.mcpProfile}
+                emptyTitle={
+                  environmentError
+                    ? "This scenario can't be previewed"
+                    : undefined
+                }
+                emptyBody={
+                  environmentError
+                    ? `${environmentError.message} Its sessions are unaffected.`
+                    : undefined
+                }
+              />
+            )}
+          </div>
+        ) : null}
       </div>
 
       <ChatboxDeleteConfirmDialog
