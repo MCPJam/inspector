@@ -6,7 +6,8 @@
  * extraction ADDED: the controlled contract (the component never persists) and
  * single-select mode, which the Playground will use in Phase 2.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockEnvironments } = vi.hoisted(() => ({
@@ -257,5 +258,48 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByTestId("picker-footer-action")).toBeInTheDocument();
     expect(screen.getByText("Manage environments →")).toBeInTheDocument();
+  });
+
+  // The wrapper that closes the popover once a footer action fires must listen
+  // for the CLICK only. Closing on keydown unmounts the button before the
+  // browser dispatches its activation click, so Enter/Space would silently do
+  // nothing — the reason this pair of cases exists.
+  it.each([
+    ["Enter", "{Enter}"],
+    ["Space", " "],
+  ])("runs a footer action activated with %s", async (_label, key) => {
+    const onFooterAction = vi.fn();
+    render(
+      <EnvironmentPicker
+        projectId="p_1"
+        value={[]}
+        onChange={vi.fn()}
+        multi
+        triggerTestId="picker"
+        footerSlot={
+          <button
+            type="button"
+            data-testid="picker-footer-action"
+            onClick={onFooterAction}
+          >
+            Save as environment
+          </button>
+        }
+      />
+    );
+    fireEvent.click(screen.getByTestId("picker"));
+
+    const action = screen.getByTestId("picker-footer-action");
+    action.focus();
+    await userEvent.keyboard(key);
+
+    expect(onFooterAction).toHaveBeenCalledTimes(1);
+    // …and the close still happens, just AFTER the action: keyboard activation
+    // has to dismiss the popover exactly like a pointer click does.
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("picker-footer-action")
+      ).not.toBeInTheDocument()
+    );
   });
 });
