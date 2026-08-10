@@ -107,11 +107,19 @@ It is forced off in hosted mode regardless of the env var.
 
 **Caveat that governs rollback:** the kill switch is a *server* env var. Users
 running a published `npx @mcpjam/inspector` or a packaged Electron build are on
-their own machines — flipping anything server-side does not reach them. Pulling
-the feature back from already-published clients needs a **patch release**. Plan
-rollback accordingly: the feature flag governs UI exposure in the hosted app;
-the kill switch governs a given self-hosted server; neither retroactively
-disarms a shipped binary.
+their own machines — flipping anything server-side does not reach them.
+
+That is why UI exposure has its own, client-evaluated gate: the
+`local-computer-enabled` PostHog flag (`useLocalComputerEnabled`,
+`client/src/hooks/useComputersEnabled.ts`). It gates local-engine *candidacy*
+in `useComputerEngine` — flag off ⇒ the Local⇄Cloud toggle, the "This machine"
+face, the consent gate, the rail's local body, the run-location pill, and the
+local chat transmission are all invisible, and the inspector behaves exactly
+as before the local engine shipped. Published clients fetch flags at runtime,
+so flipping this flag **does** reach shipped binaries (fail-closed: no PostHog
+⇒ off). The env kill switch remains the server-side stop for the execution
+capability itself; a **patch release** is only needed to disarm the server
+code paths in already-published clients, not to hide the feature.
 
 ## Cloud-only surfaces
 
@@ -173,9 +181,15 @@ gate needs the local success rate.
 properties alone are invisible to `/flags`, which evaluates person properties —
 that is why both exist. `platform` is set alongside it.
 
-The rollout rule itself is a **dashboard operation**, not code:
+The rollout rules themselves are **dashboard operations**, not code. Two flags:
 
 > `computers-enabled` → employees ∪ (`deployment = self_hosted` AND signed in)
+> — the whole Project Computers surface, unchanged.
+>
+> `local-computer-enabled` → **off for everyone at ship time** (dark launch);
+> then employees for dogfooding; then widen to the
+> `deployment = self_hosted` cohort at launch. Gates only the LOCAL engine UI
+> inside the computers surface.
 
 ## Launch / rollback checklist
 
@@ -183,9 +197,13 @@ The rollout rule itself is a **dashboard operation**, not code:
 
 Pre-launch:
 
+- [ ] `local-computer-enabled` exists in PostHog and is **off for everyone**
+      before any deploy/release that carries this code; enable for employees to
+      dogfood.
 - [ ] Flag `computers-enabled` rule set to employees ∪ `deployment = self_hosted`
       signed-in cohort; dry-run the targeting against a known self-hosted
-      distinct_id before widening.
+      distinct_id before widening. Launch = widening `local-computer-enabled`
+      to the same cohort.
 - [ ] Confirm `deployment` shows up as a **person** property (not only as an
       event property) in PostHog for a fresh browser profile.
 - [ ] Confirm the consent funnel is intact:
@@ -207,12 +225,15 @@ Pre-launch:
 
 Rollback:
 
-- [ ] Turn the flag off — this is the fast lever, and it governs hosted UI
-      exposure.
+- [ ] Turn `local-computer-enabled` off — this is the fast lever, and it hides
+      the local-engine UI in ALL clients (hosted and published binaries alike;
+      flags are fetched at runtime, fail-closed).
 - [ ] For a specific self-hosted server: set
       `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and restart.
-- [ ] For already-published npx/Electron clients: **cut a patch release.** No
-      server-side switch reaches them.
+- [ ] For already-published npx/Electron clients: the flag hides the UI at
+      runtime; **cut a patch release** only if the server-side execution paths
+      themselves must be disarmed (no server-side switch reaches a shipped
+      binary).
 
 Follow-ups (explicitly not in this program):
 
