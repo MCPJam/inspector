@@ -24,14 +24,13 @@
 
 import { useCallback, useMemo } from "react";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import {
   assertPluginBundleWithinCap,
   toPluginApiError,
   uploadPluginBundleTracked,
 } from "@/lib/plugins/plugin-api";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
-import { getGuestBearerToken } from "@/lib/guest-session";
+import { useConvexAccessToken } from "./use-convex-access-token";
 import { shouldQueryProjectId } from "./useProjects";
 import {
   PluginApiError,
@@ -185,8 +184,6 @@ export interface StartPluginImportResult {
 }
 
 export interface PluginImportActions {
-  /** Mint a storage upload URL (`plugins.generateBundleUploadUrl`). */
-  generateBundleUploadUrl: (projectId: string) => Promise<string>;
   /** Stage an uploaded bundle blob as an import (`plugins.createImport`). */
   createImport: (args: {
     projectId: string;
@@ -201,10 +198,11 @@ export interface PluginImportActions {
     options?: { setActive?: boolean },
   ) => Promise<PluginCommitResult>;
   /**
-   * Full upload path: mint URL → POST the ZIP to storage → `createImport` →
-   * `inspectImport`. Resolves once inspection lands `preview_ready` (or
-   * `failed` — inspect failures are recorded on the row, not thrown).
-   * Subscribe with `usePluginImport(importId)` for live progress.
+   * Full upload path: POST the ZIP to the tracked upload route →
+   * `createImport` → `inspectImport`. Resolves once inspection lands
+   * `preview_ready` (or `failed` — inspect failures are recorded on the
+   * row, not thrown). Subscribe with `usePluginImport(importId)` for live
+   * progress.
    */
   startImport: (
     args: StartPluginImportArgs,
@@ -220,10 +218,7 @@ export interface PluginImportActions {
  */
 export function usePluginImportActions(): PluginImportActions {
   const enabled = usePluginsEnabled();
-  const { getAccessToken } = useAuth();
-  const generateUploadUrlMutation = useMutation(
-    "plugins:generateBundleUploadUrl" as any,
-  );
+  const getConvexAccessToken = useConvexAccessToken();
   const createImportMutation = useMutation("plugins:createImport" as any);
   const inspectImportAction = useAction("pluginsNode:inspectImport" as any);
   const commitImportAction = useAction("pluginsNode:commitImport" as any);
@@ -237,37 +232,20 @@ export function usePluginImportActions(): PluginImportActions {
     }
   }, [enabled]);
 
-  // The bearer the tracked upload route authorizes with: the WorkOS access
-  // token when signed in, else the guest bearer — the same fallback order the
-  // chat session uses to hit Convex HTTP routes.
+  // The bearer the tracked upload route authorizes with, resolved through
+  // the shared `resolveConvexAccessToken` order: WorkOS token when signed
+  // in, guest bearer only when there is NO WorkOS user. A signed-in user
+  // whose token transiently fails to refresh must get an error here — never
+  // a silent guest fallback, or the staged upload would belong to a
+  // different actor than the `createImport` that adopts it.
   const acquireBearerToken = useCallback(async (): Promise<string> => {
-    try {
-      const token = await getAccessToken?.();
-      if (token) return token;
-    } catch {
-      // Not signed in (LoginRequiredError) — fall through to the guest bearer.
-    }
-    const guestToken = await getGuestBearerToken();
-    if (guestToken) return guestToken;
+    const token = await getConvexAccessToken();
+    if (token) return token;
     throw new PluginApiError(
       "UPLOAD_FAILED",
-      "No Convex session available to upload the bundle.",
+      "Your session could not be refreshed for the upload. Please retry, or sign in again.",
     );
-  }, [getAccessToken]);
-
-  const generateBundleUploadUrl = useCallback(
-    async (projectId: string): Promise<string> => {
-      requireEnabled();
-      try {
-        return (await generateUploadUrlMutation({
-          projectId,
-        } as any)) as string;
-      } catch (err) {
-        throw toPluginApiError(err, "Could not create an upload URL");
-      }
-    },
-    [requireEnabled, generateUploadUrlMutation],
-  );
+  }, [getConvexAccessToken]);
 
   const createImport = useCallback(
     async (args: {
@@ -364,19 +342,12 @@ export function usePluginImportActions(): PluginImportActions {
 
   return useMemo(
     () => ({
-      generateBundleUploadUrl,
       createImport,
       inspectImport,
       commitImport,
       startImport,
     }),
-    [
-      generateBundleUploadUrl,
-      createImport,
-      inspectImport,
-      commitImport,
-      startImport,
-    ],
+    [createImport, inspectImport, commitImport, startImport],
   );
 }
 

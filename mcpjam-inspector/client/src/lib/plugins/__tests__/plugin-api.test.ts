@@ -3,7 +3,6 @@ import {
   assertPluginBundleWithinCap,
   MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES,
   toPluginApiError,
-  uploadPluginBundleToUrl,
   uploadPluginBundleTracked,
 } from "../plugin-api";
 import { PluginApiError } from "../plugin-api-types";
@@ -70,78 +69,82 @@ describe("uploadPluginBundleTracked", () => {
     ).rejects.toMatchObject({ code: "ARCHIVE_TOO_LARGE_COMPRESSED" });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
-});
 
-function okJson(payload: unknown): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => payload,
-  } as unknown as Response;
-}
-
-describe("uploadPluginBundleToUrl", () => {
-  it("POSTs the bundle and returns the storage id", async () => {
-    const fetchImpl = vi.fn(async () => okJson({ storageId: "st_123" }));
-    const storageId = await uploadPluginBundleToUrl(
-      "https://upload.example/x",
-      new Uint8Array([1, 2, 3]),
-      { fetchImpl: fetchImpl as unknown as typeof fetch },
+  it("still uploads a zero-length bundle (the backend rejects it as a malformed archive)", async () => {
+    const fetchImpl = vi.fn(async () =>
+      okJson({ ok: true, storageId: "st_empty" }),
     );
-    expect(storageId).toBe("st_123");
-    expect(fetchImpl).toHaveBeenCalledWith(
-      "https://upload.example/x",
-      expect.objectContaining({
-        method: "POST",
-        signal: expect.any(AbortSignal),
-      }),
-    );
+    const storageId = await uploadPluginBundleTracked({
+      ...baseArgs,
+      bundle: new Uint8Array(0),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(storageId).toBe("st_empty");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects an oversized bundle before uploading (backend cap mirror)", async () => {
-    const fetchImpl = vi.fn();
-    const oversized = {
-      size: MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES + 1,
-    } as unknown as Blob;
-    Object.setPrototypeOf(oversized, Blob.prototype);
+  it("maps a network failure to UPLOAD_FAILED with the cause", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
     await expect(
-      uploadPluginBundleToUrl("https://upload.example/x", oversized, {
+      uploadPluginBundleTracked({
+        ...baseArgs,
+        bundle: new Blob(["zip-bytes"]),
         fetchImpl: fetchImpl as unknown as typeof fetch,
       }),
-    ).rejects.toMatchObject({ code: "ARCHIVE_TOO_LARGE_COMPRESSED" });
-    expect(fetchImpl).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({
+      code: "UPLOAD_FAILED",
+      message: expect.stringContaining("Failed to fetch"),
+    });
   });
 
-  it("maps a non-2xx response to UPLOAD_FAILED", async () => {
+  it("maps a 2xx response without a storage id to UPLOAD_FAILED", async () => {
+    const fetchImpl = vi.fn(async () => okJson({ ok: true }));
+    await expect(
+      uploadPluginBundleTracked({
+        ...baseArgs,
+        bundle: new Blob(["zip-bytes"]),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({
+      code: "UPLOAD_FAILED",
+      message: expect.stringContaining("storage id"),
+    });
+  });
+
+  it("aborts when the response body stalls past timeoutMs", async () => {
+    // fetch resolves on HEADERS; the abort timer must survive into the body
+    // read, so a response whose json() never settles still times out.
     const fetchImpl = vi.fn(
-      async () => ({ ok: false, status: 500 }) as unknown as Response,
+      async (_url: string, init: RequestInit) =>
+        ({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init.signal?.addEventListener("abort", () =>
+                reject(
+                  new DOMException("The operation was aborted.", "AbortError"),
+                ),
+              );
+            }),
+        }) as unknown as Response,
     );
     await expect(
-      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
+      uploadPluginBundleTracked({
+        ...baseArgs,
+        bundle: new Blob(["zip-bytes"]),
         fetchImpl: fetchImpl as unknown as typeof fetch,
+        timeoutMs: 20,
       }),
-    ).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
+    ).rejects.toMatchObject({
+      code: "UPLOAD_FAILED",
+      message: expect.stringContaining("timed out"),
+    });
   });
 
-  it("maps a missing storageId to UPLOAD_FAILED", async () => {
-    const fetchImpl = vi.fn(async () => okJson({}));
-    await expect(
-      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
-  });
-
-  it("rejects an empty-string storageId as UPLOAD_FAILED", async () => {
-    const fetchImpl = vi.fn(async () => okJson({ storageId: "" }));
-    await expect(
-      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
-  });
-
-  it("aborts a stalled upload after timeoutMs", async () => {
+  it("aborts a stalled request after timeoutMs", async () => {
     const fetchImpl = vi.fn(
       (_url: string, init: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
@@ -153,7 +156,9 @@ describe("uploadPluginBundleToUrl", () => {
         }),
     );
     await expect(
-      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
+      uploadPluginBundleTracked({
+        ...baseArgs,
+        bundle: new Blob(["zip-bytes"]),
         fetchImpl: fetchImpl as unknown as typeof fetch,
         timeoutMs: 20,
       }),
@@ -163,6 +168,14 @@ describe("uploadPluginBundleToUrl", () => {
     });
   });
 });
+
+function okJson(payload: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => payload,
+  } as unknown as Response;
+}
 
 describe("assertPluginBundleWithinCap", () => {
   it("accepts a bundle at the cap and rejects one byte over", () => {
