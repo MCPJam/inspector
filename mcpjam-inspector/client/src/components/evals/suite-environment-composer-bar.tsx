@@ -33,7 +33,6 @@ import { useComposerResolver } from "@/components/environment-composer/use-compo
 import { CompareClientsButton } from "@/components/evals/compare-clients-button";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useAdhocEnvironmentsEnabled } from "@/hooks/useAdhocEnvironmentsEnabled";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -65,10 +64,9 @@ export function SuiteEnvironmentComposerBar({
 }: SuiteEnvironmentComposerBarProps) {
   const projectId = suite.projectId ?? null;
   const environmentsEnabled = useProjectEnvironmentsEnabled();
-  const adhocEnabled = useAdhocEnvironmentsEnabled();
   // Environments are project-scoped, so a suite without a project can only ever
   // run the legacy axes — no flag makes that untrue.
-  const envCapable = Boolean(projectId) && environmentsEnabled && adhocEnabled;
+  const envCapable = Boolean(projectId) && environmentsEnabled;
 
   const editable = !readOnly && Boolean(onUpdate);
 

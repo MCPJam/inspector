@@ -19,7 +19,6 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useAdhocEnvironmentsEnabled } from "@/hooks/useAdhocEnvironmentsEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { toast } from "@/lib/toast";
@@ -86,13 +85,12 @@ export function CreateSuiteDialog({
   );
 
   const environmentsEnabled = useProjectEnvironmentsEnabled();
-  const adhocEnabled = useAdhocEnvironmentsEnabled();
   /**
    * Born in environment mode. A suite created legacy can be converted from the
    * header later, but starting there means the axes the dialog offers are the
    * ones its runs will actually read.
    */
-  const composeMode = Boolean(projectId) && environmentsEnabled && adhocEnabled;
+  const composeMode = Boolean(projectId) && environmentsEnabled;
   // Only used when `composeMode`; `projectId` is non-null in that case.
   const resolveTargets = useComposerResolver(projectId ?? "");
   const composerEnvironments = useProjectEnvironments(

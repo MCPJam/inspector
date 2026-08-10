@@ -23,7 +23,7 @@ const {
   onUpdateMock,
   toastError,
 } = vi.hoisted(() => ({
-  flags: { environments: true, adhoc: true },
+  flags: { environments: true },
   environmentsRef: { current: [] as any[] },
   ensureAdhocMock: vi.fn(),
   setSuiteEnvironmentsMock: vi.fn(async () => ({})),
@@ -36,9 +36,6 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
 
-vi.mock("@/hooks/useAdhocEnvironmentsEnabled", () => ({
-  useAdhocEnvironmentsEnabled: () => flags.adhoc,
-}));
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => flags.environments,
 }));
@@ -104,7 +101,6 @@ function renderBar(over: Partial<EvalSuite> = {}, props: any = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   flags.environments = true;
-  flags.adhoc = true;
   environmentsRef.current = [];
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -237,8 +233,8 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
     expect(setSuiteEnvironmentsMock).not.toHaveBeenCalled();
   });
 
-  it("writes host attachments when the flags are off", async () => {
-    flags.adhoc = false;
+  it("writes host attachments when project environments are off", async () => {
+    flags.environments = false;
     renderBar({
       hostAttachments: [
         { namedHostId: "host-1", enabledOptionalServerIds: [] },
@@ -257,7 +253,7 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
   });
 
   it("refuses the last detach — a suite with no client cannot run", async () => {
-    flags.adhoc = false;
+    flags.environments = false;
     renderBar({
       hostAttachments: [
         { namedHostId: "host-1", enabledOptionalServerIds: [] },
@@ -271,7 +267,7 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
   });
 
   it("renders read-only when the caller says so", () => {
-    flags.adhoc = false;
+    flags.environments = false;
     renderBar(
       {
         hostAttachments: [

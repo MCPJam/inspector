@@ -69,15 +69,12 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 const {
   createEnvironmentMock,
   ensureAdhocEnvironmentsMock,
-  adhocFlagRef,
   environmentsRef,
   setInsightsTuningMock,
   insightsTuningRef,
 } = vi.hoisted(() => ({
   createEnvironmentMock: vi.fn(),
   ensureAdhocEnvironmentsMock: vi.fn(),
-  /** `environments-adhoc-enabled`. Off by default, matching a fresh deployment. */
-  adhocFlagRef: { current: false },
   setInsightsTuningMock: vi.fn().mockResolvedValue(undefined),
   /** What `getSwarmInsightsTuning` returns; a ref so a case can re-point it. */
   insightsTuningRef: {
@@ -95,10 +92,6 @@ const {
       revision: number;
     }>,
   },
-}));
-
-vi.mock("@/hooks/useAdhocEnvironmentsEnabled", () => ({
-  useAdhocEnvironmentsEnabled: () => adhocFlagRef.current,
 }));
 
 vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
@@ -323,7 +316,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   existingPersonas = [];
   personaJourneys = [];
-  adhocFlagRef.current = false;
   // Ad-hoc rows carry NO name — the shape the flag-on path has to cope with.
   ensureAdhocEnvironmentsMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -1407,8 +1399,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-running-step");
   });
 
-  it("resolves composed clients into ad-hoc environments when the flag is on", async () => {
-    adhocFlagRef.current = true;
+  it("resolves composed clients into ad-hoc environments", async () => {
     environmentsRef.current = [];
     environments = environmentsRef.current;
     openDescribe();
@@ -1442,32 +1433,15 @@ describe("SwarmsTab — New swarm create flow", () => {
     ]);
   });
 
-  it("falls back to naming rows when the backend has no ad-hoc mutation", async () => {
-    adhocFlagRef.current = true;
+  it("falls back to NAMING rows on a backend with no ad-hoc mutation", async () => {
+    // A desktop build can meet an arbitrarily old self-hosted backend, and this
+    // is the only signal Convex gives for a missing function. The launch must
+    // still complete, by the path it used before ad-hoc rows existed.
     ensureAdhocEnvironmentsMock.mockRejectedValue(
       Object.assign(new Error("Could not find public function"), {
         data: "Could not find public function for 'projectEnvironments:ensureAdhocEnvironments'",
       })
     );
-    environmentsRef.current = [];
-    environments = environmentsRef.current;
-    openDescribe();
-
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
-      target: { value: "Support agents answering refunds" },
-    });
-    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
-    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
-
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-
-    // A desktop build against an old self-hosted backend still launches.
-    await waitFor(() => expect(createEnvironmentMock).toHaveBeenCalledTimes(1));
-    await screen.findByTestId("new-swarm-proposed-personas");
-  });
-
-  it("materializes composed clients into environments before generate + launch", async () => {
-    // Empty project: compose from clients instead of picking environments.
     environmentsRef.current = [];
     environments = environmentsRef.current;
     openDescribe();

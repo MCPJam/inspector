@@ -88,7 +88,6 @@ import {
 } from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useAdhocEnvironmentsEnabled } from "@/hooks/useAdhocEnvironmentsEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
@@ -293,15 +292,15 @@ export function NewSwarmCreateFlow({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
-  const adhocEnvironmentsEnabled = useAdhocEnvironmentsEnabled();
   const resolveComposerTargets = useComposerResolver(projectId);
   /**
-   * Both flags, not just the ad-hoc one: on a deployment with Project
-   * Environments off the user cannot even reach `/environments`, so minting rows
-   * there would create data they can never see or clean up. Such a deployment
-   * keeps the legacy naming path until it turns environments on.
+   * On a deployment with Project Environments off the user cannot even reach
+   * `/environments`, so minting rows there would create data they can never see
+   * or clean up. Such a deployment keeps the legacy naming path. Whether the
+   * BACKEND can mint is not a flag question — `isAdhocUnavailable` answers it
+   * per call, from the deployment actually being talked to.
    */
-  const canMintAdhoc = environmentsEnabled && adhocEnvironmentsEnabled;
+  const canMintAdhoc = environmentsEnabled;
   const [step, setStep] = useState<"describe" | "confirm" | "running">(
     "describe"
   );
@@ -421,6 +420,16 @@ export function NewSwarmCreateFlow({
     return [...byId.values()];
   }, [createdEnvOverlay, envList, resolvedEnvironments]);
 
+  /**
+   * Identity of "where this swarm runs", used to invalidate the retry caches
+   * below. It must cover EVERY field that changes what a target resolves to —
+   * a field left out means editing it silently reuses journeys, a swarm row and
+   * goals built for the old setup.
+   *
+   * Skill pins are in the key for exactly that reason. They are order-bearing at
+   * resolve time (the resolver iterates them into `composeSkillChannels`), so
+   * unlike the ids above they are NOT sorted.
+   */
   const environmentSelectionKey = useMemo(
     () =>
       [
@@ -429,6 +438,7 @@ export function NewSwarmCreateFlow({
         ...[...targetState.stack.hostIds].sort(),
         targetState.stack.serverAttachmentId ?? "",
         targetState.stack.computerEnvironmentId ?? "",
+        `skills:${(targetState.stack.skillSelection?.skillIds ?? []).join(",")}`,
         targetState.customized ? "custom" : "seeded",
       ].join("|"),
     [composeMode, targetState]
