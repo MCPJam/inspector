@@ -95,6 +95,29 @@ function serializeProxyBody(
   return body;
 }
 
+/**
+ * The proxy route answers a failure with `{ error }` naming the guard that
+ * rejected the request — unresolvable host, private/reserved address, timeout,
+ * redirect cap. Dropping it leaves the flow log (and Sentry) with a bare status
+ * line that says nothing about which one fired.
+ */
+async function readProxyError(response: Response): Promise<string | undefined> {
+  const text = await response.text().catch(() => "");
+  if (!text) return undefined;
+  try {
+    const body = JSON.parse(text) as {
+      message?: string;
+      error?: string;
+    } | null;
+    const message = body?.message ?? body?.error;
+    if (typeof message === "string" && message) return message;
+  } catch {
+    // Not JSON — a reverse proxy or dev-server error page. Fall through to the
+    // raw text, capped so an HTML document cannot become the error message.
+  }
+  return text.slice(0, 300);
+}
+
 export function createDebugRequestExecutor(): OAuthRequestExecutor {
   return async (request) => {
     const debugProxyPath = HOSTED_MODE
@@ -119,8 +142,11 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
     });
 
     if (!proxyResponse.ok) {
+      const reason = await readProxyError(proxyResponse);
       throw new Error(
-        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}`,
+        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}${
+          reason ? `: ${reason}` : ""
+        }`,
       );
     }
 
