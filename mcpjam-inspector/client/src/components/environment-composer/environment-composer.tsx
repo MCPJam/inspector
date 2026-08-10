@@ -90,24 +90,32 @@ export function EnvironmentComposer({
   const handleEnvironmentsChange = useCallback(
     (nextIds: string[]) => {
       const ids = nextIds.slice(0, maxTargets);
-      // Seed from the most recently added environment when the selection grows;
-      // when it shrinks or clears, keep the current stack unless it's untouched.
-      let seeded = value.stack;
       const added = ids.find((id) => !value.environmentIds.includes(id));
       if (added) {
+        // ADDING is the one move that re-seeds: the user is asking to run a
+        // saved thing, so the strip should show what that thing is, and any
+        // previous customization is what they just replaced.
         const env = liveEnvironments.find((e) => e.environmentId === added);
-        if (env) seeded = stackFromEnvironment(env);
-      } else if (ids.length === 1) {
-        const env = liveEnvironments.find((e) => e.environmentId === ids[0]);
-        if (env) seeded = stackFromEnvironment(env);
-      } else if (ids.length === 0 && !value.customized) {
-        seeded = emptyEnvironmentStack();
+        onChange({
+          environmentIds: ids,
+          stack: env ? stackFromEnvironment(env) : value.stack,
+          customized: false,
+        });
+        return;
       }
+      // REMOVING keeps both the stack and `customized`. Re-seeding here would
+      // discard edits the user can still see in the strip, and clearing
+      // `customized` would silently flip an edited stack back onto the
+      // saved-environment path — committing the saved ids and dropping every
+      // edit, which is the worst of the three outcomes because it looks like it
+      // worked.
       onChange({
         environmentIds: ids,
-        stack: seeded,
-        // Selecting saved environments resets customize — pure saved-env path.
-        customized: false,
+        stack:
+          ids.length === 0 && !value.customized
+            ? emptyEnvironmentStack()
+            : value.stack,
+        customized: value.customized,
       });
     },
     [

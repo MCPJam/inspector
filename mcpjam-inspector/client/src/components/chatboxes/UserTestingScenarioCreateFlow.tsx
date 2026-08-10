@@ -115,7 +115,14 @@ export function UserTestingScenarioCreateFlow({
   const hasTarget = composing
     ? target.stack.hostIds.length > 0
     : Boolean(environmentId);
-  const canSave = hasTarget && effectiveName.length > 0 && !isSaving;
+  // Gated on the environment list having SETTLED: the resolver reuses a
+  // matching NAMED environment, and against an empty live list it would find
+  // none and mint an unnamed twin of one that already exists.
+  const canSave =
+    environments !== undefined &&
+    hasTarget &&
+    effectiveName.length > 0 &&
+    !isSaving;
 
   const handleTargetChange = (next: EnvironmentComposerState) => {
     setTarget(next);

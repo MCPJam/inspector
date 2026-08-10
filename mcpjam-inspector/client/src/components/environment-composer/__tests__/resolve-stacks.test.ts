@@ -6,7 +6,9 @@ import {
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
 import {
+  composerStateFromEnvironments,
   emptyEnvironmentStack,
+  environmentsCollapseByHost,
   type EnvironmentComposerState,
 } from "../environment-stack";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -373,5 +375,64 @@ describe("resolveComposerEnvironments — backend skew", () => {
         ensureAdhocEnvironments: ensureReturning(["adhoc-1"]),
       })
     ).rejects.toMatchObject({ code: "BACKEND_REJECTED" });
+  });
+});
+
+/**
+ * Seeding a persisted selection back into composer state, and the cases where it
+ * cannot be done without losing something.
+ */
+describe("composerStateFromEnvironments", () => {
+  it("keeps a named multi-env selection on the saved path", () => {
+    const state = composerStateFromEnvironments([
+      named({ environmentId: "a", hostId: "h1" }),
+      named({ environmentId: "b", hostId: "h2" }),
+    ]);
+    expect(state.environmentIds).toEqual(["a", "b"]);
+    expect(state.customized).toBe(false);
+    expect(state.stack.hostIds).toEqual(["h1", "h2"]);
+  });
+
+  it("empties a shared slot the selection disagrees on", () => {
+    // Imposing one environment's server group on the rest would be a silent
+    // change to what the others run.
+    const state = composerStateFromEnvironments([
+      named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
+      named({ environmentId: "b", hostId: "h2", serverAttachmentId: "g2" }),
+    ]);
+    expect(state.stack.serverAttachmentId).toBeNull();
+  });
+
+  it("seeds ad-hoc rows as a COMPOSITION, not a selection", () => {
+    // Ad-hoc rows are never offerable in the saved-environment picker, so
+    // presenting them there would render undetachable generic chips.
+    const state = composerStateFromEnvironments([
+      env({ environmentId: "adhoc-1", hostId: "h1" }),
+    ]);
+    expect(state.environmentIds).toEqual([]);
+    expect(state.customized).toBe(true);
+    expect(state.stack.hostIds).toEqual(["h1"]);
+  });
+});
+
+describe("environmentsCollapseByHost", () => {
+  it("flags two environments sharing a client", () => {
+    // The stack fans out over hostIds, so these two would resolve to ONE row —
+    // a lost target, not just a homogenized slot.
+    expect(
+      environmentsCollapseByHost([
+        named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
+        named({ environmentId: "b", hostId: "h1", serverAttachmentId: "g2" }),
+      ])
+    ).toBe(true);
+  });
+
+  it("passes a selection with one environment per client", () => {
+    expect(
+      environmentsCollapseByHost([
+        named({ environmentId: "a", hostId: "h1" }),
+        named({ environmentId: "b", hostId: "h2" }),
+      ])
+    ).toBe(false);
   });
 });

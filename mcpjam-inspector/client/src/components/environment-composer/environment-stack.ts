@@ -92,6 +92,23 @@ export function stackFromEnvironment(
  * render a row of identical, undetachable "Automatic environment" chips. Their
  * stack is the honest description of them.
  */
+/**
+ * True when a selection cannot be round-tripped through a stack without LOSING a
+ * target, because two of its environments share a client.
+ *
+ * The stack's fan-out axis is `hostIds`, so two environments on one client
+ * collapse to a single host and resolve to a single row — the selection would
+ * come back with fewer targets than it went in with. Losing a target is not the
+ * same as the deliberate homogenizing of shared slots, so callers block editing
+ * rather than seed from it.
+ */
+export function environmentsCollapseByHost(
+  environments: ProjectEnvironmentView[]
+): boolean {
+  const hosts = new Set(environments.map((e) => e.hostId));
+  return hosts.size !== environments.length;
+}
+
 export function composerStateFromEnvironments(
   environments: ProjectEnvironmentView[]
 ): EnvironmentComposerState {
@@ -136,6 +153,22 @@ export function composerStateFromEnvironments(
 export function isComposeMode(state: EnvironmentComposerState): boolean {
   if (state.environmentIds.length === 0) return state.stack.hostIds.length > 0;
   return state.customized;
+}
+
+/**
+ * Whether this state names anywhere to run — asked of the ACTIVE mode, which is
+ * the only way to get it right.
+ *
+ * A composition resolves through its CLIENTS, so an environment that was picked
+ * and then edited has a selection and still no target. Asking "is anything
+ * selected?" instead would let a surface enable Save on a state that can only
+ * fail to resolve, and would make "I cleared the clients" indistinguishable from
+ * "I picked something".
+ */
+export function composerHasTarget(state: EnvironmentComposerState): boolean {
+  return isComposeMode(state)
+    ? state.stack.hostIds.length > 0
+    : state.environmentIds.length > 0;
 }
 
 /** Count used for intensity / session estimates before resolution. */

@@ -26,7 +26,9 @@ import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
+  composerHasTarget,
   composerStateFromEnvironments,
+  environmentsCollapseByHost,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
@@ -68,7 +70,16 @@ export function SuiteEnvironmentComposerBar({
   // run the legacy axes — no flag makes that untrue.
   const envCapable = Boolean(projectId) && environmentsEnabled;
 
-  const editable = !readOnly && Boolean(onUpdate);
+  /**
+   * A suite that already ATTACHES environments is never legacy-editable, even
+   * when this deployment can't offer the composer (project environments off).
+   * `buildSuiteRunPlans` prefers `environmentIds`, so writing `hostAttachments`
+   * would report success and change nothing about what runs — the exact trap
+   * this bar exists to remove. Show the legacy axes read-only instead.
+   */
+  const attachesEnvironments = (suite.environmentIds?.length ?? 0) > 0;
+  const editable =
+    !readOnly && Boolean(onUpdate) && !(attachesEnvironments && !envCapable);
 
   return envCapable && projectId ? (
     <BarShell className={className} containerVariant={containerVariant}>
@@ -161,13 +172,28 @@ function EnvironmentModeBar({
         .filter((e): e is NonNullable<typeof e> => Boolean(e)),
     [attachedIds, liveEnvironments]
   );
+  /** `undefined` until the query settles. `[]` would read as "none exist". */
+  const environmentsLoading = environments === undefined;
   /**
    * An attachment that no live row resolves — archived, or deleted out from
    * under the suite. Every edit here rewrites `environmentIds` wholesale, so
    * proceeding would either silently drop it or be rejected by the backend's
    * liveness check. Neither is a thing to do behind the user's back.
+   *
+   * Gated on the query having SETTLED: while loading, every attachment looks
+   * unresolved, which would flash the warning and disable the strip on any
+   * environment suite.
    */
-  const unresolvedCount = attachedIds.length - attachedEnvironments.length;
+  const unresolvedCount = environmentsLoading
+    ? 0
+    : attachedIds.length - attachedEnvironments.length;
+  /**
+   * Two attachments on one client cannot be represented as a stack — its
+   * fan-out axis is `hostIds`, so editing any pill would resolve them to a
+   * single row and lose a target. Block editing rather than seed from a
+   * selection we cannot put back.
+   */
+  const collapsesByHost = environmentsCollapseByHost(attachedEnvironments);
 
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
@@ -214,18 +240,27 @@ function EnvironmentModeBar({
       setState(next);
       setSaving(true);
       try {
+        // Detaching EVERYTHING is a legitimate move — it returns the suite to
+        // its legacy axes — so it clears the field instead of being resolved.
+        // Resolution would refuse it (a composition needs a target), and the
+        // user would get an error for unchecking the last box.
+        const emptied = !composerHasTarget(next);
         // Resolve BEFORE writing: a failure mid-way leaves at most some
         // deduped ad-hoc rows nothing points at, never a half-updated suite.
-        const resolved = await resolveTargets({
-          state: next,
-          liveEnvironments,
-          max: MAX_SUITE_ENVIRONMENTS,
-        });
+        const environmentIds = emptied
+          ? null
+          : (
+              await resolveTargets({
+                state: next,
+                liveEnvironments,
+                max: MAX_SUITE_ENVIRONMENTS,
+              })
+            ).environmentIds;
         await setSuiteEnvironments({
           suiteId: suite._id,
           // The backend rejects an empty array; `null` is how a field clears.
           environmentIds:
-            resolved.environmentIds.length > 0 ? resolved.environmentIds : null,
+            environmentIds && environmentIds.length > 0 ? environmentIds : null,
         });
       } catch (err) {
         if (commitVersion.current === mine) setState(previous);
@@ -254,7 +289,16 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
-          disabled={disabled || saving || unresolvedCount > 0}
+          // Also disabled while the environment list is still loading: resolving
+          // against an empty live list would miss a matching NAMED environment
+          // and mint an unnamed twin of it.
+          disabled={
+            disabled ||
+            saving ||
+            environmentsLoading ||
+            unresolvedCount > 0 ||
+            collapsesByHost
+          }
           testIdPrefix="suite-env"
         />
         <CompareClientsButton hostIds={state.stack.hostIds} />
@@ -268,6 +312,15 @@ function EnvironmentModeBar({
             ? "One attached environment is archived or unavailable."
             : `${unresolvedCount} attached environments are archived or unavailable.`}{" "}
           Detach it in suite settings before changing where this runs.
+        </p>
+      ) : collapsesByHost ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="suite-env-collapse-hint"
+        >
+          Two of this suite&apos;s environments run on the same client, which
+          this strip can&apos;t represent without dropping one. Change them in
+          suite settings.
         </p>
       ) : null}
     </div>

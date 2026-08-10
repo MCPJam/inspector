@@ -14,6 +14,7 @@ import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
 import {
+  composerHasTarget,
   emptyComposerState,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
@@ -175,8 +176,10 @@ export function CreateSuiteDialog({
   ]);
 
   const attachmentsRequired = hostsEnabled && projectId !== null;
-  const composeHasTarget =
-    target.stack.hostIds.length > 0 || target.environmentIds.length > 0;
+  // Keyed on the ACTIVE mode, not on "something is selected" — see
+  // `composerHasTarget`. Create would otherwise stay enabled on a state that can
+  // only fail resolution.
+  const composeHasTarget = composerHasTarget(target);
   const hasRequiredAttachments = composeMode
     ? composeHasTarget
     : !attachmentsRequired ||
@@ -218,14 +221,21 @@ export function CreateSuiteDialog({
           liveEnvironments: composerEnvironments ?? [],
           max: MAX_SUITE_ENVIRONMENTS,
         });
+        // Legacy fields ride along as rollback data, the way journey writes keep
+        // theirs from going stale — built from the RESOLVED environments, not
+        // from the stack. Picking two saved environments seeds the stack from
+        // only one of them, so a stack-derived fallback would name one client
+        // for a two-target suite and quietly drop the other if the second call
+        // failed.
+        const fallbackHostIds = [
+          ...new Set(resolved.environments.map((env) => env.hostId)),
+        ];
         payload = {
           name: name.trim(),
           environmentIds: resolved.environmentIds,
-          // Legacy fields ride along as rollback data, the way journey writes
-          // keep theirs from going stale.
-          ...(target.stack.hostIds.length > 0
+          ...(fallbackHostIds.length > 0
             ? {
-                hostAttachments: target.stack.hostIds.map((namedHostId) => ({
+                hostAttachments: fallbackHostIds.map((namedHostId) => ({
                   namedHostId,
                   enabledOptionalServerIds: [],
                 })),

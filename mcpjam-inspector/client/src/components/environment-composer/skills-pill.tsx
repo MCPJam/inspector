@@ -37,7 +37,12 @@ export function SkillsPill({
         : `${selectedCount} skills`;
 
   return (
-    <Popover open={open} onOpenChange={(next) => !disabled && setOpen(next)}>
+    <Popover open={open} onOpenChange={(next) => {
+        // CLOSE always goes through, even when disabled: a menu open at the
+        // moment the strip becomes disabled (a commit starting) would otherwise
+        // be stuck open with no way out.
+        if (!next || !disabled) setOpen(next);
+      }}>
       <PopoverTrigger asChild>
         <button
           type="button"

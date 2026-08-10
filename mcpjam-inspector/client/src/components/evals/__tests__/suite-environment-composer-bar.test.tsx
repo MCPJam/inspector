@@ -100,6 +100,9 @@ function renderBar(over: Partial<EvalSuite> = {}, props: any = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears CALLS, not implementations — a `mockRejectedValue`
+  // from an earlier case would otherwise leak into every case after it.
+  setSuiteEnvironmentsMock.mockResolvedValue({});
   flags.environments = true;
   environmentsRef.current = [];
   ensureAdhocMock.mockImplementation(
@@ -214,6 +217,76 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     expect(screen.getByTestId("suite-env-unresolved-hint")).toBeInTheDocument();
     expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
   });
+
+  it("waits for the environment list before allowing an edit", () => {
+    // Resolving against an empty live list would miss a matching NAMED
+    // environment and mint an unnamed twin of it.
+    environmentsRef.current = undefined as any;
+    renderBar({ environmentIds: ["env-live"] } as any);
+
+    expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
+    // ...and it must NOT claim the attachment is archived while merely loading.
+    expect(
+      screen.queryByTestId("suite-env-unresolved-hint"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the field when the last environment is detached", async () => {
+    environmentsRef.current = [
+      {
+        environmentId: "env-live",
+        projectId: "proj-1",
+        name: "Alpha",
+        origin: "named",
+        hostId: "host-1",
+        revision: 1,
+      },
+    ];
+    renderBar({ environmentIds: ["env-live"] } as any);
+
+    // Clearing the clients leaves the composition with nowhere to run. That is
+    // a legitimate "back to legacy" move, so it clears the field rather than
+    // erroring on a composition with no target.
+    fireEvent.click(screen.getByTestId("suite-env-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
+
+    await waitFor(() => expect(setSuiteEnvironmentsMock).toHaveBeenCalled());
+    expect(setSuiteEnvironmentsMock).toHaveBeenCalledWith({
+      suiteId: "suite-1",
+      environmentIds: null,
+    });
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("blocks editing when two attachments share a client", () => {
+    // The strip fans out over hostIds, so these two would resolve to ONE row.
+    // Losing a target silently is worse than refusing the edit.
+    environmentsRef.current = [
+      {
+        environmentId: "env-a",
+        projectId: "proj-1",
+        name: "A",
+        origin: "named",
+        hostId: "host-1",
+        serverAttachmentId: "grp-1",
+        revision: 1,
+      },
+      {
+        environmentId: "env-b",
+        projectId: "proj-1",
+        name: "B",
+        origin: "named",
+        hostId: "host-1",
+        serverAttachmentId: "grp-2",
+        revision: 1,
+      },
+    ];
+    renderBar({ environmentIds: ["env-a", "env-b"] } as any);
+
+    expect(screen.getByTestId("suite-env-collapse-hint")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
+  });
 });
 
 describe("SuiteEnvironmentComposerBar — legacy mode", () => {
@@ -264,6 +337,23 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
 
     expect(onUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("is NOT editable for a suite that already attaches environments", () => {
+    // `buildSuiteRunPlans` prefers environmentIds, so a legacy client write here
+    // would report success and change nothing about what runs.
+    flags.environments = false;
+    renderBar({
+      environmentIds: ["env-a"],
+      hostAttachments: [
+        { namedHostId: "host-1", hostName: "Claude", enabledOptionalServerIds: [] },
+      ] as any,
+    } as any);
+
+    expect(
+      screen.queryByTestId("suite-env-clients-picker"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
   });
 
   it("renders read-only when the caller says so", () => {

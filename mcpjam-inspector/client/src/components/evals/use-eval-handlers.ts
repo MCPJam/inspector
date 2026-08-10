@@ -918,7 +918,7 @@ export function useEvalHandlers({
       getAccessToken,
       projectId,
       projectServers,
-      projectEnvironments,
+      labeledProjectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
       evalsNavigationContext,
