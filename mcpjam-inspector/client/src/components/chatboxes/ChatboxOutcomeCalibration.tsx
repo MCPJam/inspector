@@ -34,10 +34,16 @@ export function ChatboxOutcomeCalibration({
   const rows = breakdown?.outcomeFeedbackCalibration ?? [];
   const hasAnyRating = rows.some((row) => row.rated > 0);
 
-  if (rows.length === 0) return null;
+  // Empty / unrated: stay out of the way so Insights can match Swarm's
+  // fill-viewport chrome. Surfaces mount this in a popover chip when there
+  // is something to show.
+  if (rows.length === 0 || !hasAnyRating) return null;
 
   return (
-    <div className="flex flex-col gap-2 border-b px-5 py-4">
+    <div
+      className="flex flex-col gap-2 px-5 py-4"
+      data-testid="chatbox-outcome-calibration"
+    >
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-medium">Feedback by inferred outcome</h3>
         <Tooltip delayDuration={200}>
@@ -79,92 +85,94 @@ export function ChatboxOutcomeCalibration({
         </div>
       ) : null}
 
-      {!hasAnyRating ? (
-        <p className="text-[11px] text-muted-foreground">
-          No sessions in this window carry a rating, so there is nothing to
-          compare inferred outcomes against yet.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[420px] border-separate border-spacing-0 text-left">
-            <thead>
-              <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th scope="col" className="py-1.5 pr-3 font-medium">
-                  Inferred outcome
-                </th>
-                <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                  Sessions
-                </th>
-                <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                  Rated
-                </th>
-                <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                  Negative
-                </th>
-                <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                  Negative rate
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                // A high negative rate among sessions we called `completed` is
-                // the actionable disagreement; flag only that combination.
-                const suspicious =
-                  row.outcome === "completed" &&
-                  row.rated >= MIN_RATINGS_FOR_RATE &&
-                  row.negativeRate !== null &&
-                  row.negativeRate >= 0.2;
-                return (
-                  <tr
-                    key={row.outcome}
-                    className="border-t border-border/60 text-xs"
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] border-separate border-spacing-0 text-left">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <th scope="col" className="py-1.5 pr-3 font-medium">
+                Inferred outcome
+              </th>
+              <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                Sessions
+              </th>
+              <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                Rated
+              </th>
+              <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                Negative
+              </th>
+              <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                Negative rate
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              // A high negative rate among sessions we called `completed` is
+              // the actionable disagreement; flag only that combination.
+              const suspicious =
+                row.outcome === "completed" &&
+                row.rated >= MIN_RATINGS_FOR_RATE &&
+                row.negativeRate !== null &&
+                row.negativeRate >= 0.2;
+              return (
+                <tr
+                  key={row.outcome}
+                  className="border-t border-border/60 text-xs"
+                >
+                  <th
+                    scope="row"
+                    className="py-1.5 pr-3 text-left font-medium"
                   >
-                    <th
-                      scope="row"
-                      className="py-1.5 pr-3 text-left font-medium"
-                    >
-                      {row.outcome}
-                    </th>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
-                      {row.sessions.toLocaleString()}
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
-                      {row.rated.toLocaleString()}
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
-                      {row.negative.toLocaleString()}
-                    </td>
-                    <td
-                      className={cn(
-                        "px-2 py-1.5 text-right tabular-nums",
-                        suspicious && "font-medium text-destructive"
-                      )}
-                    >
-                      {/* A rate off one or two ratings is noise. Show the raw
-                          counts instead of a percentage that reads as a
-                          finding. */}
-                      {row.negativeRate === null
-                        ? "—"
-                        : row.rated < MIN_RATINGS_FOR_RATE
+                    {row.outcome}
+                  </th>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                    {row.sessions.toLocaleString()}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                    {row.rated.toLocaleString()}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                    {row.negative.toLocaleString()}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-2 py-1.5 text-right tabular-nums",
+                      suspicious && "font-medium text-destructive",
+                    )}
+                  >
+                    {/* A rate off one or two ratings is noise. Show the raw
+                        counts instead of a percentage that reads as a
+                        finding. */}
+                    {row.negativeRate === null
+                      ? "—"
+                      : row.rated < MIN_RATINGS_FOR_RATE
                         ? `${row.negative}/${row.rated}`
                         : `${Math.round(row.negativeRate * 100)}%`}
-                      {/* The flagged row is the whole point of the panel, so it
-                          cannot be announced in colour alone. */}
-                      {suspicious ? (
-                        <span className="sr-only">
-                          {" "}
-                          — unexpectedly negative for a completed outcome
-                        </span>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                    {/* The flagged row is the whole point of the panel, so it
+                        cannot be announced in colour alone. */}
+                    {suspicious ? (
+                      <span className="sr-only">
+                        {" "}
+                        — unexpectedly negative for a completed outcome
+                      </span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+/** True when the breakdown has at least one rated session to calibrate against. */
+export function hasOutcomeFeedbackCalibration(
+  breakdown: UsageBreakdown | null | undefined,
+): boolean {
+  return (breakdown?.outcomeFeedbackCalibration ?? []).some(
+    (row) => row.rated > 0,
   );
 }
