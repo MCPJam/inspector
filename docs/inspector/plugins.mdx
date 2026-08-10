@@ -145,7 +145,7 @@ Before you confirm the install, MCPJam shows a preview of what the bundle declar
 | Identity | Plugin name, version, and a short content-addressed revision ID |
 | Census | Counts of skills, MCP servers, app mappings, and assets |
 | Warnings | Non-fatal issues, including every skipped component with its reason |
-| Unsupported components | Anything preserved in the stored bundle that MCPJam does not run |
+| Unsupported components | One line per component MCPJam stores but does not run — lifecycle hooks, browser extensions, scheduled-task templates, and unrecognized manifest fields — each with its key and the reason it is inert |
 | Setup required | Environment variable and header names the bundle declares — you supply values per server after installing, not here |
 | Skills | Declared skill model references and descriptions |
 | MCP servers | Server keys, transports, and any OAuth or credential requirements |
@@ -187,7 +187,7 @@ Click the card header to expand it and see the active revision's components:
 - **Revision ID** — the short content-addressed identity of the active bundle.
 - **MCP servers** — each server's key, transport, placement, and readiness.
 - **Skills** — model references for each declared skill, namespaced as `<plugin-name>/<skill-name>`.
-- **Unsupported components** — a count of components preserved in the bundle that MCPJam does not run.
+- **Unsupported components** — a count of the same inert components the import preview itemizes. Only the count appears here; the per-component keys and reasons are shown at import time.
 - **Other revisions** — ready revisions of the same plugin that are not currently active. Click **Activate** next to a revision to make it the active one.
 
 ### Plugin actions
