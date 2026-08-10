@@ -5,7 +5,7 @@ icon: "package"
 ---
 
 <Note>
-Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account. Guest sessions can import plugins too — the same upload path and limits apply to every actor.
+Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account. Importing a plugin requires **project admin** — it creates shared executable capabilities, so it carries the same bar as managing shared OAuth connections. Project members can view installed plugins; the feature flag only controls whether the surface appears, never who may import.
 </Note>
 
 A **plugin** is an [Agent Plugins 1.0](https://agent-plugins.org) bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
@@ -25,7 +25,7 @@ my-plugin/
 └── assets/              # optional icons, logos, screenshots
 ```
 
-A `plugin.json` or `mcp.json` anywhere else in the bundle is treated as an ordinary file, and a `SKILL.md` deeper than one directory under `skills/` is not a skill. Directories the format does not define (`hooks/`, vendored folders, and so on) are preserved as plain files — they are not components and not errors.
+A `plugin.json` anywhere else in the bundle is treated as an ordinary file, an `mcp.json` outside the root is ignored with an `MCP_CONFIG_IGNORED` preview warning, and a `SKILL.md` deeper than one directory under `skills/` is not a skill. Directories the format does not define (`hooks/`, vendored folders, and so on) are preserved as plain files — they are not components and not errors.
 
 ### `plugin.json`
 
@@ -34,7 +34,7 @@ The manifest requires two fields:
 - **`$schema`** — the canonical Agent Plugins schema identifier, for example `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`. MCPJam uses it to select its locally supported validation rules; the URL is **never fetched** during import. A missing or unsupported `$schema` rejects the bundle.
 - **`name`** — the plugin's stable identity: 1–64 lowercase characters from `a-z`, `0-9`, `-`, and `.`. Dots are legal (`com.example.deploy` is a valid name), separators may not lead or trail, and the same separator may not repeat (`--` and `..` are invalid — mixed pairs like `foo.-bar` are allowed by the spec).
 
-`version` is a free-form string — the format imposes no semver rule. The manifest is a **closed object**: unknown top-level fields are reported in the import preview and ignored — with one exception. A handful of *execution-ambiguous* names (`command`, `entrypoint`, `exec`, `install`, `install_script`, `postinstall`, `preinstall`, `run`, `script`, `scripts`) **reject the bundle outright** rather than being ignored, because silently dropping something that looks like an install or run hook is the wrong failure mode. Remove them from `plugin.json`; there is no preview to fix them from. The `extensions` field carries client-specific data under reverse-domain namespaces; MCPJam reads its own presentation metadata (display name, icon, logo) from the `com.mcpjam` namespace and preserves other namespaces without validating them.
+`version` is a free-form string — the format imposes no semver rule. The manifest is a **closed object**: unknown top-level fields are reported in the import preview and ignored — with one exception. A handful of *execution-ambiguous* names (`command`, `entrypoint`, `exec`, `install`, `install_script`, `postinstall`, `preinstall`, `run`, `script`, `scripts`) **reject the bundle outright** rather than being ignored, because silently dropping something that looks like an install or run hook is the wrong failure mode. Remove them from `plugin.json`; there is no preview to fix them from. The `extensions` field carries client-specific data under reverse-domain namespaces; MCPJam reads its own presentation metadata (display name, icon, logo) from the `com.mcpjam` namespace and preserves other namespaces without validating their *shape*. Two hygiene rules still apply to every namespace: secret-looking values are dropped rather than stored (reported as `MANIFEST_SECRET_FIELD_OMITTED`), and a namespace nested beyond the depth cap rejects the bundle with `VALUE_TOO_DEEP`. Round-tripping client-specific metadata is safe as long as it carries no credentials and stays reasonably flat.
 
 ```json
 {

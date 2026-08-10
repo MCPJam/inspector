@@ -96,9 +96,9 @@ tested in the inspector's local plugin runtime,
   spawn time (`plugin-root.ts`); a leftover placeholder refuses the spawn so
   a child process never sees a literal `${…}` token.
 - **Client-controlled variables set last** — the injected
-  `PLUGIN_ROOT`/`PLUGIN_DATA` env aliases are applied first and cannot be
-  shadowed (the parser already rejects bundles whose `env` declares the
-  reserved keys).
+  `PLUGIN_ROOT`/`PLUGIN_DATA` env aliases are applied AFTER the bundle's own
+  `env`, so a bundle cannot shadow them (the parser already rejects bundles
+  whose `env` declares the reserved keys).
 - **Bare commands resolve through platform executable search rules; `cwd`
   defaults to the plugin root** — the local stdio materializer
   (`local-stdio.ts`).
