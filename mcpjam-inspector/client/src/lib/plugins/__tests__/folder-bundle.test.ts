@@ -32,18 +32,27 @@ function textFile(path: string, content: string): PluginBundleFile {
   return { path, bytes: encoder.encode(content) };
 }
 
+const PLUGIN_SCHEMA_URL =
+  "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+const MCP_SCHEMA_URL =
+  "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
+
 const MANIFEST = textFile(
-  ".codex-plugin/plugin.json",
-  JSON.stringify({ name: "demo-plugin", display_name: "Demo Plugin" }),
+  "plugin.json",
+  JSON.stringify({ $schema: PLUGIN_SCHEMA_URL, name: "demo-plugin" }),
 );
 
 const MCP_SERVERS = {
-  demo: { url: "https://example.com/mcp" },
-  local: { command: "node", args: ["server.js"] },
+  demo: { type: "streamable-http", url: "https://example.com/mcp" },
+  local: { type: "stdio", command: "node", args: ["server.js"] },
 };
 
-function bundleFiles(mcpConfigDocument: unknown): PluginBundleFile[] {
-  return [MANIFEST, textFile(".mcp.json", JSON.stringify(mcpConfigDocument))];
+function mcpDocument(servers: unknown): string {
+  return JSON.stringify({ $schema: MCP_SCHEMA_URL, mcpServers: servers });
+}
+
+function bundleFiles(servers: unknown): PluginBundleFile[] {
+  return [MANIFEST, textFile("mcp.json", mcpDocument(servers))];
 }
 
 async function expectIssueCode(
@@ -145,7 +154,7 @@ function factSource(entries: PluginFileEntry[]): PluginFileSource {
 describe("parsePluginBundleFromFiles", () => {
   it("parses a minimal bundle and reports a content-defined bundle hash", async () => {
     const parsed = await parsePluginBundleFromFiles(
-      bundleFiles({ mcpServers: MCP_SERVERS }),
+      bundleFiles(MCP_SERVERS),
     );
     expect(parsed.manifest.name).toBe("demo-plugin");
     expect(parsed.bundleHash).toMatch(/^[0-9a-f]{64}$/);
@@ -155,34 +164,45 @@ describe("parsePluginBundleFromFiles", () => {
     ]);
   });
 
-  it("accepts direct, mcp_servers, and mcpServers shapes identically (SDK parity)", async () => {
+  it("keeps the lenient JSON-import shape detection while the plugin path is strict", async () => {
+    // The generic MCP-JSON import still accepts all three legacy shapes...
     const shapes: unknown[] = [
       MCP_SERVERS,
       { mcp_servers: MCP_SERVERS },
       { mcpServers: MCP_SERVERS },
     ];
-    const parsedKeys: string[][] = [];
     for (const shape of shapes) {
-      const parsed = await parsePluginBundleFromFiles(bundleFiles(shape));
-      parsedKeys.push(parsed.mcpServers.map((server) => server.key).sort());
-
-      // The inspector's JSON import resolves the same shapes to the same
-      // server names — the two code paths agree on shape detection.
       const resolved = resolveJsonServerMap(shape);
       expect(resolved.ok).toBe(true);
       if (resolved.ok) {
         expect(Object.keys(resolved.servers).sort()).toEqual(["demo", "local"]);
       }
     }
-    expect(parsedKeys[1]).toEqual(parsedKeys[0]);
-    expect(parsedKeys[2]).toEqual(parsedKeys[0]);
+    // ...while the Agent Plugins path requires the strict document: a Codex
+    // mcp_servers wrapper disables the MCP component type (never the bundle).
+    const strict = await parsePluginBundleFromFiles(bundleFiles(MCP_SERVERS));
+    expect(strict.mcpServers.map((server) => server.key).sort()).toEqual([
+      "demo",
+      "local",
+    ]);
+    const legacy = await parsePluginBundleFromFiles([
+      MANIFEST,
+      textFile(
+        "mcp.json",
+        JSON.stringify({ $schema: MCP_SCHEMA_URL, mcp_servers: MCP_SERVERS }),
+      ),
+    ]);
+    expect(legacy.mcpServers).toEqual([]);
+    expect(legacy.skipped).toEqual([
+      expect.objectContaining({ kind: "mcp-config" }),
+    ]);
   });
 });
 
 describe("folder / ZIP bundle hash parity", () => {
   const files = [
     MANIFEST,
-    textFile(".mcp.json", JSON.stringify({ mcp_servers: MCP_SERVERS })),
+    textFile("mcp.json", mcpDocument(MCP_SERVERS)),
     textFile(
       "skills/demo/SKILL.md",
       "---\nname: demo\ndescription: A demo skill for parity tests\n---\nBody\n",
@@ -232,15 +252,15 @@ describe("createFolderPluginFileSource selection mapping", () => {
 
   it("strips the shared picked-folder segment and filters OS junk", async () => {
     const source = createFolderPluginFileSource([
-      pickedFile("my-plugin/.codex-plugin/plugin.json", "{}"),
-      pickedFile("my-plugin/.mcp.json", "{}"),
+      pickedFile("my-plugin/plugin.json", "{}"),
+      pickedFile("my-plugin/mcp.json", "{}"),
       pickedFile("my-plugin/.DS_Store", "junk"),
       pickedFile("my-plugin/__MACOSX/resource", "junk"),
     ]);
     const entries = await source.list();
     expect(entries.map((entry) => entry.path).sort()).toEqual([
-      ".codex-plugin/plugin.json",
-      ".mcp.json",
+      "mcp.json",
+      "plugin.json",
     ]);
   });
 
@@ -259,13 +279,10 @@ describe("createFolderPluginFileSource selection mapping", () => {
   it("folderSelectionToPluginZip yields a zip whose parse matches the folder parse", async () => {
     const selection = [
       pickedFile(
-        "my-plugin/.codex-plugin/plugin.json",
-        JSON.stringify({ name: "demo-plugin" }),
+        "my-plugin/plugin.json",
+        JSON.stringify({ $schema: PLUGIN_SCHEMA_URL, name: "demo-plugin" }),
       ),
-      pickedFile(
-        "my-plugin/.mcp.json",
-        JSON.stringify({ mcp_servers: MCP_SERVERS }),
-      ),
+      pickedFile("my-plugin/mcp.json", mcpDocument(MCP_SERVERS)),
     ];
     const { parsed, zipBytes } = await folderSelectionToPluginZip(selection);
     const roundTripped = await parsePluginBundleFromZip(zipBytes);
@@ -423,7 +440,7 @@ describe("client-only archive screen", () => {
     );
 
     // ...and a clean junk-suffixed archive still parses with the same hash.
-    const files = bundleFiles({ mcpServers: MCP_SERVERS });
+    const files = bundleFiles(MCP_SERVERS);
     const clean = await parsePluginBundleFromFiles(files);
     const suffixed = await parsePluginBundleFromZip(
       withTrailingJunk(await buildPluginZip(files), [0xde, 0xad]),
@@ -589,7 +606,7 @@ describe("preflight parity with the SDK parser", () => {
   }
 
   it("clean bundle → accepted by both with the same bundle hash", async () => {
-    const files = bundleFiles({ mcpServers: MCP_SERVERS });
+    const files = bundleFiles(MCP_SERVERS);
     const viaSdkSource = await parsePluginBundleFromFiles(files);
     const viaZipAdapter = await parsePluginBundleFromZip(
       await buildPluginZip(files),
