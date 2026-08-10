@@ -302,7 +302,7 @@ export function HostFocusDialog({
         open={confirmDiscard}
         onOpenChange={(next) => !next && setConfirmDiscard(false)}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <div className="flex flex-col gap-2">
             <h2 className="text-base font-semibold">Discard changes?</h2>
             <p className="text-[12.5px] text-muted-foreground">

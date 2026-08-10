@@ -278,7 +278,7 @@ export function XAAServerModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl flex max-h-[85vh] flex-col">
+      <DialogContent className="sm:max-w-xl flex max-h-[85vh] flex-col">
         <DialogHeader>
           <DialogTitle>Configure Server to Test</DialogTitle>
         </DialogHeader>

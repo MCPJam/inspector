@@ -104,7 +104,7 @@ export function ClientCapabilitiesOverrideDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
         aria-describedby={undefined}
       >
         <DialogHeader>

@@ -91,7 +91,7 @@ function WidgetModalChrome({ open, onClose, title, children }: WidgetModalProps)
         if (!next) onClose();
       }}
     >
-      <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
+      <DialogContent className="w-fit sm:max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>

@@ -56,7 +56,7 @@ export function ModelDetailsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] w-full max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[85vh] w-full sm:max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <ProviderLogo
