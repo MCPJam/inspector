@@ -39,7 +39,10 @@ vi.mock("node:os", async () => {
   return { ...actual, homedir: () => scratch };
 });
 
-import { createLocalComputerTerminalWsHandler } from "../local-computer-terminal.js";
+import {
+  createLocalComputerTerminalWsHandler,
+  resolveLocalShell,
+} from "../local-computer-terminal.js";
 import {
   resetLocalPtyCachesForTests,
   setLocalPtyModuleForTests,
@@ -411,5 +414,32 @@ describe("local terminal WS — lifecycle", () => {
 
     await exited;
     expect((await closed).code).toBe(1000);
+  });
+});
+
+describe("resolveLocalShell", () => {
+  it("prefers $SHELL when it exists", () => {
+    const bash = resolveLocalShell({ PATH: process.env.PATH });
+    // Use a shell we know is present on this host as the "preferred" value.
+    expect(resolveLocalShell({ PATH: process.env.PATH, SHELL: bash })).toBe(
+      bash
+    );
+  });
+
+  it("falls back to bash when $SHELL is STALE rather than failing the open", () => {
+    // node-pty spawns synchronously and would throw on a nonexistent shell,
+    // surfacing as "failed to open a terminal" on a machine where bash exists.
+    const resolved = resolveLocalShell({
+      PATH: process.env.PATH,
+      SHELL: "/nonexistent/shell",
+    });
+    expect(resolved).not.toBe("/nonexistent/shell");
+    expect(resolved).toMatch(/bash|^sh$/);
+  });
+
+  it("falls back to a bare sh when nothing else resolves", () => {
+    expect(resolveLocalShell({ PATH: "/nonexistent/bin" })).toMatch(
+      /bash|^sh$/
+    );
   });
 });

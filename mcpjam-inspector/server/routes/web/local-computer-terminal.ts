@@ -30,6 +30,7 @@
  *                    | {type:"error", message} | {type:"pong"}
  */
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { MiddlewareHandler } from "hono";
 import { createPtyWithCwd } from "../../utils/computers/create-pty.js";
@@ -98,9 +99,19 @@ function toUint8Array(data: unknown): Uint8Array | null {
   return null;
 }
 
-/** `$SHELL` if the allowlisted env carries one, else bash, else a bare `sh`. */
-function resolveLocalShell(env: NodeJS.ProcessEnv): string {
-  return env.SHELL || resolveLocalBashPath() || "sh";
+/**
+ * `$SHELL` if the allowlisted env carries a shell that actually exists, else
+ * bash, else a bare `sh`.
+ *
+ * The `existsSync` check matters: a stale `SHELL` (a shell uninstalled since
+ * login, or one inherited from a different container image) would make
+ * node-pty's synchronous spawn throw, and the user would get "failed to open a
+ * terminal" on a machine where bash is sitting right there.
+ */
+export function resolveLocalShell(env: NodeJS.ProcessEnv): string {
+  const preferred = env.SHELL;
+  if (preferred && existsSync(preferred)) return preferred;
+  return resolveLocalBashPath() || "sh";
 }
 
 export function createLocalComputerTerminalWsHandler(

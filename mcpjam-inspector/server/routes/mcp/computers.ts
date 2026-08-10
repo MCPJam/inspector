@@ -45,13 +45,13 @@ computers.use("/local-consent/*", async (c, next) => {
   return next();
 });
 
-// The consent gates above are scoped to `/local-consent/*` ONLY — the mint
-// route needs its own identical stack, or it would inherit nothing but the
-// app-level session middleware.
-// Registered on the EXACT path, not `/local-terminal-token/*`: the mint is a
-// single bare path with no sub-routes, and an exact registration can't be
-// wrong about whether a wildcard covers its own prefix. (`bearerAuthMiddleware`
-// resolves the bearer, so matching twice would also do that work twice.)
+// The gates above are scoped to `/local-consent/*` ONLY, so the terminal mint
+// needs its own identical stack — without this it would inherit nothing but the
+// app-level session middleware. Registered on the EXACT path rather than
+// `/local-terminal-token/*`: the mint is a single bare path with no sub-routes,
+// and an exact registration can't be wrong about whether a wildcard covers its
+// own prefix. (`bearerAuthMiddleware` resolves the bearer, so a double match
+// would also do that work twice.)
 computers.use(
   "/local-terminal-token",
   bearerAuthMiddleware,
