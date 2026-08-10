@@ -9,6 +9,11 @@ import { resolveHostLogoByName, UNKNOWN_HOST_LOGO } from "@/lib/host-logo";
 describe("resolveHostLogoByName", () => {
   it("falls back to the generic MCP mark for a name it cannot place", () => {
     expect(resolveHostLogoByName("Acme Internal Bot")).toBe(UNKNOWN_HOST_LOGO);
+    // The return type is a plain string, so the blank cases have to resolve to
+    // the mark too rather than falling through to undefined. `trim()` is what
+    // the exact-match pass guards on, hence the whitespace-only case.
+    expect(resolveHostLogoByName("")).toBe(UNKNOWN_HOST_LOGO);
+    expect(resolveHostLogoByName("   ")).toBe(UNKNOWN_HOST_LOGO);
   });
 
   it("still places a decorated name via the hint table", () => {
