@@ -8,6 +8,32 @@
  * one is a docs-breaking change.
  */
 
+/**
+ * Who has to act — NOT a blame label.
+ *
+ * MCPJam is a debugger: pointing it at a broken server is the product
+ * working, not an incident. This field exists so a failure that belongs to
+ * the user's server or the user's configuration can be shown to them clearly
+ * while never paging the MCPJam team, and so the failures that ARE ours stop
+ * being lost in that noise.
+ *
+ * - `user_server`  — we reached the user's server (or its authorization
+ *                    server) and it failed, refused, or answered wrongly.
+ * - `user_config`  — the inputs we were given are wrong or incomplete: URL,
+ *                    credentials, transport, capability toggles.
+ * - `mcpjam`       — MCPJam's own code or infrastructure.
+ * - `ambiguous`    — the evidence does not settle it. Deliberately distinct
+ *                    from `mcpjam`: consumers surface these without paging.
+ *
+ * Some slugs are genuinely undecidable between the two `user_*` values — a
+ * refused port is "nothing is running there" or "wrong port", and the wire
+ * cannot tell you which. Nothing downstream depends on separating them:
+ * capture policy treats both as never-page, and user-facing copy comes from
+ * this entry's own `oneLine` / `likelyCauses` / `nextSteps`, which already
+ * state the ambiguity in words. Do NOT write user-facing prose off `origin`.
+ */
+export type ErrorOrigin = "user_server" | "user_config" | "mcpjam" | "ambiguous";
+
 export type ErrorCatalogEntry = {
   slug: string; // e.g. "jsonrpc/connection_closed"
   title: string;
@@ -20,9 +46,94 @@ export type ErrorCatalogEntry = {
    */
   docsAnchor: string;
   severity: "info" | "warning" | "error";
+  /**
+   * Optional in the type because `ErrorCatalogEntry` is published and an
+   * external caller may still construct one; required in practice — a test
+   * asserts every catalog slug carries an origin. Read it through
+   * `originOf()`, which defaults a missing value to `ambiguous`.
+   */
+  origin?: ErrorOrigin;
 };
 
 const DOCS_BASE = "/troubleshooting/error-codes";
+
+/**
+ * Origin per slug, kept as one table rather than a field threaded through 34
+ * call sites: the whole taxonomy is the thing that needs reviewing, and it is
+ * only reviewable when it can be read at once.
+ *
+ * A slug missing from this table fails the catalog test.
+ */
+const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
+  // --- The server answered, and the answer was the problem -----------------
+  // We completed a round trip. Whatever went wrong is on the other end.
+  "jsonrpc/parse_error": "user_server",
+  "jsonrpc/internal_error": "user_server",
+  "jsonrpc/method_not_found": "user_server",
+  // -32602 is about the CALL's arguments — a missing field, a type the tool
+  // schema did not match, or a validator stricter than the published schema.
+  // The fix is in the schema or the arguments; neither is MCPJam plumbing.
+  "jsonrpc/invalid_params": "user_server",
+  "jsonrpc/unsupported_protocol_version": "user_server",
+  // The provider rejected a tool NAME that came from the user's server
+  // ("rename the offending tool on the server").
+  "provider/invalid_tool_name": "user_server",
+  // Their authorization server, or the issuer URL it advertised, is not
+  // answering. Reaching it is not something the user configures directly.
+  "oauth/well_known_unreachable": "user_server",
+  // We connected, then the peer hung up mid-response.
+  "transport/socket_hang_up": "user_server",
+
+  // --- What we were told to connect to, or with, was wrong -----------------
+  "transport/econnrefused": "user_config",
+  "transport/enotfound": "user_config",
+  "auth/http_401": "user_config",
+  "auth/http_403": "user_config",
+  "auth/missing_bearer": "user_config",
+  // Default only. A refresh failure on a credential MCPJam itself holds is
+  // ours — callers pass `credentialOwner: "mcpjam"` to say so.
+  "auth/oauth_refresh_failed": "user_config",
+  "oauth/invalid_client": "user_config",
+  "oauth/invalid_grant": "user_config",
+  "oauth/redirect_mismatch": "user_config",
+  // Same default/override pair: a managed key hitting an auth or quota wall
+  // is MCPJam's account problem, a BYO key is the user's.
+  "provider/auth_error": "user_config",
+  "provider/quota": "user_config",
+  // "Enable the required client capability in the connection's Client
+  // settings" — a toggle the user owns.
+  "jsonrpc/missing_required_client_capability": "user_config",
+  // Not a failure at all: the server is asking the user to go open a URL.
+  "jsonrpc/url_elicitation_required": "user_config",
+  // Despite the `sdk/` namespace, this one is a misconfiguration: "you
+  // enabled the stateless protocol toggle on a stdio server".
+  "sdk/stateless_requires_http": "user_config",
+
+  // --- Ours ----------------------------------------------------------------
+  "sdk/not_yet_supported_in_stateless": "mcpjam",
+  "sdk/paginated_tool_header_discovery_unsupported": "mcpjam",
+
+  // --- Not settled by the evidence ----------------------------------------
+  // Either peer can drop a connection or run out of time.
+  "jsonrpc/connection_closed": "ambiguous",
+  "jsonrpc/request_timeout": "ambiguous",
+  "transport/etimedout": "ambiguous",
+  "transport/econnreset": "ambiguous",
+  "transport/eai_again": "ambiguous",
+  "transport/fetch_failed": "ambiguous",
+  "transport/undici": "ambiguous",
+  // -32600 and a protocol-version header mismatch are envelope-level: MCPJam
+  // builds that envelope, so a systematic serialization bug of ours would
+  // land here. Marking them `user_server` would make exactly the class of
+  // MCPJam bug that affects every user the one class we never see.
+  "jsonrpc/invalid_request": "ambiguous",
+  "jsonrpc/header_mismatch": "ambiguous",
+  // Unclassifiable. NOT `mcpjam`: this is where every unrecognized failure
+  // from an arbitrary user server lands, and paging on it would rebuild the
+  // noise problem this field exists to remove. Callers that know the failure
+  // happened on an internal boundary escalate it themselves.
+  "internal/unknown": "ambiguous",
+};
 
 function entry(
   slug: string,
@@ -41,6 +152,7 @@ function entry(
     nextSteps,
     docsAnchor: `${DOCS_BASE}#${anchor}`,
     severity,
+    ...(ERROR_ORIGINS[slug] ? { origin: ERROR_ORIGINS[slug] } : {}),
   };
 }
 
