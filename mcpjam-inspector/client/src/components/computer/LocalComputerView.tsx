@@ -66,17 +66,19 @@ export function LocalComputerView({
   );
 
   // One `computer_terminal_opened` per opened SESSION (not per reconnect), and
-  // one `local_terminal_unavailable` per degraded state — content-free either
-  // way. The key includes `projectId` because the pane is keyed by it: a project
-  // switch remounts `ComputerTerminal`, minting a fresh nonce and starting a
-  // real new shell, which must be counted even though THIS component didn't
-  // remount.
+  // one `local_terminal_unavailable` per degraded state.
+  //
+  // Only the `open` key carries `projectId`: the pane is keyed by project, so a
+  // switch remounts `ComputerTerminal` and starts a REAL new shell that must be
+  // counted even though this component didn't remount. Degradation, by contrast,
+  // is a property of the MACHINE (node-pty is missing) — re-reporting it per
+  // project would inflate the count with events that reflect no change at all.
   const showTerminal = consent.granted && localTerminalAvailable;
   const showDegraded = consent.granted && !localTerminalAvailable;
   const lastReportedRef = useRef<string | null>(null);
   useEffect(() => {
     const state = showTerminal ? "open" : showDegraded ? "degraded" : null;
-    const key = state === null ? null : `${state}:${projectId}`;
+    const key = state === "open" ? `open:${projectId}` : state;
     if (key === null || lastReportedRef.current === key) return;
     lastReportedRef.current = key;
     if (state === "open") {

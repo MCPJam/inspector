@@ -152,9 +152,12 @@ export function ComputerTerminal({
    * Whether drag-and-drop upload is offered. The upload targets the CLOUD box's
    * upload route, so the LOCAL pane must pass `false`: there it would burn its
    * single-use nonce against the wrong route and toast "Upload failed". When
-   * false the drop handlers are not attached at all and the overlay copy is
-   * suppressed, so there is no affordance suggesting a capability that isn't
-   * there.
+   * false the upload and the overlay copy are suppressed, so there is no
+   * affordance suggesting a capability that isn't there.
+   *
+   * The drop handlers STAY attached either way — they must still cancel the
+   * browser's default file-drop navigation, which would otherwise unload the
+   * inspector and lose the session. Do not condition them on this flag.
    */
   uploadEnabled?: boolean;
 }) {
@@ -508,6 +511,7 @@ export function ComputerTerminal({
         {/* Terminal canvas + overlay */}
         <div
           className="relative min-h-0 flex-1"
+          data-testid="terminal-drop-surface"
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}

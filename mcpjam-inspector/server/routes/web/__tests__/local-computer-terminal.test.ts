@@ -81,9 +81,19 @@ interface FakePtyRecord {
 
 const spawned: FakePtyRecord[] = [];
 
+/** When set, the next spawn sweeps the live set from inside `spawn` itself. */
+let killDuringNextSpawn = false;
+
 function installFakePty(): void {
   const module: NodePtyModule = {
     spawn: (file, _args, options) => {
+      if (killDuringNextSpawn) {
+        killDuringNextSpawn = false;
+        // Runs BEFORE `createPtyWithCwd` resolves, so the handle provably is not
+        // in `livePtys` yet — the generation check is the only thing that can
+        // still kill it.
+        killLocalComputerTerminals();
+      }
       const dataListeners: Array<(d: string) => void> = [];
       const exitListeners: Array<(e: { exitCode: number }) => void> = [];
       const record: FakePtyRecord = {
@@ -225,6 +235,7 @@ let server: { port: number; close: () => Promise<void> };
 beforeEach(async () => {
   vi.stubEnv("ALLOWED_ORIGINS", ALLOWED_ORIGIN);
   spawned.length = 0;
+  killDuringNextSpawn = false;
   consentState.fingerprint = MINT_FINGERPRINT;
   resetLocalTerminalNoncesForTests();
   resetLocalPtyCachesForTests();
@@ -379,6 +390,19 @@ describe("local terminal WS — shutdown", () => {
     expect(spawned).toHaveLength(2);
     reopened.close();
     await waitForClose(reopened);
+  });
+
+  it("kills a PTY whose spawn was in flight when the set was drained", async () => {
+    killDuringNextSpawn = true;
+    const { nonce } = mintNonce();
+    const ws = connect(server.port, nonce);
+
+    await vi.waitFor(() => expect(spawned).toHaveLength(1));
+    // The sweep happened mid-spawn, so this handle was never registered — only
+    // the generation check can account for it being dead.
+    await vi.waitFor(() => expect(spawned[0]!.killed).toBe(true));
+    ws.close();
+    await waitForClose(ws);
   });
 
   it("refuses NEW handshakes once shutdown has begun", async () => {

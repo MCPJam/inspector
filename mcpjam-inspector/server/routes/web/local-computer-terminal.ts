@@ -81,6 +81,18 @@ const livePtys = new Set<NodePtyProcess>();
 let shuttingDown = false;
 
 /**
+ * Bumped by every kill. A handshake captures it and re-checks after the awaits
+ * in its open path, so a PTY whose spawn was already in flight when the set was
+ * drained gets killed instead of registered — `livePtys.clear()` alone can't
+ * see it yet, and nothing else would ever kill it.
+ *
+ * A monotonic counter rather than a flag, deliberately: it invalidates in-flight
+ * spawns without any state that has to be cleared again afterwards, so it works
+ * for the non-terminating `killLocalComputerTerminals()` path too.
+ */
+let ptyGeneration = 0;
+
+/**
  * Kill every live local PTY, WITHOUT latching shutdown.
  *
  * For paths where the server goes away but the process may keep running and
@@ -90,6 +102,7 @@ let shuttingDown = false;
  * terminal handshake after the user reopened the window.
  */
 export function killLocalComputerTerminals(): void {
+  ptyGeneration += 1;
   for (const pty of livePtys) {
     try {
       pty.kill();
@@ -115,6 +128,7 @@ export function shutdownLocalComputerTerminals(): void {
 /** Test seam: the shutdown latch is module state for the process lifetime. */
 export function resetLocalTerminalShutdownForTests(): void {
   shuttingDown = false;
+  ptyGeneration = 0;
   livePtys.clear();
 }
 
@@ -210,6 +224,9 @@ export function createLocalComputerTerminalWsHandler(
     }
 
     const sessionId = randomUUID();
+    // Captured at handshake: any kill between here and registration invalidates
+    // this spawn (see `ptyGeneration`).
+    const openGeneration = ptyGeneration;
     let pty: NodePtyProcess | null = null;
     let closed = false;
     // Only journal a `close` for a session that was journaled `open`. The open
@@ -266,10 +283,11 @@ export function createLocalComputerTerminalWsHandler(
               },
               workspaceDir
             );
-            if (closed || shuttingDown) {
-              // The socket died — or the server began shutting down — while the
-              // PTY was coming up. Either way this handle is not in `livePtys`
-              // yet, so nothing else will ever kill it.
+            if (closed || shuttingDown || openGeneration !== ptyGeneration) {
+              // The socket died, the server began shutting down, or a kill swept
+              // the live set while this PTY was still coming up. In every case
+              // the handle is not in `livePtys` yet, so nothing else would ever
+              // kill it.
               try {
                 handle.kill();
               } catch {}

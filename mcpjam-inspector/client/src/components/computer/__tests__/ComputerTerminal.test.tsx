@@ -185,7 +185,7 @@ describe("ComputerTerminal — wsPath + uploadEnabled", () => {
     );
     await waitFor(() => expect(h.connections).toHaveLength(1));
 
-    const surface = container.querySelector(".relative.min-h-0.flex-1");
+    const surface = container.querySelector('[data-testid="terminal-drop-surface"]');
     expect(surface).not.toBeNull();
     // A drag that WOULD open the overlay must do nothing: on the local pane the
     // upload posts to the cloud box's route and would burn the single-use nonce.
@@ -212,7 +212,7 @@ describe("ComputerTerminal — wsPath + uploadEnabled", () => {
       />
     );
     await waitFor(() => expect(h.connections).toHaveLength(1));
-    const surface = container.querySelector(".relative.min-h-0.flex-1")!;
+    const surface = container.querySelector('[data-testid="terminal-drop-surface"]')!;
 
     for (const type of ["dragEnter", "dragOver", "drop"] as const) {
       const event = new Event(type.toLowerCase(), {
@@ -241,7 +241,7 @@ describe("ComputerTerminal — wsPath + uploadEnabled", () => {
     );
     await waitFor(() => expect(h.connections).toHaveLength(1));
 
-    const surface = container.querySelector(".relative.min-h-0.flex-1")!;
+    const surface = container.querySelector('[data-testid="terminal-drop-surface"]')!;
     fireEvent.dragEnter(surface, { dataTransfer: { types: ["Files"] } });
     expect(container.textContent?.includes("Drop files to upload")).toBe(false);
     fireEvent.drop(surface, {
@@ -257,7 +257,7 @@ describe("ComputerTerminal — wsPath + uploadEnabled", () => {
     );
     await waitFor(() => expect(h.connections).toHaveLength(1));
 
-    const surface = container.querySelector(".relative.min-h-0.flex-1");
+    const surface = container.querySelector('[data-testid="terminal-drop-surface"]');
     fireEvent.dragEnter(surface!, { dataTransfer: { types: ["Files"] } });
     await waitFor(() =>
       expect(container.textContent?.includes("Drop files to upload")).toBe(true)

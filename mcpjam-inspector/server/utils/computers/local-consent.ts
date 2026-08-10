@@ -106,18 +106,17 @@ export function grantLocalComputerConsent(): Promise<{
   });
 }
 
-/** Constant-time verify of a presented capability against the stored hash. */
+/**
+ * Constant-time verify of a presented capability against the stored hash.
+ *
+ * Delegates to `verifyAndFingerprintLocalConsent` so the length bounds and the
+ * `timingSafeEqual` compare live in exactly ONE place and cannot drift apart.
+ * Same single-read property, same lock-free behavior.
+ */
 export async function verifyLocalComputerConsent(
   token: string | null | undefined
 ): Promise<boolean> {
-  if (!token || token.length < 16 || token.length > 256) return false;
-  const persisted = await readPersistedConsent();
-  if (!persisted) return false;
-  const presented = Buffer.from(hashToken(token), "hex");
-  const stored = Buffer.from(persisted.tokenHash, "hex");
-  return (
-    presented.length === stored.length && timingSafeEqual(presented, stored)
-  );
+  return (await verifyAndFingerprintLocalConsent(token)) !== null;
 }
 
 /**

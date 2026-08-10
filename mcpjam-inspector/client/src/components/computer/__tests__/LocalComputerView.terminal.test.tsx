@@ -177,6 +177,20 @@ describe("LocalComputerView — terminal branch", () => {
     ).toHaveLength(1);
   });
 
+  it("does NOT re-report degradation on a project switch", () => {
+    const degraded = () => engineState({ localTerminalAvailable: false });
+    const { rerender } = render(
+      <LocalComputerView projectId="proj_1" engine={degraded()} />,
+    );
+    rerender(<LocalComputerView projectId="proj_2" engine={degraded()} />);
+
+    // node-pty availability is a property of the MACHINE, not the project — a
+    // switch is not a new degrade event and must not inflate the count.
+    expect(
+      trackSpy.mock.calls.filter((c) => c[0] === "local_terminal_unavailable"),
+    ).toHaveLength(1);
+  });
+
   it("never mounts the pane before consent, whatever the probe says", () => {
     render(
       <LocalComputerView
