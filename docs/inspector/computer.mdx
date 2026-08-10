@@ -17,6 +17,56 @@ you close the terminal, and wakes on next use.
 Open it from the **Computer** tab. The first time you open the terminal, MCPJam
 provisions the machine; after that it resumes in about a second.
 
+## This machine (local engine)
+
+Signed-in members on a non-hosted inspector can run agent commands directly on
+the machine the inspector is running on — no cloud computer required. When both
+engines are available, a **This machine / Cloud** toggle appears at the top of
+the Computer tab.
+
+### First-run consent
+
+The first time you select **This machine**, a consent gate appears:
+
+> **Allow agents to run commands on this machine?**
+>
+> The bash tool runs real commands on this computer, as your user account. The
+> project folder is only a starting directory, not a sandbox — commands can read
+> or change any files and credentials your user can access. Each agent command
+> still asks for approval in chat before it runs.
+
+Click **Allow** to grant permission. If a cloud computer is also available, a
+**Use cloud instead** button lets you switch without granting.
+
+### Working directory
+
+Agent commands run in a per-project working directory:
+
+```
+~/.mcpjam/computer/<projectId>
+```
+
+The path is shown in the Computer tab once consent is granted.
+
+### Re-authorization
+
+If you need to revoke access — for example, after switching machines or clearing
+browser data — click **Forget & re-authorize** at the bottom of the Computer
+tab. This clears the stored permission and returns you to the consent gate.
+
+### Agent tools on the local engine
+
+The cloud lifecycle tools (`ui_start_computer`, `ui_hibernate_computer`,
+`ui_reset_computer`, `ui_delete_computer`) do not apply to your local machine.
+If an agent calls one of them while **This machine** is selected, it receives an
+error asking it to switch to Cloud to manage the cloud computer. The `bash` tool
+works normally once consent is granted.
+
+<Note>
+  The interactive terminal for the local engine is not yet available. Agent bash
+  commands from chat already work once consent is granted.
+</Note>
+
 ## Chat attachments
 
 When the previewed host has a computer attached and you are signed in, files you
