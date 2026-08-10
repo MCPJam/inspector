@@ -136,6 +136,31 @@ describe("local-consent routes", () => {
     expect(await after.json()).toEqual({ valid: false });
   });
 
+  it("a revoke scoped to a superseded token leaves the newer capability alive", async () => {
+    const app = makeApp();
+    const first = (await (await post(app, "/local-consent/grant")).json()) as {
+      token: string;
+    };
+    const second = (await (await post(app, "/local-consent/grant")).json()) as {
+      token: string;
+    };
+
+    // Delayed revoke carrying the rotated-out token: must be a no-op.
+    await post(app, "/local-consent/revoke", { token: first.token });
+    const alive = await post(app, "/local-consent/verify", {
+      token: second.token,
+    });
+    expect(await alive.json()).toEqual({ valid: true });
+
+    // Bodiless revoke stays unconditional (nothing stored client-side, but
+    // the user still asked to sever this device).
+    await post(app, "/local-consent/revoke");
+    const dead = await post(app, "/local-consent/verify", {
+      token: second.token,
+    });
+    expect(await dead.json()).toEqual({ valid: false });
+  });
+
   it("verify tolerates a malformed body", async () => {
     const response = await post(makeApp(), "/local-consent/verify");
     expect(await response.json()).toEqual({ valid: false });
