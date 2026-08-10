@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
@@ -18,6 +18,15 @@ import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { ChatboxPreviewPane } from "@/components/chatboxes/ChatboxPreviewPane";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import { EditableTitle } from "@/components/evals/EditableTitle";
+import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  composerStateFromEnvironments,
+  composerHasTarget,
+  emptyComposerState,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
+import { isAdhocUnavailable } from "@/components/environment-composer/resolve-stacks";
+import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { NameEnvironmentDialog } from "@/components/project-environments/NameEnvironmentDialog";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
@@ -25,7 +34,10 @@ import {
   type ChatboxSettings,
 } from "@/hooks/useChatboxes";
 import { useHost } from "@/hooks/useClients";
-import { useProjectEnvironment } from "@/hooks/useProjectEnvironments";
+import {
+  useProjectEnvironment,
+  useProjectEnvironments,
+} from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { isAdhocEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -86,7 +98,8 @@ export function UserTestingScenarioDetail({
   const location = useLocation();
   const computersEnabled = useComputersEnabled();
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { deleteChatbox, updateChatbox } = useChatboxMutations();
+  const { deleteChatbox, updateChatbox, rebindEnvironmentChatbox } =
+    useChatboxMutations();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [nameEnvironmentOpen, setNameEnvironmentOpen] = useState(false);
@@ -110,6 +123,144 @@ export function UserTestingScenarioDetail({
   const environmentIsAdhoc = Boolean(
     environment && isAdhocEnvironment(environment),
   );
+
+  // ── Setup editor: the shared composer, committing through REBIND ────────
+  //
+  // The strip edits the scenario's execution context in place: each change
+  // resolves the composition to a real environment row (ad-hoc get-or-create,
+  // or a matching NAMED row) and re-points the chatbox at it. The environment
+  // itself is never mutated — a named row may back suites and other runs, and
+  // an ad-hoc row is immutable by construction. Session history stays with the
+  // chatbox either way.
+  const namedEnvironments = useProjectEnvironments(
+    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
+  );
+  const liveNamedEnvironments = useMemo(
+    () => (namedEnvironments ?? []).filter((env) => !env.archivedAt),
+    [namedEnvironments],
+  );
+  const resolveComposerTargets = useComposerResolver(chatbox.projectId);
+  const [composer, setComposer] = useState<EnvironmentComposerState>(
+    emptyComposerState,
+  );
+  const [isRebinding, setIsRebinding] = useState(false);
+  // Blocks the reseed below while a commit is in flight, so the rebind's own
+  // reactive echo doesn't clobber the state the user is mid-editing against.
+  const committingRef = useRef(false);
+  // The environment the backend ACTUALLY points at, as far as this client
+  // knows — advanced synchronously when a rebind succeeds, because the
+  // reactive `chatbox.environmentId` echo lags the mutation. Comparing
+  // against the prop instead let an immediate "change it back" edit read as
+  // a no-op and get silently swallowed while the backend stayed on the FIRST
+  // target.
+  const committedEnvironmentIdRef = useRef<string | null>(
+    chatbox.environmentId ?? null,
+  );
+  // Always the CURRENT reactive values, for the post-commit reconciliation
+  // below: a subscription update that lands mid-commit is deliberately
+  // skipped by both sync effects, and their deps have already settled by the
+  // time the commit ends — clearing the guard alone never replays it. The
+  // closure's own props are frozen at edit time, so it reads these instead.
+  const latestEnvironmentIdRef = useRef<string | null>(
+    chatbox.environmentId ?? null,
+  );
+  latestEnvironmentIdRef.current = chatbox.environmentId ?? null;
+  const latestEnvironmentRowRef = useRef(environment);
+  latestEnvironmentRowRef.current = environment;
+  useEffect(() => {
+    // Adopt remote rebinds (another member, or our own echo) — but never
+    // mid-commit, when the ref is ahead of the subscription on purpose.
+    if (committingRef.current) return;
+    committedEnvironmentIdRef.current = chatbox.environmentId ?? null;
+  }, [chatbox.environmentId]);
+  useEffect(() => {
+    if (!environment || committingRef.current) return;
+    setComposer(composerStateFromEnvironments([environment]));
+    // Keyed on identity + revision, not the (always-fresh) row object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [environment?.environmentId, environment?.revision]);
+
+  const composerActive = Boolean(
+    environmentsEnabled && chatbox.environmentId && environment,
+  );
+  // Held closed until the NAMED list settles, like the create flow: the
+  // resolver reuses a matching named environment, and resolving against an
+  // empty not-yet-loaded list would mint an unnamed twin of one that exists.
+  const composerReady = namedEnvironments !== undefined;
+
+  const handleComposerChange = (next: EnvironmentComposerState) => {
+    // One commit at a time: a second edit mid-flight would clear
+    // `committingRef` out from under the first one's rollback. The strip is
+    // disabled while committing, so this guard only closes the setState gap.
+    if (committingRef.current) return;
+    const previous = composer;
+    setComposer(next);
+    // No target (cleared clients / detached selection) commits nothing — the
+    // scenario keeps its current environment until the state resolves again.
+    if (!composerHasTarget(next)) return;
+    void (async () => {
+      committingRef.current = true;
+      setIsRebinding(true);
+      // What this commit is moving AWAY from — needed to tell a collaborator's
+      // mid-flight rebind (a third id) apart from our own not-yet-echoed one.
+      const startedFromId = committedEnvironmentIdRef.current;
+      try {
+        const resolved = await resolveComposerTargets({
+          state: next,
+          liveEnvironments: liveNamedEnvironments,
+          max: 1,
+        });
+        const nextEnvironmentId = resolved.environmentIds[0];
+        if (!nextEnvironmentId) {
+          // Should be unreachable (a target implies one resolved id), but a
+          // silent skip here would leave the strip showing a setup the
+          // scenario does not run.
+          setComposer(previous);
+          toast.error("Could not resolve this setup to an environment.");
+          return;
+        }
+        if (nextEnvironmentId !== committedEnvironmentIdRef.current) {
+          await rebindEnvironmentChatbox({
+            chatboxId: chatbox.chatboxId,
+            environmentId: nextEnvironmentId,
+          } as any);
+          committedEnvironmentIdRef.current = nextEnvironmentId;
+        }
+      } catch (err) {
+        // Roll back to what the scenario actually runs, then say why —
+        // verbatim, because the refusals are instructions ("that setup
+        // already has a scenario — …", "requires project admin").
+        setComposer(previous);
+        toast.error(
+          isAdhocUnavailable(err)
+            ? "This workspace's backend doesn't support editing a scenario's setup yet."
+            : convexErrMessage(err, "Could not update this scenario's setup"),
+        );
+      } finally {
+        committingRef.current = false;
+        setIsRebinding(false);
+        // Replay what the guard skipped. A subscription value that is neither
+        // what this commit started from (our own echo still pending) nor what
+        // it committed is a collaborator's rebind that landed mid-flight —
+        // without this, a FAILED commit rolls back to a setup the backend no
+        // longer points at, and the stale ref then swallows follow-up edits
+        // as no-ops.
+        const latest = latestEnvironmentIdRef.current;
+        if (
+          latest !== committedEnvironmentIdRef.current &&
+          latest !== startedFromId
+        ) {
+          committedEnvironmentIdRef.current = latest;
+          const row = latestEnvironmentRowRef.current;
+          if (row && row.environmentId === latest) {
+            setComposer(composerStateFromEnvironments([row]));
+          }
+          // If the row for `latest` hasn't loaded yet, the reseed effect
+          // fires when it does — `committingRef` is already false.
+        }
+      }
+    })();
+  };
 
   // Draft state for the description, persisted on blur. Reseeded whenever the
   // reactive envelope changes so another member's edit doesn't get silently
@@ -267,21 +418,27 @@ export function UserTestingScenarioDetail({
               className="-ml-2 px-2 text-xl font-semibold tracking-tight"
               inputClassName="text-xl font-semibold tracking-tight"
             />
-            <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
-              {environmentName ? (
-                // Environment-backed: the environment IS the scenario's
-                // identity. Its client is a detail of the environment, not a
-                // second name for the thing.
-                <>
-                  <Layers className="size-4 shrink-0" />
-                  <span className="truncate font-medium text-foreground">
-                    {environmentName}
-                  </span>
+            {composerActive ? (
+              // The scenario's setup, editable in place. Each pill edit
+              // resolves to a real environment row and REBINDS the scenario —
+              // "same setup, different server group" is one pill change on a
+              // live share link, not a trip to /environments.
+              <div className="mt-2 min-w-0">
+                <EnvironmentComposer
+                  projectId={chatbox.projectId}
+                  environments={liveNamedEnvironments}
+                  value={composer}
+                  onChange={handleComposerChange}
+                  maxTargets={1}
+                  disabled={isRebinding || !composerReady}
+                  testIdPrefix="user-testing-detail"
+                />
+                <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
                   {environmentIsAdhoc ? (
-                    // The row behind this label is ad-hoc: content-addressed,
-                    // immutable, and labeled by its client rather than a name.
-                    // Naming it (in place, same id) is what makes it — and
-                    // therefore this scenario's execution config — editable.
+                    // The row behind this setup is ad-hoc: content-addressed,
+                    // immutable, labeled by its client rather than a name.
+                    // Naming it (in place, same id) turns it into a curated
+                    // environment other surfaces can pick.
                     <Button
                       variant="ghost"
                       size="sm"
@@ -293,6 +450,25 @@ export function UserTestingScenarioDetail({
                       Name environment
                     </Button>
                   ) : null}
+                  {computersEnabled ? (
+                    <CloudRunBadge
+                      tooltip="Tester computer commands run in per-conversation MCPJam cloud sandboxes — never on the machine serving this inspector."
+                      data-testid="user-testing-cloud-run-badge"
+                    />
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+            <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
+              {environmentName ? (
+                // Environment-backed but the composer can't run here (flag
+                // off, or the row hasn't loaded / isn't visible): the static
+                // identity row.
+                <>
+                  <Layers className="size-4 shrink-0" />
+                  <span className="truncate font-medium text-foreground">
+                    {environmentName}
+                  </span>
                 </>
               ) : (
                 <>
@@ -323,6 +499,7 @@ export function UserTestingScenarioDetail({
                 />
               ) : null}
             </div>
+            )}
             <TextareaAutosize
               aria-label="Scenario description"
               data-testid="user-testing-description"

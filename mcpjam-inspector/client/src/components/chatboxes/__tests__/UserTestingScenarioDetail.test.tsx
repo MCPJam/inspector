@@ -9,7 +9,7 @@
  *    back button goes from a scenario to the list rather than walking back
  *    through every tab the user tried.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 
@@ -21,7 +21,11 @@ const {
   previewPaneMock,
   hostState,
   updateChatboxMock,
+  rebindChatboxMock,
+  resolveTargetsMock,
+  composerMock,
   environmentState,
+  namedListState,
   flagState,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
@@ -31,9 +35,17 @@ const {
   previewPaneMock: vi.fn(),
   hostState: { host: null as unknown, isLoading: false },
   updateChatboxMock: vi.fn().mockResolvedValue(undefined),
+  rebindChatboxMock: vi.fn().mockResolvedValue({}),
+  resolveTargetsMock: vi.fn(),
+  // Captures the props of every EnvironmentComposer render, so tests can
+  // assert the seeded value and drive onChange without the real pills.
+  composerMock: vi.fn(),
   // What `useProjectEnvironment` answers with: `undefined` = loading,
   // `null` = not visible, a row = loaded. Mutable per test.
   environmentState: { row: undefined as unknown },
+  // The NAMED environment list (`useProjectEnvironments`): `undefined` while
+  // loading, an array once settled.
+  namedListState: { value: [] as unknown },
   flagState: { environmentsEnabled: true },
 }));
 
@@ -66,6 +78,7 @@ vi.mock("@/hooks/useChatboxes", () => ({
   useChatboxMutations: () => ({
     deleteChatbox: deleteChatboxMock,
     updateChatbox: updateChatboxMock,
+    rebindEnvironmentChatbox: rebindChatboxMock,
   }),
 }));
 
@@ -73,6 +86,19 @@ vi.mock("@/hooks/useChatboxes", () => ({
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironment: (projectId: string | null, envId: string | null) =>
     projectId && envId ? environmentState.row : null,
+  useProjectEnvironments: () => namedListState.value,
+}));
+
+// Same reason: the real resolver hook binds a Convex mutation.
+vi.mock("@/components/environment-composer/use-composer-resolver", () => ({
+  useComposerResolver: () => resolveTargetsMock,
+}));
+
+vi.mock("@/components/environment-composer/environment-composer", () => ({
+  EnvironmentComposer: (props: Record<string, unknown>) => {
+    composerMock(props);
+    return <div data-testid="stub-environment-composer" />;
+  },
 }));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -115,6 +141,7 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 import { UserTestingScenarioDetail } from "../UserTestingScenarioDetail";
+import { toast } from "@/lib/toast";
 
 const chatbox = {
   chatboxId: "cb-1",
@@ -152,10 +179,18 @@ beforeEach(() => {
   // resolved defaults so a per-test rejection can't leak into later cases.
   deleteChatboxMock.mockResolvedValue(undefined);
   updateChatboxMock.mockResolvedValue(undefined);
+  rebindChatboxMock.mockResolvedValue({});
+  resolveTargetsMock.mockResolvedValue({
+    environmentIds: ["env-1"],
+    environments: [],
+    createdIds: [],
+    reusedIds: ["env-1"],
+  });
   locationState.search = "";
   hostState.host = { config: { mcpProfile: undefined } };
   hostState.isLoading = false;
   environmentState.row = undefined;
+  namedListState.value = [];
   flagState.environmentsEnabled = true;
 });
 
@@ -365,6 +400,281 @@ describe("UserTestingScenarioDetail", () => {
         chatboxId: "cb-1",
         description: "New copy",
       });
+    });
+  });
+
+  describe("editing the setup (composer → rebind)", () => {
+    const namedRow = {
+      environmentId: "env-1",
+      projectId: "p1",
+      origin: "named",
+      name: "Checkout flow",
+      hostId: "host-1",
+      revision: 3,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const composeState = {
+      environmentIds: [],
+      stack: {
+        hostIds: ["host-2"],
+        serverAttachmentId: null,
+        skillSelection: null,
+        computerEnvironmentId: null,
+      },
+      customized: true,
+    };
+    const lastComposerProps = () =>
+      composerMock.mock.calls.at(-1)?.[0] as {
+        value: { environmentIds: string[] };
+        onChange: (next: unknown) => void;
+      };
+
+    it("renders the composer seeded from the backing environment", () => {
+      environmentState.row = namedRow;
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      expect(
+        screen.getByTestId("stub-environment-composer"),
+      ).toBeInTheDocument();
+      expect(lastComposerProps().value.environmentIds).toEqual(["env-1"]);
+    });
+
+    it("does not render the composer while the row is loading, or flag-off", () => {
+      environmentState.row = undefined;
+      const { unmount } = renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+      expect(
+        screen.queryByTestId("stub-environment-composer"),
+      ).not.toBeInTheDocument();
+      unmount();
+
+      flagState.environmentsEnabled = false;
+      environmentState.row = namedRow;
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+      expect(
+        screen.queryByTestId("stub-environment-composer"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("a composer edit resolves the stack and rebinds the scenario", async () => {
+      environmentState.row = namedRow;
+      resolveTargetsMock.mockResolvedValue({
+        environmentIds: ["env-2"],
+        environments: [],
+        createdIds: ["env-2"],
+        reusedIds: [],
+      });
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() => lastComposerProps().onChange(composeState));
+
+      await waitFor(() =>
+        expect(rebindChatboxMock).toHaveBeenCalledWith({
+          chatboxId: "cb-1",
+          environmentId: "env-2",
+        }),
+      );
+      expect(resolveTargetsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ state: composeState, max: 1 }),
+      );
+    });
+
+    it("skips the rebind when the edit resolves back to the current environment", async () => {
+      environmentState.row = namedRow;
+      resolveTargetsMock.mockResolvedValue({
+        environmentIds: ["env-1"],
+        environments: [],
+        createdIds: [],
+        reusedIds: ["env-1"],
+      });
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() => lastComposerProps().onChange(composeState));
+
+      await waitFor(() => expect(resolveTargetsMock).toHaveBeenCalled());
+      expect(rebindChatboxMock).not.toHaveBeenCalled();
+    });
+
+    it("an edit with no target commits nothing", () => {
+      environmentState.row = namedRow;
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() =>
+        lastComposerProps().onChange({
+          ...composeState,
+          stack: { ...composeState.stack, hostIds: [] },
+        }),
+      );
+
+      expect(resolveTargetsMock).not.toHaveBeenCalled();
+      expect(rebindChatboxMock).not.toHaveBeenCalled();
+    });
+
+    it("stays disabled until the named-environment list settles", () => {
+      environmentState.row = namedRow;
+      namedListState.value = undefined;
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      // The resolver reuses matching NAMED rows; resolving against a list
+      // that hasn't loaded would mint an unnamed twin of one that exists.
+      expect(lastComposerProps()).toEqual(
+        expect.objectContaining({ disabled: true }),
+      );
+    });
+
+    it("ignores a second edit while a commit is in flight", async () => {
+      environmentState.row = namedRow;
+      let release!: (v: unknown) => void;
+      resolveTargetsMock.mockImplementation(
+        () => new Promise((res) => (release = res)),
+      );
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() => lastComposerProps().onChange(composeState));
+      // A second edit before the first settles: its rollback would clear the
+      // in-flight guard out from under the first commit.
+      act(() => lastComposerProps().onChange(composeState));
+      expect(resolveTargetsMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        release({
+          environmentIds: ["env-2"],
+          environments: [],
+          createdIds: ["env-2"],
+          reusedIds: [],
+        });
+      });
+      await waitFor(() => expect(rebindChatboxMock).toHaveBeenCalledTimes(1));
+    });
+
+    it("compares against the last COMMITTED environment, not the lagging prop", async () => {
+      environmentState.row = namedRow;
+      resolveTargetsMock.mockResolvedValueOnce({
+        environmentIds: ["env-2"],
+        environments: [],
+        createdIds: ["env-2"],
+        reusedIds: [],
+      });
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() => lastComposerProps().onChange(composeState));
+      await waitFor(() =>
+        expect(rebindChatboxMock).toHaveBeenCalledWith({
+          chatboxId: "cb-1",
+          environmentId: "env-2",
+        }),
+      );
+
+      // The reactive envelope still says env-1 (the echo lags). The user
+      // flips back to env-1 — against the PROP that reads as a no-op and the
+      // backend would silently stay on env-2.
+      resolveTargetsMock.mockResolvedValueOnce({
+        environmentIds: ["env-1"],
+        environments: [],
+        createdIds: [],
+        reusedIds: ["env-1"],
+      });
+      act(() => lastComposerProps().onChange(composeState));
+
+      await waitFor(() =>
+        expect(rebindChatboxMock).toHaveBeenCalledWith({
+          chatboxId: "cb-1",
+          environmentId: "env-1",
+        }),
+      );
+      expect(rebindChatboxMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("adopts a collaborator's rebind that landed mid-commit", async () => {
+      environmentState.row = namedRow;
+      let rejectResolve!: (err: unknown) => void;
+      resolveTargetsMock.mockImplementation(
+        () => new Promise((_res, rej) => (rejectResolve = rej)),
+      );
+      const { rerender } = renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() => lastComposerProps().onChange(composeState));
+
+      // A collaborator rebinds the scenario to env-9 while our resolve is in
+      // flight — both sync effects deliberately skip the update.
+      environmentState.row = {
+        ...namedRow,
+        environmentId: "env-9",
+        name: "Remote setup",
+      };
+      rerender(detail({ environmentId: "env-9", environmentName: "Remote" }));
+
+      // Our commit then FAILS. Without reconciliation the rollback restores
+      // the pre-commit setup (env-1) and the stale committed ref swallows
+      // follow-up edits — while the backend points at env-9.
+      await act(async () => {
+        rejectResolve(new Error("boom"));
+      });
+
+      await waitFor(() =>
+        expect(lastComposerProps().value.environmentIds).toEqual(["env-9"]),
+      );
+    });
+
+    it("a refused rebind rolls the strip back and shows the backend's sentence", async () => {
+      environmentState.row = namedRow;
+      resolveTargetsMock.mockResolvedValue({
+        environmentIds: ["env-2"],
+        environments: [],
+        createdIds: [],
+        reusedIds: ["env-2"],
+      });
+      rebindChatboxMock.mockRejectedValue({
+        data: {
+          code: "CONFLICT",
+          message:
+            'That setup already has a scenario — "Other". Open it instead, or change the setup.',
+        },
+      });
+      renderDetail({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      act(() => lastComposerProps().onChange(composeState));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          'That setup already has a scenario — "Other". Open it instead, or change the setup.',
+        ),
+      );
+      // Rolled back to what the scenario actually runs.
+      expect(lastComposerProps().value.environmentIds).toEqual(["env-1"]);
     });
   });
 });
