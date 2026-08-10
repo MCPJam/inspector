@@ -2,23 +2,28 @@
  * Client side of the local-computer consent CAPABILITY.
  *
  * The server (`/api/mcp/computers/local-consent/*`, PR #3812) is the
- * authority: grant mints a token whose hash it persists; this module stores
- * the plaintext in `localStorage` and the UI treats consent as granted ONLY
- * after a server `verify` succeeds — a localStorage value alone proves
- * nothing (any script can write one; only the server knows the hash).
+ * authority: grant mints a token whose HASH it persists server-side; this
+ * module stores the plaintext in `localStorage`, and it rides the
+ * `X-MCPJam-Local-Consent` header on chat turns where the engine resolver
+ * re-verifies it on every use. That server-side re-verification is the real
+ * enforcement point — so the CLIENT treats a stored token as consent and does
+ * NOT pre-verify. Pre-verifying (an async status racing grant/revoke and the
+ * same-tab storage event) was a large, bug-prone race surface for zero real
+ * safety: a stale/tampered token simply fails the next turn's server check.
+ * localStorage is therefore the single source of truth here, read
+ * synchronously.
  *
  * DEVICE-scoped (not per-project): the thing consented to is this machine
- * executing commands. The stored token is what later rides the
- * `X-MCPJam-Local-Consent` header on chat turns.
+ * executing commands.
  *
  * Every server call goes through `authFetch`, which attaches BOTH the
  * inspector session header AND the verified WorkOS bearer (the consent path
  * is in `HOSTED_AUTH_PATH_PREFIXES`). We deliberately do NOT set the
  * `Authorization` header ourselves: doing so trips authFetch's
  * `callerProvidedAuthorization` guard and disables the on-401 session-token
- * refresh, which would leave grant/verify/revoke stuck at 401 after a
- * dev-server restart. The routes mount `requireVerifiedAuth`, so a guest or
- * unverified bearer still can't mint or verify.
+ * refresh, which would leave grant/revoke stuck at 401 after a dev-server
+ * restart. The routes mount `requireVerifiedAuth`, so a guest or unverified
+ * bearer still can't mint.
  */
 import { authFetch } from "@/lib/session-token";
 
@@ -132,9 +137,9 @@ export function persistLocalComputerConsent(
 }
 
 /**
- * Convenience: mint + persist in one call. The React hook uses the split
- * primitives above so it can guard only the persist; this stays for
- * standalone/non-hook use and lib-level tests.
+ * Convenience: mint + persist in one call. Returns whether consent ended up
+ * stored — false on either a mint failure or a persist failure, so a caller
+ * never treats a token it can't read back as granted.
  */
 export async function grantLocalComputerConsent(): Promise<boolean> {
   const minted = await mintLocalComputerConsent();
@@ -142,42 +147,16 @@ export async function grantLocalComputerConsent(): Promise<boolean> {
 }
 
 /**
- * Verify the stored capability against the server. A definitive "no" (the
- * server answered `valid:false` — revoked elsewhere, or rotated by another
- * browser profile) CLEARS the stale token so the UI re-prompts; a network
- * failure returns false WITHOUT clearing (the capability may still be good).
+ * SERVER-ONLY revoke: unlink the device's singleton capability. Deliberately
+ * does NOT touch local storage — the caller clears storage synchronously up
+ * front (the user's explicit forget) and this best-effort network call runs
+ * after. Keeping it storage-free means a slow revoke can never, on resume,
+ * delete a token a newer grant persisted while it was in flight.
  */
-export async function verifyStoredLocalComputerConsent(): Promise<boolean> {
-  const stored = loadStoredLocalComputerConsent();
-  if (!stored) return false;
-  try {
-    const response = await consentRequest("verify", {
-      token: stored.token,
-    });
-    if (!response.ok) return false;
-    const json = (await response.json()) as { valid?: unknown };
-    if (json.valid === true) return true;
-    // Clear ONLY if the stored token is still the one we verified. Granting
-    // rotates the server capability and storage events trigger concurrent
-    // refreshes, so an in-flight verify of token A can land after a new tab
-    // (or a fresh grant) stored token B — clearing then would delete a
-    // perfectly good B on A's stale "no".
-    const current = loadStoredLocalComputerConsent();
-    if (current?.token === stored.token) {
-      clearStoredLocalComputerConsent();
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/** Revoke on the server AND forget locally (best-effort on the server side). */
-export async function revokeLocalComputerConsent(): Promise<void> {
+export async function revokeLocalComputerConsentOnServer(): Promise<void> {
   try {
     await consentRequest("revoke");
   } catch {
-    // The local forget below still applies — a later verify fails closed.
+    // Local forget already happened; the server capability is best-effort.
   }
-  clearStoredLocalComputerConsent();
 }

@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 /**
- * The out-of-order guard: verify/grant/revoke resolve asynchronously and can
- * complete in any order, but only the LATEST-initiated op may write status.
- * The load-bearing case is a slow stale verify landing after a revoke — it
- * must NOT restore `granted`.
+ * The hook is now a pure projection of localStorage — no client-side verify,
+ * no sequence/self-write guards. These tests pin that projection: reads follow
+ * writes from any tab, grant reports storage-failure honestly, and revoke uses
+ * a storage-free server primitive so it can't clobber a concurrent grant.
  */
 const hosted = vi.hoisted(() => ({ value: false }));
 vi.mock("@/lib/config", () => ({
@@ -14,42 +14,37 @@ vi.mock("@/lib/config", () => ({
   },
 }));
 
-// FAITHFUL mock: the real module's grant persists a token AND
-// `clearStoredLocalComputerConsent` both reach `persist()`, which dispatches
-// the same-tab consent event SYNCHRONOUSLY. Reproducing that side effect is
-// what exercises the hook's re-entrant refresh — without it, a whole class of
-// self-supersede bugs passes silently.
+// Faithful mock: persist/clear mutate the in-memory token AND fire the
+// same-tab subscribers, exactly as the real module's `persist()` does.
 const lib = vi.hoisted(() => ({
-  storedToken: "tok" as string | null,
+  storedToken: null as string | null,
   grantToken: "granted-tok",
-  verify: vi.fn(),
-  grant: vi.fn(),
-  revoke: vi.fn(),
+  persistOk: true,
+  mint: vi.fn(),
+  revokeServer: vi.fn(),
   subscribers: new Set<() => void>(),
-  fireSubscribers() {
+  fire() {
     for (const cb of this.subscribers) cb();
   },
 }));
 vi.mock("@/lib/local-computer-consent", () => ({
   loadStoredLocalComputerConsent: () =>
     lib.storedToken ? { token: lib.storedToken, grantedAt: "now" } : null,
-  verifyStoredLocalComputerConsent: () => lib.verify(),
-  // mint = network only, NO persist, NO event (matches the real split).
   mintLocalComputerConsent: async () => {
-    const ok = await lib.grant();
+    const ok = await lib.mint();
     return ok ? { token: lib.grantToken, grantedAt: "now" } : null;
   },
-  // persist = synchronous storage write + same-tab event.
   persistLocalComputerConsent: (c: { token: string }) => {
+    if (!lib.persistOk) return false;
     lib.storedToken = c.token;
-    lib.fireSubscribers();
+    lib.fire();
     return true;
   },
-  revokeLocalComputerConsent: () => lib.revoke(),
   clearStoredLocalComputerConsent: () => {
-    lib.storedToken = null; // persist(null)
-    lib.fireSubscribers(); // persist(null)'s synchronous same-tab event
+    lib.storedToken = null;
+    lib.fire();
   },
+  revokeLocalComputerConsentOnServer: () => lib.revokeServer(),
   subscribeLocalComputerConsent: (cb: () => void) => {
     lib.subscribers.add(cb);
     return () => lib.subscribers.delete(cb);
@@ -61,179 +56,109 @@ import { useLocalComputerConsent } from "../useLocalComputerConsent";
 describe("useLocalComputerConsent", () => {
   beforeEach(() => {
     hosted.value = false;
-    lib.storedToken = "tok";
+    lib.storedToken = null;
     lib.grantToken = "granted-tok";
-    lib.verify.mockReset();
-    lib.grant.mockReset();
-    lib.revoke.mockReset();
+    lib.persistOk = true;
+    lib.mint.mockReset();
+    lib.revokeServer.mockReset().mockResolvedValue(undefined);
     lib.subscribers.clear();
   });
 
-  it("hosted: absent forever, never calls the server", () => {
+  it("hosted: absent, and grant/revoke never touch the server", async () => {
     hosted.value = true;
+    lib.storedToken = "leftover"; // even a stray token is ignored hosted
     const { result } = renderHook(() => useLocalComputerConsent());
     expect(result.current.status).toBe("absent");
-    expect(lib.verify).not.toHaveBeenCalled();
+    expect(result.current.token).toBeNull();
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.grant();
+    });
+    expect(ok).toBe(false);
+    expect(lib.mint).not.toHaveBeenCalled();
   });
 
-  it("verifies a stored token on mount → granted", async () => {
-    lib.verify.mockResolvedValue(true);
+  it("projects a stored token as granted on mount", () => {
+    lib.storedToken = "tok";
     const { result } = renderHook(() => useLocalComputerConsent());
-    await waitFor(() => expect(result.current.status).toBe("granted"));
+    expect(result.current.status).toBe("granted");
     expect(result.current.token).toBe("tok");
   });
 
-  it("a stale verify resolving AFTER revoke does NOT restore granted", async () => {
-    // Mount verify hangs; we revoke while it's in flight, then it resolves
-    // true. The op-sequence guard must drop that stale result.
-    let resolveVerify: (v: boolean) => void = () => {};
-    lib.verify.mockReturnValue(
-      new Promise<boolean>((r) => {
-        resolveVerify = r;
-      }),
-    );
-    lib.revoke.mockResolvedValue(undefined);
-
+  it("no stored token → absent", () => {
     const { result } = renderHook(() => useLocalComputerConsent());
-    await act(async () => {
-      await result.current.revoke();
-    });
-    expect(result.current.status).toBe("absent");
-
-    // The mount's verify finally answers "valid" — must be ignored.
-    await act(async () => {
-      resolveVerify(true);
-    });
-    expect(result.current.status).toBe("absent");
+    expect(result.current.granted).toBe(false);
+    expect(result.current.token).toBeNull();
   });
 
-  it("grant succeeds despite its OWN persistence event (self-write guard)", async () => {
-    // The regression this pins: the real grant dispatches a same-tab event
-    // that re-enters refresh() and bumps the sequence. Without the self-write
-    // guard, grant classifies itself as superseded, clears its own token, and
-    // returns false — making consent impossible to grant.
-    lib.storedToken = null; // start ungranted
-    lib.verify.mockResolvedValue(false);
-    lib.grant.mockResolvedValue(true);
+  it("grant mints, persists, and flips to granted via the storage event", async () => {
+    lib.mint.mockResolvedValue(true);
     const { result } = renderHook(() => useLocalComputerConsent());
-    await waitFor(() => expect(result.current.status).toBe("absent"));
     let ok = false;
     await act(async () => {
       ok = await result.current.grant();
     });
     expect(ok).toBe(true);
-    expect(result.current.status).toBe("granted");
-    expect(result.current.token).toBe("granted-tok");
-    // Its own persistence event must NOT have triggered a self-revoke.
-    expect(lib.revoke).not.toHaveBeenCalled();
-    expect(lib.storedToken).toBe("granted-tok");
-  });
-
-  it("a token rotation that keeps status 'granted' updates the returned token", async () => {
-    // Tab B rotates the capability while this hook is already granted. Status
-    // stays "granted" but the returned token MUST follow — reading it from
-    // storage at render time would go stale when React bails on same-value
-    // status.
-    lib.verify.mockResolvedValue(true);
-    const { result } = renderHook(() => useLocalComputerConsent());
-    await waitFor(() => expect(result.current.token).toBe("tok"));
-
-    lib.storedToken = "tok-B";
-    await act(async () => {
-      lib.fireSubscribers();
-    });
-    await waitFor(() => expect(result.current.token).toBe("tok-B"));
-    expect(result.current.status).toBe("granted");
-  });
-
-  it("a storage event carrying an invalidated token drops status to absent", async () => {
-    // The docstring'd re-verify path: a subscriber fires, verify now says no.
-    lib.verify.mockResolvedValueOnce(true).mockResolvedValue(false);
-    const { result } = renderHook(() => useLocalComputerConsent());
     await waitFor(() => expect(result.current.status).toBe("granted"));
+    expect(result.current.token).toBe("granted-tok");
+  });
 
+  it("grant returns FALSE and stays absent when persistence fails", async () => {
+    // Storage blocked/full: a token nothing can read must never read as granted.
+    lib.mint.mockResolvedValue(true);
+    lib.persistOk = false;
+    const { result } = renderHook(() => useLocalComputerConsent());
+    let ok = true;
     await act(async () => {
-      lib.fireSubscribers();
+      ok = await result.current.grant();
     });
-    await waitFor(() => expect(result.current.status).toBe("absent"));
+    expect(ok).toBe(false);
+    expect(result.current.status).toBe("absent");
     expect(result.current.token).toBeNull();
   });
 
-  it("a later revoke beats an EARLIER in-flight grant (claim-before-await)", async () => {
-    // grant claims its sequence before minting; a revoke that starts after
-    // gets a higher sequence and wins even though the mint resolves later.
-    // The stale grant never persists, and drops the just-minted server
-    // capability so the revoke stays final.
-    lib.verify.mockResolvedValue(false);
-    let resolveGrant: (ok: boolean) => void = () => {};
-    lib.grant.mockReturnValue(
-      new Promise<boolean>((r) => {
-        resolveGrant = r;
-      }),
-    );
-    lib.revoke.mockResolvedValue(undefined);
-
+  it("grant returns FALSE when the mint fails", async () => {
+    lib.mint.mockResolvedValue(false);
     const { result } = renderHook(() => useLocalComputerConsent());
-    await waitFor(() => expect(result.current.status).toBe("absent"));
-
-    let grantResult: Promise<boolean> = Promise.resolve(false);
-    act(() => {
-      grantResult = result.current.grant();
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.grant();
     });
-    // Revoke starts AFTER grant claimed its slot but BEFORE the mint resolves.
+    expect(ok).toBe(false);
+    expect(result.current.status).toBe("absent");
+  });
+
+  it("revoke clears storage synchronously and calls the server-only primitive", async () => {
+    lib.storedToken = "tok";
+    const { result } = renderHook(() => useLocalComputerConsent());
+    expect(result.current.status).toBe("granted");
     await act(async () => {
       await result.current.revoke();
     });
     expect(result.current.status).toBe("absent");
-
-    // The mint finally succeeds — but it's stale.
-    await act(async () => {
-      resolveGrant(true);
-      await grantResult;
-    });
-    expect(await grantResult).toBe(false);
-    expect(result.current.status).toBe("absent");
-    expect(lib.storedToken).toBeNull(); // never persisted
-    // explicit revoke + the stale grant dropping its minted capability.
-    expect(lib.revoke).toHaveBeenCalledTimes(2);
+    expect(lib.storedToken).toBeNull();
+    expect(lib.revokeServer).toHaveBeenCalledTimes(1);
   });
 
-  it("an EXTERNAL revoke during a pending grant is not overwritten (mint wait is unguarded)", async () => {
-    // The round-4 regression: guarding the whole grant network wait also hid
-    // genuine cross-tab events. Now only the synchronous persist is guarded, so
-    // an external revoke arriving mid-mint advances the sequence and the
-    // completing grant discards itself.
-    lib.storedToken = null;
-    lib.verify.mockResolvedValue(false);
-    let resolveMint: (ok: boolean) => void = () => {};
-    lib.grant.mockReturnValue(
-      new Promise<boolean>((r) => {
-        resolveMint = r;
-      }),
-    );
-    lib.revoke.mockResolvedValue(undefined);
-
+  it("reflects a cross-tab revoke: an external clear event drops to absent", async () => {
+    lib.storedToken = "tok";
     const { result } = renderHook(() => useLocalComputerConsent());
-    await waitFor(() => expect(result.current.status).toBe("absent"));
-
-    let grantResult: Promise<boolean> = Promise.resolve(false);
-    act(() => {
-      grantResult = result.current.grant();
-    });
-    // Another tab revokes while the mint is in flight — its storage clear fires
-    // the same-tab subscribers here. The unguarded mint await lets it through.
+    expect(result.current.status).toBe("granted");
     await act(async () => {
       lib.storedToken = null;
-      lib.fireSubscribers();
+      lib.fire(); // another tab cleared consent
     });
+    await waitFor(() => expect(result.current.status).toBe("absent"));
+  });
 
-    await act(async () => {
-      resolveMint(true);
-      await grantResult;
-    });
-    expect(await grantResult).toBe(false);
+  it("reflects a cross-tab grant: an external token event flips to granted", async () => {
+    const { result } = renderHook(() => useLocalComputerConsent());
     expect(result.current.status).toBe("absent");
-    expect(lib.storedToken).toBeNull();
-    expect(lib.revoke).toHaveBeenCalled(); // dropped the minted capability
+    await act(async () => {
+      lib.storedToken = "tok-from-other-tab";
+      lib.fire();
+    });
+    await waitFor(() => expect(result.current.token).toBe("tok-from-other-tab"));
+    expect(result.current.status).toBe("granted");
   });
 });

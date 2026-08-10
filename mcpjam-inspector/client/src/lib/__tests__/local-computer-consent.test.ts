@@ -12,8 +12,9 @@ import {
   clearStoredLocalComputerConsent,
   grantLocalComputerConsent,
   loadStoredLocalComputerConsent,
-  revokeLocalComputerConsent,
-  verifyStoredLocalComputerConsent,
+  mintLocalComputerConsent,
+  persistLocalComputerConsent,
+  revokeLocalComputerConsentOnServer,
 } from "../local-computer-consent";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -51,71 +52,21 @@ describe("local-computer-consent client", () => {
     expect(loadStoredLocalComputerConsent()).toBeNull();
   });
 
-  it("verify: a definitive server NO clears the stale token (re-prompt path)", async () => {
-    fetchMock.mockResolvedValueOnce(
+  it("mint returns the token WITHOUT persisting (the hook persists separately)", async () => {
+    fetchMock.mockResolvedValue(
       jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
     );
-    await grantLocalComputerConsent();
-
-    fetchMock.mockResolvedValueOnce(jsonResponse(200, { valid: false }));
-    expect(await verifyStoredLocalComputerConsent()).toBe(false);
+    const minted = await mintLocalComputerConsent();
+    expect(minted?.token).toMatch(/^tok_/);
+    // Mint is network-only — nothing is written to storage yet.
     expect(loadStoredLocalComputerConsent()).toBeNull();
   });
 
-  it("verify: a network failure does NOT clear (capability may still be good)", async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
-    );
-    await grantLocalComputerConsent();
-
-    fetchMock.mockRejectedValueOnce(new Error("offline"));
-    expect(await verifyStoredLocalComputerConsent()).toBe(false);
-    expect(loadStoredLocalComputerConsent()).not.toBeNull();
-  });
-
-  it("verify: a non-ok HTTP response (401/500) returns false WITHOUT clearing", async () => {
-    // A transient server/auth failure must not force a re-prompt by deleting a
-    // capability that may still be valid — only a definitive valid:false does.
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
-    );
-    await grantLocalComputerConsent();
-
-    fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: "boom" }));
-    expect(await verifyStoredLocalComputerConsent()).toBe(false);
-    expect(loadStoredLocalComputerConsent()).not.toBeNull();
-  });
-
-  it("verify: a stale 'no' for token A does NOT delete a replacement token B", async () => {
-    // Grant A, then a concurrent grant rotates to B while A's verify is in
-    // flight; A's late valid:false must not clobber B.
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { token: "tokA".padEnd(40, "a"), grantedAt: "now" }),
-    );
-    await grantLocalComputerConsent();
-
-    let resolveVerify: (r: Response) => void = () => {};
-    fetchMock.mockReturnValueOnce(
-      new Promise<Response>((r) => {
-        resolveVerify = r;
-      }),
-    );
-    const verifyPromise = verifyStoredLocalComputerConsent();
-
-    // Token B lands mid-flight.
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { token: "tokB".padEnd(40, "b"), grantedAt: "now" }),
-    );
-    await grantLocalComputerConsent();
-
-    resolveVerify(jsonResponse(200, { valid: false }));
-    expect(await verifyPromise).toBe(false);
-    expect(loadStoredLocalComputerConsent()?.token).toMatch(/^tokB/);
-  });
-
-  it("verify without a stored token never calls the server", async () => {
-    expect(await verifyStoredLocalComputerConsent()).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
+  it("persist stores a minted token and returns true", () => {
+    expect(
+      persistLocalComputerConsent({ token: "tok_abc".padEnd(40, "x"), grantedAt: "now" }),
+    ).toBe(true);
+    expect(loadStoredLocalComputerConsent()?.token).toMatch(/^tok_abc/);
   });
 
   it("grant reports FALSE when persistence fails — no phantom granted state", async () => {
@@ -135,15 +86,27 @@ describe("local-computer-consent client", () => {
     }
   });
 
-  it("revoke forgets locally even when the server call fails", async () => {
+  it("server revoke is storage-free (the hook clears storage separately)", async () => {
+    // The revoke primitive must NOT touch localStorage — that separation is
+    // what stops a slow revoke from deleting a token a newer grant just stored.
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tok_".padEnd(40, "x"), grantedAt: "now" }),
     );
     await grantLocalComputerConsent();
+    expect(loadStoredLocalComputerConsent()).not.toBeNull();
 
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    await revokeLocalComputerConsentOnServer();
+    // Storage is untouched by the server primitive.
+    expect(loadStoredLocalComputerConsent()).not.toBeNull();
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toBe(
+      "/api/mcp/computers/local-consent/revoke",
+    );
+  });
+
+  it("server revoke swallows a network failure", async () => {
     fetchMock.mockRejectedValueOnce(new Error("offline"));
-    await revokeLocalComputerConsent();
-    expect(loadStoredLocalComputerConsent()).toBeNull();
+    await expect(revokeLocalComputerConsentOnServer()).resolves.toBeUndefined();
   });
 
   it("reads garbage storage as absent", () => {
