@@ -44,7 +44,8 @@ vi.mock("@/lib/local-computer-consent", () => ({
     lib.storedToken = null;
     lib.fire();
   },
-  revokeLocalComputerConsentOnServer: () => lib.revokeServer(),
+  revokeLocalComputerConsentOnServer: (token: string | null = null) =>
+    lib.revokeServer(token),
   subscribeLocalComputerConsent: (cb: () => void) => {
     lib.subscribers.add(cb);
     return () => lib.subscribers.delete(cb);
@@ -137,7 +138,10 @@ describe("useLocalComputerConsent", () => {
     });
     expect(result.current.status).toBe("absent");
     expect(lib.storedToken).toBeNull();
+    // The server revoke is scoped to the token that was just forgotten, so a
+    // delayed request can't sever a capability a newer grant rotates in.
     expect(lib.revokeServer).toHaveBeenCalledTimes(1);
+    expect(lib.revokeServer).toHaveBeenCalledWith("tok");
   });
 
   it("reflects a cross-tab revoke: an external clear event drops to absent", async () => {

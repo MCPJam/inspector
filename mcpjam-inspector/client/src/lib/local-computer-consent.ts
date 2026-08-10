@@ -147,15 +147,22 @@ export async function grantLocalComputerConsent(): Promise<boolean> {
 }
 
 /**
- * SERVER-ONLY revoke: unlink the device's singleton capability. Deliberately
- * does NOT touch local storage — the caller clears storage synchronously up
- * front (the user's explicit forget) and this best-effort network call runs
- * after. Keeping it storage-free means a slow revoke can never, on resume,
- * delete a token a newer grant persisted while it was in flight.
+ * SERVER-ONLY revoke: unlink the device's capability. Deliberately does NOT
+ * touch local storage — the caller clears storage synchronously up front (the
+ * user's explicit forget) and this best-effort network call runs after.
+ * Keeping it storage-free means a slow revoke can never, on resume, delete a
+ * token a newer grant persisted while it was in flight — and passing the
+ * token being revoked makes the SERVER side equally race-safe: the server
+ * unlinks only if that token still matches, so a delayed revoke can't sever
+ * a capability a newer grant rotated in while this request was in flight.
+ * With no token (nothing was stored locally) the server unlinks
+ * unconditionally — the user's intent is to sever this device.
  */
-export async function revokeLocalComputerConsentOnServer(): Promise<void> {
+export async function revokeLocalComputerConsentOnServer(
+  token: string | null = null,
+): Promise<void> {
   try {
-    await consentRequest("revoke");
+    await consentRequest("revoke", token != null ? { token } : undefined);
   } catch {
     // Local forget already happened; the server capability is best-effort.
   }

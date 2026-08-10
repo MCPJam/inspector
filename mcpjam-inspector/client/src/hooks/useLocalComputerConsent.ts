@@ -75,9 +75,12 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     // Forget locally FIRST and synchronously — the user's explicit revoke,
     // and the only write that touches storage (fires the event → re-read →
     // absent). The server call is storage-free and best-effort, so a slow
-    // revoke resuming later can't clobber a token a newer grant just stored.
+    // revoke resuming later can't clobber a token a newer grant just stored;
+    // it is also SCOPED to the token being forgotten, so on the server side a
+    // delayed revoke can't sever a capability a newer grant rotated in.
+    const stored = loadStoredLocalComputerConsent()?.token ?? null;
     clearStoredLocalComputerConsent();
-    await revokeLocalComputerConsentOnServer();
+    await revokeLocalComputerConsentOnServer(stored);
   }, []);
 
   return {

@@ -104,6 +104,23 @@ describe("local-computer-consent client", () => {
     );
   });
 
+  it("server revoke is token-scoped when given a token, bodiless otherwise", async () => {
+    // Scoped: the server must receive the token being revoked so a delayed
+    // revoke can't sever a capability a newer grant rotated in.
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    await revokeLocalComputerConsentOnServer("tok_scoped".padEnd(40, "x"));
+    const [, scopedInit] = fetchMock.mock.calls.at(-1)!;
+    expect(JSON.parse(String(scopedInit?.body))).toEqual({
+      token: "tok_scoped".padEnd(40, "x"),
+    });
+
+    // No stored token → no body → the server unlinks unconditionally.
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    await revokeLocalComputerConsentOnServer();
+    const [, bareInit] = fetchMock.mock.calls.at(-1)!;
+    expect(bareInit?.body).toBeUndefined();
+  });
+
   it("server revoke swallows a network failure", async () => {
     fetchMock.mockRejectedValueOnce(new Error("offline"));
     await expect(revokeLocalComputerConsentOnServer()).resolves.toBeUndefined();

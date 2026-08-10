@@ -46,6 +46,23 @@ describe("local computer consent capability", () => {
     await revokeLocalComputerConsent();
   });
 
+  it("a token-scoped revoke no-ops when a newer grant rotated the capability", async () => {
+    const stale = await grantLocalComputerConsent();
+    const current = await grantLocalComputerConsent(); // rotates; `stale` is dead
+    // The delayed revoke, scoped to the stale token, must NOT sever `current`.
+    await revokeLocalComputerConsent(stale.token);
+    expect(await verifyLocalComputerConsent(current.token)).toBe(true);
+    // Scoped to the live token it does revoke.
+    await revokeLocalComputerConsent(current.token);
+    expect(await verifyLocalComputerConsent(current.token)).toBe(false);
+  });
+
+  it("an unscoped revoke (no token) unlinks unconditionally", async () => {
+    const { token } = await grantLocalComputerConsent();
+    await revokeLocalComputerConsent();
+    expect(await verifyLocalComputerConsent(token)).toBe(false);
+  });
+
   it("rejects garbage without a persisted capability", async () => {
     expect(await verifyLocalComputerConsent(undefined)).toBe(false);
     expect(await verifyLocalComputerConsent("")).toBe(false);

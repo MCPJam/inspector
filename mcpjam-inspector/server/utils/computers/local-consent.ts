@@ -99,7 +99,20 @@ export async function verifyLocalComputerConsent(
   );
 }
 
-export async function revokeLocalComputerConsent(): Promise<void> {
+/**
+ * Revoke the persisted capability. When `token` is supplied the revoke is
+ * SCOPED: it unlinks only if that token still matches the stored hash, so a
+ * slow revoke request that lost a race to a newer grant cannot sever the
+ * rotated capability that grant just minted. Without a token (the client had
+ * nothing stored but the user still asked to sever this device) it unlinks
+ * unconditionally.
+ */
+export async function revokeLocalComputerConsent(
+  token?: string | null
+): Promise<void> {
+  if (token != null && !(await verifyLocalComputerConsent(token))) {
+    return;
+  }
   await unlink(consentFilePath()).catch(() => {});
   logger.info("[local-consent] capability revoked");
 }
