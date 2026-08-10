@@ -266,14 +266,21 @@ relayRoutes.all("*", async (c) => {
 
   const url = new URL(c.req.url);
   const subpath = stripRelayPrefix(url.pathname);
-  // Static assets (recorder.js, array config) live on the assets host; all
-  // other endpoints (/i/v0/e/, /flags/, /decide/, /s/) on the ingest host.
+  // Only /static/* goes to the assets host. Everything else — including
+  // /array/<token>/config(.js), the SDK's remote-config fetch — goes to the
+  // ingest host, which serves it too and is what posthog-js itself targets
+  // when unproxied (it derives the config URL from api_host). This matters
+  // in production: the assets host 403s our server's egress (Cloudflare in
+  // front of us-assets challenging datacenter IPs — the block page our relay
+  // then piped through verbatim), while the ingest host demonstrably accepts
+  // it (events and flags have always flowed). /static is unaffected in
+  // practice: every runtime script is compiled into the client bundle
+  // (client/src/lib/posthog-bundled-extensions.ts).
   // Unknown subpaths forward to ingest rather than 404ing here: the
   // posthog-js endpoint set changes across SDK versions.
-  const upstreamBase =
-    subpath.startsWith("/static/") || subpath.startsWith("/array/")
-      ? ASSET_HOST
-      : INGEST_HOST;
+  const upstreamBase = subpath.startsWith("/static/")
+    ? ASSET_HOST
+    : INGEST_HOST;
   // Preserve the subpath verbatim (trailing slashes matter to PostHog) and
   // the full query string (compression=gzip-js, ver, ip flags).
   const target = `${upstreamBase}${subpath}${url.search}`;

@@ -50,6 +50,7 @@ describe("preloadPosthogBundledExtensions", () => {
       generateSurveys: expect.anything(), // surveys popover
       errorWrappingFunctions: expect.anything(), // $exception capture
       initDeadClicksAutocapture: expect.anything(),
+      postHogWebVitalsCallbacks: expect.anything(), // $web_vitals
     });
   });
 });
