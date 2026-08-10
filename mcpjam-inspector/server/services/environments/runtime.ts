@@ -25,6 +25,7 @@
  *     configuration the user launched. Those raise, never default.
  */
 import type { ConvexHttpClient } from "convex/browser";
+import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
@@ -259,6 +260,14 @@ function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
  * unknown args. That narrowing is applied to the RESOLVED spec by
  * `./plugin-override`, which can only remove versions this environment already
  * resolved for this caller.
+ *
+ * `runtimeVenue: "local"` is declared — HERE, once, for every caller of this
+ * service (chat-v2, the preview route, the connect check) — when this
+ * deployment IS the local binary. The backend then admits `local`-placement
+ * plugin components, which this process spawns itself through the
+ * `createAuthorizedManager` stdio divert. Hosted deployments send NOTHING
+ * (not an explicit "hosted"): absent already means hosted fail-closed on the
+ * backend, and omitting the field keeps hosted requests byte-identical.
  */
 export async function resolveEnvironmentForRuntime(
   convexClient: ConvexHttpClient,
@@ -277,6 +286,7 @@ export async function resolveEnvironmentForRuntime(
         projectId: args.projectId,
         environmentId: args.environmentId,
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
+        ...(HOSTED_MODE ? {} : { runtimeVenue: "local" }),
       } as any
     );
   } catch (error) {

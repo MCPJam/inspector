@@ -300,12 +300,32 @@ export async function bearerAuthMiddleware(
         );
       }
       c.set("guestId", result.guestId);
+      c.set("authMethod", "guest");
       return next();
     }
   } catch {
     // Guest token service not initialized — treat as non-guest token
   }
 
-  // Not a guest token — assume WorkOS token, allow through
+  // Not a guest token — assume a WorkOS AuthKit JWT and let it through
+  // WITHOUT verifying it here.
+  //
+  // That is legitimate for the routes this middleware normally fronts: every
+  // one of them forwards the bearer to Convex, which verifies it against
+  // AuthKit's JWKS before doing anything. Verifying twice would add a JWKS
+  // round trip to the hot path to reach the same answer, and a token that
+  // fails downstream fails the request.
+  //
+  // It is NOT legitimate for a v1 route that does not forward the bearer.
+  // Such a route treats "reached the handler" as "authenticated", and nothing
+  // downstream ever contradicts it — so `Authorization: Bearer whatever`
+  // reads it. THE RULE, therefore:
+  //
+  //   A v1 route that does not forward the bearer to Convex MUST mount
+  //   `middleware/require-verified-auth.ts`.
+  //
+  // The label below is what lets that middleware tell the two apart: a
+  // request that got here carries an ASSERTED identity, not a verified one.
+  c.set("authMethod", "unverified_passthrough");
   return next();
 }

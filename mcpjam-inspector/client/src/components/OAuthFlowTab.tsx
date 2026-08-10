@@ -15,6 +15,8 @@ import {
   ResizablePanelGroup,
 } from "./ui/resizable";
 import { track } from "@/lib/analytics";
+import { toast } from "@/lib/toast";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   OAuthProfileModal,
   type OAuthProfileAgentSeed,
@@ -204,6 +206,9 @@ export const OAuthFlowTab = ({
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  // Continue is in flight. Purely presentational — the flow state machine
+  // remains the source of truth for where the flow actually is.
+  const [isAdvancing, setIsAdvancing] = useState(false);
   const [isRefreshTokensModalOpen, setIsRefreshTokensModalOpen] =
     useState(false);
   const [isApplyingTokens, setIsApplyingTokens] = useState(false);
@@ -302,6 +307,23 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     setFocusedStep(null);
   }, [oauthFlowState.currentStep]);
+
+  // Surface flow errors as a toast exactly once per NEW error. The state
+  // machine catches its own step failures and writes them into flow state,
+  // where they previously only appeared as inline log text — easy to miss
+  // while watching the sequence diagram. Keyed off the transition (ref
+  // comparison), not the render, so a re-render never re-toasts.
+  const lastToastedErrorRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const error = oauthFlowState.error;
+    if (!error) {
+      lastToastedErrorRef.current = undefined;
+      return;
+    }
+    if (lastToastedErrorRef.current === error) return;
+    lastToastedErrorRef.current = error;
+    toast.error(error);
+  }, [oauthFlowState.error]);
 
   const updateOAuthFlowState = useCallback(
     (updates: Partial<OAuthFlowState>) => {
@@ -405,6 +427,7 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine]);
 
   const handleAdvance = useCallback(async () => {
+    setIsAdvancing(true);
     track("oauth_flow_tab_next_step_button_clicked", {
       location: "oauth_flow_tab",
       currentStep: oauthFlowState.currentStep,
@@ -414,16 +437,32 @@ export const OAuthFlowTab = ({
       targetUrlConfigured: Boolean(profile.serverUrl),
     });
 
-    if (
-      oauthFlowState.currentStep === "authorization_request" ||
-      oauthFlowState.currentStep === "generate_pkce_parameters"
-    ) {
-      if (oauthFlowState.currentStep === "generate_pkce_parameters") {
+    try {
+      if (
+        oauthFlowState.currentStep === "authorization_request" ||
+        oauthFlowState.currentStep === "generate_pkce_parameters"
+      ) {
+        if (oauthFlowState.currentStep === "generate_pkce_parameters") {
+          await proceedToNextStep();
+        }
+        setIsAuthModalOpen(true);
+      } else {
         await proceedToNextStep();
       }
-      setIsAuthModalOpen(true);
-    } else {
-      await proceedToNextStep();
+    } catch (err) {
+      // The state machine normally catches its own step errors and surfaces
+      // them through flow state; anything that escapes to here is a bug in the
+      // adapter or an unreachable target, and used to reject silently while
+      // Continue sat there looking clickable.
+      reportCaught(err, {
+        source: "oauth_debugger_advance",
+        extra: { step: oauthFlowState.currentStep, protocolVersion },
+      });
+      toast.error(
+        err instanceof Error ? err.message : "Failed to advance the OAuth flow",
+      );
+    } finally {
+      setIsAdvancing(false);
     }
   }, [
     hasProfile,
@@ -731,8 +770,24 @@ export const OAuthFlowTab = ({
       });
 
       exchangeTimeoutRef.current = setTimeout(() => {
-        oauthStateMachine?.proceedToNextStep();
         exchangeTimeoutRef.current = null;
+        setIsAdvancing(true);
+        // This promise had no rejection handler: a token exchange that threw
+        // left the UI frozen mid-flow with nothing logged anywhere.
+        Promise.resolve(oauthStateMachine?.proceedToNextStep())
+          .catch((err) => {
+            reportCaught(err, {
+              source: "oauth_debugger_auto_advance",
+              extra: { protocolVersion },
+            });
+            updateOAuthFlowState({
+              error:
+                err instanceof Error
+                  ? err.message
+                  : "Failed to exchange the authorization code",
+            });
+          })
+          .finally(() => setIsAdvancing(false));
       }, 500);
     };
 
@@ -787,6 +842,13 @@ export const OAuthFlowTab = ({
         }
       } catch (error) {
         console.error("Failed to process Electron OAuth callback:", error);
+        reportCaught(error, { source: "oauth_debugger_electron_callback" });
+        updateOAuthFlowState({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to process the OAuth callback",
+        });
       }
     };
 
@@ -893,6 +955,7 @@ export const OAuthFlowTab = ({
                   continueDisabled: Boolean(
                     canApplyTokens || continueDisabled
                   ),
+                  continuePending: isAdvancing,
                   resetDisabled:
                     !hasProfile || oauthFlowState.isInitiatingAuth,
                   onConnectServer:

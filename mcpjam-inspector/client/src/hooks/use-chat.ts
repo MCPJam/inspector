@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
+import { reportCaught } from "@/lib/error-reporting";
 import { ChatMessage, ChatState, Attachment } from "@/lib/types/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import {
@@ -437,6 +438,13 @@ export function useChat(options: UseChatOptions = {}) {
               "[useChat] failed to retrieve access token",
               tokenError,
             );
+            // Warning, not error: the request still goes out unauthenticated
+            // and usually succeeds. Worth tracking as a trend — a spike means
+            // auth refresh is broken for a cohort — but not a failed chat.
+            reportCaught(tokenError, {
+              source: "chat_access_token",
+              level: "warning",
+            });
           }
         }
 

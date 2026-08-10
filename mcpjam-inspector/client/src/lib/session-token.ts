@@ -325,6 +325,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // needs the bearer for the hosted-issuer forward (harmless locally).
   // Boundary matching keeps this from also matching /token-exchange.
   "/api/mcp/xaa/token",
+  // Local-computer consent capability (grant/verify/revoke): the routes mount
+  // `requireVerifiedAuth`, so they need the user's WorkOS bearer. Attaching
+  // via authFetch (not a manual header) keeps the on-401 session-token refresh
+  // so a dev-server restart doesn't strand consent at 401 until a page reload.
+  "/api/mcp/computers/local-consent",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
 ];
