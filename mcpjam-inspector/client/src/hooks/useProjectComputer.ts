@@ -145,6 +145,18 @@ export function useMintTerminalToken(): (args: {
  * here and the UI should say so instead of offering a terminal that can't
  * connect.
  */
+export interface ComputerEnginesConfig {
+  local: {
+    available: boolean;
+    /** Bash may work while the terminal doesn't (node-pty failed to load). */
+    terminalAvailable: boolean;
+    /** Tilde display root ("~/.mcpjam/computer") — render `${root}/<projectId>`. */
+    workspaceDisplayRoot: string | null;
+    reason?: string;
+  };
+  cloud: { available: boolean };
+}
+
 export interface ComputersDataPlaneConfig {
   localConfigured: boolean;
   remoteDataPlaneUrl: string | null;
@@ -158,6 +170,35 @@ export interface ComputersDataPlaneConfig {
    * `localConfigured` (creds present ⇔ ephemeral exec works).
    */
   ephemeralCloudAvailable?: boolean;
+  /**
+   * Per-engine availability. Always present POST-PARSE: servers that predate
+   * the field get a derived block — local unavailable (an old server has no
+   * local engine to offer), cloud from the legacy pair — so consumers never
+   * branch on absence.
+   */
+  engines: ComputerEnginesConfig;
+  /** Server's suggested engine; `null` when NO engine can serve here. */
+  defaultEngine: "local" | "cloud" | null;
+}
+
+/** The legacy-pair derivation, shared by old-server parse and fallbacks. */
+function deriveEnginesFromLegacyPair(args: {
+  localConfigured: boolean;
+  remoteDataPlaneUrl: string | null;
+}): Pick<ComputersDataPlaneConfig, "engines" | "defaultEngine"> {
+  const cloudAvailable =
+    args.localConfigured || args.remoteDataPlaneUrl !== null;
+  return {
+    engines: {
+      local: {
+        available: false,
+        terminalAvailable: false,
+        workspaceDisplayRoot: null,
+      },
+      cloud: { available: cloudAvailable },
+    },
+    defaultEngine: cloudAvailable ? "cloud" : null,
+  };
 }
 
 // One fetch per page load — the answer is env-derived and can't change
@@ -168,23 +209,71 @@ let cachedDataPlaneConfig: ComputersDataPlaneConfig | null = null;
 let inFlightDataPlaneConfigFetch: Promise<ComputersDataPlaneConfig | null> | null =
   null;
 
+function parseEngines(value: unknown): ComputerEnginesConfig | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const local =
+    record.local && typeof record.local === "object"
+      ? (record.local as Record<string, unknown>)
+      : null;
+  const cloud =
+    record.cloud && typeof record.cloud === "object"
+      ? (record.cloud as Record<string, unknown>)
+      : null;
+  if (
+    !local ||
+    !cloud ||
+    typeof local.available !== "boolean" ||
+    typeof cloud.available !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    local: {
+      available: local.available,
+      terminalAvailable: local.terminalAvailable === true,
+      workspaceDisplayRoot:
+        typeof local.workspaceDisplayRoot === "string"
+          ? local.workspaceDisplayRoot
+          : null,
+      ...(typeof local.reason === "string" ? { reason: local.reason } : {}),
+    },
+    cloud: { available: cloud.available },
+  };
+}
+
 function parseDataPlaneConfig(value: unknown): ComputersDataPlaneConfig | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (typeof record.localConfigured !== "boolean") return null;
+  const localConfigured = record.localConfigured;
+  const remoteDataPlaneUrl =
+    typeof record.remoteDataPlaneUrl === "string"
+      ? record.remoteDataPlaneUrl
+      : null;
   const capabilities =
     record.capabilities && typeof record.capabilities === "object"
       ? (record.capabilities as Record<string, unknown>)
       : undefined;
+  // A malformed `engines` block is read like an OLD server (derive), never
+  // half-trusted — a partial parse could invent a local engine.
+  const engines = parseEngines(record.engines);
+  const derived = deriveEnginesFromLegacyPair({
+    localConfigured,
+    remoteDataPlaneUrl,
+  });
   return {
-    localConfigured: record.localConfigured,
-    remoteDataPlaneUrl:
-      typeof record.remoteDataPlaneUrl === "string"
-        ? record.remoteDataPlaneUrl
-        : null,
+    localConfigured,
+    remoteDataPlaneUrl,
     ...(typeof capabilities?.ephemeralCloudAvailable === "boolean"
       ? { ephemeralCloudAvailable: capabilities.ephemeralCloudAvailable }
       : {}),
+    engines: engines ?? derived.engines,
+    defaultEngine: engines
+      ? record.defaultEngine === "local" || record.defaultEngine === "cloud"
+        ? record.defaultEngine
+        : null
+      : derived.defaultEngine,
   };
 }
 
@@ -234,8 +323,17 @@ export function useComputersDataPlaneConfig():
       });
     void inFlightDataPlaneConfigFetch.then((parsed) => {
       if (!cancelled) {
+        // Legacy fail-open fallback: assume a local data plane (cloud engine
+        // served by this server), NEVER a phantom local machine engine.
         setConfig(
-          parsed ?? { localConfigured: true, remoteDataPlaneUrl: null }
+          parsed ?? {
+            localConfigured: true,
+            remoteDataPlaneUrl: null,
+            ...deriveEnginesFromLegacyPair({
+              localConfigured: true,
+              remoteDataPlaneUrl: null,
+            }),
+          }
         );
       }
     });
