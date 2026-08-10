@@ -184,8 +184,15 @@ export function CreateSuiteDialog({
     ? composeHasTarget
     : !attachmentsRequired ||
       (serverAttachmentId !== null && hostAttachments.length > 0);
+  // Compose mode also waits for the environment list: the resolver reuses a
+  // matching NAMED environment, and against an empty live list it finds none and
+  // mints an unnamed duplicate — attaching the new suite to the wrong identity.
+  const composerReady = !composeMode || composerEnvironments !== undefined;
   const canSubmit =
-    name.trim().length > 0 && hasRequiredAttachments && !isSaving;
+    name.trim().length > 0 &&
+    hasRequiredAttachments &&
+    composerReady &&
+    !isSaving;
 
   const blockReason: string | null = (() => {
     if (canSubmit || isSaving) return null;
@@ -193,6 +200,7 @@ export function CreateSuiteDialog({
     if (composeMode && !composeHasTarget) {
       return "Pick an environment or at least one client first.";
     }
+    if (!composerReady) return "Loading this project's environments…";
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
@@ -230,6 +238,13 @@ export function CreateSuiteDialog({
         const fallbackHostIds = [
           ...new Set(resolved.environments.map((env) => env.hostId)),
         ];
+        const resolvedGroups = new Set(
+          resolved.environments.map((env) => env.serverAttachmentId ?? null)
+        );
+        const fallbackServerAttachmentId =
+          resolvedGroups.size === 1
+            ? ([...resolvedGroups][0] ?? undefined)
+            : undefined;
         payload = {
           name: name.trim(),
           environmentIds: resolved.environmentIds,
@@ -241,8 +256,13 @@ export function CreateSuiteDialog({
                 })),
               }
             : {}),
-          ...(target.stack.serverAttachmentId
-            ? { serverAttachmentId: target.stack.serverAttachmentId }
+          // Only when every resolved environment agrees. A stack-derived value
+          // would impose the last-selected environment's server group on every
+          // restored host, so a rollback suite would run something the user never
+          // chose. Omitting it is honest: the legacy fields simply cannot
+          // represent a heterogeneous selection.
+          ...(fallbackServerAttachmentId
+            ? { serverAttachmentId: fallbackServerAttachmentId }
             : {}),
         };
       } catch (err) {
@@ -314,6 +334,7 @@ export function CreateSuiteDialog({
                 maxTargets={MAX_SUITE_ENVIRONMENTS}
                 disabled={isSaving}
                 testIdPrefix="create-suite"
+                inModal
               />
             </div>
           ) : hostsEnabled && projectId ? (

@@ -8,7 +8,7 @@ import {
 import {
   composerStateFromEnvironments,
   emptyEnvironmentStack,
-  environmentsCollapseByHost,
+  environmentsExceedOneStack,
   type EnvironmentComposerState,
 } from "../environment-stack";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -415,24 +415,79 @@ describe("composerStateFromEnvironments", () => {
   });
 });
 
-describe("environmentsCollapseByHost", () => {
+describe("environmentsExceedOneStack", () => {
   it("flags two environments sharing a client", () => {
     // The stack fans out over hostIds, so these two would resolve to ONE row —
     // a lost target, not just a homogenized slot.
     expect(
-      environmentsCollapseByHost([
+      environmentsExceedOneStack([
         named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
         named({ environmentId: "b", hostId: "h1", serverAttachmentId: "g2" }),
       ])
     ).toBe(true);
   });
 
-  it("passes a selection with one environment per client", () => {
+  it("passes a selection with one environment per client and agreeing slots", () => {
     expect(
-      environmentsCollapseByHost([
+      environmentsExceedOneStack([
         named({ environmentId: "a", hostId: "h1" }),
         named({ environmentId: "b", hostId: "h2" }),
       ])
     ).toBe(false);
+  });
+
+  it("flags a selection that DISAGREES on a shared slot", () => {
+    // A stack has ONE server group for all its clients. Seeding a disagreement
+    // reads the slot as empty, so an edit would resolve both with defaults and
+    // silently replace each environment's execution context.
+    expect(
+      environmentsExceedOneStack([
+        named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
+        named({ environmentId: "b", hostId: "h2", serverAttachmentId: "g2" }),
+      ])
+    ).toBe(true);
+  });
+
+  it("passes a single environment, which is always one stack", () => {
+    expect(
+      environmentsExceedOneStack([named({ environmentId: "a", hostId: "h1" })])
+    ).toBe(false);
+  });
+});
+
+describe("named reuse — which matching row wins", () => {
+  it("prefers an environment the user actually SELECTED", async () => {
+    // Two named rows with identical stacks are interchangeable to us and not to
+    // the user: on User Testing, silently swapping opens a different
+    // environment's scenario, with its own name and access.
+    const ensure = ensureReturning([]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: {
+        environmentIds: ["second"],
+        stack: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
+        customized: true,
+      },
+      liveEnvironments: [
+        named({ environmentId: "first", hostId: "h1" }),
+        named({ environmentId: "second", hostId: "h1" }),
+      ],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(result.environmentIds).toEqual(["second"]);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("falls back to any matching named row when none was selected", async () => {
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: composeState({ hostIds: ["h1"] }),
+      liveEnvironments: [
+        named({ environmentId: "first", hostId: "h1" }),
+        named({ environmentId: "second", hostId: "h1" }),
+      ],
+      ensureAdhocEnvironments: ensureReturning([]),
+    });
+    expect(result.environmentIds).toEqual(["first"]);
   });
 });

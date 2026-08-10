@@ -28,7 +28,7 @@ import { SandboxImagePill } from "@/components/environment-composer/sandbox-imag
 import {
   composerHasTarget,
   composerStateFromEnvironments,
-  environmentsCollapseByHost,
+  environmentsExceedOneStack,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
@@ -188,9 +188,9 @@ function EnvironmentModeBar({
     ? 0
     : attachedIds.length - attachedEnvironments.length;
   /**
-   * Two ATTACHMENTS on one client cannot be represented as a stack — its fan-out
-   * axis is `hostIds`, so editing any pill would resolve them to a single row and
-   * lose a target.
+   * The ATTACHMENTS cannot be represented as one stack — two on a single client,
+   * or disagreeing on a shared slot — so editing any pill would change what some
+   * of them run.
    *
    * The composer has its own guard for the same shape, but only for a live NAMED
    * selection. This one is computed from the PERSISTED attachments, which is the
@@ -198,7 +198,7 @@ function EnvironmentModeBar({
    * (`customized: true`), where the composer has no saved selection left to
    * protect.
    */
-  const collapsesByHost = environmentsCollapseByHost(attachedEnvironments);
+  const collapsesByHost = environmentsExceedOneStack(attachedEnvironments);
 
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
@@ -323,9 +323,9 @@ function EnvironmentModeBar({
           className="text-[11px] text-muted-foreground"
           data-testid="suite-env-attachments-collapse-hint"
         >
-          Two of this suite&apos;s environments run on the same client, which
-          this strip can&apos;t represent without dropping one. Change them in
-          suite settings.
+          This suite&apos;s environments don&apos;t share one setup, so this
+          strip can&apos;t change them without changing what some of them run.
+          Adjust them in suite settings.
         </p>
       ) : null}
     </div>

@@ -29,7 +29,7 @@ import { SandboxImagePill } from "@/components/environment-composer/sandbox-imag
 import {
   composerStateFromEnvironments,
   emptyEnvironmentStack,
-  environmentsCollapseByHost,
+  environmentsExceedOneStack,
   isComposeMode,
   type EnvironmentComposerState,
   type EnvironmentStack,
@@ -48,6 +48,7 @@ export function EnvironmentComposer({
   maxTargets = 10,
   disabled = false,
   testIdPrefix,
+  inModal = false,
   className,
 }: {
   projectId: string;
@@ -63,6 +64,14 @@ export function EnvironmentComposer({
    * the first surface, hence "target"/"lego") — they are not composer concepts.
    */
   testIdPrefix?: string;
+  /**
+   * Render the popovers INLINE rather than portalled, for callers inside a Radix
+   * Dialog. A portalled popover lands outside the dialog, where the modal
+   * overlay's `pointer-events: none` swallows every click — so without this a
+   * dialog's environment picker looks present and cannot be used. Same escape
+   * hatch, same name, as `EnvironmentPicker` and `ServerGroupPicker`.
+   */
+  inModal?: boolean;
   className?: string;
 }) {
   const skillsEnabled = useSkillsEnabled();
@@ -84,17 +93,17 @@ export function EnvironmentComposer({
    * Only while `customized` is false: once the stack is authoritative there is
    * no saved selection left to lose.
    */
-  const selectionCollapses = useMemo(() => {
+  const selectionExceedsOneStack = useMemo(() => {
     if (value.customized || value.environmentIds.length < 2) return false;
     const selected = value.environmentIds
       .map((id) => liveEnvironments.find((e) => e.environmentId === id))
       .filter((e): e is NonNullable<typeof e> => Boolean(e));
     return (
       selected.length === value.environmentIds.length &&
-      environmentsCollapseByHost(selected)
+      environmentsExceedOneStack(selected)
     );
   }, [liveEnvironments, value.customized, value.environmentIds]);
-  const slotsDisabled = disabled || selectionCollapses;
+  const slotsDisabled = disabled || selectionExceedsOneStack;
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
 
@@ -112,6 +121,12 @@ export function EnvironmentComposer({
   const handleEnvironmentsChange = useCallback(
     (nextIds: string[]) => {
       const ids = nextIds.slice(0, maxTargets);
+      /** Ids → the rows this client can see. Unknown ids simply contribute
+       *  nothing, which is what an ad-hoc or deleted id should do here. */
+      const resolve = (list: string[]) =>
+        list
+          .map((id) => liveEnvironments.find((e) => e.environmentId === id))
+          .filter((e): e is NonNullable<typeof e> => Boolean(e));
       const added = ids.find((id) => !value.environmentIds.includes(id));
       if (added) {
         // ADDING is the one move that re-seeds: the user is asking to run a
@@ -124,9 +139,7 @@ export function EnvironmentComposer({
         // the stack — silently drops every other selected environment from the
         // run. `composerStateFromEnvironments` also empties any shared slot the
         // selection disagrees on, rather than imposing the newest row's on all.
-        const selected = ids
-          .map((id) => liveEnvironments.find((e) => e.environmentId === id))
-          .filter((e): e is NonNullable<typeof e> => Boolean(e));
+        const selected = resolve(ids);
         onChange({
           environmentIds: ids,
           // `environmentIds` stays exactly what the picker said — the helper's
@@ -140,19 +153,41 @@ export function EnvironmentComposer({
         });
         return;
       }
-      // REMOVING keeps both the stack and `customized`. Re-seeding here would
-      // discard edits the user can still see in the strip, and clearing
-      // `customized` would silently flip an edited stack back onto the
-      // saved-environment path — committing the saved ids and dropping every
-      // edit, which is the worst of the three outcomes because it looks like it
-      // worked.
+      // REMOVING has to do two things that pull against each other: drop what
+      // was detached, and keep edits the user can still see in the strip.
+      const remaining = resolve(ids);
+      if (!value.customized) {
+        // Untouched: the stack is a pure mirror of the selection, so mirror it.
+        onChange({
+          environmentIds: ids,
+          stack:
+            remaining.length > 0
+              ? composerStateFromEnvironments(remaining).stack
+              : emptyEnvironmentStack(),
+          customized: false,
+        });
+        return;
+      }
+      // Customized: keep the slot edits, but drop the clients that ONLY the
+      // removed environments contributed. Preserving the whole stack would make
+      // a detach do nothing — resolution goes through `hostIds`, so the removed
+      // environment's client would still get a run — and re-seeding instead
+      // would throw away the edits.
+      const keptHosts = new Set(remaining.map((e) => e.hostId));
+      const removedHosts = new Set(
+        resolve(value.environmentIds.filter((id) => !ids.includes(id))).map(
+          (e) => e.hostId
+        )
+      );
       onChange({
         environmentIds: ids,
-        stack:
-          ids.length === 0 && !value.customized
-            ? emptyEnvironmentStack()
-            : value.stack,
-        customized: value.customized,
+        stack: {
+          ...value.stack,
+          hostIds: value.stack.hostIds.filter(
+            (hostId) => !removedHosts.has(hostId) || keptHosts.has(hostId)
+          ),
+        },
+        customized: true,
       });
     },
     [
@@ -187,6 +222,7 @@ export function EnvironmentComposer({
             }
             triggerTestId={testId("environments-picker")}
             triggerAriaLabel="Environments"
+            inModal={inModal}
           />
           {composeMode ? (
             <span
@@ -219,6 +255,7 @@ export function EnvironmentComposer({
           emptyTriggerLabel="Server group · client default"
           infoText="Optional shared server group for every client in this setup."
           onClearSelection={() => patchStack({ serverAttachmentId: null })}
+          inModal={inModal}
         />
         {skillsEnabled ? (
           <SkillsPill
@@ -242,13 +279,18 @@ export function EnvironmentComposer({
         ) : null}
       </div>
 
-      {selectionCollapses ? (
+      {/* Only when the picker above is actually usable: the surrounding surface
+          may already be disabling everything and saying its own version of
+          this, and "change the selection above" would then name a control the
+          user cannot reach. */}
+      {selectionExceedsOneStack && !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("collapse-hint")}
         >
-          Two selected environments run on the same client, so editing the setup
-          below would drop one of them. Change the selection above instead.
+          These environments don&apos;t share one setup — they differ by client
+          or by their server group, skills or image — so editing below would
+          change what some of them run. Change the selection above instead.
         </p>
       ) : null}
     </div>

@@ -129,23 +129,34 @@ function sharedFields(
 function matchingNamedEnvironment(
   hostId: string,
   fields: ReturnType<typeof sharedFields>,
-  liveEnvironments: ProjectEnvironmentView[]
+  liveEnvironments: ProjectEnvironmentView[],
+  /**
+   * Ids the user actually picked. Preferred when several named rows match,
+   * because identical stacks make the rows interchangeable to US and not to the
+   * user: on User Testing, silently swapping to another matching row opens or
+   * publishes a DIFFERENT environment's scenario, with its own name and access.
+   */
+  preferIds: readonly string[] = []
 ): ProjectEnvironmentView | undefined {
-  return liveEnvironments.find(
-    (env) =>
-      !env.archivedAt &&
-      env.hostId === hostId &&
-      isNamedEnvironment(env) &&
-      (env.pluginVersionIds?.length ?? 0) === 0 &&
-      stackFieldsEqual(
-        {
-          serverAttachmentId: env.serverAttachmentId ?? null,
-          skillSelection: env.skillSelection ?? null,
-          computerEnvironmentId: env.computerEnvironmentId ?? null,
-        },
-        fields
-      )
-  );
+  const matches = (env: ProjectEnvironmentView) =>
+    !env.archivedAt &&
+    env.hostId === hostId &&
+    isNamedEnvironment(env) &&
+    (env.pluginVersionIds?.length ?? 0) === 0 &&
+    stackFieldsEqual(
+      {
+        serverAttachmentId: env.serverAttachmentId ?? null,
+        skillSelection: env.skillSelection ?? null,
+        computerEnvironmentId: env.computerEnvironmentId ?? null,
+      },
+      fields
+    );
+
+  for (const id of preferIds) {
+    const env = liveEnvironments.find((e) => e.environmentId === id);
+    if (env && matches(env)) return env;
+  }
+  return liveEnvironments.find(matches);
 }
 
 export async function resolveComposerEnvironments(args: {
@@ -220,7 +231,12 @@ export async function resolveComposerEnvironments(args: {
   const reusedByHost = new Map<string, ProjectEnvironmentView>();
   const toMint: string[] = [];
   for (const hostId of hostIds) {
-    const named = matchingNamedEnvironment(hostId, fields, live);
+    const named = matchingNamedEnvironment(
+      hostId,
+      fields,
+      live,
+      state.environmentIds
+    );
     if (named) reusedByHost.set(hostId, named);
     else toMint.push(hostId);
   }

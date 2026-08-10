@@ -39,7 +39,12 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
-    hosts: [{ hostId: "host-1", name: "Claude" }],
+    // Two, because the multi-environment fixtures below reference both — a
+    // one-host list made a second environment's client unmanipulable.
+    hosts: [
+      { hostId: "host-1", name: "Claude" },
+      { hostId: "host-2", name: "Cursor" },
+    ],
     isLoading: false,
   }),
 }));
@@ -299,6 +304,22 @@ describe("SwarmTargetComposer — multi-environment seeding", () => {
     },
   ];
 
+  it("blocks slot edits when the selection disagrees on a shared slot", () => {
+    // A stack has ONE server group for all its clients, so an edit would resolve
+    // both with defaults and replace each environment's execution context.
+    const differentGroups = [
+      { ...twoEnvironments[0], serverAttachmentId: "grp-1" },
+      { ...twoEnvironments[1], serverAttachmentId: "grp-2" },
+    ];
+    render(<Harness environments={differentGroups as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+
+    expect(screen.getByTestId("new-swarm-collapse-hint")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeDisabled();
+  });
+
   it("keeps EVERY selected environment's client in the stack", () => {
     render(<Harness environments={twoEnvironments as never} />);
 
@@ -309,6 +330,26 @@ describe("SwarmTargetComposer — multi-environment seeding", () => {
     const clients = screen.getByTestId("new-swarm-clients-picker");
     expect(clients).toHaveTextContent(/claude/i);
     expect(clients).toHaveTextContent(/\+1/);
+  });
+
+  it("drops a removed environment's client from the stack", () => {
+    render(<Harness environments={twoEnvironments as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+    // Customize, so the stack — not the selection — is what resolves.
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
+      /claude/i,
+    );
+
+    // Detach every environment. Resolution goes through `hostIds`, so keeping
+    // them would mean the detach did nothing and both clients still ran.
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
+      /no clients/i,
+    );
   });
 
   it("blocks slot edits when two selected environments share a client", () => {

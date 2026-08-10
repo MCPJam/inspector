@@ -118,11 +118,12 @@ export function UserTestingScenarioCreateFlow({
   // Gated on the environment list having SETTLED: the resolver reuses a
   // matching NAMED environment, and against an empty live list it would find
   // none and mint an unnamed twin of one that already exists.
+  //
+  // `undefined` also covers a query that is skipped or failed, not just one in
+  // flight, so the reason is stated below rather than leaving a dead button.
+  const environmentsSettled = environments !== undefined;
   const canSave =
-    environments !== undefined &&
-    hasTarget &&
-    effectiveName.length > 0 &&
-    !isSaving;
+    environmentsSettled && hasTarget && effectiveName.length > 0 && !isSaving;
 
   const handleTargetChange = (next: EnvironmentComposerState) => {
     setTarget(next);
@@ -245,6 +246,14 @@ export function UserTestingScenarioCreateFlow({
                 </button>
               </>
             }
+            {!environmentsSettled ? (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid="user-testing-create-environments-loading"
+              >
+                Loading this project&apos;s environments…
+              </p>
+            ) : null}
             {computersEnabled ? (
               <p
                 className="text-xs text-muted-foreground"

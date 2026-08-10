@@ -79,36 +79,57 @@ export function stackFromEnvironment(
   };
 }
 
+/** The three slots a stack shares across every client it fans out to. */
+function sharedSlotsOf(env: ProjectEnvironmentView) {
+  return {
+    serverAttachmentId: env.serverAttachmentId ?? null,
+    skillSelection: env.skillSelection ?? null,
+    computerEnvironmentId: env.computerEnvironmentId ?? null,
+  };
+}
+
+/**
+ * True when a selection CANNOT be round-tripped through a stack without changing
+ * what runs. Two ways that happens, and both cost a real thing:
+ *
+ *  - TWO ENVIRONMENTS ON ONE CLIENT. The stack's fan-out axis is `hostIds`, so
+ *    they collapse to a single host and resolve to a single row — the selection
+ *    comes back with fewer targets than it went in with.
+ *  - DISAGREEING SHARED SLOTS. A stack has ONE server group, ONE skill
+ *    selection, ONE image for all of its clients. Seeding a disagreement reads
+ *    the slot as empty, so the first edit would resolve every client with
+ *    defaults and quietly replace each environment's distinct execution context.
+ *
+ * Neither is the deliberate homogenizing the compose model is allowed to do (the
+ * user picking a shared value and applying it) — both are silent losses. Callers
+ * block stack edits while this holds; changing the SELECTION is the way out.
+ */
+export function environmentsExceedOneStack(
+  environments: ProjectEnvironmentView[]
+): boolean {
+  if (environments.length < 2) return false;
+  const hosts = new Set(environments.map((e) => e.hostId));
+  if (hosts.size !== environments.length) return true;
+  const first = sharedSlotsOf(environments[0]);
+  return !environments.every((env) =>
+    stackFieldsEqual(sharedSlotsOf(env), first)
+  );
+}
+
 /**
  * Composer state for a surface whose `environmentIds` are already PERSISTED.
  *
  * The stack is what the selection has in common: every attached environment's
  * client, plus the shared slots when all of them agree. When they disagree the
  * slot reads empty rather than picking a winner — editing another slot would
- * otherwise silently impose one environment's server group on the rest.
+ * otherwise silently impose one environment's server group on the rest, which is
+ * why {@link environmentsExceedOneStack} blocks editing in exactly that case.
  *
  * Ad-hoc rows seed as a COMPOSITION, not a selection: they are deliberately not
  * offerable in the saved-environment picker, so presenting them there would
  * render a row of identical, undetachable "Automatic environment" chips. Their
  * stack is the honest description of them.
  */
-/**
- * True when a selection cannot be round-tripped through a stack without LOSING a
- * target, because two of its environments share a client.
- *
- * The stack's fan-out axis is `hostIds`, so two environments on one client
- * collapse to a single host and resolve to a single row — the selection would
- * come back with fewer targets than it went in with. Losing a target is not the
- * same as the deliberate homogenizing of shared slots, so callers block editing
- * rather than seed from it.
- */
-export function environmentsCollapseByHost(
-  environments: ProjectEnvironmentView[]
-): boolean {
-  const hosts = new Set(environments.map((e) => e.hostId));
-  return hosts.size !== environments.length;
-}
-
 export function composerStateFromEnvironments(
   environments: ProjectEnvironmentView[]
 ): EnvironmentComposerState {
@@ -120,18 +141,7 @@ export function composerStateFromEnvironments(
   const shared =
     first &&
     environments.every((env) =>
-      stackFieldsEqual(
-        {
-          serverAttachmentId: env.serverAttachmentId ?? null,
-          skillSelection: env.skillSelection ?? null,
-          computerEnvironmentId: env.computerEnvironmentId ?? null,
-        },
-        {
-          serverAttachmentId: first.serverAttachmentId ?? null,
-          skillSelection: first.skillSelection ?? null,
-          computerEnvironmentId: first.computerEnvironmentId ?? null,
-        }
-      )
+      stackFieldsEqual(sharedSlotsOf(env), sharedSlotsOf(first))
     )
       ? first
       : undefined;
