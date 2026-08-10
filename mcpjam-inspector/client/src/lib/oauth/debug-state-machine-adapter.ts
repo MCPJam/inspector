@@ -95,27 +95,35 @@ function serializeProxyBody(
   return body;
 }
 
+/** Cap on the reason text, so no failure body can become the error message. */
+const MAX_PROXY_ERROR_CHARS = 300;
+
 /**
  * The proxy route answers a failure with `{ error }` naming the guard that
  * rejected the request — unresolvable host, private/reserved address, timeout,
  * redirect cap. Dropping it leaves the flow log (and Sentry) with a bare status
  * line that says nothing about which one fired.
+ *
+ * Only the proxy hop's own failures land here: whenever the server under test
+ * answers at all, the route wraps that response in a 200, so this never sees a
+ * body from it.
  */
 async function readProxyError(response: Response): Promise<string | undefined> {
   const text = await response.text().catch(() => "");
   if (!text) return undefined;
+
+  let reason = text;
   try {
     const body = JSON.parse(text) as {
       message?: string;
       error?: string;
     } | null;
     const message = body?.message ?? body?.error;
-    if (typeof message === "string" && message) return message;
+    if (typeof message === "string" && message) reason = message;
   } catch {
-    // Not JSON — a reverse proxy or dev-server error page. Fall through to the
-    // raw text, capped so an HTML document cannot become the error message.
+    // Not JSON — a reverse proxy or dev-server error page. Report its text.
   }
-  return text.slice(0, 300);
+  return reason.slice(0, MAX_PROXY_ERROR_CHARS);
 }
 
 export function createDebugRequestExecutor(): OAuthRequestExecutor {

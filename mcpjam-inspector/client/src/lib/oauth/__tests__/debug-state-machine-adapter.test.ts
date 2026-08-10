@@ -275,6 +275,20 @@ describe("Inspector OAuth debug proxy failures", () => {
     );
   });
 
+  // The cap applies to whichever branch produced the reason, not just the
+  // raw-text fallback — a JSON `error` is just as capable of being huge.
+  it.each([
+    ["json", JSON.stringify({ error: "x".repeat(1000) })],
+    ["raw text", "x".repeat(1000)],
+  ])("caps a long %s reason", async (_label, body) => {
+    authFetchMock.mockResolvedValue(proxyFailure(body));
+
+    const error = await createDebugRequestExecutor()(request).catch((e) => e);
+    expect(error.message).toBe(
+      `Backend debug proxy error: 400 Bad Request: ${"x".repeat(300)}`,
+    );
+  });
+
   it("keeps the bare status line when the body is empty", async () => {
     authFetchMock.mockResolvedValue(proxyFailure(""));
 
