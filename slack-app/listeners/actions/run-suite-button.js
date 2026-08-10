@@ -15,9 +15,10 @@
  *
  * Do not add features here. New behaviour belongs on the proposal path.
  */
+
+import { EventDedupe } from '@mcpjam/surface-core';
 import { McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
 import { tenantKey, tryslackContextFrom } from '../../agent/slack-context.js';
-import { EventDedupe } from '../../agent/turn-runner.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../../installations/event-claims.js';
 import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';

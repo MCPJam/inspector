@@ -110,7 +110,7 @@ describe("GET /api/web/environments/:id/tools", () => {
     expect(response.status).toBe(200);
     expect(convexQueryMock).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForRuntime",
-      { projectId: "p_1", environmentId: "env_1" }
+      { projectId: "p_1", environmentId: "env_1", runtimeVenue: "local" }
     );
     // ONE manager per resolved server id — the only path that reaches
     // plugin-contributed servers, isolated so one server's authorization
