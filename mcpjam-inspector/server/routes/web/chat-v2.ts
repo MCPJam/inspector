@@ -425,9 +425,16 @@ chatV2.post("/", async (c) => {
           status: runtime.status,
           error: runtime.error,
         });
+        // A 403 here is an ACCESS verdict, not an internal fault: the backend
+        // refused to serve this chatbox's config to this caller. Give it a
+        // dedicated code so the browser can tell "re-redeem and retry" from
+        // "the server broke" — everything else keeps the generic
+        // classification (>=500 collapses to a 502 upstream failure).
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
-          ErrorCode.INTERNAL_ERROR,
+          runtime.status === 403
+            ? ErrorCode.CHATBOX_ACCESS_DENIED
+            : ErrorCode.INTERNAL_ERROR,
           `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
         );
       }

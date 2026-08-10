@@ -505,6 +505,42 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
+  it("tags a 403 chatbox runtime-config refusal as CHATBOX_ACCESS_DENIED", async () => {
+    const { app, token } = createWebTestApp();
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: "Chatbox not found or access denied",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-denied",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // 403 is an ACCESS verdict, not an internal fault. The dedicated code is
+    // what lets the browser tell "re-redeem and retry" from "the server
+    // broke" instead of classifying off message substrings.
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+    };
+    expect(body.code).toBe("CHATBOX_ACCESS_DENIED");
+    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
   it("a chatbox session ignores a stray hostId (chatbox path wins)", async () => {
     const { app, token } = createWebTestApp();
 

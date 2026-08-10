@@ -56,6 +56,20 @@ export const ErrorCode = {
   // method that does not exist on that wire (`tasks/result` on the extension),
   // or an undeclared capability. A caller/feature error (400), never a 500.
   TASKS_UNSUPPORTED: "TASKS_UNSUPPORTED",
+  // A chatbox-scoped turn was refused by the backend when the route
+  // re-resolved the authoritative runtime config (403). Deliberately
+  // collapses "no such chatbox" and "no grant for this caller" into one
+  // code — the anti-probing collapse the backend already performs — so the
+  // browser learns "you cannot run this turn" without learning whether the
+  // chatbox exists. Distinct from INTERNAL_ERROR so the client can attempt a
+  // re-redeem instead of dead-ending on a generic failure banner.
+  CHATBOX_ACCESS_DENIED: "CHATBOX_ACCESS_DENIED",
+  // The caller's cached `accessVersion` is behind the chatbox's current one
+  // (409): a rebind, mode change, or republish moved the authoritative
+  // config out from under an open tab. Recoverable — re-redeem the share
+  // token and replay the turn. Emitted once the backend enforces the
+  // version it already advertises.
+  CHATBOX_ACCESS_STALE: "CHATBOX_ACCESS_STALE",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

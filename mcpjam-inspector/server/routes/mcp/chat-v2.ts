@@ -730,10 +730,19 @@ chatV2.post("/", async (c) => {
               error: runtime.error,
             }
           );
+          const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+          // This route hand-rolls its error envelope (no WebRouteError), so
+          // the access code rides as a top-level `code` — which is exactly
+          // where the client's `readRouteError` looks. Only the 403 case
+          // carries one; every other status keeps the pre-existing shape.
+          if (runtime.status === 403) {
+            return c.json(
+              { error: failClosedMessage, code: "CHATBOX_ACCESS_DENIED" },
+              403
+            );
+          }
           return c.json(
-            {
-              error: `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`,
-            },
+            { error: failClosedMessage },
             runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
           );
         }

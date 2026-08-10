@@ -185,7 +185,11 @@ function getChatboxDisplayError(
   const requiresSignIn = normalizedMessage.includes(
     "sign in to access this chatbox"
   );
-  const isAccessDenied = normalizedMessage.includes("don't have access");
+  // The code is authoritative when the route sent one; the substring checks
+  // stay as the deploy-skew fallback for servers that predate the code.
+  const isAccessDenied =
+    error.code === "CHATBOX_ACCESS_DENIED" ||
+    normalizedMessage.includes("don't have access");
   const isGuestBlocked =
     normalizedMessage.includes("guests cannot access") ||
     normalizedMessage.includes("guest access");
