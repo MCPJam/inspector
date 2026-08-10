@@ -83,21 +83,21 @@ describe("posthog relay proxy", () => {
       body: "batch",
     });
 
-    // The alias exists because Railway's edge 403s GETs under /relay/static
-    // and /relay/array on hosted; PostHog must still receive the bare
-    // subpaths — never /tlm/....
+    // PostHog must receive the bare subpaths — never /tlm/... — and the
+    // remote-config path must hit the INGEST host (the assets host 403s our
+    // production egress; see the routing comment in relay.ts).
     expect(mockedFetchUrl(0)).toBe(
       "https://us-assets.i.posthog.com/static/recorder.js",
     );
     expect(mockedFetchUrl(1)).toBe(
-      "https://us-assets.i.posthog.com/array/phc_x/config",
+      "https://us.i.posthog.com/array/phc_x/config",
     );
     expect(mockedFetchUrl(2)).toBe(
       "https://us.i.posthog.com/i/v0/e/?compression=gzip-js",
     );
   });
 
-  it("routes /static and /array to the assets host and /flags to the ingest host", async () => {
+  it("routes /static to the assets host and /array + /flags to the ingest host", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValue(upstreamResponse());
 
@@ -111,8 +111,11 @@ describe("posthog relay proxy", () => {
     expect(mockedFetchUrl(0)).toBe(
       "https://us-assets.i.posthog.com/static/recorder.js",
     );
+    // Remote config deliberately targets the ingest host, matching what
+    // posthog-js does unproxied — the assets host rejects our production
+    // egress (relay.ts routing comment).
     expect(mockedFetchUrl(1)).toBe(
-      "https://us-assets.i.posthog.com/array/phc_x/config.js",
+      "https://us.i.posthog.com/array/phc_x/config.js",
     );
     expect(mockedFetchUrl(2)).toBe("https://us.i.posthog.com/flags/?v=2");
   });

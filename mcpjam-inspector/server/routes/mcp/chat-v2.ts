@@ -80,6 +80,7 @@ import {
   LOCAL_CONSENT_HEADER,
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
+import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -1041,12 +1042,16 @@ chatV2.post("/", async (c) => {
       rawEnginePref === "local" || rawEnginePref === "cloud"
         ? rawEnginePref
         : undefined;
+    // A GUEST must never resolve the local engine — bash on the local machine
+    // has no backend reserve gate (unlike the cloud path), so the request-level
+    // guest check IS the boundary (see isGuestChatRequest).
+    const requestIsGuest = isGuestChatRequest(requestAuthHeader);
     const localPrefEligible =
-      enginePref === "local" && Boolean(requestAuthHeader) && !isChatboxSession;
+      enginePref === "local" && !requestIsGuest && !isChatboxSession;
     if (enginePref === "local" && !localPrefEligible) {
       logger.debug(
         "[mcp/chat-v2] computerEngine=local ignored for an ineligible request",
-        { isChatboxSession, hasAuth: Boolean(requestAuthHeader) }
+        { isChatboxSession, isGuest: requestIsGuest }
       );
     }
     const localConsentValid = localPrefEligible
@@ -1415,6 +1420,9 @@ chatV2.post("/", async (c) => {
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
+                ...(!isChatboxSession && body.rewind
+                  ? { rewind: body.rewind }
+                  : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
                 ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
@@ -1519,6 +1527,9 @@ chatV2.post("/", async (c) => {
                 runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
+              ...(!isChatboxSession && body.rewind
+                ? { rewind: body.rewind }
+                : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
@@ -1723,6 +1734,9 @@ chatV2.post("/", async (c) => {
               modelSource: "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
+              ...(!isChatboxSession && body.rewind
+                ? { rewind: body.rewind }
+                : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)

@@ -65,6 +65,13 @@ describe("ChatboxShareSection", () => {
       <ChatboxShareSection chatbox={createChatbox()} projectName="Acme" />,
     );
 
+    // getByLabelText, not getByText: the "Tester link" label has to resolve to
+    // a real labelable control, so the link reads as that label's value to
+    // assistive tech instead of as unassociated text.
+    expect(screen.getByLabelText("Tester link")).toHaveTextContent(
+      "/chatbox/my-chatbox/t",
+    );
+    expect(screen.getByTestId("chatbox-copy-tester-link")).toBeInTheDocument();
     expect(screen.getByText("Invite with email")).toBeInTheDocument();
     expect(screen.getByText("Access settings")).toBeInTheDocument();
     expect(screen.getByText("Has access")).toBeInTheDocument();

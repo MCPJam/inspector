@@ -990,7 +990,6 @@ export function SuiteIterationsView({
             onSuiteHostAttachmentsUpdate={
               readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
-            projectHosts={projectHosts}
             omitRunDetailIdentity={omitRunDetailIdentity}
           />
         </div>

@@ -1446,6 +1446,7 @@ chatV2.post("/", async (c) => {
           // versions that fork an incompatible resumed sandbox.
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
+          ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
           // prepare resolved temperature into `buildDirectHostConfig`.

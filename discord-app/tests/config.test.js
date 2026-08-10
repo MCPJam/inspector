@@ -158,3 +158,41 @@ test("reports each missing piece by name, and says which credential it is", () =
 test("a fully configured deployment warns about nothing", () => {
 	assert.deepEqual(describeConfigGaps(loadConfig(FULL_ENV)), []);
 });
+
+/**
+ * Slash-command scope migration. Registration used to REQUIRE
+ * `DISCORD_GUILD_ID`, so every deployment with a working `/mcpjam` has it
+ * set. It must no longer scope registration — otherwise those deployments
+ * stay pinned to one server and global registration is a no-op exactly where
+ * it is needed — but it must not vanish silently either.
+ */
+
+test("the dev override reads the NEW name, and the old one never scopes registration", () => {
+	const migrated = loadConfig({
+		...FULL_ENV,
+		DISCORD_APPLICATION_ID: "app-1",
+		DISCORD_GUILD_ID: "stale-guild",
+	});
+	assert.equal(
+		migrated.devGuildId,
+		undefined,
+		"a stale DISCORD_GUILD_ID must not become the dev override",
+	);
+	assert.equal(migrated.legacyGuildId, "stale-guild");
+
+	const opted = loadConfig({
+		...FULL_ENV,
+		DISCORD_APPLICATION_ID: "app-1",
+		DISCORD_DEV_GUILD_ID: "dev-guild",
+	});
+	assert.equal(opted.devGuildId, "dev-guild");
+});
+
+test("a stale DISCORD_GUILD_ID warns that it is ignored, and names its replacement", () => {
+	const warnings = describeConfigGaps(
+		loadConfig({ ...FULL_ENV, DISCORD_GUILD_ID: "stale-guild" }),
+	);
+	const joined = warnings.join("\n");
+	assert.match(joined, /DISCORD_GUILD_ID is set but no longer does anything/);
+	assert.match(joined, /DISCORD_DEV_GUILD_ID/);
+});

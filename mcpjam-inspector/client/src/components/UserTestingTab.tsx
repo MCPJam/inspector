@@ -42,8 +42,7 @@ import type {
  * "what happened when real people used this?".
  *
  *   - `/user-testing`               — the project's scenarios
- *   - `/user-testing/:scenarioId`   — one scenario: share band, then
- *                                     Sessions | Clusters
+ *   - `/user-testing/:scenarioId`   — one scenario: Edit | Sessions | Insights
  *
  * `:scenarioId` is the scenario's CHATBOX id. It used to be the host id, back
  * when every scenario was a client and the two were 1:1. Environment-backed
@@ -586,6 +585,7 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         chatbox={chatbox}
+        isAuthenticated={effectiveAuth}
         onBack={goOverview}
         onDeleted={goOverview}
       />
