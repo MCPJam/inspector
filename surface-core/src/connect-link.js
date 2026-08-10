@@ -54,28 +54,29 @@ export function assertConnectUrl(candidate, origins) {
 	return candidate;
 }
 
-/** @param {{backend:any, ctx:any, origins?:string[], opts?:any}} args */
-export async function mintConnectUrl({
-	backend,
-	ctx,
-	origins = [],
-	opts = {},
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * The direct-fetch mint, used by a caller with no `backend` client of its
+ * own (today: discord-app). `backend.mintLink` goes through
+ * `createBackendClient`'s `post()` instead, which already carries its own
+ * timeout and error-code mapping — this one needed its own copy.
+ *
+ * @param {{baseUrl:string, token:string, path:string, surfaceKind?:string, tenantId?:string, actorId?:string, fetchImpl:typeof fetch, timeoutMs:number}} args
+ */
+async function mintConnectUrlDirect({
 	baseUrl,
 	token,
-	path = "/api/surface-link/session",
+	path,
 	surfaceKind,
 	tenantId,
 	actorId,
-	fetchImpl = fetch,
+	fetchImpl,
+	timeoutMs,
 }) {
-	let url;
-	if (backend) {
-		url = await backend.mintLink(ctx, opts);
-	} else {
-		if (!baseUrl || !token)
-			throw new InstallationBackendError("Connect link config is required.", {
-				code: "CONFIG",
-			});
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
 		const response = await fetchImpl(
 			`${String(baseUrl).replace(/\/+$/, "")}${path}`,
 			{
@@ -89,15 +90,71 @@ export async function mintConnectUrl({
 					surfaceTenantId: tenantId,
 					surfaceUserId: actorId,
 				}),
+				signal: controller.signal,
 			},
 		);
-		const payload = await response.json().catch(() => null);
+		let payload = null;
+		try {
+			payload = await response.json();
+		} catch (error) {
+			// Only an empty/malformed body reads as "no body". Anything else — a
+			// stream failure mid-read — is a real failure and must propagate, not
+			// be laundered into a response that merely lacks a url.
+			if (!(error instanceof SyntaxError)) throw error;
+		}
 		if (!response.ok)
 			throw new InstallationBackendError(
 				payload?.error || "Unable to create a connect link.",
 				{ status: response.status },
 			);
-		url = payload?.url;
+		return payload?.url;
+	} catch (error) {
+		if (error instanceof InstallationBackendError) throw error;
+		const aborted = error instanceof Error && error.name === "AbortError";
+		throw new InstallationBackendError(
+			aborted
+				? "Connect-link request timed out"
+				: `Connect-link request failed: ${error}`,
+			{ code: aborted ? "TIMEOUT" : "NETWORK" },
+		);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** @param {{backend:any, ctx:any, origins?:string[], opts?:any}} args */
+export async function mintConnectUrl({
+	backend,
+	ctx,
+	origins = [],
+	opts = {},
+	baseUrl,
+	token,
+	path = "/api/surface-link/session",
+	surfaceKind,
+	tenantId,
+	actorId,
+	fetchImpl = fetch,
+	timeoutMs = DEFAULT_TIMEOUT_MS,
+}) {
+	let url;
+	if (backend) {
+		url = await backend.mintLink(ctx, opts);
+	} else {
+		if (!baseUrl || !token)
+			throw new InstallationBackendError("Connect link config is required.", {
+				code: "CONFIG",
+			});
+		url = await mintConnectUrlDirect({
+			baseUrl,
+			token,
+			path,
+			surfaceKind,
+			tenantId,
+			actorId,
+			fetchImpl,
+			timeoutMs,
+		});
 	}
 	if (typeof url !== "string")
 		throw new InstallationBackendError(
