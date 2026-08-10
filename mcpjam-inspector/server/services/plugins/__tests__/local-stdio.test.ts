@@ -58,7 +58,14 @@ function stubClient(options?: {
         ];
       }
       if (name === "plugins:resolvePluginRuntimePreview") {
-        if (!available) return { pluginVersions: [], effectiveServerIds: [] };
+        if (!available) {
+          return {
+            pluginVersions: [],
+            effectiveServerIds: [],
+            serverComponents: [],
+            pluginSkills: [],
+          };
+        }
         return {
           pluginVersions: [
             {
@@ -69,6 +76,15 @@ function stubClient(options?: {
             },
           ],
           effectiveServerIds: [SERVER_ID],
+          serverComponents: [
+            {
+              pluginVersionId: VERSION_ID,
+              componentKey: "server:fixture-local",
+              placement: "local",
+              authenticationPolicy: "on_use",
+              materializedServerId: SERVER_ID,
+            },
+          ],
           pluginSkills: [],
         };
       }
