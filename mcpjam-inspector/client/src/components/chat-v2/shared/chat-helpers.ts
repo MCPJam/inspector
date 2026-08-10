@@ -460,7 +460,78 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
+  const opaque = summarizeOpaquePayload(errorString);
+  if (opaque) return opaque;
+
   return { message: errorString };
+}
+
+/**
+ * Longest error text rendered inline. Past this the chat turns into a wall of
+ * red and the actual conversation is pushed off screen.
+ */
+const INLINE_MESSAGE_MAX = 400;
+
+/** Hard cap on what we keep for the collapsible. */
+const RAW_PAYLOAD_MAX = 4000;
+
+const HTML_PAYLOAD_START = /^\s*(?:<!doctype\s+html|<html\b)/i;
+
+/**
+ * Pull the status out of an error page's `<title>` or `<h1>` — the two places
+ * gateways put it verbatim ("502 Bad Gateway"). Deliberately not a scan of the
+ * whole document: a bare `\b\d{3}\b` match anywhere would happily return a
+ * pixel value out of an inline stylesheet.
+ */
+function extractErrorPageStatus(html: string): number | undefined {
+  const heading =
+    html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1] ??
+    html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1];
+  const status = heading?.match(/\b([45]\d{2})\b/)?.[1];
+  if (!status) return undefined;
+  const parsed = Number(status);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Last-resort formatting for a body that is not an error message at all.
+ *
+ * When an upstream hop fails — a gateway 502, a proxy timeout — the response
+ * body is an HTML page, and the AI SDK surfaces it by throwing
+ * `new Error(await response.text())`. That put an entire HTML document into
+ * `message`, which rendered verbatim and unbounded.
+ *
+ * Returns `null` for ordinary error text so every existing message is
+ * untouched; only genuinely opaque or oversized payloads are summarized, with
+ * the original preserved in `details` for the existing collapsible.
+ */
+function summarizeOpaquePayload(raw: string): FormattedError | null {
+  const trimmed = raw.trim();
+  const isHtml =
+    HTML_PAYLOAD_START.test(trimmed) || /<\/html>\s*$/i.test(trimmed);
+
+  if (!isHtml && trimmed.length <= INLINE_MESSAGE_MAX) return null;
+
+  const details =
+    trimmed.length > RAW_PAYLOAD_MAX
+      ? `${trimmed.slice(0, RAW_PAYLOAD_MAX)}…`
+      : trimmed;
+
+  if (isHtml) {
+    const statusCode = extractErrorPageStatus(trimmed);
+    return {
+      message: statusCode
+        ? `The request failed with HTTP ${statusCode}. The server returned an error page instead of a response.`
+        : "The request failed. The server returned an error page instead of a response.",
+      details,
+      ...(statusCode !== undefined ? { statusCode } : {}),
+    };
+  }
+
+  return {
+    message: `${trimmed.slice(0, INLINE_MESSAGE_MAX).trimEnd()}…`,
+    details,
+  };
 }
 
 export const VALID_MESSAGE_ROLES: UIMessage["role"][] = [
