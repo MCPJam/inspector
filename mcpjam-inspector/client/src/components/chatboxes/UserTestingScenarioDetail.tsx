@@ -187,12 +187,16 @@ export function UserTestingScenarioDetail({
     if (tab === "preview") setHasOpenedPreview(true);
   }, [tab]);
 
-  // The host config decides which browser features the preview iframe may
-  // pass through to the mcp-apps renderer inside it. The `allow` attribute
-  // only takes effect at mount, and its no-config default is permissive, so
-  // a deny-all host would get the wrong frame if we mounted before this
-  // resolved. `useHost` reports a SKIPPED query as loading forever — treat it
-  // as pending only when it can actually resolve.
+  // The host config sets the preview iframe's `allow` ceiling. Waiting for it
+  // is about FIDELITY, not enforcement: the attribute only takes effect at
+  // mount and its no-config default is permissive, so mounting early would
+  // give a deny-all host a wider wrapper than it asked for. It is not a
+  // security hole when the host doesn't resolve — the wrapper is a ceiling,
+  // and the mcp-apps renderer INSIDE the frame re-reads the real host policy
+  // and enforces it per resource (see `previewIframeAllow`). So a null host
+  // still previews; only a genuinely pending one waits.
+  // `useHost` reports a SKIPPED query as loading forever — treat it as
+  // pending only when it can actually resolve.
   const previewHostId = chatbox.namedHostId ?? null;
   const { host: previewHost, isLoading: previewHostLoading } = useHost({
     isAuthenticated,

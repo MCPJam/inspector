@@ -10,7 +10,7 @@
  *    render an error page inside the pane; offering the link is the honest
  *    answer.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { ChatboxPreviewPane } from "../ChatboxPreviewPane";
@@ -81,5 +81,80 @@ describe("ChatboxPreviewPane", () => {
       screen.queryByTestId("user-testing-preview-frame"),
     ).not.toBeInTheDocument();
     expect(screen.getByText("No share link yet")).toBeInTheDocument();
+  });
+
+  it("says the preview runs as the signed-in member, not as a guest", () => {
+    render(
+      <ChatboxPreviewPane publishLink={sameOriginLink} mcpProfile={undefined} />,
+    );
+
+    // Same-origin means the frame shares the dashboard's login, so this is a
+    // fidelity caveat the user needs stated, not a detail to bury.
+    expect(screen.getByText(/Previewing as you, signed in/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Authorizing an OAuth-backed MCP server navigates THIS frame (via
+   * window.location.assign) and returns to /oauth/callback, which the
+   * main.tsx self-embed exemption deliberately doesn't cover — the frame
+   * would land on IframeRouterError. Hand the flow back to a real tab.
+   */
+  it("hands off to a browser tab when the frame navigates off the chatbox", () => {
+    render(
+      <ChatboxPreviewPane publishLink={sameOriginLink} mcpProfile={undefined} />,
+    );
+
+    const frame = screen.getByTestId("user-testing-preview-frame");
+    // jsdom won't navigate for us; drive the load event with the frame
+    // parked somewhere that isn't the chatbox runtime path.
+    Object.defineProperty(frame, "contentWindow", {
+      configurable: true,
+      value: { location: { pathname: "/oauth/callback" } },
+    });
+    fireEvent.load(frame);
+
+    expect(
+      screen.queryByTestId("user-testing-preview-frame"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/can't finish inside the preview/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /open in a new tab/i }),
+    ).toHaveAttribute("href", sameOriginLink);
+  });
+
+  it("keeps the frame when a load lands back on the chatbox path", () => {
+    render(
+      <ChatboxPreviewPane publishLink={sameOriginLink} mcpProfile={undefined} />,
+    );
+
+    const frame = screen.getByTestId("user-testing-preview-frame");
+    Object.defineProperty(frame, "contentWindow", {
+      configurable: true,
+      value: { location: { pathname: "/chatbox/payments-beta/tok-1" } },
+    });
+    fireEvent.load(frame);
+
+    expect(
+      screen.getByTestId("user-testing-preview-frame"),
+    ).toBeInTheDocument();
+  });
+
+  it("can reload back into the preview after a hand-off", () => {
+    render(
+      <ChatboxPreviewPane publishLink={sameOriginLink} mcpProfile={undefined} />,
+    );
+
+    const frame = screen.getByTestId("user-testing-preview-frame");
+    Object.defineProperty(frame, "contentWindow", {
+      configurable: true,
+      value: { location: { pathname: "/oauth/callback" } },
+    });
+    fireEvent.load(frame);
+
+    fireEvent.click(screen.getByRole("button", { name: /reload preview/i }));
+
+    expect(screen.getByTestId("user-testing-preview-frame")).toBeInTheDocument();
   });
 });
