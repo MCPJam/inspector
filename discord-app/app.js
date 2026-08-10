@@ -10,15 +10,8 @@ import {
 	runTurnForEvent,
 	textContent,
 } from "@mcpjam/surface-core";
-import {
-	Client,
-	Events,
-	GatewayIntentBits,
-	Partials,
-	REST,
-	Routes,
-	SlashCommandBuilder,
-} from "discord.js";
+import { Client, Events, GatewayIntentBits, Partials, REST } from "discord.js";
+import { MCPJAM_COMMANDS, resolveCommandRegistration } from "./commands.js";
 import { config, describeConfigGaps } from "./config.js";
 import { buildInteractionRef, buildMessageRef } from "./context.js";
 import { createDiscordDelivery } from "./delivery.js";
@@ -506,21 +499,37 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 // ── Slash-command registration ──────────────────────────────────────────────
 
-if (config.applicationId && config.guildId) {
-	const rest = new REST({ version: "10" }).setToken(config.botToken);
-	await rest.put(
-		Routes.applicationGuildCommands(config.applicationId, config.guildId),
-		{
-			body: [
-				new SlashCommandBuilder()
-					.setName("mcpjam")
-					.setDescription("MCPJam commands")
-					.addSubcommand((subcommand) =>
-						subcommand.setName("connect").setDescription("Connect MCPJam"),
-					),
-			],
-		},
+// Guild-scoped when a guild id is configured (the development override:
+// instant propagation in one server), GLOBAL otherwise so every server the
+// bot is added to gets `/mcpjam`. See commands.js for the full reasoning.
+const registration = resolveCommandRegistration({
+	applicationId: config.applicationId,
+	guildId: config.guildId,
+});
+if (registration.scope === "skipped") {
+	console.warn(
+		"[discord] DISCORD_APPLICATION_ID is not set — slash commands are not registered. Mentioning the bot still works.",
 	);
+} else {
+	const rest = new REST({ version: "10" }).setToken(config.botToken);
+	// Best-effort: a failed registration must not stop the bot from
+	// connecting. The @-mention path offers the same connect link, so a bot
+	// that is up without its slash command is degraded, not broken — and
+	// crashing here would take down every guild over one bad API call.
+	try {
+		await rest.put(registration.route, { body: MCPJAM_COMMANDS });
+		console.log(
+			registration.scope === "guild"
+				? `[discord] registered slash commands to guild ${config.guildId} (development override)`
+				: "[discord] registered slash commands globally; Discord may take up to an hour to propagate them",
+		);
+	} catch (error) {
+		console.error(
+			`[discord] could not register slash commands (${registration.scope}): ${
+				error?.message ?? error
+			}`,
+		);
+	}
 }
 
 await client.login(config.botToken);

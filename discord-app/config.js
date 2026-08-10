@@ -117,7 +117,15 @@ export function loadConfig(env = process.env) {
 		 */
 		legacyProjectId: trimmed(env.MCPJAM_PROJECT_ID),
 
-		/** Slash-command registration. Both required, or registration is skipped. */
+		/**
+		 * Slash-command registration. `applicationId` is required, or
+		 * registration is skipped entirely.
+		 *
+		 * `guildId` is an OPTIONAL DEVELOPMENT OVERRIDE: set it and commands
+		 * register to that one server and propagate instantly; leave it unset
+		 * and they register globally, reaching every server the bot is added
+		 * to. See commands.js for why global is the production default.
+		 */
 		applicationId: trimmed(env.DISCORD_APPLICATION_ID),
 		guildId: trimmed(env.DISCORD_GUILD_ID),
 	};
