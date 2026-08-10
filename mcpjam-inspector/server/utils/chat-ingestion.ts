@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import type { ChatRewind } from "@/shared/chat-v2";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -195,6 +196,7 @@ interface PersistChatSessionOptions {
   timeoutMs?: number;
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
+  rewind?: ChatRewind;
   turnTrace?: PersistedTurnTrace;
   /**
    * §3: chat-backed harness resume-state commit. Applied ATOMICALLY with the
@@ -441,6 +443,7 @@ export async function persistChatSessionToConvex(
         ...(options.expectedVersion !== undefined
           ? { expectedVersion: options.expectedVersion }
           : {}),
+        ...(options.rewind ? { rewind: options.rewind } : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
         ...(options.harnessSessionCommit
           ? { harnessSessionCommit: options.harnessSessionCommit }

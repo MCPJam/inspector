@@ -34,9 +34,9 @@ vi.mock("@/components/notifications/NotificationsPanel", () => ({
   NotificationsPanelContent: () => <div data-testid="notifications-panel" />,
 }));
 
-// Represent local/npx mode (VITE_MCPJAM_HOSTED_MODE unset). The sidebar
-// sign-in affordance is intentionally mode-agnostic — a guest must see it in
-// both hosted and local, since the header sign-in is hidden on the Home route.
+// Represent local/npx mode (VITE_MCPJAM_HOSTED_MODE unset). Guests get no
+// sidebar footer at all in either mode — they sign in from the header button or
+// the org switcher's sign-in chip.
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
@@ -114,20 +114,10 @@ describe("SidebarUser", () => {
     window.isElectron = false;
   });
 
-  it("renders sign-in button when unauthenticated", () => {
-    render(<SidebarUser />);
-    expect(screen.getByText("Sign in")).toBeDefined();
-    const signInButton = screen.getByRole("button", { name: "Sign in" });
-    expect(signInButton).toHaveAttribute("aria-label", "Sign in");
-    expect(signInButton.className).toContain(
-      "data-[state=open]:bg-sidebar-accent"
-    );
-  });
-
-  it("calls signIn when button is clicked", () => {
-    render(<SidebarUser />);
-    fireEvent.click(screen.getByText("Sign in"));
-    expect(authState.signInMock).toHaveBeenCalled();
+  it("renders nothing when unauthenticated", () => {
+    const { container } = render(<SidebarUser />);
+    expect(screen.queryByText("Sign in")).toBeNull();
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("no longer renders credit usage in the account dropdown (moved to the org switcher)", () => {

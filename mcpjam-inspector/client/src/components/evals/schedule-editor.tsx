@@ -10,6 +10,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
+import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
+import {
+  disambiguateLabels,
+  environmentLabel as environmentRowLabel,
+} from "@/lib/environment-label";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -118,7 +123,28 @@ export function ScheduleEditor({
     setDraftEnvironmentId(persistedEnvironmentId ?? attachedEnvironmentIds[0]);
   }, [persistedEnvironmentId, attachedEnvironmentIds]);
   const environments = useProjectEnvironments(
-    requiresEnvironmentPin ? projectId : null
+    requiresEnvironmentPin ? projectId : null,
+    // A suite composed from the header attaches nameless ad-hoc rows, and a pin
+    // labeled by a bare id tells the user nothing about what it pinned.
+    { includeAdhoc: true }
+  );
+  const labelContext = useEnvironmentLabelContext(
+    requiresEnvironmentPin ? projectId : null,
+    environments
+  );
+  // Ad-hoc rows label by their client, so two setups on one client would read
+  // identically without disambiguation — the case a composed suite makes normal.
+  const labelsById = useMemo(
+    () =>
+      new Map(
+        disambiguateLabels(
+          (environments ?? []).map((environment) => ({
+            environmentId: environment.environmentId,
+            label: environmentRowLabel(environment, labelContext),
+          }))
+        ).map(({ environmentId, label }) => [environmentId, label])
+      ),
+    [environments, labelContext]
   );
   // Defensive: a persisted pin whose environment was detached from the
   // suite still renders (marked) so the user sees why a re-pin is needed.
@@ -127,8 +153,7 @@ export function ScheduleEditor({
     attachedEnvironmentIds.length > 0 &&
     !attachedEnvironmentIds.includes(draftEnvironmentId);
 
-  const environmentLabel = (id: string) =>
-    environments?.find((e) => e.environmentId === id)?.name ?? id;
+  const environmentLabel = (id: string) => labelsById.get(id) ?? id;
 
   const apply = async (args: {
     enabled: boolean;

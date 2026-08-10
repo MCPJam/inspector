@@ -88,6 +88,13 @@ interface ThreadProps {
    */
   renderUserMessageActions?: TranscriptThreadProps["renderUserMessageActions"];
   /**
+   * Enables the per-user-message edit affordance. Saving rewinds the thread to
+   * that message and re-runs the turn from the edited text.
+   */
+  onEditUserMessage?: TranscriptThreadProps["onEditUserMessage"];
+  /** Blocks editing while a response is streaming. */
+  editDisabled?: TranscriptThreadProps["editDisabled"];
+  /**
    * Per-message sender attribution in shared sessions. Both must be supplied
    * for avatars to render; otherwise the transcript looks identical to today.
    */
@@ -165,6 +172,8 @@ export function Thread({
   contentClassName,
   getMessageWrapperProps,
   renderUserMessageActions,
+  onEditUserMessage,
+  editDisabled,
   showSenderAvatars,
   resolveSenderAvatar,
   recorder,
@@ -376,6 +385,8 @@ export function Thread({
           }
           getMessageWrapperProps={getMessageWrapperProps}
           renderUserMessageActions={renderUserMessageActions}
+          onEditUserMessage={onEditUserMessage}
+          editDisabled={editDisabled}
           showSenderAvatars={showSenderAvatars}
           resolveSenderAvatar={resolveSenderAvatar}
           recorder={recorder}
