@@ -2,6 +2,7 @@
 import {
 	createApiClient,
 	createBackendClient,
+	createChannelBindingCache,
 	createEventClaims,
 	createTurnTargetResolver,
 	mintConnectUrl,
@@ -73,10 +74,18 @@ const claims = createEventClaims({
 	backend: claimBackend,
 	surfaceKind: "discord",
 });
+// Every mention asks whether its channel is bound, which put a Convex round
+// trip on the hot path of every single message with no caching at all.
+// Channel bindings are written by an admin through a separate settings flow,
+// not by the turn reading one, so caching (including a "no binding" answer —
+// the common case) is safe. See channel-binding-cache.js for why this does
+// not also cover thread bindings.
+const channelBindingCache = createChannelBindingCache();
 const resolveTurnTarget = createTurnTargetResolver({
 	backend: claimBackend,
 	hasPerUserAuth: () => Boolean(config.convexServiceToken),
 	legacyProjectId: () => config.legacyProjectId,
+	channelBindingCache,
 });
 
 const api = createApiClient({
@@ -134,12 +143,16 @@ client.on(Events.GuildCreate, (guild) =>
 		`presence installed (${guild.id})`,
 	),
 );
-client.on(Events.GuildDelete, (guild) =>
+client.on(Events.GuildDelete, (guild) => {
+	// A removed-then-reinstalled guild may come back under a DIFFERENT org.
+	// Without this, the first minute of turns after reinstall could still be
+	// routed by channel bindings written for the org that just left.
+	channelBindingCache.clearTenant(`discord:${guild.id}:`);
 	detach(
 		recordPresence({ tenantId: guild.id, status: "removed" }),
 		`presence removed (${guild.id})`,
-	),
-);
+	);
+});
 
 // ── /mcpjam connect ─────────────────────────────────────────────────────────
 
