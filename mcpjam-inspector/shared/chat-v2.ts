@@ -13,6 +13,12 @@ import type {
   ScopeStepUpResumeRequest,
 } from "./scope-step-up";
 
+export interface ChatRewind {
+  parentChatSessionId: string;
+  rewoundFromMessageId: string;
+  reason: "message_edit";
+}
+
 export interface ChatV2Request {
   messages: UIMessage[];
   /**
@@ -33,6 +39,8 @@ export interface ChatV2Request {
    */
   environmentOverrides?: EnvironmentOverrides;
   chatSessionId?: string;
+  /** Lineage for a new session created by editing an earlier user message. */
+  rewind?: ChatRewind;
   /** Userless retry of a tool call suspended for SEP-2350 authorization. */
   scopeStepUpResume?: ScopeStepUpResumeRequest;
   /** Userless resolution when the user denied or failed authorization. */

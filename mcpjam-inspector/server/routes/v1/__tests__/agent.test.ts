@@ -20,6 +20,7 @@ const {
   resolveSlackActingUserMock,
   createProposedActionMock,
   getOrgAgentPolicyMock,
+  verifyAuthKitTokenMock,
 } = vi.hoisted(() => {
   process.env.DO_NOT_TRACK = "1"; // analytics no-op in tests
   return {
@@ -35,8 +36,18 @@ const {
     resolveSlackActingUserMock: vi.fn(),
     createProposedActionMock: vi.fn(),
     getOrgAgentPolicyMock: vi.fn(),
+    verifyAuthKitTokenMock: vi.fn(),
   };
 });
+
+// `GET /agent-ops` mounts `requireVerifiedAuth` — it never calls Convex, so
+// nothing downstream would re-check the bearer. Tokens here are placeholder
+// strings; the middleware's own branches are covered in
+// server/middleware/__tests__/require-verified-auth.test.ts.
+vi.mock("../../../services/authkit-jwt.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  verifyAuthKitToken: verifyAuthKitTokenMock,
+}));
 
 vi.mock("../../../services/slack-backend.js", () => ({
   resolveSlackActingUser: resolveSlackActingUserMock,
@@ -1467,6 +1478,7 @@ describe("GET /api/v1/agent-ops", () => {
     process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH = SLACK_TOKEN_HASH;
     resetSlackRateLimitForTests();
     validateGuestTokenMock.mockResolvedValue({ valid: false });
+    verifyAuthKitTokenMock.mockResolvedValue({ sub: "workos|alice" });
   });
 
   afterEach(() => {

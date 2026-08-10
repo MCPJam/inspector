@@ -10,7 +10,7 @@ import { updateThemeMode } from "@/lib/theme-utils";
 import { track } from "@/lib/analytics";
 import { Info, KeyRound } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
-import { SettingsNav } from "./settings/SettingsNav";
+import { SettingsPageShell } from "./settings/SettingsPageShell";
 
 interface SettingsTabProps {
   activeOrganizationId?: string;
@@ -40,113 +40,106 @@ export function SettingsTab({
   };
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-10 space-y-8 max-w-3xl">
-        <div className="space-y-4">
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <SettingsNav
-            active="general"
-            activeOrganizationId={activeOrganizationId}
-          />
-        </div>
+    <SettingsPageShell
+      active="general"
+      activeOrganizationId={activeOrganizationId}
+    >
+      {/* About */}
+      <SettingsSection title="About">
+        <SettingsRow label="Version" value={`v${__APP_VERSION__}`} />
+      </SettingsSection>
 
-        {/* About */}
-        <SettingsSection title="About">
-          <SettingsRow label="Version" value={`v${__APP_VERSION__}`} />
-        </SettingsSection>
+      {/* Appearance */}
+      <SettingsSection title="Appearance">
+        <SettingsRow
+          label="Theme"
+          value={
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {themeMode === "dark" ? "Dark" : "Light"}
+              </span>
+              <Switch
+                checked={themeMode === "dark"}
+                onCheckedChange={handleThemeToggle}
+                aria-label="Toggle dark mode"
+              />
+            </div>
+          }
+        />
+      </SettingsSection>
 
-        {/* Appearance */}
-        <SettingsSection title="Appearance">
-          <SettingsRow
-            label="Theme"
-            value={
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {themeMode === "dark" ? "Dark" : "Light"}
-                </span>
-                <Switch
-                  checked={themeMode === "dark"}
-                  onCheckedChange={handleThemeToggle}
-                  aria-label="Toggle dark mode"
-                />
-              </div>
-            }
-          />
-        </SettingsSection>
-
-        {!HOSTED_MODE && !byokAllowed && (
-          <SettingsSection title="LLM Providers">
-            <EmptyState
-              icon={KeyRound}
-              title="Sign in to configure model providers"
-              description="Provider keys are managed at the organization level. Sign in to set up your organization's models and use them in chat, evals, and the playground."
-              className="py-10"
+      {!HOSTED_MODE && !byokAllowed && (
+        <SettingsSection title="LLM Providers">
+          <EmptyState
+            icon={KeyRound}
+            title="Sign in to configure model providers"
+            description="Provider keys are managed at the organization level. Sign in to set up your organization's models and use them in chat, evals, and the playground."
+            className="py-10"
+          >
+            <Button
+              type="button"
+              onClick={() => {
+                track("login_button_clicked", {
+                  location: "byok_signin_gate",
+                });
+                signIn();
+              }}
+              size="sm"
             >
+              Sign in
+            </Button>
+          </EmptyState>
+        </SettingsSection>
+      )}
+
+      {!HOSTED_MODE && byokAllowed && isOrgBacked && (
+        <SettingsSection title="LLM Providers">
+          <div className="flex items-start gap-3 px-4 py-3 rounded-md border border-border/40 bg-muted/30">
+            <Info className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+            <div className="flex flex-col gap-1">
+              <span className="text-sm text-muted-foreground">
+                Model providers are managed in your organization settings.
+              </span>
               <Button
-                type="button"
-                onClick={() => {
-                  track("login_button_clicked", {
-                    location: "byok_signin_gate",
-                  });
-                  signIn();
-                }}
-                size="sm"
+                variant="link"
+                className="h-auto p-0 text-sm justify-start"
+                onClick={() =>
+                  onNavigate?.(`organizations/${activeOrganizationId}/models`)
+                }
               >
-                Sign in
+                Go to Organization Models
               </Button>
-            </EmptyState>
-          </SettingsSection>
-        )}
-
-        {!HOSTED_MODE && byokAllowed && isOrgBacked && (
-          <SettingsSection title="LLM Providers">
-            <div className="flex items-start gap-3 px-4 py-3 rounded-md border border-border/40 bg-muted/30">
-              <Info className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">
-                  Model providers are managed in your organization settings.
-                </span>
-                <Button
-                  variant="link"
-                  className="h-auto p-0 text-sm justify-start"
-                  onClick={() =>
-                    onNavigate?.(`organizations/${activeOrganizationId}/models`)
-                  }
-                >
-                  Go to Organization Models
-                </Button>
-              </div>
             </div>
-          </SettingsSection>
-        )}
+          </div>
+        </SettingsSection>
+      )}
 
-        {!HOSTED_MODE && byokAllowed && !isOrgBacked && (
-          <SettingsSection title="LLM Providers">
-            <div className="flex items-start gap-3 px-4 py-3 rounded-md border border-border/40 bg-muted/30">
-              <Info className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">
-                  Model providers are configured at the organization level.
-                  Create or join an organization on mcpjam.com to set them up.
-                </span>
-                <Button
-                  variant="link"
-                  className="h-auto p-0 text-sm justify-start"
-                  onClick={() =>
-                    window.open(
-                      "https://app.mcpjam.com/organizations",
-                      "_blank",
-                      "noopener,noreferrer"
-                    )
-                  }
-                >
-                  Open mcpjam.com
-                </Button>
-              </div>
+      {!HOSTED_MODE && byokAllowed && !isOrgBacked && (
+        <SettingsSection title="LLM Providers">
+          <div className="flex items-start gap-3 px-4 py-3 rounded-md border border-border/40 bg-muted/30">
+            <Info className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+            <div className="flex flex-col gap-1">
+              <span className="text-sm text-muted-foreground">
+                Model providers are configured at the organization level. Create
+                or join an organization on mcpjam.com to set them up.
+              </span>
+              <Button
+                variant="link"
+                className="h-auto p-0 text-sm justify-start"
+                onClick={() =>
+                  window.open(
+                    "https://app.mcpjam.com/organizations",
+                    "_blank",
+                    "noopener,noreferrer"
+                  )
+                }
+              >
+                Open mcpjam.com
+              </Button>
             </div>
-          </SettingsSection>
-        )}
-      </div>
-    </div>
+          </div>
+        </SettingsSection>
+      )}
+    </SettingsPageShell>
   );
 }

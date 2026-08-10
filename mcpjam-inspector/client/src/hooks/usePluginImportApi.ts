@@ -24,12 +24,13 @@
 
 import { useCallback, useMemo } from "react";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import {
   assertPluginBundleWithinCap,
   toPluginApiError,
-  uploadPluginBundleToUrl,
+  uploadPluginBundleTracked,
 } from "@/lib/plugins/plugin-api";
+import { getConvexSiteUrl } from "@/lib/convex-site-url";
+import { useConvexAccessToken } from "./use-convex-access-token";
 import { shouldQueryProjectId } from "./useProjects";
 import {
   PluginApiError,
@@ -55,25 +56,19 @@ import { usePluginsEnabled } from "./usePluginsEnabled";
 // ---------------------------------------------------------------------------
 
 /**
- * Shared gate: `plugins-enabled` (fail-closed) AND a *signed-in* actor.
+ * Shared gate: `plugins-enabled` (fail-closed) AND a resolved Convex actor.
  *
- * `isAuthenticated` alone is not enough: guests authenticate to Convex through
- * the same provider chain (see `useUnifiedConvexAuth`), so it is true for them
- * too. Every plugin function is a `signedInQuery`, which rejects guests with
- * "Authenticated user required" — a render-time throw that takes down the whole
- * route, since Connect mounts `PluginsSection` inline. The WorkOS user is the
- * signed-in/guest discriminator (same predicate as `use-project-state`'s
- * `isAuthenticated && !hasSignedInUser`).
- *
- * TEMPORARY: remove the `Boolean(user)` term once the backend serves guests —
- * this gate exists only because the frontend is ready for guest plugins and the
- * backend is not.
+ * Guests count: the backend serves them across the whole plugin surface
+ * (mcpjam-backend#913 — `user*` wrappers, guest-tier rate ceilings, tracked
+ * uploads), and `isAuthenticated` is true for a guest session through the
+ * same provider chain (see `useUnifiedConvexAuth`). The historical
+ * `Boolean(user)` term existed only because the backend was `signedIn*`
+ * while the frontend was already guest-ready.
  */
 function usePluginQueriesReady(): boolean {
   const enabled = usePluginsEnabled();
   const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
-  return enabled && isAuthenticated && Boolean(user);
+  return enabled && isAuthenticated;
 }
 
 /**
@@ -189,8 +184,6 @@ export interface StartPluginImportResult {
 }
 
 export interface PluginImportActions {
-  /** Mint a storage upload URL (`plugins.generateBundleUploadUrl`). */
-  generateBundleUploadUrl: (projectId: string) => Promise<string>;
   /** Stage an uploaded bundle blob as an import (`plugins.createImport`). */
   createImport: (args: {
     projectId: string;
@@ -205,10 +198,11 @@ export interface PluginImportActions {
     options?: { setActive?: boolean },
   ) => Promise<PluginCommitResult>;
   /**
-   * Full upload path: mint URL → POST the ZIP to storage → `createImport` →
-   * `inspectImport`. Resolves once inspection lands `preview_ready` (or
-   * `failed` — inspect failures are recorded on the row, not thrown).
-   * Subscribe with `usePluginImport(importId)` for live progress.
+   * Full upload path: POST the ZIP to the tracked upload route →
+   * `createImport` → `inspectImport`. Resolves once inspection lands
+   * `preview_ready` (or `failed` — inspect failures are recorded on the
+   * row, not thrown). Subscribe with `usePluginImport(importId)` for live
+   * progress.
    */
   startImport: (
     args: StartPluginImportArgs,
@@ -224,9 +218,7 @@ export interface PluginImportActions {
  */
 export function usePluginImportActions(): PluginImportActions {
   const enabled = usePluginsEnabled();
-  const generateUploadUrlMutation = useMutation(
-    "plugins:generateBundleUploadUrl" as any,
-  );
+  const getConvexAccessToken = useConvexAccessToken();
   const createImportMutation = useMutation("plugins:createImport" as any);
   const inspectImportAction = useAction("pluginsNode:inspectImport" as any);
   const commitImportAction = useAction("pluginsNode:commitImport" as any);
@@ -240,19 +232,20 @@ export function usePluginImportActions(): PluginImportActions {
     }
   }, [enabled]);
 
-  const generateBundleUploadUrl = useCallback(
-    async (projectId: string): Promise<string> => {
-      requireEnabled();
-      try {
-        return (await generateUploadUrlMutation({
-          projectId,
-        } as any)) as string;
-      } catch (err) {
-        throw toPluginApiError(err, "Could not create an upload URL");
-      }
-    },
-    [requireEnabled, generateUploadUrlMutation],
-  );
+  // The bearer the tracked upload route authorizes with, resolved through
+  // the shared `resolveConvexAccessToken` order: WorkOS token when signed
+  // in, guest bearer only when there is NO WorkOS user. A signed-in user
+  // whose token transiently fails to refresh must get an error here — never
+  // a silent guest fallback, or the staged upload would belong to a
+  // different actor than the `createImport` that adopts it.
+  const acquireBearerToken = useCallback(async (): Promise<string> => {
+    const token = await getConvexAccessToken();
+    if (token) return token;
+    throw new PluginApiError(
+      "UPLOAD_FAILED",
+      "Your session could not be refreshed for the upload. Please retry, or sign in again.",
+    );
+  }, [getConvexAccessToken]);
 
   const createImport = useCallback(
     async (args: {
@@ -307,15 +300,27 @@ export function usePluginImportActions(): PluginImportActions {
   const startImport = useCallback(
     async (args: StartPluginImportArgs): Promise<StartPluginImportResult> => {
       requireEnabled();
-      // Size-check BEFORE minting: generateBundleUploadUrl is rate-limited,
-      // and an oversized bundle must not burn a token on a doomed upload.
-      // uploadPluginBundleToUrl re-checks as defense in depth.
+      // Size-check BEFORE uploading: the tracked route is rate-limited, and
+      // an oversized bundle must not burn a token on a doomed upload.
+      // uploadPluginBundleTracked re-checks as defense in depth.
       assertPluginBundleWithinCap(args.bundle);
-      const uploadUrl = await generateBundleUploadUrl(args.projectId);
-      const bundleStorageId = await uploadPluginBundleToUrl(
-        uploadUrl,
-        args.bundle,
-      );
+      // ONE upload path for every actor: the tracked route stores AND
+      // records the blob server-side so an abandoned upload is sweepable —
+      // required for guests (minted URLs refuse them), harmless for members.
+      const siteUrl = getConvexSiteUrl();
+      if (!siteUrl) {
+        throw new PluginApiError(
+          "UPLOAD_FAILED",
+          "Convex site URL is not configured; cannot upload the bundle.",
+        );
+      }
+      const bearerToken = await acquireBearerToken();
+      const bundleStorageId = await uploadPluginBundleTracked({
+        siteUrl,
+        projectId: args.projectId,
+        bundle: args.bundle,
+        bearerToken,
+      });
       const { importId } = await createImport({
         projectId: args.projectId,
         bundleStorageId,
@@ -332,24 +337,17 @@ export function usePluginImportActions(): PluginImportActions {
       const inspect = await inspectImport(importId);
       return { importId, inspect };
     },
-    [requireEnabled, generateBundleUploadUrl, createImport, inspectImport],
+    [requireEnabled, acquireBearerToken, createImport, inspectImport],
   );
 
   return useMemo(
     () => ({
-      generateBundleUploadUrl,
       createImport,
       inspectImport,
       commitImport,
       startImport,
     }),
-    [
-      generateBundleUploadUrl,
-      createImport,
-      inspectImport,
-      commitImport,
-      startImport,
-    ],
+    [createImport, inspectImport, commitImport, startImport],
   );
 }
 

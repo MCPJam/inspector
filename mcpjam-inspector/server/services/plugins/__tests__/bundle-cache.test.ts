@@ -51,7 +51,7 @@ describe("PluginBundleCache", () => {
     // Extraction is files only — no install script ever runs, so nothing the
     // bundle could declare appears in the entry beyond its own content.
     const entries = await readdir(result.root);
-    expect(entries.sort()).toEqual([".codex-plugin", ".mcp.json", "data.txt", "server"]);
+    expect(entries.sort()).toEqual(["data.txt", "mcp.json", "plugin.json", "server"]);
   });
 
   it("serves a cache hit with no source at all", async () => {

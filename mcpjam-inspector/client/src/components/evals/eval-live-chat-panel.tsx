@@ -227,6 +227,7 @@ export function EvalLiveChatPanel({
                       hideWelcomeHero
                       hideCenterHeaderChrome
                       hideInlineEdit
+                      hideMessageEdit
                       suppressHistoryConflictToast
                       onMessagesChange={handleMessagesChange}
                       recorder={recorder}
