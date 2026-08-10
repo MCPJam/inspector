@@ -11,9 +11,10 @@ interface TopupActionButtonProps {
  * the button opens a dialog that immediately shows "Credit packages are
  * unavailable right now" because the backend is missing the function.
  *
- * Wrap this in an `<ErrorBoundary fallback={null}>` at the call site so a
- * thrown query (e.g. function not deployed) collapses to nothing instead of
- * surfacing a generic error UI.
+ * Wrap this in an `<ErrorBoundary>` with a quiet fallback at the call site so
+ * a thrown query (e.g. function not deployed) degrades to a muted line rather
+ * than a generic error UI. Use a fallback that still says something — a bare
+ * `fallback={null}` leaves the user staring at a gap with no explanation.
  */
 export function TopupActionButton({ onClick }: TopupActionButtonProps) {
   const { presets } = useCreditTopupPresets();
