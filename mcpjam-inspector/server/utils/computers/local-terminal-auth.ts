@@ -32,13 +32,22 @@ import { validateLocalProjectKey } from "./local-machine.js";
 
 export const LOCAL_TERMINAL_NONCE_TTL_MS = 60_000;
 
-/** Backstop against unbounded growth if something mints in a loop. */
-const MAX_OUTSTANDING_NONCES = 64;
+/** Backstop against unbounded growth if something mints in a loop. Exported so
+ *  the eviction test derives its bounds from the source of truth. */
+export const MAX_OUTSTANDING_NONCES = 64;
 
 interface IssuedNonce {
   nonce: string;
   projectId: string;
   expiresAtMs: number;
+  /**
+   * Fingerprint of the consent capability this nonce was minted against. The
+   * TTL alone would let a nonce outlive the consent that authorized it: revoke
+   * (or a re-grant from another profile, which ROTATES the capability) must
+   * invalidate anything already handed out, so redemption re-checks this
+   * against the live capability rather than trusting the 60s window.
+   */
+  consentFingerprint: string;
 }
 
 const outstanding: IssuedNonce[] = [];
@@ -55,11 +64,17 @@ function pruneExpired(now: number): void {
  * bounded path segment — the same validation the workspace resolver applies,
  * done HERE so an invalid key never reaches the WS handler at all.
  */
-export function issueLocalTerminalNonce(projectId: string): {
+export function issueLocalTerminalNonce(
+  projectId: string,
+  consentFingerprint: string
+): {
   nonce: string;
   expiresAtMs: number;
 } {
   const validated = validateLocalProjectKey(projectId);
+  if (!consentFingerprint) {
+    throw new Error("A consent capability is required to mint a terminal nonce.");
+  }
   const now = Date.now();
   pruneExpired(now);
   // Drop the oldest rather than refuse: a legitimate user reconnecting in a
@@ -67,19 +82,27 @@ export function issueLocalTerminalNonce(projectId: string): {
   while (outstanding.length >= MAX_OUTSTANDING_NONCES) outstanding.shift();
   const nonce = randomBytes(32).toString("base64url");
   const expiresAtMs = now + LOCAL_TERMINAL_NONCE_TTL_MS;
-  outstanding.push({ nonce, projectId: validated, expiresAtMs });
+  outstanding.push({
+    nonce,
+    projectId: validated,
+    expiresAtMs,
+    consentFingerprint,
+  });
   return { nonce, expiresAtMs };
 }
 
 /**
- * Redeem a nonce. Returns the bound projectId on success and `null` otherwise;
- * either way the nonce is gone afterwards. The scan is unconditional (no early
- * exit) and compares with `timingSafeEqual`, so a caller learns nothing from
- * how long a rejection took.
+ * Redeem a nonce. Returns the bound projectId and the consent fingerprint it was
+ * minted against on success, `null` otherwise; either way the nonce is gone
+ * afterwards. The CALLER must still check that fingerprint against the live
+ * capability — see `IssuedNonce.consentFingerprint`.
+ *
+ * The scan is unconditional (no early exit) and compares with `timingSafeEqual`,
+ * so a caller learns nothing from how long a rejection took.
  */
 export function consumeLocalTerminalNonce(
   presented: string | null | undefined
-): { projectId: string } | null {
+): { projectId: string; consentFingerprint: string } | null {
   const now = Date.now();
   pruneExpired(now);
   if (typeof presented !== "string" || presented.length === 0) return null;
@@ -100,7 +123,10 @@ export function consumeLocalTerminalNonce(
   // Re-check the deadline on the CLAIMED entry: pruning ran before the compare,
   // and an entry that expires in between must not be honored.
   if (claimed.expiresAtMs <= Date.now()) return null;
-  return { projectId: claimed.projectId };
+  return {
+    projectId: claimed.projectId,
+    consentFingerprint: claimed.consentFingerprint,
+  };
 }
 
 /** Test seam: the store is process-global. */

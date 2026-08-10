@@ -25,6 +25,7 @@ import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
   LOCAL_CONSENT_HEADER,
+  getLocalConsentFingerprint,
   grantLocalComputerConsent,
   revokeLocalComputerConsent,
   verifyLocalComputerConsent,
@@ -110,6 +111,15 @@ computers.post("/local-terminal-token", async (c) => {
   if (!availability.available) {
     return c.json({ error: availability.reason }, 503);
   }
+  // Bind the nonce to the capability that authorized it. Without this the 60s
+  // TTL would outlive a revoke: a nonce minted a second before the user clicked
+  // "Forget & re-authorize" would still open a shell. The WS handler re-checks
+  // this fingerprint against the live capability, so a revoke OR a re-grant
+  // (which rotates it) kills anything already handed out.
+  const consentFingerprint = await getLocalConsentFingerprint();
+  if (!consentFingerprint) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
   } | null;
@@ -117,7 +127,10 @@ computers.post("/local-terminal-token", async (c) => {
   try {
     // `issueLocalTerminalNonce` re-validates the project key (one bounded path
     // segment) — an invalid key never reaches the WS handler.
-    const { nonce, expiresAtMs } = issueLocalTerminalNonce(projectId);
+    const { nonce, expiresAtMs } = issueLocalTerminalNonce(
+      projectId,
+      consentFingerprint
+    );
     return c.json({ nonce, expiresAtMs });
   } catch {
     return c.json({ error: "Invalid project for the local terminal" }, 400);

@@ -41,6 +41,7 @@ import {
 } from "../../utils/computers/local-pty.js";
 import { createLocalPtyCreator } from "../../utils/computers/local-pty-adapter.js";
 import { consumeLocalTerminalNonce } from "../../utils/computers/local-terminal-auth.js";
+import { getLocalConsentFingerprint } from "../../utils/computers/local-consent.js";
 import {
   appendLocalCommandLog,
   buildLocalCommandEnv,
@@ -68,11 +69,22 @@ const CLOSE_UNAVAILABLE = 4503;
 const livePtys = new Set<NodePtyProcess>();
 
 /**
+ * Latched by `shutdownLocalComputerTerminals()`. A handshake can be mid-spawn
+ * when shutdown runs — `createPtyWithCwd` is awaited — and that PTY would be
+ * registered AFTER the live set was drained, outliving the inspector. The
+ * open path re-checks this after every await and kills rather than registers.
+ * Also refuses new handshakes outright.
+ */
+let shuttingDown = false;
+
+/**
  * Kill every live local PTY. THE shutdown mechanism — called from
  * `server/index.ts`'s `shutdown()` (standalone) and `src/main.ts`'s
- * `before-quit` (Electron). Safe to call when none are open.
+ * `before-quit` / `window-all-closed` (Electron). Safe to call repeatedly and
+ * when none are open.
  */
 export function shutdownLocalComputerTerminals(): void {
+  shuttingDown = true;
   for (const pty of livePtys) {
     try {
       pty.kill();
@@ -80,6 +92,12 @@ export function shutdownLocalComputerTerminals(): void {
       // Already dead — nothing to clean up.
     }
   }
+  livePtys.clear();
+}
+
+/** Test seam: the shutdown latch is module state for the process lifetime. */
+export function resetLocalTerminalShutdownForTests(): void {
+  shuttingDown = false;
   livePtys.clear();
 }
 
@@ -142,7 +160,10 @@ export function createLocalComputerTerminalWsHandler(
     // headers) and 403s a disallowed Origin pre-upgrade. This in-handler check
     // additionally rejects an ABSENT Origin, and covers embeddings that mount
     // the route on a bare Hono app without the global middleware.
-    if (!isAllowedRequestOrigin(origin)) {
+    if (shuttingDown) {
+      rejectCode = CLOSE_UNAVAILABLE;
+      rejectMessage = "The inspector is shutting down.";
+    } else if (!isAllowedRequestOrigin(origin)) {
       rejectCode = CLOSE_UNAUTHORIZED;
       rejectMessage = "Terminal requests must come from the inspector UI.";
     } else {
@@ -157,6 +178,14 @@ export function createLocalComputerTerminalWsHandler(
         if (!claim) {
           rejectCode = CLOSE_UNAUTHORIZED;
           rejectMessage = "Invalid or expired terminal token.";
+        } else if (
+          claim.consentFingerprint !== (await getLocalConsentFingerprint())
+        ) {
+          // The capability that authorized this nonce is no longer the live one:
+          // consent was revoked, or a re-grant from another browser profile
+          // rotated it. The 60s TTL must not outlive either.
+          rejectCode = CLOSE_UNAUTHORIZED;
+          rejectMessage = "Local computer consent is no longer valid.";
         } else {
           projectId = claim.projectId;
         }
@@ -166,6 +195,10 @@ export function createLocalComputerTerminalWsHandler(
     const sessionId = randomUUID();
     let pty: NodePtyProcess | null = null;
     let closed = false;
+    // Only journal a `close` for a session that was journaled `open`. The open
+    // write happens after the PTY spawns, so a degrade (4503) or a socket that
+    // dies mid-spawn would otherwise leave a dangling close with no match.
+    let journaledOpen = false;
 
     return {
       onOpen: (_evt, ws) => {
@@ -216,8 +249,10 @@ export function createLocalComputerTerminalWsHandler(
               },
               workspaceDir
             );
-            if (closed) {
-              // The socket died while the PTY was coming up — don't leak it.
+            if (closed || shuttingDown) {
+              // The socket died — or the server began shutting down — while the
+              // PTY was coming up. Either way this handle is not in `livePtys`
+              // yet, so nothing else will ever kill it.
               try {
                 handle.kill();
               } catch {}
@@ -234,6 +269,7 @@ export function createLocalComputerTerminalWsHandler(
             });
             // Journal the SESSION only — never the keystrokes (see
             // appendLocalCommandLog's contract).
+            journaledOpen = true;
             void appendLocalCommandLog({
               ts: new Date().toISOString(),
               projectId: boundProjectId,
@@ -315,7 +351,7 @@ export function createLocalComputerTerminalWsHandler(
             // Already exited.
           }
         }
-        if (projectId) {
+        if (projectId && journaledOpen) {
           void appendLocalCommandLog({
             ts: new Date().toISOString(),
             projectId,

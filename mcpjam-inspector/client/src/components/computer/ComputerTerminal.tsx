@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  LOCAL_TERMINAL_WS_PATH,
   openTerminalConnection,
   uploadFilesToComputer,
   type TerminalConnection,
@@ -125,7 +126,7 @@ export function ComputerTerminal({
   baseUrl,
   cwd,
   wsPath,
-  uploadEnabled = true,
+  uploadEnabled: uploadEnabledProp = true,
 }: {
   mintToken: () => Promise<string>;
   themeMode: "light" | "dark";
@@ -157,6 +158,12 @@ export function ComputerTerminal({
    */
   uploadEnabled?: boolean;
 }) {
+  // The upload posts to the CLOUD box's route, so it is structurally
+  // incompatible with the local terminal — enforced here rather than left to
+  // caller discipline, since the failure mode (burning the pane's single-use
+  // nonce against the wrong endpoint) is silent from the call site.
+  const uploadEnabled = uploadEnabledProp && wsPath !== LOCAL_TERMINAL_WS_PATH;
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);

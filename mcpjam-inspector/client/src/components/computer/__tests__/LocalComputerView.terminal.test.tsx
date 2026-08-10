@@ -128,6 +128,28 @@ describe("LocalComputerView — terminal branch", () => {
     );
   });
 
+  it("remounts the pane when the project changes", () => {
+    const { rerender } = render(
+      <LocalComputerView projectId="proj_1" engine={engineState()} />,
+    );
+    expect(terminalProps).toHaveLength(1);
+
+    rerender(
+      <LocalComputerView projectId="proj_2" engine={engineState()} />,
+    );
+
+    // `ComputerTerminal` connects from a mount-only effect, so without a
+    // project key the live PTY would stay in the previous project's workspace
+    // while this view showed the new one.
+    expect(terminalProps.length).toBeGreaterThan(1);
+    const latestMint = terminalProps.at(-1)!.mintToken as () => Promise<string>;
+    void latestMint();
+    expect(mintSpy).toHaveBeenLastCalledWith({
+      projectId: "proj_2",
+      consentToken: "consent-token",
+    });
+  });
+
   it("never mounts the pane before consent, whatever the probe says", () => {
     render(
       <LocalComputerView

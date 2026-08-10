@@ -339,6 +339,16 @@ export const getPostHogOptions = () =>
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
+        // This branch keeps /decide ON for flag evaluation, so it needs the flag
+        // PERSON properties too — otherwise a `deployment = self_hosted` rule
+        // targets nobody in exactly the local build someone would use to test
+        // that rollout.
+        loaded: (posthog: any) => {
+          posthog.setPersonPropertiesForFlags?.({
+            deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+            platform: detectPlatform(),
+          });
+        },
       }
     : options;
 

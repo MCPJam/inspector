@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 /**
@@ -9,22 +9,11 @@ import { Hono } from "hono";
  * can't assert the `true` branch on a CI box that has no native addon.
  */
 
-const configState = vi.hoisted(() => ({ hosted: false, localEnabled: true }));
-vi.mock("../../../config.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../config.js")>(
-    "../../../config.js"
-  );
-  return {
-    ...actual,
-    get HOSTED_MODE() {
-      return configState.hosted;
-    },
-    get LOCAL_COMPUTER_ENABLED() {
-      return configState.localEnabled;
-    },
-  };
-});
-
+// No `config.js` mock here on purpose: both consumers of HOSTED_MODE /
+// LOCAL_COMPUTER_ENABLED on this route's config path (`local-machine`,
+// `local-pty`) are mocked below, and `createComputersRoutes` never reads
+// `config.js` itself. The sibling `computers.test.ts` needs that mock precisely
+// because it exercises the REAL probes.
 const engineState = vi.hoisted(() => ({
   engine: { available: true } as
     | { available: true }
@@ -45,6 +34,20 @@ vi.mock("../../../utils/computers/local-pty.js", () => ({
 
 import { createComputersRoutes } from "../computers.js";
 
+/**
+ * Keep the control plane out of it: `/config` also resolves
+ * `resolveComputersLocalConfigured()` / `resolveComputersRemoteDataPlaneUrl()`,
+ * which would make real outbound calls (with retries) if CONVEX_HTTP_URL happens
+ * to be set in the environment — slow, and order-dependent through their
+ * memoized discovery promises.
+ */
+function installFetchStub() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("{}", { status: 404 }))
+  );
+}
+
 function createApp() {
   const app = new Hono();
   app.route("/api/web/computers", createComputersRoutes());
@@ -60,10 +63,13 @@ async function readLocalEngineBlock(): Promise<Record<string, unknown>> {
 }
 
 beforeEach(() => {
-  configState.hosted = false;
-  configState.localEnabled = true;
+  installFetchStub();
   engineState.engine = { available: true };
   terminalState.terminal = { available: true };
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("GET /api/web/computers/config — local terminal probe", () => {

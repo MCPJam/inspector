@@ -808,7 +808,11 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  // Close the server when all windows are closed
+  // Close the server when all windows are closed. On macOS the app stays alive
+  // here, so this is not a quit — but the server is going away, and a local PTY
+  // must not outlive it. (A destroyed renderer's socket usually closes and the
+  // WS teardown kills the PTY anyway; this makes it unconditional.)
+  shutdownLocalTerminals?.();
   if (server) {
     server.close?.();
     serverPort = 0;

@@ -121,6 +121,20 @@ export async function verifyLocalComputerConsent(
 }
 
 /**
+ * Fingerprint of the CURRENTLY persisted capability (its stored SHA-256), or
+ * null when no consent exists.
+ *
+ * Lets a holder of a derived credential — the local terminal's handshake nonce —
+ * verify that the capability it was minted against is still the live one,
+ * WITHOUT holding the plaintext token. A revoke (no consent) or a re-grant from
+ * another browser profile (rotated hash) both change the answer, so a nonce
+ * minted before either becomes unredeemable.
+ */
+export async function getLocalConsentFingerprint(): Promise<string | null> {
+  return (await readPersistedConsent())?.tokenHash ?? null;
+}
+
+/**
  * Revoke the persisted capability. When `token` is supplied the revoke is
  * SCOPED: it unlinks only if that token still matches the stored hash, so a
  * slow revoke request that lost a race to a newer grant cannot sever the

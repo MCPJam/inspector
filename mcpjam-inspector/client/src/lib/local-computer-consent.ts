@@ -193,7 +193,10 @@ export async function mintLocalTerminalNonce(args: {
     nonce?: unknown;
     error?: unknown;
   } | null;
-  if (!response.ok || typeof json?.nonce !== "string") {
+  // Length-checked like `mintLocalComputerConsent` above: this value becomes a
+  // WebSocket SUBPROTOCOL, and an empty/short one would fail as a silent dead
+  // socket instead of the presentable error this function promises.
+  if (!response.ok || typeof json?.nonce !== "string" || json.nonce.length < 16) {
     throw new Error(
       typeof json?.error === "string"
         ? json.error

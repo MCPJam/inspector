@@ -39,9 +39,18 @@ vi.mock("node:os", async () => {
   return { ...actual, homedir: () => scratch };
 });
 
+const consentState = vi.hoisted(() => ({
+  fingerprint: "a".repeat(64) as string | null,
+}));
+vi.mock("../../../utils/computers/local-consent.js", () => ({
+  getLocalConsentFingerprint: async () => consentState.fingerprint,
+}));
+
 import {
   createLocalComputerTerminalWsHandler,
+  resetLocalTerminalShutdownForTests,
   resolveLocalShell,
+  shutdownLocalComputerTerminals,
 } from "../local-computer-terminal.js";
 import {
   resetLocalPtyCachesForTests,
@@ -142,6 +151,13 @@ async function startServer(): Promise<{
   };
 }
 
+const MINT_FINGERPRINT = "a".repeat(64);
+
+/** Mint a nonce bound to the fingerprint the handler will see as live. */
+function mintNonce(projectId = "proj_1", fingerprint = MINT_FINGERPRINT) {
+  return issueLocalTerminalNonce(projectId, fingerprint);
+}
+
 function connect(
   port: number,
   nonce: string,
@@ -208,8 +224,10 @@ let server: { port: number; close: () => Promise<void> };
 beforeEach(async () => {
   vi.stubEnv("ALLOWED_ORIGINS", ALLOWED_ORIGIN);
   spawned.length = 0;
+  consentState.fingerprint = MINT_FINGERPRINT;
   resetLocalTerminalNoncesForTests();
   resetLocalPtyCachesForTests();
+  resetLocalTerminalShutdownForTests();
   installFakePty();
   server = await startServer();
 });
@@ -219,11 +237,12 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   resetLocalPtyCachesForTests();
   resetLocalTerminalNoncesForTests();
+  resetLocalTerminalShutdownForTests();
 });
 
 describe("local terminal WS — auth", () => {
   it("opens a PTY for a valid nonce and announces ready", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     const ready = await waitForJson(ws, "ready");
 
@@ -252,7 +271,7 @@ describe("local terminal WS — auth", () => {
   });
 
   it("4401s a REUSED nonce — single use survives a replayed handshake", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const first = connect(server.port, nonce);
     await waitForJson(first, "ready");
     first.close();
@@ -265,7 +284,7 @@ describe("local terminal WS — auth", () => {
   });
 
   it("4401s a DISALLOWED Origin", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce, {
       origin: "https://evil.example.com",
     });
@@ -276,7 +295,7 @@ describe("local terminal WS — auth", () => {
   });
 
   it("4401s an ABSENT Origin — the local tightening over the HTTP middleware", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce, { origin: null });
     const { code } = await waitForClose(ws);
 
@@ -285,7 +304,7 @@ describe("local terminal WS — auth", () => {
   });
 
   it("does NOT consume the nonce when the Origin is rejected", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const rejected = connect(server.port, nonce, { origin: null });
     await waitForClose(rejected);
 
@@ -298,10 +317,66 @@ describe("local terminal WS — auth", () => {
   });
 });
 
+describe("local terminal WS — consent is re-checked at redeem", () => {
+  it("4401s a nonce whose consent has been REVOKED inside the TTL", async () => {
+    const { nonce } = mintNonce();
+    // The user clicked "Forget & re-authorize" between mint and connect. The
+    // 60s TTL must not outlive the capability that authorized it.
+    consentState.fingerprint = null;
+
+    const ws = connect(server.port, nonce);
+    const { code } = await waitForClose(ws);
+
+    expect(code).toBe(4401);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("4401s a nonce whose consent was ROTATED by a re-grant", async () => {
+    const { nonce } = mintNonce();
+    // Another browser profile re-granted, rotating the capability.
+    consentState.fingerprint = "b".repeat(64);
+
+    const ws = connect(server.port, nonce);
+    const { code } = await waitForClose(ws);
+
+    expect(code).toBe(4401);
+    expect(spawned).toHaveLength(0);
+  });
+});
+
+describe("local terminal WS — shutdown", () => {
+  it("kills a live PTY", async () => {
+    const { nonce } = mintNonce();
+    const ws = connect(server.port, nonce);
+    await waitForJson(ws, "ready");
+
+    shutdownLocalComputerTerminals();
+    expect(spawned[0]!.killed).toBe(true);
+
+    // The fake PTY's kill doesn't emit `exit`, so the socket is still open —
+    // close it here rather than leaving it for the server teardown.
+    ws.close();
+    await waitForClose(ws);
+  });
+
+  it("refuses NEW handshakes once shutdown has begun", async () => {
+    const { nonce } = mintNonce();
+    shutdownLocalComputerTerminals();
+
+    const ws = connect(server.port, nonce);
+    const { code } = await waitForClose(ws);
+
+    // Otherwise a handshake landing during the shutdown window spawns a shell
+    // that nothing will ever kill.
+    expect(code).toBe(4503);
+    expect(spawned).toHaveLength(0);
+  });
+});
+
 describe("local terminal WS — degrade", () => {
   it("4503s with an explanatory message when node-pty can't load", async () => {
     setLocalPtyModuleForTests(null);
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     const error = await waitForJson(ws, "error");
     const { code } = await waitForClose(ws);
@@ -314,7 +389,7 @@ describe("local terminal WS — degrade", () => {
 
 describe("local terminal WS — wire protocol", () => {
   it("spawns in the project workspace dir with the allowlisted env", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
 
@@ -332,7 +407,7 @@ describe("local terminal WS — wire protocol", () => {
   });
 
   it("streams PTY output to the client as binary frames", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
 
@@ -344,7 +419,7 @@ describe("local terminal WS — wire protocol", () => {
   });
 
   it("forwards binary client frames to PTY stdin", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
 
@@ -354,7 +429,7 @@ describe("local terminal WS — wire protocol", () => {
   });
 
   it("answers ping with pong", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
 
@@ -364,7 +439,7 @@ describe("local terminal WS — wire protocol", () => {
   });
 
   it("applies resize, CLAMPED to sane geometry", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
 
@@ -381,7 +456,7 @@ describe("local terminal WS — wire protocol", () => {
   });
 
   it("ignores malformed text frames instead of dying", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
 
@@ -394,7 +469,7 @@ describe("local terminal WS — wire protocol", () => {
 
 describe("local terminal WS — lifecycle", () => {
   it("KILLS the PTY when the socket closes (no orphaned shells)", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
     expect(spawned[0]!.killed).toBe(false);
@@ -404,7 +479,7 @@ describe("local terminal WS — lifecycle", () => {
   });
 
   it("closes the socket cleanly when the PTY exits", async () => {
-    const { nonce } = issueLocalTerminalNonce("proj_1");
+    const { nonce } = mintNonce();
     const ws = connect(server.port, nonce);
     await waitForJson(ws, "ready");
 

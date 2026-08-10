@@ -74,12 +74,19 @@ Every entry point into local execution, with what gates it:
 | Chat `bash` (guest / chatbox / web route) | **never local** — `isGuestChatRequest` forces cloud |
 | Comparison cards / org-model turns | same engine resolution as the playground; no separate path |
 | Terminal nonce mint (`POST /api/mcp/computers/local-terminal-token`) | inspector session + verified sign-in + non-guest + kill switch + server-verified consent + availability probe + validated project key |
-| Terminal WebSocket (`GET /api/web/computers/local-terminal`) | allowed `Origin` (**absent Origin rejected**) + availability probe + single-use, 60s, project-bound nonce |
+| Terminal WebSocket (`GET /api/web/computers/local-terminal`) | allowed `Origin` (**absent Origin rejected**) + availability probe + single-use, 60s, project-bound nonce + the nonce's consent fingerprint must still match the live capability |
 | Hosted build | `/api/mcp` unmounted, kill switch forced off, WS route not mounted, `terminalAvailable: false` |
 
 The terminal has **no per-command approval** — an interactive shell can't have
 one. That is precisely why its mint requires consent that already exists, and
 why the nonce is single-use with a short TTL.
+
+The nonce also carries a **fingerprint of the consent capability** it was minted
+against (the capability's stored hash), which the WebSocket re-checks against the
+live one. Without that, the 60s TTL would outlive a revoke: a nonce minted a
+second before the user clicked "Forget & re-authorize" would still open a shell.
+A re-grant from another browser profile rotates the capability and invalidates
+outstanding nonces the same way.
 
 ## Kill switch
 

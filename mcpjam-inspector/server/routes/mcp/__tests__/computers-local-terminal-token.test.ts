@@ -134,7 +134,7 @@ describe("POST /api/mcp/computers/local-terminal-token", () => {
     };
     expect(typeof json.nonce).toBe("string");
     expect(json.expiresAtMs).toBeGreaterThan(Date.now());
-    expect(consumeLocalTerminalNonce(json.nonce)).toEqual({
+    expect(consumeLocalTerminalNonce(json.nonce)).toMatchObject({
       projectId: "proj_1",
     });
   });
@@ -245,6 +245,45 @@ describe("POST /api/mcp/computers/local-terminal-token", () => {
       );
       expect(response.status).toBe(400);
     }
+  });
+
+  it("binds the nonce to the LIVE consent capability", async () => {
+    const consent = await grantConsent();
+    const response = await mint(
+      { projectId: "proj_1" },
+      { [LOCAL_CONSENT_HEADER]: consent }
+    );
+    const { nonce } = (await response.json()) as { nonce: string };
+
+    // The WS handler re-checks this against the live capability, so a revoke or
+    // a re-grant inside the 60s TTL invalidates the nonce.
+    const claim = consumeLocalTerminalNonce(nonce);
+    expect(claim?.consentFingerprint).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("re-mints against a ROTATED capability, not the old one", async () => {
+    const first = await grantConsent();
+    const a = await mint(
+      { projectId: "proj_1" },
+      { [LOCAL_CONSENT_HEADER]: first }
+    );
+    const firstClaim = consumeLocalTerminalNonce(
+      ((await a.json()) as { nonce: string }).nonce
+    );
+
+    // A second grant rotates the capability.
+    const second = await grantConsent();
+    const b = await mint(
+      { projectId: "proj_1" },
+      { [LOCAL_CONSENT_HEADER]: second }
+    );
+    const secondClaim = consumeLocalTerminalNonce(
+      ((await b.json()) as { nonce: string }).nonce
+    );
+
+    expect(secondClaim?.consentFingerprint).not.toBe(
+      firstClaim?.consentFingerprint
+    );
   });
 
   it("mints a DISTINCT nonce per call (no reuse across reconnects)", async () => {

@@ -134,10 +134,26 @@ describe("PlaygroundRightRail — engine indicator", () => {
     );
   });
 
-  it("is hidden when there is no engine choice to indicate", () => {
+  it("is hidden when there is no engine choice to indicate (cloud body)", () => {
     engineState.toggleVisible = false;
     renderRail();
     expect(screen.queryByTestId("rail-engine-chip")).not.toBeInTheDocument();
+  });
+
+  it("is hidden on the LOCAL body too when there is no choice", () => {
+    // Both bodies gate on the same flag — a local-only install (no cloud
+    // computer) has nothing to indicate, and the body copy already names the
+    // machine.
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    engineState.toggleVisible = false;
+    renderRail();
+    expect(screen.queryByTestId("rail-engine-chip")).not.toBeInTheDocument();
+    // The body itself is still the local one.
+    expect(
+      screen.getByTestId("rail-local-terminal-unavailable"),
+    ).toBeInTheDocument();
   });
 });
 

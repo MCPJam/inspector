@@ -138,7 +138,10 @@ describe("ToolPart run-location pill", () => {
     expect(screen.getByTestId("tool-run-location")).toHaveTextContent("cloud");
   });
 
-  it("renders on an ERROR result too — a failed command still ran somewhere", () => {
+  it("renders when the result carries an `error` field — a failed command still ran somewhere", () => {
+    // The local bash tool reports soft failures as a NORMAL tool result with an
+    // `error` field (not the AI SDK's `output-error` state), which is why this
+    // is `output-available` with `error` inside the output.
     renderBash({ error: "Command failed to run.", engine: "local" });
     expect(screen.getByTestId("tool-run-location")).toHaveTextContent(
       "this machine",

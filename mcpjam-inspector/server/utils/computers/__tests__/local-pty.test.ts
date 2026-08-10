@@ -61,8 +61,6 @@ describe("getLocalTerminalAvailability", () => {
     // Even with a perfectly good node-pty: a terminal on a machine that may not
     // execute bash would be a second, ungated execution path.
     setLocalPtyModuleForTests({ spawn: (() => {}) as never });
-    resetLocalPtyCachesForTests();
-    setLocalPtyModuleForTests({ spawn: (() => {}) as never });
 
     await expect(getLocalTerminalAvailability()).resolves.toEqual({
       available: false,

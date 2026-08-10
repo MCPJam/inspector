@@ -227,6 +227,29 @@ describe("ComputerTerminal — wsPath + uploadEnabled", () => {
     }
   });
 
+  it("forces uploads OFF on the local route even if a caller leaves the default", async () => {
+    // The invariant is structural, not caller discipline: the upload posts to
+    // the CLOUD box's route, so on the local pane it would burn the single-use
+    // nonce against the wrong endpoint.
+    const mintToken = vi.fn(async () => "nonce");
+    const { container } = render(
+      <ComputerTerminal
+        mintToken={mintToken}
+        themeMode="dark"
+        wsPath={LOCAL_TERMINAL_WS_PATH}
+      />
+    );
+    await waitFor(() => expect(h.connections).toHaveLength(1));
+
+    const surface = container.querySelector(".relative.min-h-0.flex-1")!;
+    fireEvent.dragEnter(surface, { dataTransfer: { types: ["Files"] } });
+    expect(container.textContent?.includes("Drop files to upload")).toBe(false);
+    fireEvent.drop(surface, {
+      dataTransfer: { types: ["Files"], files: [new File(["x"], "a.txt")] },
+    });
+    expect(mintToken).toHaveBeenCalledTimes(1);
+  });
+
   it("uploadEnabled defaults to true — the cloud pane keeps its drop overlay", async () => {
     const mintToken = vi.fn(async () => "tok");
     const { container } = render(

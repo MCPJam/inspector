@@ -134,6 +134,12 @@ export function LocalComputerView({
           // Writing dropped files onto the user's real filesystem is a separate
           // consent question, deliberately out of scope here.
           <ComputerTerminal
+            // Keyed by project: `ComputerTerminal` connects from a MOUNT-ONLY
+            // effect, so switching projects while staying on the Computer tab
+            // would otherwise leave the live PTY in the previous project's
+            // workspace (and journaled under it) while this view showed the new
+            // one. Remounting closes that session and opens one in the right dir.
+            key={projectId}
             mintToken={mintToken}
             themeMode={themeMode === "dark" ? "dark" : "light"}
             wsPath={LOCAL_TERMINAL_WS_PATH}
