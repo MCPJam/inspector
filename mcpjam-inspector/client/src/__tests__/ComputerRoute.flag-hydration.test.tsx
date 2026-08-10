@@ -19,6 +19,15 @@ vi.mock("../hooks/useComputersEnabled", () => ({
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => flagState,
   useComputersEnabled: () => flagState === true,
+  // The local-engine dark-launch flag lives in the same module and is read by
+  // `useComputerEngine`, which this route reaches through `ComputerTabView`.
+  // This mock replaces the module wholesale, so omitting the export throws
+  // rather than falling through to the real hook. Mocked `false` to match the
+  // flag's own default-off semantics: this test is about the tri-state
+  // `computers-enabled` hydration guard and says nothing about the local
+  // engine.
+  LOCAL_COMPUTER_FEATURE_FLAG: "local-computer-enabled",
+  useLocalComputerEnabled: () => false,
 }));
 
 vi.mock("react-router", async (importOriginal) => {
