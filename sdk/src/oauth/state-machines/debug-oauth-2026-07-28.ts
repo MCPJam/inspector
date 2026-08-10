@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 State Machine for MCP - 2026-07-28 Protocol (Draft)
+ * OAuth 2.0 State Machine for MCP - 2026-07-28 Protocol
  *
  * This implementation follows the 2026-07-28 MCP OAuth specification:
  * - Registration priority: CIMD (SHOULD) > Pre-registered > DCR (MAY)
