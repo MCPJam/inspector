@@ -80,10 +80,49 @@ jobs:
           echo "MAC_CODESIGN_IDENTITY=Developer ID Application: Marcelo Jimenez (TLBS4N7QZ3)" >> $GITHUB_ENV
           echo "APPLE_API_KEY_FILE=/tmp/AuthKey.p8" >> $GITHUB_ENV
 
-      - name: Build and sign application
-        run: |
-          npm run build -w @mcpjam/inspector
+      - name: Build application
+        run: npm run build -w @mcpjam/inspector
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
+      # ONLY dist/client here. The packaged app serves its UI from
+      # dist/client via the embedded Hono server (server/app.ts
+      # serveStatic root + forge extraResource), and `npm run build`
+      # produces it — so this is both the bundle desktop users execute
+      # and the one that exists at this point in the job.
+      #
+      # The Electron bundles (.vite/build, .vite/renderer) are NOT
+      # handled here: @electron-forge/plugin-vite builds them during
+      # `electron:make`, so they do not exist yet. Their injection and
+      # upload lives in forge.config.ts's `packageAfterCopy` hook, the
+      # first point where the built bundles exist and are still
+      # editable before asar packing.
+      - name: Inject and upload web sourcemaps to Sentry
+        continue-on-error: true
+        timeout-minutes: 10
+        working-directory: mcpjam-inspector
+        run: |
+          version=$(node -p "require('./package.json').version")
+
+          # Cleanup runs on EVERY exit path, including a sentry-cli
+          # failure — `-e` would otherwise skip a trailing delete and
+          # `continue-on-error` would still let packaging proceed,
+          # shipping full source maps in the installer.
+          trap "find dist/client -name '*.map' -type f -delete 2>/dev/null || true" EXIT
+
+          if [ -d dist/client ]; then
+            npx @sentry/cli sourcemaps inject dist/client
+            npx @sentry/cli sourcemaps upload \
+              --release="$version" \
+              --org=mcpjam-gh \
+              --project=inspector-client \
+              dist/client
+          fi
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Sign and package application
+        run: |
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
 
@@ -95,6 +134,12 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=8192
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          # Actions injects a secret only into steps that name it. The
+          # `.vite/build` + `.vite/renderer` sourcemaps are injected and
+          # uploaded by forge.config.ts's `packageAfterCopy` hook, which runs
+          # inside THIS step — without the token here the hook silently
+          # early-returns and desktop crashes never symbolicate.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Notarize and staple DMG
         run: |

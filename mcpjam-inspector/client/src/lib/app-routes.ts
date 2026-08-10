@@ -152,6 +152,19 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "screen",
     surfaceId: "organizations",
   },
+  // Discord agent org settings, on the same terms as Slack above — an
+  // `organizations` section, not a surface. It has no `?tab=` because it is a
+  // single view (see DiscordAgentSettingsSection), which changes nothing here:
+  // sub-tabs never appeared in the path for Slack either.
+  // Discord agent org settings, on the same terms as Slack above — an
+  // `organizations` section, not a surface. It has no `?tab=` because it is a
+  // single view (see DiscordAgentSettingsSection), which changes nothing here:
+  // sub-tabs never appeared in the path for Slack either.
+  {
+    path: "organizations/:orgId/discord",
+    kind: "screen",
+    surfaceId: "organizations",
+  },
   { path: "evals", kind: "screen", surfaceId: "evals" },
   { path: "evals/create", kind: "screen", surfaceId: "evals" },
   { path: "evals/suite/:suiteId", kind: "screen", surfaceId: "evals" },

@@ -1,0 +1,190 @@
+// @ts-nocheck
+import "dotenv/config";
+
+/**
+ * Every environment variable this app reads, resolved ONCE at boot.
+ *
+ * It exists because the same credential question was answered three different
+ * ways in three places. `app.js` had:
+ *
+ *   MCPJAM_DISCORD_SERVICE_TOKEN || DISCORD_SERVICE_TOKEN || DISCORD_API_TOKEN
+ *   DISCORD_SERVICE_TOKEN || MCPJAM_DISCORD_SERVICE_TOKEN || DISCORD_API_TOKEN
+ *   DISCORD_SERVICE_TOKEN            (alone, on the unlinked-user path)
+ *
+ * Three orders, one of them reversed, plus a `DISCORD_API_TOKEN` fallback
+ * nothing documents. On a deployment with both variables set they resolve to
+ * DIFFERENT tokens depending on which line runs, and the failure is a 401 far
+ * from the cause.
+ *
+ * ── THE TWO CREDENTIALS ARE NOT INTERCHANGEABLE ─────────────────────────────
+ *
+ * They authenticate to different services, and the fallback chains above were
+ * quietly papering over that:
+ *
+ *   `convexServiceToken` (DISCORD_SERVICE_TOKEN)
+ *       The Convex backend's `/agent/*` surface — event claims, thread
+ *       bindings, presence. Sent as the `x-discord-service-token` header.
+ *
+ *   `inspectorApiToken` (MCPJAM_DISCORD_SERVICE_TOKEN)
+ *       The Inspector's `/api/v1` and `/api/surface-link/session`. A `dsc_`
+ *       bearer, matched against `MCPJAM_DISCORD_SERVICE_TOKEN_HASH` by
+ *       `middleware/surface-service-auth.ts`.
+ *
+ * This mirrors the Slack app's split, which is deliberate for the same reason:
+ * two services, two trust boundaries, two rotations. Handing one service the
+ * other's token is not a degraded mode, it is an authentication failure — so
+ * there is no cross-fallback here. A missing one is reported as missing.
+ *
+ * Reading at boot rather than per call is what makes that legible: the shape
+ * of what this app needs is one object, in one file, instead of thirty
+ * `process.env` reads whose disagreements only show up at runtime.
+ */
+
+const DEFAULT_APP_ORIGIN = "https://app.mcpjam.com";
+
+function trimmed(value) {
+	const text = typeof value === "string" ? value.trim() : "";
+	return text.length > 0 ? text : undefined;
+}
+
+/**
+ * Origins a connect link may point at.
+ *
+ * Deduped and order-preserving. `assertConnectUrl` normalizes each through
+ * `new URL(x).origin` and skips anything malformed, so a typo here narrows the
+ * allowlist rather than widening it — the safe direction for a list that
+ * decides where a credential-bearing link may lead.
+ *
+ * Takes the RESOLVED `appUrl`, not the raw `MCPJAM_APP_URL`. Links are minted
+ * against the resolved value, which falls back to the production origin when
+ * the variable is unset — so reading the raw variable here left that fallback
+ * origin out of its own allowlist. A deployment that set only
+ * `MCPJAM_BASE_URL` then rejected every link it produced, and the error named
+ * the origin rather than the missing variable.
+ */
+function resolveLinkOrigins(env, appUrl, baseUrl) {
+	const candidates = [appUrl, env.DISCORD_LINK_PUBLIC_ORIGIN, baseUrl];
+	const origins = [];
+	for (const candidate of candidates) {
+		const value = trimmed(candidate);
+		if (value && !origins.includes(value)) origins.push(value);
+	}
+	return origins;
+}
+
+/** @param {NodeJS.ProcessEnv} env */
+export function loadConfig(env = process.env) {
+	const baseUrl = trimmed(env.MCPJAM_BASE_URL) ?? DEFAULT_APP_ORIGIN;
+	const appUrl = trimmed(env.MCPJAM_APP_URL) ?? DEFAULT_APP_ORIGIN;
+
+	return {
+		/** Gateway credential. The one thing with no sensible default. */
+		botToken: trimmed(env.DISCORD_BOT_TOKEN),
+
+		/**
+		 * The agent turn is OFF unless this is explicitly "true". A Discord bot
+		 * that answers when it should not is worse than one that stays quiet,
+		 * and this app can be deployed before the agent is meant to be live.
+		 */
+		botEnabled: env.POSTHOG_DISCORD_AGENT_ENABLED === "true",
+
+		/** Convex `/agent/*` — claims, thread bindings, presence. */
+		convexServiceToken: trimmed(env.DISCORD_SERVICE_TOKEN),
+		/** Inspector `/api/v1` + `/api/surface-link/session`. A `dsc_` bearer. */
+		inspectorApiToken: trimmed(env.MCPJAM_DISCORD_SERVICE_TOKEN),
+
+		/** Inspector base URL. Where turns and connect links go. */
+		baseUrl,
+		/** Public app URL, for links shown to a human. */
+		appUrl,
+		/** Convex HTTP URL, for presence. Absent ⇒ presence is a no-op. */
+		convexHttpUrl: trimmed(env.MCPJAM_CONVEX_HTTP_URL)?.replace(/\/+$/, ""),
+
+		linkOrigins: resolveLinkOrigins(env, appUrl, baseUrl),
+
+		/**
+		 * LEGACY single-project fallback, for a deployment predating per-user
+		 * linking. Real installs resolve the project from the linked account.
+		 *
+		 * WIRED BUT DORMANT, and worth saying plainly so nobody sets this
+		 * expecting it to work: `createTurnTargetResolver` only reaches the
+		 * legacy branch for a ref carrying `isLegacyTenant === true`, and
+		 * nothing in this repo — Discord or Slack — ever sets that marker. A
+		 * deployment with only `MCPJAM_PROJECT_ID` set therefore gets the
+		 * connect flow, not its configured project. Making it reachable means
+		 * deciding which tenants are legacy and marking them at ref-build time;
+		 * until then this is plumbing waiting for that decision.
+		 */
+		legacyProjectId: trimmed(env.MCPJAM_PROJECT_ID),
+
+		/**
+		 * Slash-command registration. `applicationId` is required, or
+		 * registration is skipped entirely.
+		 *
+		 * `devGuildId` is an OPTIONAL DEVELOPMENT OVERRIDE: set it and commands
+		 * register to that one server and propagate instantly; leave it unset
+		 * and they register globally, reaching every server the bot is added
+		 * to. See commands.js for why global is the production default.
+		 *
+		 * A NEW variable name, deliberately, rather than reusing
+		 * `DISCORD_GUILD_ID`. Registration previously REQUIRED a guild id, so
+		 * every deployment with a working `/mcpjam` necessarily has the old
+		 * variable set — including production. Reading it here would keep
+		 * exactly those deployments guild-scoped after this upgrade, which is
+		 * the one thing the change exists to stop. Ignoring the old name makes
+		 * the new behavior the default on deploy, with no ops step to
+		 * remember; `describeConfigGaps` warns when the stale variable is
+		 * still present so it does not look like the override silently broke.
+		 */
+		applicationId: trimmed(env.DISCORD_APPLICATION_ID),
+		devGuildId: trimmed(env.DISCORD_DEV_GUILD_ID),
+		/** Read ONLY to warn that it is now ignored. Never used for scoping. */
+		legacyGuildId: trimmed(env.DISCORD_GUILD_ID),
+	};
+}
+
+/**
+ * The boot-time check.
+ *
+ * Only `botToken` is fatal — without it there is no bot at all. Everything
+ * else degrades to a describable state (no agent, no presence, no connect
+ * links) and is WARNED about rather than thrown on, so a partially-provisioned
+ * deployment starts and tells you what it cannot do instead of crash-looping
+ * with one line of stack.
+ *
+ * @returns {string[]} warnings, empty when fully configured
+ */
+export function describeConfigGaps(config) {
+	const warnings = [];
+	if (!config.convexServiceToken) {
+		warnings.push(
+			"DISCORD_SERVICE_TOKEN is not set — event claims, thread bindings and presence are disabled. (This is the CONVEX credential; it is not interchangeable with MCPJAM_DISCORD_SERVICE_TOKEN.)",
+		);
+	}
+	if (!config.inspectorApiToken) {
+		warnings.push(
+			"MCPJAM_DISCORD_SERVICE_TOKEN is not set — agent turns and connect links will be rejected by the Inspector. (This is the INSPECTOR credential; it is not interchangeable with DISCORD_SERVICE_TOKEN.)",
+		);
+	}
+	if (!config.convexHttpUrl) {
+		warnings.push(
+			"MCPJAM_CONVEX_HTTP_URL is not set — install/uninstall presence will not be recorded.",
+		);
+	}
+	if (!config.botEnabled) {
+		warnings.push(
+			'POSTHOG_DISCORD_AGENT_ENABLED is not "true" — the bot will connect but will not answer mentions.',
+		);
+	}
+	// Not a gap so much as a stale setting, but it belongs in the same boot
+	// output: someone upgrading sees their commands go global and needs to
+	// know it was deliberate, not a broken override.
+	if (config.legacyGuildId) {
+		warnings.push(
+			"DISCORD_GUILD_ID is set but no longer does anything — slash commands now register globally so every server gets them. Remove it, or set DISCORD_DEV_GUILD_ID instead to keep registering to one server during development.",
+		);
+	}
+	return warnings;
+}
+
+export const config = loadConfig();

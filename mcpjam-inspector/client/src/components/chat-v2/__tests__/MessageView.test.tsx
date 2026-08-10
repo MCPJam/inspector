@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
@@ -71,7 +71,7 @@ describe("MessageView", () => {
     render(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
         {ui}
-      </PreferencesStoreProvider>,
+      </PreferencesStoreProvider>
     );
 
   describe("user messages", () => {
@@ -97,7 +97,7 @@ describe("MessageView", () => {
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
       expect(screen.getByTestId("part-text")).toHaveAttribute(
         "data-role",
-        "user",
+        "user"
       );
     });
 
@@ -131,16 +131,14 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           renderUserMessageActions={renderActions}
-        />,
+        />
       );
 
       expect(renderActions).toHaveBeenCalledTimes(1);
       expect(renderActions).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "msg-row-test" }),
+        expect.objectContaining({ id: "msg-row-test" })
       );
-      expect(
-        screen.getByTestId("save-as-test-case-stub"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("save-as-test-case-stub")).toBeInTheDocument();
     });
 
     it("does not render the actions slot when no renderer is provided", () => {
@@ -150,7 +148,7 @@ describe("MessageView", () => {
       });
       renderMessageView(<MessageView {...defaultProps} message={message} />);
       expect(
-        screen.queryByTestId("save-as-test-case-stub"),
+        screen.queryByTestId("save-as-test-case-stub")
       ).not.toBeInTheDocument();
     });
 
@@ -167,11 +165,325 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           renderUserMessageActions={renderActions}
-        />,
+        />
       );
       expect(renderActions).not.toHaveBeenCalled();
       expect(
-        screen.queryByTestId("save-as-test-case-stub"),
+        screen.queryByTestId("save-as-test-case-stub")
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("editing a past user message", () => {
+    const editableMessage = () =>
+      createMessage({
+        id: "msg-edit-test",
+        role: "user",
+        parts: [{ type: "text", text: "original prompt" }],
+      });
+
+    const editButton = () =>
+      screen.getByRole("button", {
+        name: "Rewind to here",
+      });
+
+    it("renders the edit affordance only when a handler is provided", () => {
+      const message = editableMessage();
+      const { unmount } = renderMessageView(
+        <MessageView {...defaultProps} message={message} />
+      );
+      expect(
+        screen.queryByRole("button", {
+          name: "Rewind to here",
+        })
+      ).not.toBeInTheDocument();
+      unmount();
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={vi.fn()}
+        />
+      );
+      expect(editButton()).toBeInTheDocument();
+    });
+
+    it("does not render the edit affordance for assistant messages", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={vi.fn()}
+        />
+      );
+      expect(
+        screen.queryByRole("button", {
+          name: "Rewind to here",
+        })
+      ).not.toBeInTheDocument();
+    });
+
+    it("swaps the bubble for a textarea seeded with the message text", () => {
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={vi.fn()}
+        />
+      );
+
+      fireEvent.click(editButton());
+
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      expect(textarea).toHaveValue("original prompt");
+      expect(
+        screen.queryByTestId("user-message-bubble")
+      ).not.toBeInTheDocument();
+    });
+
+    it("preserves every text part of a multi-part user message", () => {
+      const onEditUserMessage = vi.fn();
+      const message = createMessage({
+        id: "msg-multi-part",
+        role: "user",
+        parts: [
+          { type: "text", text: "Hello" },
+          { type: "text", text: "World" },
+        ],
+      });
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      // Both parts must be present, not just the first — extractUserMessageText
+      // (used elsewhere for prompt previews) intentionally returns only the
+      // first text part, but the editor has to round-trip every part or an
+      // edit would silently discard the rest of the user's own message.
+      expect(textarea).toHaveValue("Hello\n\nWorld");
+
+      fireEvent.change(textarea, {
+        target: { value: "Hello\n\nWorld and more" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      expect(onEditUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-multi-part" }),
+        "Hello\n\nWorld and more"
+      );
+    });
+
+    it("submits the edited text and closes the editor", async () => {
+      const onEditUserMessage = vi.fn();
+      const message = editableMessage();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "revised prompt" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      expect(onEditUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-edit-test" }),
+        "revised prompt"
+      );
+      expect(
+        await screen.findByTestId("user-message-bubble")
+      ).toBeInTheDocument();
+    });
+
+    // The host's gates run after awaits the editor cannot see (discard-draft
+    // declined, server unreachable, thread switched, rewind refused). Closing
+    // on dispatch rather than on click is what keeps the typed text alive:
+    // `startEditing` reseeds from the message, so a closed editor is a lost
+    // edit.
+    it("keeps the editor and the typed text when the host refuses", async () => {
+      const onEditUserMessage = vi.fn().mockResolvedValue(false);
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "a long carefully rewritten prompt" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Send" })).toBeEnabled()
+      );
+      expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+        "a long carefully rewritten prompt"
+      );
+      expect(
+        screen.queryByTestId("user-message-bubble")
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not dispatch twice while the host is still deciding", async () => {
+      let release: (value: boolean) => void = () => {};
+      const onEditUserMessage = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            release = resolve;
+          })
+      );
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "revised prompt" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      release(true);
+      expect(
+        await screen.findByTestId("user-message-bubble")
+      ).toBeInTheDocument();
+    });
+
+    it("cancels without submitting and restores the bubble", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "discarded" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+    });
+
+    it("does not resend when the text is unchanged", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("textbox", { name: "Edit message" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("submits on Enter without Shift", async () => {
+      const onEditUserMessage = vi.fn();
+      const message = editableMessage();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      fireEvent.change(textarea, { target: { value: "revised via enter" } });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      expect(onEditUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-edit-test" }),
+        "revised via enter"
+      );
+      expect(
+        await screen.findByTestId("user-message-bubble")
+      ).toBeInTheDocument();
+    });
+
+    it("does not submit on Shift+Enter and keeps the editor open", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      fireEvent.change(textarea, { target: { value: "line one\nline two" } });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
+      // The draft (including the newline already in it) survives untouched —
+      // Shift+Enter must fall through to the textarea's own newline-insertion
+      // behavior rather than the submit/cancel branches clearing anything.
+      expect(textarea).toHaveValue("line one\nline two");
+      expect(
+        screen.queryByTestId("user-message-bubble")
+      ).not.toBeInTheDocument();
+    });
+
+    it("cancels via Escape and restores the bubble", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      fireEvent.change(textarea, { target: { value: "discarded via escape" } });
+      fireEvent.keyDown(textarea, { key: "Escape" });
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("textbox", { name: "Edit message" })
       ).not.toBeInTheDocument();
     });
   });
@@ -186,7 +498,7 @@ describe("MessageView", () => {
       renderMessageView(<MessageView {...defaultProps} message={message} />);
 
       expect(
-        screen.queryByTestId("user-message-bubble"),
+        screen.queryByTestId("user-message-bubble")
       ).not.toBeInTheDocument();
       expect(screen.getByRole("article")).toBeInTheDocument();
     });
@@ -202,7 +514,7 @@ describe("MessageView", () => {
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
       expect(screen.getByTestId("part-text")).toHaveAttribute(
         "data-role",
-        "assistant",
+        "assistant"
       );
     });
 
@@ -227,12 +539,12 @@ describe("MessageView", () => {
       renderMessageView(
         <ChatboxHostStyleProvider value="claude">
           <MessageView {...defaultProps} message={message} />
-        </ChatboxHostStyleProvider>,
+        </ChatboxHostStyleProvider>
       );
 
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
       expect(
-        screen.queryByLabelText("GPT-4 assistant"),
+        screen.queryByLabelText("GPT-4 assistant")
       ).not.toBeInTheDocument();
     });
   });
@@ -246,7 +558,7 @@ describe("MessageView", () => {
       });
 
       const { container } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
+        <MessageView {...defaultProps} message={message} />
       );
 
       expect(container.firstChild).toBeNull();
@@ -260,7 +572,7 @@ describe("MessageView", () => {
       });
 
       const { container } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
+        <MessageView {...defaultProps} message={message} />
       );
 
       expect(container.firstChild).toBeNull();
@@ -273,7 +585,7 @@ describe("MessageView", () => {
       });
 
       const { container } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
+        <MessageView {...defaultProps} message={message} />
       );
 
       expect(container.firstChild).toBeNull();
@@ -328,7 +640,7 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           onSendFollowUp={onSendFollowUp}
-        />,
+        />
       );
 
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
@@ -346,7 +658,7 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           onWidgetStateChange={onWidgetStateChange}
-        />,
+        />
       );
 
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
@@ -365,7 +677,7 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           displayMode="fullscreen"
-        />,
+        />
       );
 
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
