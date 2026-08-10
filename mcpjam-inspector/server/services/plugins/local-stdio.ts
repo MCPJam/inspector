@@ -390,6 +390,11 @@ export async function materializePluginStdioForConnect(args: {
   serverId: string;
   /** Manager key the lease is bound to. */
   serverName: string;
+  /**
+   * Human label for error messages when the manager key isn't one (web-route
+   * managers key by serverId). Defaults to `serverName`.
+   */
+  displayName?: string;
   spec: PluginStdioLaunchSpec;
   cache?: PluginBundleCache;
   /** Test seam for the `${PLUGIN_DATA}` root. */
@@ -416,7 +421,10 @@ export async function materializePluginStdioForConnect(args: {
   });
 
   if (!prepared.ok) {
-    throw pluginStdioFailureToRouteError(args.serverName, prepared);
+    throw pluginStdioFailureToRouteError(
+      args.displayName ?? args.serverName,
+      prepared
+    );
   }
 
   retainPluginLease(args.serverName, prepared.release);

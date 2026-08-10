@@ -975,6 +975,9 @@ export async function createAuthorizedManager(
       mcpProtocolVersion?: McpProtocolVersion;
       /** SEP-2243 `Mcp-Param-*` mirroring; host-level, so batch-uniform. */
       mirrorToolParamHeaders?: boolean;
+      /** Client-conformance knobs; host-level, so batch-uniform. */
+      firstPageOnly?: boolean;
+      supportsMrtr?: boolean;
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
@@ -1297,6 +1300,23 @@ export async function createAuthorizedManager(
             firstPageOnly: effectiveInitializePins?.firstPageOnly,
             supportsMrtr: effectiveInitializePins?.supportsMrtr,
             xaaPolicy: options?.xaaPolicy,
+            // The local reread + secret reveal must carry the same scope and
+            // delegated identity as the hosted mint path below — a harness
+            // caller's bearer is deliberately empty (workos_api_key supplies
+            // the service-token exchange), and a chatbox-scoped caller's
+            // reveal is gated on chatboxId/accessVersion.
+            accessScope: options?.accessScope,
+            chatboxId: options?.chatboxId,
+            accessVersion: options?.accessVersion,
+            workosApiKeyActingAs:
+              caller.authMethod === "workos_api_key" &&
+              caller.workosUserId &&
+              caller.mcpjamOrganizationId
+                ? {
+                    workosUserId: caller.workosUserId,
+                    mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                  }
+                : undefined,
           }
         );
         return [serverId, config] as const;

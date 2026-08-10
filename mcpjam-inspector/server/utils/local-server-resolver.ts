@@ -163,6 +163,20 @@ function hasNonEmptyStringRecord(value: unknown): boolean {
 }
 
 /**
+ * Delegated-identity exchange for callers authenticated via a WorkOS API key
+ * (the harness proxy passes an EMPTY bearer on that path): Inspector swaps
+ * the bearer for `INSPECTOR_SERVICE_TOKEN` + acting-as headers, exactly as
+ * `fetchRuntimeServerSecrets` and the hosted `authorizeBatch` exchange do.
+ * The backend resolves delegation before JWT verification, so the local
+ * authorize endpoint honors the same trust model.
+ */
+export interface WorkosApiKeyActingAs {
+  /** WorkOS user id (Convex `externalId`), NOT the Convex user `_id`. */
+  workosUserId: string;
+  mcpjamOrganizationId: string;
+}
+
+/**
  * Call Convex `/web/authorize-batch-local` with the user's bearer.
  * Returns the full server config for each requested serverId, including
  * STDIO command/args/env. Hosted-only fields (share/chatbox tokens) are not
@@ -176,7 +190,8 @@ export async function authorizeBatchLocal(
   c: Context | null,
   bearerToken: string,
   projectId: string,
-  serverIds: string[]
+  serverIds: string[],
+  workosApiKeyActingAs?: WorkosApiKeyActingAs
 ): Promise<LocalAuthorizeBatchResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -198,14 +213,31 @@ export async function authorizeBatchLocal(
     AUTHORIZE_BATCH_LOCAL_TIMEOUT_MS
   );
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (workosApiKeyActingAs) {
+    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+    if (!serviceToken) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
+      );
+    }
+    headers["Authorization"] = `Bearer ${serviceToken}`;
+    headers["x-mcpjam-acting-as"] = workosApiKeyActingAs.workosUserId;
+    headers["x-mcpjam-acting-in-org"] =
+      workosApiKeyActingAs.mcpjamOrganizationId;
+  } else {
+    headers["Authorization"] = `Bearer ${bearerToken}`;
+  }
+
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch-local`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${bearerToken}`,
-      },
+      headers,
       body: JSON.stringify({ projectId, serverIds }),
       signal: controller.signal,
     });
@@ -296,16 +328,21 @@ export async function authorizeServerLocal(
   c: Context | null,
   bearerToken: string,
   projectId: string,
-  serverId: string
+  serverId: string,
+  workosApiKeyActingAs?: WorkosApiKeyActingAs
 ): Promise<
   LocalAuthorizeBatchSuccess & {
     organizationId?: string | null;
     isAnonymous?: boolean;
   }
 > {
-  const batch = await authorizeBatchLocal(c, bearerToken, projectId, [
-    serverId,
-  ]);
+  const batch = await authorizeBatchLocal(
+    c,
+    bearerToken,
+    projectId,
+    [serverId],
+    workosApiKeyActingAs
+  );
   const result = batch.results[serverId];
   if (!result) {
     throw new WebRouteError(
@@ -778,7 +815,20 @@ async function applyLocalRuntimeResolution<
     bearerToken: string;
     projectId: string;
     serverId: string;
+    /**
+     * The key THIS surface's manager registers the server under — the plugin
+     * bundle lease is bound to it, so acquire and any later release always
+     * agree. /api/mcp managers key by display name; web-route managers key
+     * by serverId (display names are user-entered and can collide across
+     * servers, which would let one server's reconnect drop another's lease).
+     */
+    managerKey: string;
     serverDisplayName?: string;
+    /** Secret-reveal scope; must match what the hosted mint path would send. */
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+    accessVersion?: number;
+    workosApiKeyActingAs?: WorkosApiKeyActingAs;
   }
 ): Promise<T> {
   const { bearerToken, projectId, serverId } = args;
@@ -794,6 +844,10 @@ async function applyLocalRuntimeResolution<
       bearerToken,
       projectId,
       serverId,
+      accessScope: args.accessScope,
+      chatboxId: args.chatboxId,
+      accessVersion: args.accessVersion,
+      workosApiKeyActingAs: args.workosApiKeyActingAs,
     });
     result = {
       ...result,
@@ -821,7 +875,8 @@ async function applyLocalRuntimeResolution<
       createClient: () => createPluginRuntimeConvexClient(bearerToken),
       projectId,
       serverId,
-      serverName: args.serverDisplayName ?? serverId,
+      serverName: args.managerKey,
+      displayName: args.serverDisplayName ?? args.managerKey,
       spec: {
         command: stdioConfig.command,
         args: stdioConfig.args ?? [],
@@ -886,13 +941,25 @@ export async function resolveLocalStdioServerConfig(
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
     xaaPolicy?: XaaEnterprisePolicy;
+    /**
+     * Secret-reveal scope + delegated identity, threaded from
+     * `createAuthorizedManager`'s options and caller context so the local
+     * reread and reveal follow the same trust model as the hosted batch —
+     * a chatbox-scoped or WorkOS-API-key caller must not get a lesser (or
+     * failing) resolution just because the deployment is local.
+     */
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+    accessVersion?: number;
+    workosApiKeyActingAs?: WorkosApiKeyActingAs;
   }
 ): Promise<MCPServerConfig> {
   let result = await authorizeServerLocal(
     null,
     bearerToken,
     projectId,
-    serverId
+    serverId,
+    options?.workosApiKeyActingAs
   );
   if (result.serverConfig.transportType !== "stdio") {
     throw new WebRouteError(
@@ -908,7 +975,14 @@ export async function resolveLocalStdioServerConfig(
     bearerToken,
     projectId,
     serverId,
+    // Web-route managers register servers under their serverId, so the
+    // plugin bundle lease is keyed by it here (see managerKey docs).
+    managerKey: serverId,
     serverDisplayName: options?.serverDisplayName,
+    accessScope: options?.accessScope,
+    chatboxId: options?.chatboxId,
+    accessVersion: options?.accessVersion,
+    workosApiKeyActingAs: options?.workosApiKeyActingAs,
   });
   return toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs,
@@ -1160,6 +1234,10 @@ export async function resolveLocalServerForConnect(
     bearerToken,
     projectId,
     serverId,
+    // /api/mcp managers register servers under their display name — the same
+    // key `releasePluginLease` gets on the disconnect route and on connect
+    // failure — so the lease binds to it here.
+    managerKey: options?.serverDisplayName ?? serverId,
     serverDisplayName: options?.serverDisplayName,
   });
 

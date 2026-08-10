@@ -1316,4 +1316,57 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       resolveLocalStdioServerConfig("bearer-xyz", "proj-1", "srv-stdio")
     ).rejects.toMatchObject({ status: 409, code: "CONFLICT" });
   });
+
+  // The stated invariant of the shared runtime resolution: a row with
+  // `hasEnv: true` and an empty env means the values live in the vault —
+  // the reveal must run and its env must land on the SDK config, carrying
+  // the same scope fields the hosted mint path would send.
+  it("reveals deferred secrets (hasEnv with empty env) with the caller's scope", async () => {
+    let revealInit: RequestInit | undefined;
+    const fetchMock = vi.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return localBatchResponse({
+          transportType: "stdio",
+          command: "node",
+          args: ["server.js"],
+          hasEnv: true,
+          env: {},
+        });
+      }
+      if (url.endsWith("/web/server/reveal-secrets")) {
+        revealInit = init;
+        return new Response(
+          JSON.stringify({ success: true, env: { API_KEY: "vault-value" } }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const config: any = await resolveLocalStdioServerConfig(
+      "bearer-xyz",
+      "proj-1",
+      "srv-stdio",
+      {
+        accessScope: "chat_v2",
+        chatboxId: "chatbox-1",
+        accessVersion: 7,
+      }
+    );
+
+    expect(config.env).toEqual({ API_KEY: "vault-value" });
+    expect((revealInit?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer bearer-xyz"
+    );
+    expect(JSON.parse(revealInit?.body as string)).toMatchObject({
+      purpose: "runtime",
+      projectId: "proj-1",
+      serverId: "srv-stdio",
+      accessScope: "chat_v2",
+      chatboxId: "chatbox-1",
+      accessVersion: 7,
+    });
+  });
 });
