@@ -33,17 +33,25 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
-  materializeSwarmTargets,
   resolveSwarmJourneyPayload,
   SwarmTargetMaterializeError,
   type CreateProjectEnvironmentFn,
 } from "@/components/swarms/swarm-target-materialize";
+import {
+  buildEnvJourneyPayload,
+  MAX_ENVIRONMENTS_PER_JOURNEY,
+} from "@/components/swarms/journey-environments";
 import {
   composerTargetCount,
   emptyComposerState,
   isComposeMode,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
+import {
+  ComposerResolveError,
+  isAdhocUnavailable,
+} from "@/components/environment-composer/resolve-stacks";
+import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { MAX_PERSONAS_PER_PROJECT } from "@/components/swarms/GenerateSwarmDialog";
 import {
   PersonaPixelAvatar,
@@ -80,6 +88,7 @@ import {
 } from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useAdhocEnvironmentsEnabled } from "@/hooks/useAdhocEnvironmentsEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
@@ -284,6 +293,15 @@ export function NewSwarmCreateFlow({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const adhocEnvironmentsEnabled = useAdhocEnvironmentsEnabled();
+  const resolveComposerTargets = useComposerResolver(projectId);
+  /**
+   * Both flags, not just the ad-hoc one: on a deployment with Project
+   * Environments off the user cannot even reach `/environments`, so minting rows
+   * there would create data they can never see or clean up. Such a deployment
+   * keeps the legacy naming path until it turns environments on.
+   */
+  const canMintAdhoc = environmentsEnabled && adhocEnvironmentsEnabled;
   const [step, setStep] = useState<"describe" | "confirm" | "running">(
     "describe"
   );
@@ -509,6 +527,16 @@ export function NewSwarmCreateFlow({
     ]
   );
 
+  /**
+   * Composer state → real `environmentIds` (plus the compat `hostIds` the
+   * journey payload still carries).
+   *
+   * Ad-hoc rows are the path: the backend fingerprints the composition, so
+   * relaunching the same setup reuses one unnamed row instead of naming a new
+   * one after whatever the user typed in Describe. Two deployments can't do that
+   * — one where the flag is off, one whose backend predates the mutation — and
+   * both fall back to the legacy naming materializer for a release.
+   */
   const resolveTargets = useCallback(async () => {
     const liveWithOverlay = (() => {
       const byId = new Map(envList.map((e) => [e.environmentId, e]));
@@ -517,16 +545,53 @@ export function NewSwarmCreateFlow({
       }
       return [...byId.values()];
     })();
-    const resolved = await resolveSwarmJourneyPayload({
-      compose: composeMode,
-      castleIds: targetState.environmentIds,
-      legos: targetState.stack,
-      liveEnvironments: liveWithOverlay,
-      materialize: {
-        ...materializeArgs(),
+
+    const legacyResolve = () =>
+      resolveSwarmJourneyPayload({
+        compose: composeMode,
+        castleIds: targetState.environmentIds,
+        legos: targetState.stack,
         liveEnvironments: liveWithOverlay,
-      },
-    });
+        materialize: {
+          ...materializeArgs(),
+          liveEnvironments: liveWithOverlay,
+        },
+      });
+
+    let resolved: Awaited<ReturnType<typeof legacyResolve>> = null;
+    if (canMintAdhoc) {
+      try {
+        const composed = await resolveComposerTargets({
+          state: targetState,
+          liveEnvironments: liveWithOverlay,
+          max: MAX_ENVIRONMENTS_PER_JOURNEY,
+        });
+        const payload = buildEnvJourneyPayload(
+          composed.environmentIds,
+          composed.environments
+        );
+        resolved = payload
+          ? {
+              ...payload,
+              environments: composed.environments,
+              materialized: {
+                environmentIds: composed.environmentIds,
+                environments: composed.environments,
+                createdIds: composed.createdIds,
+                reusedIds: composed.reusedIds,
+              },
+            }
+          : null;
+      } catch (err) {
+        // An old backend is the one failure worth retrying differently; every
+        // other rejection is the user's to read.
+        if (!isAdhocUnavailable(err)) throw err;
+        resolved = await legacyResolve();
+      }
+    } else {
+      resolved = await legacyResolve();
+    }
+
     if (!resolved) return null;
     setResolvedEnvironmentIds(resolved.environmentIds);
     setResolvedEnvironments(resolved.environments);
@@ -542,55 +607,14 @@ export function NewSwarmCreateFlow({
     }
     return resolved;
   }, [
+    canMintAdhoc,
     composeMode,
     createdEnvOverlay,
     envList,
     materializeArgs,
+    resolveComposerTargets,
     targetState,
   ]);
-
-  const handleSaveAsEnvironments = useCallback(async () => {
-    if (!composeMode || targetState.stack.hostIds.length === 0) return;
-    setMaterializing(true);
-    setErrorMessage(null);
-    try {
-      const result = await materializeSwarmTargets(materializeArgs());
-      if (result.createdIds.length > 0) {
-        const created = result.environments.filter((env) =>
-          result.createdIds.includes(env.environmentId)
-        );
-        setCreatedEnvOverlay((prev) => {
-          const byId = new Map(prev.map((e) => [e.environmentId, e]));
-          for (const env of created) byId.set(env.environmentId, env);
-          return [...byId.values()];
-        });
-      }
-      // Commit to a pure saved-environment selection so launch skips re-create.
-      // Overlay covers names until the live list query catches up.
-      setTargetState({
-        environmentIds: result.environmentIds,
-        stack: targetState.stack,
-        customized: false,
-      });
-      setResolvedEnvironmentIds(result.environmentIds);
-      setResolvedEnvironments(result.environments);
-      toast.success(
-        result.createdIds.length > 0
-          ? `Saved ${result.createdIds.length} environment${
-              result.createdIds.length === 1 ? "" : "s"
-            }`
-          : "Matched existing environments"
-      );
-    } catch (err) {
-      setErrorMessage(
-        err instanceof SwarmTargetMaterializeError
-          ? err.message
-          : errorMessageOf(err, "Could not save environments.")
-      );
-    } finally {
-      setMaterializing(false);
-    }
-  }, [composeMode, materializeArgs, targetState.stack]);
 
   const handleGenerate = useCallback(async () => {
     if (!canGenerate || inFlightRef.current) return;
@@ -683,11 +707,11 @@ export function NewSwarmCreateFlow({
     } catch (err) {
       setMaterializing(false);
       setErrorMessage(
-        err instanceof SwarmTargetMaterializeError
+        err instanceof SwarmTargetMaterializeError ||
+          err instanceof ComposerResolveError ||
+          err instanceof SwarmGenerateError
           ? err.message
-          : err instanceof SwarmGenerateError
-            ? err.message
-            : errorMessageOf(err, "Failed to generate personas.")
+          : errorMessageOf(err, "Failed to generate personas.")
       );
     } finally {
       inFlightRef.current = false;
@@ -755,7 +779,8 @@ export function NewSwarmCreateFlow({
             : null;
         } catch (err) {
           setErrorMessage(
-            err instanceof SwarmTargetMaterializeError
+            err instanceof SwarmTargetMaterializeError ||
+              err instanceof ComposerResolveError
               ? err.message
               : errorMessageOf(
                   err,
@@ -1386,8 +1411,6 @@ export function NewSwarmCreateFlow({
                   value={targetState}
                   onChange={setTargetState}
                   draftNameHint={draft.trim() || undefined}
-                  onSaveAsEnvironments={handleSaveAsEnvironments}
-                  savingEnvironments={materializing}
                   disabled={generating || materializing}
                 />
                 {groundingEnvironmentId ? (

@@ -30,8 +30,6 @@ export function SwarmTargetComposer({
   value,
   onChange,
   draftNameHint,
-  onSaveAsEnvironments,
-  savingEnvironments = false,
   disabled = false,
 }: {
   projectId: string;
@@ -39,11 +37,8 @@ export function SwarmTargetComposer({
   environmentsLoading?: boolean;
   value: EnvironmentComposerState;
   onChange: (next: EnvironmentComposerState) => void;
-  /** Used for draft / auto-env naming. */
+  /** Used for draft naming. */
   draftNameHint?: string;
-  /** Persist the stack as real environments now (materialize + select them). */
-  onSaveAsEnvironments?: () => void | Promise<void>;
-  savingEnvironments?: boolean;
   disabled?: boolean;
 }) {
   const skillsEnabled = useSkillsEnabled();
@@ -102,20 +97,6 @@ export function SwarmTargetComposer({
 
       {environmentsEnabled && composeMode ? (
         <div className="flex flex-wrap items-center gap-2">
-          {onSaveAsEnvironments ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={
-                disabled || savingEnvironments || value.stack.hostIds.length === 0
-              }
-              data-testid="new-swarm-save-as-environments"
-              onClick={() => void onSaveAsEnvironments()}
-            >
-              {savingEnvironments ? "Saving…" : "Save as environment(s)"}
-            </Button>
-          ) : null}
           <Button
             type="button"
             size="sm"
