@@ -70,6 +70,12 @@ export default defineConfig(({ mode }) => {
           target: "http://localhost:6274",
           changeOrigin: true,
         },
+        // /tlm is the same relay on its edge-safe alias prefix (see
+        // RELAY_MOUNT_PREFIXES in server/routes/relay.ts).
+        "/tlm": {
+          target: "http://localhost:6274",
+          changeOrigin: true,
+        },
       },
     },
     define: {

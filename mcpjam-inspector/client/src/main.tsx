@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
+import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
@@ -346,6 +347,12 @@ if (isInIframe) {
       );
       return;
     }
+
+    // Replay/surveys/exception bundles must be REGISTERED before the provider
+    // initializes the SDK, or feature start falls back to the remote fetch
+    // that Railway's edge blocks on hosted — see lib/posthog-bundled-extensions.ts.
+    // No-op (and no chunk download) off the error-capture surfaces.
+    await preloadPosthogBundledExtensions();
 
     root.render(
       <StrictMode>

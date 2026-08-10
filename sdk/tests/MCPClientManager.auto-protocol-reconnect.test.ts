@@ -198,4 +198,63 @@ describe("MCPClientManager Automatic legacy fallback", () => {
       NEGOTIATED_VERSION
     );
   });
+
+  it("proposes the PINNED version, not the accept-list's first entry", async () => {
+    // The list says what this client can speak; the pin says which of those it
+    // proposes. Upstream `Client` only ever reads element 0, so honoring the
+    // pin means hoisting it. Before this, the list silently won and a user who
+    // pinned 2025-06-18 watched 2025-11-25 go out on the wire.
+    await manager.connectToServer("bart", {
+      url: fixture.url,
+      timeout: 5_000,
+      mcpProtocolVersion: NEGOTIATED_VERSION,
+      supportedProtocolVersions: ["2025-11-25", NEGOTIATED_VERSION],
+    });
+
+    const initializeRequests = fixture.requests.filter(
+      (request) => request.rpcMethod === "initialize"
+    );
+    expect(
+      initializeRequests.map((request) => request.proposedProtocolVersion)
+    ).toEqual([NEGOTIATED_VERSION]);
+  });
+
+  it("keeps the unpinned entries as fallbacks when hoisting", async () => {
+    // Hoisting must not collapse the list to `[pin]`: the remaining versions
+    // are still accepted, so a server that counter-offers one of them
+    // negotiates rather than failing.
+    await manager.connectToServer("bart", {
+      url: fixture.url,
+      timeout: 5_000,
+      mcpProtocolVersion: "2025-11-25",
+      supportedProtocolVersions: [NEGOTIATED_VERSION, "2025-11-25"],
+    });
+
+    const initializeRequests = fixture.requests.filter(
+      (request) => request.rpcMethod === "initialize"
+    );
+    // Pin went out first...
+    expect(initializeRequests[0]?.proposedProtocolVersion).toBe("2025-11-25");
+    // ...and the fixture's own 2025-06-18 counter-offer was still accepted.
+    expect(manager.getInitializationInfo("bart")?.protocolVersion).toBe(
+      NEGOTIATED_VERSION
+    );
+  });
+
+  it("leaves a pin that the accept-list does not contain alone", async () => {
+    // Hoisting an unlisted pin would put a version on the wire this client
+    // never claimed to speak. `canonicalizeMcpProfile` rejects that pairing
+    // for stateful pins, so this only guards hand-built configs.
+    await manager.connectToServer("bart", {
+      url: fixture.url,
+      timeout: 5_000,
+      mcpProtocolVersion: "2025-03-26",
+      supportedProtocolVersions: ["2025-11-25", NEGOTIATED_VERSION],
+    });
+
+    const initializeRequests = fixture.requests.filter(
+      (request) => request.rpcMethod === "initialize"
+    );
+    expect(initializeRequests[0]?.proposedProtocolVersion).toBe("2025-11-25");
+  });
 });

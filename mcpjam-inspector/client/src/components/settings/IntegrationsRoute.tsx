@@ -9,7 +9,6 @@ import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsPageShell } from "./SettingsPageShell";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
-import { discordInstallUrl } from "@/lib/config";
 
 /**
  * `/settings/integrations` — the one place a connectable outside service is
@@ -193,21 +192,49 @@ function SlackIntegrationCard({
 /**
  * The Discord agent.
  *
- * Unlike the other two, this card LEAVES the app. Discord's setup does not
- * happen here and cannot: an admin adds the bot to a server, and then each
- * member links their own account from inside Discord with `/mcpjam connect`.
- * There is no org-scoped Discord settings page yet — when there is, this
- * becomes an in-app `onSelect` like the others, and the copy changes with it.
+ * This card used to LEAVE the app, straight to Discord's install URL, because
+ * there was no org-scoped Discord settings page to send anyone to. There is
+ * now, so it navigates in-app like the other two — and the install link moved
+ * onto that page, next to the server list it affects, where "add the bot"
+ * reads as one step of setup rather than the whole of it.
  *
- * Two gates, both fail-closed. The FLAG, because the agent is dark; and the
- * CLIENT ID, because an install URL built without one lands on a Discord
- * error page that reads as our bug rather than as missing configuration.
- * Saying nothing is better than offering an install that cannot work.
+ * Still flag-gated, and still fail-closed while flags load: the agent is dark,
+ * and a settings page for a bot that cannot answer is worse than no entry.
  */
-function DiscordCard() {
+function DiscordCard({
+  activeOrganizationId,
+}: {
+  activeOrganizationId: string;
+}) {
+  const appNavigate = useAppNavigate();
   const enabled = useDiscordAgentEnabled();
-  const installUrl = discordInstallUrl();
-  if (!enabled || !installUrl) return null;
+  // THE FLAG HAS TO REACH THE QUERY, not just the render. A hook cannot be
+  // called conditionally, so `if (!enabled) return null` below happens too
+  // late — the query would already have fired for every visitor to this page,
+  // including flagged-off ones. That matters because this is the one call
+  // that sends `surfaceKind: "discord"`, which a backend deployed before that
+  // argument existed rejects: the throw would hit this card's error boundary
+  // and render an ErrorCard to someone who should see no Discord entry at all.
+  // A null organization id is the hook's own documented skip.
+  const { connections } = useOrgSlackSettings(
+    enabled ? activeOrganizationId : null,
+    "discord"
+  );
+
+  if (!enabled) return null;
+
+  // Same `undefined` reasoning as the other two cards: still-asking is not
+  // none-connected, and saying "Not connected" in that window tells a
+  // connected org their setup is gone.
+  const connectedCount = connections?.workspaces.filter(
+    (workspace) => workspace.installed
+  ).length;
+  const status =
+    connections === undefined
+      ? ""
+      : !connectedCount
+      ? "Not connected"
+      : `${connectedCount} ${connectedCount === 1 ? "server" : "servers"} connected`;
 
   return (
     <IntegrationCard
@@ -215,11 +242,10 @@ function DiscordCard() {
       icon={<MessageSquare className="size-4 text-primary" aria-hidden />}
       title="Discord"
       description="Mention the agent in a channel to run and approve evals."
-      // Not "Not connected": this page is org-scoped and a Discord link is
-      // per-member, so it cannot honestly report a connection state. It
-      // reports the ACTION instead.
-      status="Add to a server"
-      href={installUrl}
+      status={status}
+      onSelect={() =>
+        appNavigate(buildOrganizationPath(activeOrganizationId, "discord"))
+      }
     />
   );
 }
@@ -268,7 +294,14 @@ export function IntegrationsRoute({
           <SlackIntegrationCard activeOrganizationId={activeOrganizationId} />
         </ErrorBoundary>
 
-        <DiscordCard />
+        <ErrorBoundary
+          name="integrations_discord"
+          fallback={({ error, reset }) => (
+            <ErrorCard error={error} onRetry={reset} />
+          )}
+        >
+          <DiscordCard activeOrganizationId={activeOrganizationId} />
+        </ErrorBoundary>
       </div>
     </SettingsPageShell>
   );

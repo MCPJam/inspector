@@ -1,5 +1,6 @@
 export * from "./api-client.js";
 export * from "./backend-client.js";
+export * from "./channel-binding-cache.js";
 export * from "./connect-link.js";
 export * from "./copy.js";
 export * from "./event-claims.js";
