@@ -72,7 +72,8 @@ For remote MCP servers via SSE or Streamable HTTP.
 | `clientSecret` | `string` | No | OAuth client secret for confidential clients |
 | `reconnectionOptions` | `StreamableHTTPClientTransportOptions["reconnectionOptions"]` | No | Streamable HTTP reconnection behavior |
 | `sessionId` | `string` | No | Existing Streamable HTTP session ID |
-| `preferSSE` | `boolean` | No | Forces SSE instead of Streamable HTTP |
+| `preferSSE` | `boolean` | No | Forces SSE instead of Streamable HTTP. |
+| `disableSseFallback` | `boolean` | No | Opt out of the silent Streamable HTTP → SSE downgrade. By default a failed Streamable HTTP connect falls back to SSE. When set, the Streamable HTTP failure surfaces instead of being retried over SSE. Inert alongside `preferSSE` (no fallback exists on that path). |
 | `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
 | `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
 | `onUnauthorized` | `UnauthorizedRefreshHandler` | No | 401 recovery hook. Called once when an operation fails with HTTP 401; return a new `accessToken` and the SDK rebuilds the transport and retries. Not invoked for 403, or when `refreshToken`/`authProvider` is set. |
