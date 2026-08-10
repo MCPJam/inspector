@@ -237,6 +237,30 @@ describe("OAuthProfileModal", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("leaves an unrelated error standing when the strategy changes", async () => {
+    // Only the client-id message is retracted: the name collision is untouched
+    // by the strategy, so dismissing it would hide a problem that still blocks
+    // the save. No other field clears the banner on edit either.
+    const user = userEvent.setup();
+    renderModal({ existingServerNames: ["staging-mcp"] });
+
+    await user.clear(screen.getByLabelText(/Server Name/));
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.example.com/mcp",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
+
+    await user.click(screen.getByLabelText(/Registration/));
+    await user.click(await screen.findByRole("option", { name: "Pre-registered" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
+  });
+
   it("reveals the collapsed advanced section when pre-registered is in play", async () => {
     // The client id input lives behind "Advanced settings (optional)", so a
     // required field was hidden by a control that calls itself optional.

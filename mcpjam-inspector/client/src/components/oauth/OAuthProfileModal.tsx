@@ -94,6 +94,14 @@ const createHeaderRow = (initial?: Partial<HeaderRow>): HeaderRow => {
   };
 };
 
+/**
+ * Named so the Registration dropdown can retract exactly this error and leave
+ * every other one standing — see `handleRegistrationChange`.
+ */
+const PREREGISTERED_CLIENT_ID_ERROR =
+  "Client ID is required for pre-registered registration. Add one under " +
+  "Advanced settings, or switch Registration to Dynamic (DCR).";
+
 const describeRegistrationStrategy = (strategy: string): string => {
   if (strategy === "cimd") return "CIMD (URL-based)";
   if (strategy === "dcr") return "Dynamic (DCR)";
@@ -201,10 +209,11 @@ export function OAuthProfileModal({
   // whenever that strategy is chosen; a manual collapse afterwards sticks.
   const handleRegistrationChange = (value: OAuthRegistrationStrategy) => {
     setDraft((prev) => ({ ...prev, registrationStrategy: value }));
-    // The client-id error names switching to DCR as one of its two remedies,
-    // so leaving it on screen after the user does exactly that reads as though
-    // the save is still blocked. Any strategy change re-opens the question.
-    setError(null);
+    // That error names switching to DCR as one of its two remedies, so it must
+    // not outlive the user doing exactly that. Retract only that message: no
+    // other field clears the banner on edit, and a duplicate name or a bad URL
+    // survives a strategy change untouched.
+    setError((prev) => (prev === PREREGISTERED_CLIENT_ID_ERROR ? null : prev));
     if (value === "preregistered") {
       setAdvancedOpen("advanced");
     }
@@ -250,9 +259,7 @@ export function OAuthProfileModal({
     // here would delete the very credential the flow would fall back to.
     if (draft.registrationStrategy === "preregistered" && !trimmedClientId) {
       setAdvancedOpen("advanced");
-      setError(
-        "Client ID is required for pre-registered registration. Add one under Advanced settings, or switch Registration to Dynamic (DCR).",
-      );
+      setError(PREREGISTERED_CLIENT_ID_ERROR);
       return null;
     }
 
