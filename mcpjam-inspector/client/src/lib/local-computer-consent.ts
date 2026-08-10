@@ -45,7 +45,8 @@ export function loadStoredLocalComputerConsent(): StoredLocalComputerConsent | n
   }
 }
 
-function persist(consent: StoredLocalComputerConsent | null): void {
+/** Returns whether the write actually landed (storage can be disabled/full). */
+function persist(consent: StoredLocalComputerConsent | null): boolean {
   try {
     if (consent) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(consent));
@@ -53,8 +54,9 @@ function persist(consent: StoredLocalComputerConsent | null): void {
       localStorage.removeItem(STORAGE_KEY);
     }
     window.dispatchEvent(new CustomEvent(EVENT_NAME));
+    return true;
   } catch {
-    // ignore
+    return false;
   }
 }
 
@@ -101,12 +103,14 @@ export async function grantLocalComputerConsent(
       grantedAt?: unknown;
     };
     if (typeof json.token !== "string" || json.token.length < 16) return false;
-    persist({
+    // Persistence is the whole point — a granted capability the UI can't read
+    // back (storage disabled/full) would let the engine resolve local while
+    // no `X-MCPJam-Local-Consent` header exists to send. Report the failure.
+    return persist({
       token: json.token,
       grantedAt:
         typeof json.grantedAt === "string" ? json.grantedAt : "unknown",
     });
-    return true;
   } catch {
     return false;
   }
@@ -130,7 +134,15 @@ export async function verifyStoredLocalComputerConsent(
     if (!response.ok) return false;
     const json = (await response.json()) as { valid?: unknown };
     if (json.valid === true) return true;
-    clearStoredLocalComputerConsent();
+    // Clear ONLY if the stored token is still the one we verified. Granting
+    // rotates the server capability and storage events trigger concurrent
+    // refreshes, so an in-flight verify of token A can land after a new tab
+    // (or a fresh grant) stored token B — clearing then would delete a
+    // perfectly good B on A's stale "no".
+    const current = loadStoredLocalComputerConsent();
+    if (current?.token === stored.token) {
+      clearStoredLocalComputerConsent();
+    }
     return false;
   } catch {
     return false;

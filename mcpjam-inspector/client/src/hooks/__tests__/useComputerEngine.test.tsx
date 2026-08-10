@@ -107,6 +107,22 @@ describe("useComputerEngine", () => {
     expect(result.current.engine).toBe("cloud");
   });
 
+  it("a project switch reads the NEW project's preference immediately (no stale render)", () => {
+    state.consentGranted = true;
+    // p1 pinned to cloud; p2 has no stored pref → the server 'local' default.
+    saveComputerEngine("p1", "cloud");
+    const { result, rerender } = renderHook(
+      ({ pid }: { pid: string | null }) => useComputerEngine(pid),
+      { initialProps: { pid: "p1" as string | null } },
+    );
+    expect(result.current.engine).toBe("cloud");
+    rerender({ pid: "p2" });
+    // Must NOT briefly report p1's "cloud" for p2 — synchronous re-key.
+    expect(result.current.engine).toBe("local");
+    rerender({ pid: null });
+    expect(result.current.engine).toBe("local"); // no project pref → default
+  });
+
   it("local-only machine with consent: local wins even with defaultEngine null", () => {
     state.consentGranted = true;
     state.config = config({

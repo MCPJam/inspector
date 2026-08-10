@@ -18,7 +18,7 @@
  * server's `defaultEngine:"local"` wins the candidate race as soon as
  * consent exists — no stored preference required.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   loadComputerEngine,
@@ -55,17 +55,21 @@ export function useComputerEngine(
 ): ComputerEngineState {
   const config = useComputersDataPlaneConfig();
   const consent = useLocalComputerConsent();
-  const [storedPref, setStoredPref] = useState<ComputerEngineChoice | null>(
-    () => (HOSTED_MODE || !projectId ? null : loadComputerEngine(projectId)),
-  );
-
-  useEffect(() => {
-    if (HOSTED_MODE || !projectId) return;
-    setStoredPref(loadComputerEngine(projectId));
-    return subscribeComputerEngine(projectId, () => {
-      setStoredPref(loadComputerEngine(projectId));
-    });
+  // Read the stored preference SYNCHRONOUSLY, keyed to the CURRENT projectId —
+  // via useSyncExternalStore rather than a passive effect, so a project switch
+  // never renders once with the previous project's preference (and switching
+  // to null yields null immediately instead of stranding a stale value). The
+  // snapshot is a primitive, so React's value-compare handles re-render.
+  const { subscribe, getSnapshot } = useMemo(() => {
+    if (HOSTED_MODE || !projectId) {
+      return { subscribe: () => () => {}, getSnapshot: () => null };
+    }
+    return {
+      subscribe: (cb: () => void) => subscribeComputerEngine(projectId, cb),
+      getSnapshot: () => loadComputerEngine(projectId),
+    };
   }, [projectId]);
+  const storedPref = useSyncExternalStore(subscribe, getSnapshot, () => null);
 
   const setEngine = useCallback(
     (engine: ComputerEngineChoice) => {

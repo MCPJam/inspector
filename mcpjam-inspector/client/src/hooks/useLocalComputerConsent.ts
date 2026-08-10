@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { HOSTED_MODE } from "@/lib/config";
 import {
+  clearStoredLocalComputerConsent,
   grantLocalComputerConsent,
   loadStoredLocalComputerConsent,
   revokeLocalComputerConsent,
@@ -85,6 +86,13 @@ export function useLocalComputerConsent(): LocalComputerConsent {
 
   const revoke = useCallback(async (): Promise<void> => {
     if (HOSTED_MODE) return;
+    // Forget the capability locally FIRST and unconditionally — this is the
+    // user's explicit revoke. If we skipped it when getAccessToken threw (a
+    // transient auth refresh), the still-valid stored token would survive and
+    // a later remount could re-verify it and silently restore consent. The
+    // server call is best-effort on top of the guaranteed local forget.
+    clearStoredLocalComputerConsent();
+    setStatus("absent");
     let accessToken: string | undefined;
     try {
       accessToken = await getAccessToken?.();
@@ -94,7 +102,6 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     if (accessToken) {
       await revokeLocalComputerConsent(accessToken);
     }
-    setStatus("absent");
   }, [getAccessToken]);
 
   return {
