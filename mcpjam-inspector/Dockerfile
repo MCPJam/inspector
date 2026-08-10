@@ -69,17 +69,11 @@ RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
 # client tree. It therefore has to run AFTER `mcpjam-inspector/client` is on
 # disk; `build:server` consumes the generated harness bundle so it runs in the
 # same step.
+# chat-ui and widget-react are aliased to their SOURCE by client/vite.config.ts
+# (and Tailwind scans the same source), so they must be on disk before
+# `build:client` — but they are consumed from source, so neither needs a build.
 COPY design-system ./design-system
-# The inspector client aliases `@mcpjam/chat-ui` to `../chat-ui/src/index.ts`
-# (see client/vite.config.ts) and Tailwind scans the same source, so the
-# chat-ui workspace must be on disk before `build:client` runs. It is consumed
-# from source, not from a built dist, so no chat-ui build step is needed.
 COPY chat-ui ./chat-ui
-# The inspector client aliases `@mcpjam/widget-react` to
-# `../widget-react/src/index.ts` (see client/vite.config.ts), so — like chat-ui —
-# the widget-react workspace source must be on disk before `build:client` runs.
-# Consumed from source, not from a built dist, so no widget-react build step is
-# needed.
 COPY widget-react ./widget-react
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/

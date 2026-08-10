@@ -69,6 +69,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
           "io.modelcontextprotocol/enterprise-managed-authorization": {},
+          "io.modelcontextprotocol/skills": {},
         },
       },
       hostContext: {
@@ -241,6 +242,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Claude",
       provenance: "assumed",
       rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25"],
       verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -445,6 +447,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "claude-ai",
             version: "0.1.0",
@@ -637,6 +640,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "ChatGPT",
       provenance: "vendor-doc",
       rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25"],
       verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -721,6 +725,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "openai-mcp",
             version: "1.0.0",
@@ -1385,6 +1390,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Cursor",
       provenance: "probe",
       rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25"],
       verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -1460,6 +1466,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "cursor-vscode",
             version: "1.0.0",
@@ -1584,6 +1591,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Copilot",
       provenance: "vendor-doc",
       rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25"],
       verifiedAt: 1784764800000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
@@ -1929,6 +1937,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "ms-copilot",
             version: "1.0.1",
