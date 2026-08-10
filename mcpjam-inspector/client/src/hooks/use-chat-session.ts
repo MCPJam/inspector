@@ -1583,6 +1583,13 @@ export function useChatSession(
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
+  // Whether the turn's Authorization is a real member (WorkOS) bearer vs a
+  // guest bearer (which the auth effect attaches when signed out). Defense in
+  // depth for the local engine: a stale consent token can outlive sign-out, so
+  // never forward the local engine on a guest turn even if the token verifies.
+  // The server independently rejects guest local turns — this just avoids
+  // sending a header a guest can't use.
+  const authIsMemberRef = useRef(false);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
   const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
@@ -2399,7 +2406,8 @@ export function useChatSession(
       !shouldUseOrgAwareChatApi &&
       resolvedLocalEngine &&
       !hostedChatboxId &&
-      Boolean(localConsentToken);
+      Boolean(localConsentToken) &&
+      authIsMemberRef.current;
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
@@ -3900,12 +3908,15 @@ export function useChatSession(
         if (!active) return;
         if (token) {
           resolvedAuthHeaders = { Authorization: `Bearer ${token}` };
+          authIsMemberRef.current = true;
           setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         }
       } catch {
         // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
       }
+      // Anything past the WorkOS-token path is a guest (or unauthenticated).
+      if (!resolved) authIsMemberRef.current = false;
 
       // In non-hosted mode, attach a guest bearer so local chat persistence and
       // history lookups use the same Convex identity as the active thread.

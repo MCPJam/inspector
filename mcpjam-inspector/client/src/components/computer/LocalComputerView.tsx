@@ -102,6 +102,25 @@ export function LocalComputerView({
           </PaneMessage>
         )}
       </div>
+
+      {consent.granted ? (
+        // Recovery path: the stored capability can go stale (another browser
+        // profile re-granted, or the server-side consent file was removed) —
+        // `granted` only reflects a stored token, so without this the gate
+        // would never return. Forgetting clears it (and best-effort revokes on
+        // the server), which re-shows the consent gate to re-authorize.
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>Agent commands are allowed on this machine.</span>
+          <button
+            type="button"
+            data-testid="local-computer-reauthorize"
+            className="font-medium text-primary hover:underline"
+            onClick={() => void consent.revoke()}
+          >
+            Forget &amp; re-authorize
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

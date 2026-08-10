@@ -26,7 +26,9 @@ const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(async () => {}),
   stop: vi.fn(),
   addToolApprovalResponse: vi.fn(),
-  getAccessToken: vi.fn(async () => null),
+  // A member (WorkOS) bearer by default → authIsMemberRef true. Individual
+  // tests flip it to null to model a signed-out guest.
+  getAccessToken: vi.fn(async () => "workos-jwt"),
   hasToken: vi.fn(() => false),
   getToken: vi.fn(() => ""),
   getOpenRouterSelectedModels: vi.fn(() => []),
@@ -160,6 +162,12 @@ async function renderWithEngine(
     } as never),
   );
   await waitFor(() => expect(mockState.chatOnData).not.toBeNull());
+  // Wait for the async auth effect to settle (it re-renders → rebuilds the
+  // transport) so the member-gated header/body reflect the resolved auth,
+  // not the pre-effect default.
+  await waitFor(() =>
+    expect(mockState.transportOptions.length).toBeGreaterThan(1),
+  );
   return rendered;
 }
 
@@ -227,6 +235,17 @@ describe("useChatSession — local computer engine transmission", () => {
       { engine: "local", consentToken: "cap-token-123" },
       { projectId: "proj-1", chatboxId: "cbx-1", accessVersion: 1 },
     );
+    const { body, headers } = lastTransport();
+    expect(body.computerEngine).toBeUndefined();
+    expect(headers[LOCAL_CONSENT_HEADER]).toBeUndefined();
+  });
+
+  it("never sends the local engine on a GUEST turn (signed out, stale token)", async () => {
+    // A previously-signed-in user's consent token can outlive sign-out. The
+    // guest turn attaches a guest bearer, not a member one — the local engine
+    // must not be forwarded even though a token is present.
+    mockState.getAccessToken.mockResolvedValue(null);
+    await renderWithEngine({ engine: "local", consentToken: "cap-token-123" });
     const { body, headers } = lastTransport();
     expect(body.computerEngine).toBeUndefined();
     expect(headers[LOCAL_CONSENT_HEADER]).toBeUndefined();

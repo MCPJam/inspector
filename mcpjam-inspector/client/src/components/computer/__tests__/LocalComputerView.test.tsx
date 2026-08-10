@@ -142,4 +142,28 @@ describe("LocalComputerView", () => {
       screen.getByText(/terminal for this machine isn't available yet/i),
     ).toBeInTheDocument();
   });
+
+  it("granted: offers a re-authorize action that revokes a stale capability", async () => {
+    // A stale token (another profile re-granted / server file removed) would
+    // otherwise hide the gate forever; forgetting clears it so the user can
+    // re-grant.
+    const revoke = vi.fn().mockResolvedValue(undefined);
+    render(
+      <LocalComputerView
+        projectId="proj_1"
+        engine={engineState({
+          consent: { granted: true, token: "tok", status: "granted", revoke },
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("local-computer-reauthorize"));
+    await waitFor(() => expect(revoke).toHaveBeenCalledTimes(1));
+  });
+
+  it("ungranted: no re-authorize action (the consent gate is the entry point)", () => {
+    render(<LocalComputerView projectId="proj_1" engine={engineState()} />);
+    expect(
+      screen.queryByTestId("local-computer-reauthorize"),
+    ).not.toBeInTheDocument();
+  });
 });
