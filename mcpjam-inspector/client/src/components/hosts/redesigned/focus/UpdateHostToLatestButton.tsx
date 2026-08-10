@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -12,13 +13,17 @@ import type { ThemeMode } from "@/types/preferences/theme";
 
 interface UpdateHostToLatestButtonProps {
   draft: HostConfigInputV2;
+  savedDraft?: HostConfigInputV2;
   hostDisplayName: string;
+  savedHostDisplayName?: string;
   onHostDisplayNameChange: (value: string) => void;
   themeMode: ThemeMode;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
 }
+
+const UPDATE_TOAST_ID = "client-update-available";
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -43,7 +48,9 @@ function applyCatalogTemplateToDraft(
 
 export function UpdateHostToLatestButton({
   draft,
+  savedDraft = draft,
   hostDisplayName,
+  savedHostDisplayName = hostDisplayName,
   onHostDisplayNameChange,
   themeMode,
   onDraftChange,
@@ -61,6 +68,10 @@ export function UpdateHostToLatestButton({
     catalogTemplate === undefined
       ? undefined
       : applyCatalogTemplateToDraft(catalogTemplate, draft, themeMode);
+  const latestSavedDraft =
+    catalogTemplate === undefined
+      ? undefined
+      : applyCatalogTemplateToDraft(catalogTemplate, savedDraft, themeMode);
   const latestDisplayName = catalogHost?.label;
 
   const alreadyCurrent =
@@ -68,6 +79,17 @@ export function UpdateHostToLatestButton({
     latestDisplayName !== undefined &&
     hostDisplayName === latestDisplayName &&
     hostConfigInputsEqual(draft, latestDraft);
+  const savedAlreadyCurrent =
+    latestSavedDraft !== undefined &&
+    latestDisplayName !== undefined &&
+    savedHostDisplayName === latestDisplayName &&
+    hostConfigInputsEqual(savedDraft, latestSavedDraft);
+  const updateAvailable =
+    catalogState.status === "live" &&
+    latestSavedDraft !== undefined &&
+    latestDisplayName !== undefined &&
+    !savedAlreadyCurrent &&
+    !alreadyCurrent;
 
   const disabled =
     catalogState.status !== "live" ||
@@ -97,8 +119,36 @@ export function UpdateHostToLatestButton({
       applyCatalogTemplateToDraft(catalogTemplate, prev, themeMode)
     );
     onHostDisplayNameChange(latestDisplayName);
+    toast.dismiss(UPDATE_TOAST_ID);
     toast.success("Updated to latest");
   };
+
+  // Keep the action pointed at the newest draft without re-showing the toast
+  // on every local edit. Update availability is based on the saved client, so
+  // changing a field in the editor does not look like a new catalog release.
+  const handleClickRef = useRef(handleClick);
+  handleClickRef.current = handleClick;
+
+  useEffect(() => {
+    if (!updateAvailable) {
+      toast.dismiss(UPDATE_TOAST_ID);
+      return;
+    }
+
+    toast.info("Client update available", {
+      id: UPDATE_TOAST_ID,
+      description: `${latestDisplayName} has a newer configuration.`,
+      duration: 10_000,
+      action: {
+        label: "Update to latest",
+        onClick: () => handleClickRef.current(),
+      },
+    });
+
+    return () => {
+      toast.dismiss(UPDATE_TOAST_ID);
+    };
+  }, [latestDisplayName, updateAvailable]);
 
   return (
     <Button

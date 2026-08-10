@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   bundledHostCompatCatalog,
@@ -13,6 +13,7 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { UpdateHostToLatestButton } from "../UpdateHostToLatestButton";
+import { toast } from "@/lib/toast";
 
 const liveCatalog = bundledHostCompatCatalog();
 
@@ -31,8 +32,12 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
 });
 
 vi.mock("@/lib/toast", () => ({
-  toast: { success: vi.fn() },
+  toast: { dismiss: vi.fn(), info: vi.fn(), success: vi.fn() },
 }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function catalogDraftFor(
   hostStyle: string,
@@ -52,6 +57,8 @@ function catalogLabelFor(hostStyle: string) {
 function renderButton(args: {
   initialDraft: HostConfigInputV2;
   initialName?: string;
+  savedDraft?: HostConfigInputV2;
+  savedName?: string;
 }) {
   const draftRef: { current: HostConfigInputV2 } = {
     current: args.initialDraft,
@@ -68,7 +75,9 @@ function renderButton(args: {
     return (
       <UpdateHostToLatestButton
         draft={draft}
+        savedDraft={args.savedDraft}
         hostDisplayName={name}
+        savedHostDisplayName={args.savedName}
         onHostDisplayNameChange={(next) => {
           nameRef.current = next;
           setName(next);
@@ -90,6 +99,40 @@ function renderButton(args: {
 }
 
 describe("UpdateHostToLatestButton", () => {
+  it("offers the latest client configuration in a toast", async () => {
+    const initial = emptyHostConfigInputV2({
+      hostStyle: "mistral",
+      modelId: "old-model",
+    });
+    const { draftRef, nameRef } = renderButton({
+      initialDraft: initial,
+      initialName: "Old Mistral",
+    });
+
+    await waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
+    const [, options] = vi.mocked(toast.info).mock.calls[0];
+    expect(options?.action).toMatchObject({ label: "Update to latest" });
+
+    const action = options?.action as { onClick: () => void };
+    action.onClick();
+
+    expect(draftRef.current).toEqual(catalogDraftFor("mistral"));
+    expect(nameRef.current).toBe(catalogLabelFor("mistral"));
+    expect(toast.success).toHaveBeenCalledWith("Updated to latest");
+  });
+
+  it("does not treat unsaved local edits as a new client update", () => {
+    const savedDraft = catalogDraftFor("claude");
+    renderButton({
+      initialDraft: { ...savedDraft, modelId: "local-edit" },
+      savedDraft,
+      initialName: catalogLabelFor("claude"),
+      savedName: catalogLabelFor("claude"),
+    });
+
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
   it("copies the latest catalog template, including image settings", async () => {
     const user = userEvent.setup();
     const serverConnectionOverrides = {
