@@ -67,7 +67,15 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     // stored, so we must report failure rather than a token nothing can read.
     // The successful persist fires a storage event → useSyncExternalStore
     // re-reads → status flips to granted; no optimistic write needed.
-    return persistLocalComputerConsent(minted);
+    const stored = persistLocalComputerConsent(minted);
+    if (!stored) {
+      // The mint already rotated the server capability to this token, and
+      // nothing can ever present it now — release it (best-effort) rather
+      // than leave an orphaned capability. Scoped to the minted token, so if
+      // an even newer grant rotated again this is a no-op.
+      void revokeLocalComputerConsentOnServer(minted.token);
+    }
+    return stored;
   }, []);
 
   const revoke = useCallback(async (): Promise<void> => {

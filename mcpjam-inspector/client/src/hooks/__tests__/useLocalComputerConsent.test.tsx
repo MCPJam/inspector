@@ -116,6 +116,9 @@ describe("useLocalComputerConsent", () => {
     expect(ok).toBe(false);
     expect(result.current.status).toBe("absent");
     expect(result.current.token).toBeNull();
+    // The mint rotated the server capability to a token nothing can present —
+    // grant must release it (scoped) instead of leaving it orphaned.
+    expect(lib.revokeServer).toHaveBeenCalledWith("granted-tok");
   });
 
   it("grant returns FALSE when the mint fails", async () => {

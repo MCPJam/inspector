@@ -81,6 +81,14 @@ describe("local-computer-consent client", () => {
     try {
       expect(await grantLocalComputerConsent()).toBe(false);
       expect(loadStoredLocalComputerConsent()).toBeNull();
+      // The unpresentable just-minted capability gets released, token-scoped.
+      const revokeCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/local-consent/revoke"),
+      );
+      expect(revokeCall).toBeDefined();
+      expect(JSON.parse(String(revokeCall![1]?.body))).toEqual({
+        token: "tok_".padEnd(40, "x"),
+      });
     } finally {
       setItem.mockRestore();
     }

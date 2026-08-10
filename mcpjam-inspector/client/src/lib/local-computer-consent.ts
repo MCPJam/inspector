@@ -139,11 +139,16 @@ export function persistLocalComputerConsent(
 /**
  * Convenience: mint + persist in one call. Returns whether consent ended up
  * stored — false on either a mint failure or a persist failure, so a caller
- * never treats a token it can't read back as granted.
+ * never treats a token it can't read back as granted. A persist failure
+ * releases the just-minted (now unpresentable) server capability,
+ * best-effort and token-scoped.
  */
 export async function grantLocalComputerConsent(): Promise<boolean> {
   const minted = await mintLocalComputerConsent();
-  return minted ? persistLocalComputerConsent(minted) : false;
+  if (!minted) return false;
+  const stored = persistLocalComputerConsent(minted);
+  if (!stored) void revokeLocalComputerConsentOnServer(minted.token);
+  return stored;
 }
 
 /**
