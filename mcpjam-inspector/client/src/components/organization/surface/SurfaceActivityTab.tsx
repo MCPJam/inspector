@@ -92,13 +92,22 @@ function readString(
 
 function actorLabel(
   event: SlackAgentActivityEvent,
+  surfaceKind: SurfaceKind,
   surfaceLabel: string
 ): string {
   if (event.actorEmail) return event.actorEmail;
   const surfaceId =
     readString(event.metadata, "executorSurfaceUserId") ??
     readString(event.metadata, "proposerSurfaceUserId") ??
-    readString(event.metadata, "slackUserId");
+    // `slackUserId` is the pre-generic spelling and is Slack's alone, so it is
+    // only consulted for Slack. Unreachable today — the only writers are
+    // `slackAccountLinks`, which emits `slack.agent.*` — but reading a
+    // surface-specific key on every surface is the exact shape of the
+    // mislabel this component was written to remove, and the generic keys
+    // above already cover Discord.
+    (surfaceKind === "slack"
+      ? readString(event.metadata, "slackUserId")
+      : null);
   // A surface id with no MCPJam identity is a real state (the legacy
   // workspace runs on a shared key), so it is shown rather than blanked.
   return surfaceId ? `${surfaceLabel} ${surfaceId}` : "MCPJam";
@@ -158,7 +167,7 @@ export function SurfaceActivityTab({
           // Falls back to the raw action so an action this build has no label
           // for is still legible rather than blank.
           action: ACTION_LABELS[suffix] ?? event.action,
-          actor: actorLabel(event, copy.label),
+          actor: actorLabel(event, surfaceKind, copy.label),
           proposer: readString(event.metadata, "proposerSurfaceUserId"),
           detail: detailLabel(event),
           status: statusFor(event),
@@ -177,11 +186,17 @@ export function SurfaceActivityTab({
     </Button>
   ) : null;
 
-  // Only when there is nothing to show. A failed "Load more" keeps the rows it
-  // already has, and replacing the whole feed with an alert would take away
-  // what the admin was reading over a transient page fetch — so that case is
-  // surfaced beside the button instead, with a retry.
-  if (error && rows.length === 0) {
+  // NOTHING LOADED AT ALL, measured on the unfiltered `events` rather than on
+  // the filtered `rows`. The two used to be the same thing; once this tab
+  // started filtering by surface they diverged, and the difference decides
+  // which retry the user gets. `error` is one shared state set by both the
+  // first fetch and `loadMore`, and `refresh` calls `setCursor(null)` — so
+  // keying this branch on `rows` would answer a failed `loadMore` (on a page
+  // that happened to hold none of this surface's rows) by throwing the cursor
+  // away and refetching page one, stranding the user on a page they cannot
+  // get past. Empty-but-loaded is handled below, where the retry is
+  // `loadMore`.
+  if (error && events.length === 0) {
     return (
       <div className="space-y-3">
         <p
@@ -197,7 +212,9 @@ export function SurfaceActivityTab({
     );
   }
 
-  if (isLoading && rows.length === 0) {
+  // Same reasoning: `isLoading` is the first fetch (paging sets
+  // `isLoadingMore`), so it pairs with the unfiltered count.
+  if (isLoading && events.length === 0) {
     return (
       <div className="px-4 py-8 text-sm text-muted-foreground">Loading…</div>
     );
@@ -216,6 +233,13 @@ export function SurfaceActivityTab({
             ? `${copy.emptyState} Older events may be further back.`
             : copy.emptyState}
         </p>
+        {/* A page fetch that failed here is reported in place, keeping
+            `loadMore` as the retry so the cursor survives. */}
+        {error ? (
+          <p className="text-sm text-destructive" role="alert">
+            Could not load more activity. Try again in a moment.
+          </p>
+        ) : null}
         {loadMoreButton}
       </div>
     );
