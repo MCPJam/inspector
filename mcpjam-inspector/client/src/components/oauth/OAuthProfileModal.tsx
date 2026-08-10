@@ -125,6 +125,9 @@ export function OAuthProfileModal({
   const [allowPathScopedIssuer, setAllowPathScopedIssuer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Controlled so the pre-registered guard below can reveal the section that
+  // holds the Client ID. "" is the collapsed state for a single-type Accordion.
+  const [advancedOpen, setAdvancedOpen] = useState("");
   const supportedStrategies = useMemo(
     () => getSupportedRegistrationStrategies(draft.protocolVersion),
     [draft.protocolVersion],
@@ -166,6 +169,18 @@ export function OAuthProfileModal({
     server?.oauthAllowPathScopedIssuer,
   ]);
 
+  // The Client ID input lives inside "Advanced settings (optional)", which is
+  // collapsed by default, while Registration is a top-level dropdown. Picking
+  // "Pre-registered" therefore hid the one field that strategy cannot run
+  // without, and the flow only failed later at the registration step. Reveal
+  // the section as soon as the strategy needs it. A manual collapse sticks:
+  // this only fires when the strategy changes (or the modal reopens).
+  useEffect(() => {
+    if (open && draft.registrationStrategy === "preregistered") {
+      setAdvancedOpen("advanced");
+    }
+  }, [open, draft.registrationStrategy]);
+
   const normalizedHeaders = useMemo(
     () =>
       headerRows
@@ -195,6 +210,23 @@ export function OAuthProfileModal({
     }
 
     const trimmedClientId = draft.clientId.trim();
+
+    // A pre-registered flow has no way to obtain a client id: DCR is skipped,
+    // so an empty field means the flow dies at the registration step with
+    // "Pre-registered client ID is required". Reject the save instead.
+    //
+    // There is deliberately no exemption for a client id left over in
+    // `mcp-client-<name>` from an earlier DCR run: saving with an empty field
+    // removes that record (`saveOAuthConfigToLocalStorage`), so honouring it
+    // here would delete the very credential the flow would fall back to.
+    if (draft.registrationStrategy === "preregistered" && !trimmedClientId) {
+      setAdvancedOpen("advanced");
+      setError(
+        "Client ID is required for pre-registered registration. Add one under Advanced settings, or switch Registration to Dynamic (DCR).",
+      );
+      return null;
+    }
+
     // Preserve the exact typed secret — only whether there's a real value is
     // trim-based (whitespace-only counts as none). Trimming the value itself
     // would silently corrupt a secret with legitimate surrounding whitespace.
@@ -458,7 +490,12 @@ export function OAuthProfileModal({
             </div>
 
             <div className="rounded-lg border border-border">
-              <Accordion type="single" collapsible defaultValue="">
+              <Accordion
+                type="single"
+                collapsible
+                value={advancedOpen}
+                onValueChange={setAdvancedOpen}
+              >
                 <AccordionItem value="advanced" className="border-none">
                   <AccordionTrigger className="px-4 py-3 cursor-pointer">
                     <span className="text-sm font-medium">

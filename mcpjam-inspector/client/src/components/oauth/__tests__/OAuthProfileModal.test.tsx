@@ -191,6 +191,67 @@ describe("OAuthProfileModal", () => {
 
     releaseSave?.();
   });
+
+  it("rejects a pre-registered target saved without a client id", async () => {
+    // Pre-registered skips DCR, so an empty client id only failed later, in the
+    // flow itself ("Pre-registered client ID is required"). No exemption for a
+    // client id stored by an earlier DCR run: the save itself deletes that
+    // record, so the flow would still have nothing to use.
+    const user = userEvent.setup();
+    const { onSave } = renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Client ID is required for pre-registered/i,
+    );
+  });
+
+  it("reveals the collapsed advanced section when pre-registered is in play", async () => {
+    // The client id input lives behind "Advanced settings (optional)", so a
+    // required field was hidden by a control that calls itself optional.
+    renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    expect(screen.getByPlaceholderText("Client ID")).toBeInTheDocument();
+  });
+
+  it("saves a pre-registered target once a client id is filled in", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    await user.type(screen.getByPlaceholderText("Client ID"), "client-abc");
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        formData: expect.objectContaining({ clientId: "client-abc" }),
+        profile: expect.objectContaining({
+          clientId: "client-abc",
+          registrationStrategy: "preregistered",
+        }),
+      }),
+    );
+  });
 });
 
 describe("OAuthProfileModal — agentSeed", () => {
