@@ -4,8 +4,73 @@ import {
   MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES,
   toPluginApiError,
   uploadPluginBundleToUrl,
+  uploadPluginBundleTracked,
 } from "../plugin-api";
 import { PluginApiError } from "../plugin-api-types";
+
+describe("uploadPluginBundleTracked", () => {
+  const baseArgs = {
+    siteUrl: "https://demo.convex.site",
+    projectId: "prj_123",
+    bearerToken: "bearer-abc",
+  };
+
+  it("POSTs to the tracked route with the bearer and returns the storage id", async () => {
+    const fetchImpl = vi.fn(async () =>
+      okJson({ ok: true, storageId: "st_tracked" }),
+    );
+    const storageId = await uploadPluginBundleTracked({
+      ...baseArgs,
+      bundle: new Blob(["zip-bytes"]),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(storageId).toBe("st_tracked");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://demo.convex.site/plugin-bundle-upload?projectId=prj_123",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer bearer-abc",
+        }),
+      }),
+    );
+  });
+
+  it("surfaces the route's stable error codes structurally", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 429,
+          json: async () => ({
+            ok: false,
+            code: "RATE_LIMITED",
+            error: "Guest plugin uploads are busy right now. Try again later.",
+          }),
+        }) as unknown as Response,
+    );
+    await expect(
+      uploadPluginBundleTracked({
+        ...baseArgs,
+        bundle: new Blob(["zip-bytes"]),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+  });
+
+  it("rejects an oversized bundle before any network call", async () => {
+    const fetchImpl = vi.fn();
+    const oversized = new Uint8Array(MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES + 1);
+    await expect(
+      uploadPluginBundleTracked({
+        ...baseArgs,
+        bundle: oversized,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: "ARCHIVE_TOO_LARGE_COMPRESSED" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
 
 function okJson(payload: unknown): Response {
   return {
