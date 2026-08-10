@@ -16,7 +16,8 @@ import { isErrorCaptureSurface, isPostHogDisabled } from "./PosthogUtils";
  * Importing the `posthog-js/dist/*` bundles registers each feature on
  * `window.__PosthogExtensions__` (`rrweb`/`initSessionRecording`,
  * `generateSurveys`, `errorWrappingFunctions`,
- * `initDeadClicksAutocapture`), and the SDK uses a registered extension
+ * `initDeadClicksAutocapture`, `postHogWebVitalsCallbacks`), and the SDK
+ * uses a registered extension
  * instead of calling `loadExternalDependency` — verified against the
  * installed posthog-js build. Because the bundles ship in the SAME package
  * version as the SDK consuming them, the registration keys cannot drift.
@@ -41,6 +42,7 @@ export async function preloadPosthogBundledExtensions(): Promise<void> {
       import("posthog-js/dist/surveys"),
       import("posthog-js/dist/exception-autocapture"),
       import("posthog-js/dist/dead-clicks-autocapture"),
+      import("posthog-js/dist/web-vitals"),
     ]);
   } catch {
     // Analytics must never block boot. On a failed chunk load posthog-js
