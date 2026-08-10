@@ -2735,10 +2735,18 @@ export class MCPClientManager {
               { cause: error }
             );
           }
+          // Preserve `cause`: `formatError` reduces the failure to its
+          // message, and the Node errno (`ECONNREFUSED`, `ENOTFOUND`, ...)
+          // lives on the error object — usually one `.cause` hop down, since
+          // undici wraps connect failures as `TypeError("fetch failed")`.
+          // Without the chain, `extractNodeErrno` finds nothing and
+          // `describeError` degrades from a specific transport slug to
+          // message-regex guessing.
           throw new Error(
             `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
               error
-            )}`
+            )}`,
+            { cause: error }
           );
         }
       }
@@ -2788,9 +2796,27 @@ export class MCPClientManager {
         );
       }
 
-      throw new Error(
-        `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`
+      // `cause` is the SSE failure (the last attempt, and the one whose errno
+      // the message above quotes). Both transports fail with the same errno
+      // whenever the server is simply unreachable — ECONNREFUSED, ENOTFOUND —
+      // so this is the chain `extractNodeErrno` needs to reach a specific
+      // `transport/*` slug instead of message-regex guessing.
+      const combinedError = new Error(
+        `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+        { cause: error }
       );
+      // Keep the Streamable HTTP failure reachable for diagnosis when the two
+      // attempts failed for DIFFERENT reasons. Non-enumerable so it never
+      // widens a log line or a JSON.stringify of the error.
+      if (streamableError !== undefined) {
+        Object.defineProperty(combinedError, "streamableCause", {
+          value: streamableError,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      }
+      throw combinedError;
     }
   }
 

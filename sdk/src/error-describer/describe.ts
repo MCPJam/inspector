@@ -234,6 +234,20 @@ function messageSlug(message: string): string | undefined {
   if (/\bsocket\s+hang\s+up\b/i.test(message)) {
     return "transport/socket_hang_up";
   }
+  // An errno spelled out in the text beats every generic phrase below. undici
+  // reports connection failures as `TypeError: fetch failed` and appends the
+  // real reason ("... : connect ECONNREFUSED 127.0.0.1:9999"), so matching
+  // `fetch failed` first threw away the only actionable half of the message —
+  // "we couldn't reach it" instead of "nothing is listening on that port".
+  const errnoInMessage = message.match(
+    /\b(E[A-Z]{2,}|EAI_AGAIN|UND_ERR_[A-Z_]+)\b/,
+  )?.[1];
+  if (errnoInMessage) {
+    const errnoSlug = nodeErrnoToSlug(errnoInMessage);
+    if (errnoSlug) {
+      return errnoSlug;
+    }
+  }
   if (/\bfetch\s+failed\b/i.test(message)) {
     return "transport/fetch_failed";
   }
