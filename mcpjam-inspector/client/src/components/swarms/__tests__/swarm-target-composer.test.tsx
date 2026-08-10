@@ -59,13 +59,22 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
     onChange: (next: string[]) => void;
     triggerTestId?: string;
   }) => (
-    <button
-      type="button"
-      data-testid={triggerTestId}
-      onClick={() => onChange(value.length ? [] : ["env-1"])}
-    >
-      {value.length ? `${value.length} environment` : "pick environment"}
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid={triggerTestId}
+        onClick={() => onChange(value.length ? [] : ["env-1"])}
+      >
+        {value.length ? `${value.length} environment` : "pick environment"}
+      </button>
+      {/* Adds a SECOND environment without clearing the first, so the
+          seed-from-the-whole-selection contract is drivable. */}
+      <button
+        type="button"
+        data-testid="mock-add-second-environment"
+        onClick={() => onChange([...value, "env-2"])}
+      />
+    </>
   ),
 }));
 vi.mock(
@@ -257,5 +266,67 @@ describe("SwarmTargetComposer", () => {
       screen.queryByTestId("new-swarm-cloud-unreachable")
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-sandbox-image")).not.toBeDisabled();
+  });
+});
+
+/**
+ * Seeding across a MULTI-environment selection. The stack's fan-out axis is
+ * `hostIds`, so seeding only the newest environment's client means the first
+ * later edit — which flips `customized` and hands resolution to the stack —
+ * silently drops every other selected environment from the run.
+ */
+describe("SwarmTargetComposer — multi-environment seeding", () => {
+  const twoEnvironments = [
+    {
+      environmentId: "env-1",
+      projectId: "proj-1",
+      name: "Prod-like",
+      origin: "named",
+      hostId: "host-1",
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      environmentId: "env-2",
+      projectId: "proj-1",
+      name: "Staging",
+      origin: "named",
+      hostId: "host-2",
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+
+  it("keeps EVERY selected environment's client in the stack", () => {
+    render(<Harness environments={twoEnvironments as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+
+    // Both clients, not just the one added last.
+    const clients = screen.getByTestId("new-swarm-clients-picker");
+    expect(clients).toHaveTextContent(/claude/i);
+    expect(clients).toHaveTextContent(/\+1/);
+  });
+
+  it("blocks slot edits when two selected environments share a client", () => {
+    const sameHost = [
+      { ...twoEnvironments[0] },
+      { ...twoEnvironments[1], hostId: "host-1" },
+    ];
+    render(<Harness environments={sameHost as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+
+    // One host for two environments: an edit would resolve them to ONE row.
+    expect(screen.getByTestId("new-swarm-collapse-hint")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeDisabled();
+    // The way out stays open — the SELECTION is still editable.
+    expect(
+      screen.getByTestId("new-swarm-environments-picker"),
+    ).not.toBeDisabled();
   });
 });

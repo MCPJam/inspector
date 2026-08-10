@@ -188,10 +188,15 @@ function EnvironmentModeBar({
     ? 0
     : attachedIds.length - attachedEnvironments.length;
   /**
-   * Two attachments on one client cannot be represented as a stack — its
-   * fan-out axis is `hostIds`, so editing any pill would resolve them to a
-   * single row and lose a target. Block editing rather than seed from a
-   * selection we cannot put back.
+   * Two ATTACHMENTS on one client cannot be represented as a stack — its fan-out
+   * axis is `hostIds`, so editing any pill would resolve them to a single row and
+   * lose a target.
+   *
+   * The composer has its own guard for the same shape, but only for a live NAMED
+   * selection. This one is computed from the PERSISTED attachments, which is the
+   * case it cannot see: two ad-hoc rows seed as a composition
+   * (`customized: true`), where the composer has no saved selection left to
+   * protect.
    */
   const collapsesByHost = environmentsCollapseByHost(attachedEnvironments);
 
@@ -316,7 +321,7 @@ function EnvironmentModeBar({
       ) : collapsesByHost ? (
         <p
           className="text-[11px] text-muted-foreground"
-          data-testid="suite-env-collapse-hint"
+          data-testid="suite-env-attachments-collapse-hint"
         >
           Two of this suite&apos;s environments run on the same client, which
           this strip can&apos;t represent without dropping one. Change them in

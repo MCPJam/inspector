@@ -27,9 +27,10 @@ import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
+  composerStateFromEnvironments,
   emptyEnvironmentStack,
+  environmentsCollapseByHost,
   isComposeMode,
-  stackFromEnvironment,
   type EnvironmentComposerState,
   type EnvironmentStack,
 } from "@/components/environment-composer/environment-stack";
@@ -73,6 +74,27 @@ export function EnvironmentComposer({
     [environments]
   );
   const composeMode = isComposeMode(value);
+  /**
+   * The selection cannot be represented as a stack: two of its environments run
+   * on the same client, and the stack fans out over `hostIds`. Editing any slot
+   * flips `customized` and hands resolution to the stack, which would resolve
+   * them to ONE row and drop a target. So the slots are disabled while that is
+   * true — the user can still change the SELECTION, which is the way out.
+   *
+   * Only while `customized` is false: once the stack is authoritative there is
+   * no saved selection left to lose.
+   */
+  const selectionCollapses = useMemo(() => {
+    if (value.customized || value.environmentIds.length < 2) return false;
+    const selected = value.environmentIds
+      .map((id) => liveEnvironments.find((e) => e.environmentId === id))
+      .filter((e): e is NonNullable<typeof e> => Boolean(e));
+    return (
+      selected.length === value.environmentIds.length &&
+      environmentsCollapseByHost(selected)
+    );
+  }, [liveEnvironments, value.customized, value.environmentIds]);
+  const slotsDisabled = disabled || selectionCollapses;
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
 
@@ -95,10 +117,25 @@ export function EnvironmentComposer({
         // ADDING is the one move that re-seeds: the user is asking to run a
         // saved thing, so the strip should show what that thing is, and any
         // previous customization is what they just replaced.
-        const env = liveEnvironments.find((e) => e.environmentId === added);
+        //
+        // Seeded from the WHOLE selection, not just the added row. The stack's
+        // fan-out axis IS `hostIds`, so seeding one client would mean that the
+        // first later edit — which flips `customized` and hands resolution to
+        // the stack — silently drops every other selected environment from the
+        // run. `composerStateFromEnvironments` also empties any shared slot the
+        // selection disagrees on, rather than imposing the newest row's on all.
+        const selected = ids
+          .map((id) => liveEnvironments.find((e) => e.environmentId === id))
+          .filter((e): e is NonNullable<typeof e> => Boolean(e));
         onChange({
           environmentIds: ids,
-          stack: env ? stackFromEnvironment(env) : value.stack,
+          // `environmentIds` stays exactly what the picker said — the helper's
+          // own id/customized output is for seeding from PERSISTED state and
+          // would drop an already-attached ad-hoc id the picker can only detach.
+          stack:
+            selected.length > 0
+              ? composerStateFromEnvironments(selected).stack
+              : value.stack,
           customized: false,
         });
         return;
@@ -171,14 +208,14 @@ export function EnvironmentComposer({
           value={value.stack.hostIds}
           onChange={(hostIds) => patchStack({ hostIds })}
           max={maxTargets}
-          disabled={disabled}
+          disabled={slotsDisabled}
           testId={testId("clients-picker")}
         />
         <ServerGroupPicker
           projectId={projectId}
           value={value.stack.serverAttachmentId}
           onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
-          disabled={disabled}
+          disabled={slotsDisabled}
           emptyTriggerLabel="Server group · client default"
           infoText="Optional shared server group for every client in this setup."
           onClearSelection={() => patchStack({ serverAttachmentId: null })}
@@ -188,7 +225,7 @@ export function EnvironmentComposer({
             projectId={projectId}
             value={value.stack.skillSelection}
             onChange={(skillSelection) => patchStack({ skillSelection })}
-            disabled={disabled}
+            disabled={slotsDisabled}
             testId={testId("skills-picker")}
           />
         ) : null}
@@ -199,11 +236,21 @@ export function EnvironmentComposer({
             onChange={(computerEnvironmentId) =>
               patchStack({ computerEnvironmentId })
             }
-            disabled={disabled}
+            disabled={slotsDisabled}
             testId={testId("sandbox-image")}
           />
         ) : null}
       </div>
+
+      {selectionCollapses ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid={testId("collapse-hint")}
+        >
+          Two selected environments run on the same client, so editing the setup
+          below would drop one of them. Change the selection above instead.
+        </p>
+      ) : null}
     </div>
   );
 }

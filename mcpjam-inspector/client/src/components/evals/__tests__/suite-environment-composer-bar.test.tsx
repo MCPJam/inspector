@@ -284,7 +284,7 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     ];
     renderBar({ environmentIds: ["env-a", "env-b"] } as any);
 
-    expect(screen.getByTestId("suite-env-collapse-hint")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-attachments-collapse-hint")).toBeInTheDocument();
     expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
   });
 });
