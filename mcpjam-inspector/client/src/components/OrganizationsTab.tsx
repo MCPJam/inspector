@@ -85,7 +85,11 @@ import {
   SlackAgentSettingsSection,
   type SlackSettingsTabId,
 } from "./organization/slack/SlackAgentSettingsSection";
-import { DiscordAgentSettingsSection } from "./organization/discord/DiscordAgentSettingsSection";
+import {
+  DiscordAgentSettingsSection,
+  resolveDiscordSettingsTab,
+  type DiscordSettingsTabId,
+} from "./organization/discord/DiscordAgentSettingsSection";
 import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabled";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import {
@@ -606,7 +610,10 @@ function OrganizationPage({
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
   const discordAgentEnabled = useDiscordAgentEnabled();
-  const rawSlackTab = useCurrentSearchParam("tab");
+  // One `?tab=` param, read once and resolved per section — each resolver
+  // falls back to its own Connections, so a Slack tab id in a Discord URL
+  // lands somewhere real instead of on a blank panel.
+  const rawSurfaceTab = useCurrentSearchParam("tab");
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
@@ -622,11 +629,13 @@ function OrganizationPage({
       section === "discord" && discordAgentEnabled
       ? "discord"
       : "overview";
-  // The sub-tab lives in `?tab=` — three views of one settings section, not
-  // three org routes. Read from the URL rather than component state so a link
-  // to a specific tab works, and through the router's location context so
-  // switching tabs actually re-renders.
-  const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSlackTab);
+  // The sub-tab lives in `?tab=` — views of one settings section, not separate
+  // org routes. Read from the URL rather than component state so a link to a
+  // specific tab works, and through the router's location context so switching
+  // tabs actually re-renders.
+  const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSurfaceTab);
+  const discordTab: DiscordSettingsTabId =
+    resolveDiscordSettingsTab(rawSurfaceTab);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -958,6 +967,11 @@ function OrganizationPage({
       `${buildOrganizationPath(organization._id, "slack")}?tab=${tab}`
     );
   };
+  const navigateToDiscordTab = (tab: DiscordSettingsTabId) => {
+    appNavigate(
+      `${buildOrganizationPath(organization._id, "discord")}?tab=${tab}`
+    );
+  };
   const handleViewBilling = () => navigateToSection("billing");
 
   const openBillingUrl = useCallback(
@@ -1284,6 +1298,8 @@ function OrganizationPage({
         <DiscordAgentSettingsSection
           organizationId={organization._id}
           isAdmin={canEdit}
+          tab={discordTab}
+          onTabChange={navigateToDiscordTab}
         />
       ) : activeSection === "billing" ? (
         <>

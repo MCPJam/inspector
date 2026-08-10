@@ -116,6 +116,7 @@ function Harness({
       updatedAt: 1,
     },
   ],
+  onChange,
 }: {
   environments?: Array<{
     environmentId: string;
@@ -127,6 +128,7 @@ function Harness({
     updatedAt: number;
     pluginVersionIds?: string[];
   }>;
+  onChange?: (next: EnvironmentComposerState) => void;
 }) {
   const [value, setValue] = useState<EnvironmentComposerState>(
     emptyComposerState
@@ -136,7 +138,10 @@ function Harness({
       projectId="proj-1"
       environments={environments}
       value={value}
-      onChange={setValue}
+      onChange={(next) => {
+        setValue(next);
+        onChange?.(next);
+      }}
       draftNameHint="Billing"
     />
   );
@@ -152,19 +157,18 @@ beforeEach(() => {
 
 describe("SwarmTargetComposer", () => {
   it("seeds stack from a selected environment and marks custom after client edits", () => {
-    render(<Harness />);
+    let latest: EnvironmentComposerState | null = null;
+    render(<Harness onChange={(next) => (latest = next)} />);
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
       /claude/i
     );
-    expect(
-      screen.queryByTestId("new-swarm-target-custom-badge")
-    ).not.toBeInTheDocument();
+    expect(latest?.customized).toBe(false);
 
     fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
     // Toggle off the seeded client to mark customized.
     fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
-    expect(screen.getByTestId("new-swarm-target-custom-badge")).toBeVisible();
+    expect(latest?.customized).toBe(true);
   });
 
   it("blocks stack edits when a selected environment pins plugin versions", () => {
