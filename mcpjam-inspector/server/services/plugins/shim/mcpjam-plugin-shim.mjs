@@ -32,21 +32,25 @@
  *                            "env":     {[k: string]: string},// optional, default {}
  *                            "cwd":     string                // optional
  *                          }
- *                        Validated strictly: unknown keys, wrong types and
- *                        non-string env values are startup failures, not
+ *                        Validated strictly: unknown keys, wrong types,
+ *                        non-string env values and env keys in the reserved
+ *                        `MCPJAM_SHIM_` namespace are startup failures, not
  *                        silently-dropped fields. Note the key is `cwd`, the
  *                        `child_process.spawn` name — a caller holding a
  *                        `PluginStdioLaunchSpec` must map `workingDirectory`
  *                        onto it (an unmapped `workingDirectory` is rejected
  *                        loudly rather than ignored).
  *
- * Optional (defaults chosen for one interactive MCPJam user per sandbox):
+ * Optional (defaults chosen for one interactive MCPJam user per sandbox). Each
+ * is refused, never clamped, when out of range:
  *   MCPJAM_SHIM_HOST                bind address, default "0.0.0.0" (the
  *                                   sandbox's public port forwards to it).
- *   MCPJAM_SHIM_MAX_SESSIONS        concurrent sessions/children, default 8.
- *   MCPJAM_SHIM_SESSION_IDLE_MS     idle session reap, default 300000 (5 min).
+ *   MCPJAM_SHIM_MAX_SESSIONS        concurrent sessions/children, default 8,
+ *                                   max 256.
+ *   MCPJAM_SHIM_SESSION_IDLE_MS     idle session reap, default 300000 (5 min),
+ *                                   max 2147483647 (Node's timer ceiling).
  *   MCPJAM_SHIM_REQUEST_TIMEOUT_MS  per-request child response deadline,
- *                                   default 120000 (2 min).
+ *                                   default 120000 (2 min), max 2147483647.
  *
  * Exit codes: 2 = invalid configuration, 1 = the port could not be bound.
  *
@@ -129,6 +133,26 @@ const MAX_STDOUT_LINE_CHARS = 16 * 1024 * 1024;
 /** Upper bound on how coarse the idle sweep may be. */
 const SESSION_SWEEP_MS = 5_000;
 
+/**
+ * How long teardown waits after `exit` for the child's stdio to close.
+ *
+ * `exit` may be delivered while stdout still holds an undelivered chunk, so
+ * tearing the listeners down there can drop a response the child wrote just
+ * before dying; `close` is the event that means the streams are drained. A
+ * grandchild inheriting the pipes can delay `close` indefinitely, so the wait
+ * is bounded and in-flight requests still fail promptly.
+ */
+const STREAM_FLUSH_GRACE_MS = 500;
+
+/**
+ * Node clamps a `setTimeout`/`setInterval` delay above this to 1ms, which would
+ * turn a large configured timeout into one that fires immediately.
+ */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** A sandbox that could run this many plugin children is not the target here. */
+const MAX_SESSION_CAP = 256;
+
 const JSONRPC_PARSE_ERROR = -32700;
 const JSONRPC_INVALID_REQUEST = -32600;
 const JSONRPC_METHOD_NOT_FOUND = -32601;
@@ -150,7 +174,7 @@ function isRecord(value) {
   );
 }
 
-function parseOptionalPositiveInt(env, name, fallback) {
+function parseOptionalPositiveInt(env, name, fallback, max) {
   const raw = env[name];
   if (raw === undefined || raw === "") return fallback;
   if (/^\d+$/.test(raw) === false) {
@@ -159,6 +183,13 @@ function parseOptionalPositiveInt(env, name, fallback) {
   const value = Number(raw);
   if (value <= 0) {
     throw new ShimConfigError(`${name} must be greater than 0`);
+  }
+  // An out-of-range value is refused rather than clamped: a knob that silently
+  // becomes something other than what was asked for is worse than a startup
+  // failure, and for the timer knobs Node's own clamp turns "very long" into
+  // "immediately", the exact opposite of the intent.
+  if (value > max) {
+    throw new ShimConfigError(`${name} must be at most ${max}`);
   }
   return value;
 }
@@ -225,6 +256,15 @@ export function parseLaunchSpec(raw) {
           `${ENV_PREFIX}LAUNCH.env["${key}"] must be a string`
         );
       }
+      // The shim's own namespace is refused outright rather than dropped, so
+      // "the child sees no MCPJAM_SHIM_* variable" holds by construction
+      // instead of by the merge order in `buildChildEnv`. A spec declaring one
+      // is a bug in whatever produced it and is worth failing loudly on.
+      if (key.startsWith(ENV_PREFIX)) {
+        throw new ShimConfigError(
+          `${ENV_PREFIX}LAUNCH.env["${key}"] uses the reserved ${ENV_PREFIX} prefix`
+        );
+      }
       env[key] = value;
     }
   }
@@ -272,17 +312,20 @@ export function parseShimConfig(env) {
     maxSessions: parseOptionalPositiveInt(
       env,
       `${ENV_PREFIX}MAX_SESSIONS`,
-      DEFAULT_MAX_SESSIONS
+      DEFAULT_MAX_SESSIONS,
+      MAX_SESSION_CAP
     ),
     sessionIdleMs: parseOptionalPositiveInt(
       env,
       `${ENV_PREFIX}SESSION_IDLE_MS`,
-      DEFAULT_SESSION_IDLE_MS
+      DEFAULT_SESSION_IDLE_MS,
+      MAX_TIMER_MS
     ),
     requestTimeoutMs: parseOptionalPositiveInt(
       env,
       `${ENV_PREFIX}REQUEST_TIMEOUT_MS`,
-      DEFAULT_REQUEST_TIMEOUT_MS
+      DEFAULT_REQUEST_TIMEOUT_MS,
+      MAX_TIMER_MS
     ),
   };
 }
@@ -334,8 +377,12 @@ export function classifyClientMessage(message) {
   if (typeof message.method !== "string" || message.method.length === 0) {
     return "unsupported";
   }
-  const hasId = "id" in message && message.id !== null;
-  if (hasId === false) return "notification";
+  // Absence of the member is what makes a notification. An explicit `"id":
+  // null` is neither a notification nor a usable request: every MCP revision
+  // states "Unlike base JSON-RPC, the ID MUST NOT be `null`" (basic/index.mdx),
+  // so it is rejected rather than quietly demoted to a notification — which
+  // would forward it to the child and answer 202, hiding the sender's bug.
+  if ("id" in message === false) return "notification";
   if (typeof message.id !== "string" && typeof message.id !== "number") {
     return "invalid";
   }
@@ -412,11 +459,19 @@ function readRequestBody(req, limitBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let refused = false;
     req.on("data", (chunk) => {
+      if (refused) return;
       size += chunk.length;
       if (size > limitBytes) {
+        refused = true;
+        // Pause rather than destroy: destroying the request tears down the
+        // socket, so the 413 the caller is owed would never be written and it
+        // would see a connection reset instead. Pausing stops accumulating
+        // while leaving the response writable; the caller closes the socket
+        // once the refusal has flushed.
+        req.pause();
         reject(new BodyTooLargeError());
-        req.destroy();
         return;
       }
       chunks.push(chunk);
@@ -457,10 +512,12 @@ export function createShim(config) {
   /** Insertion order is LRU order: `touch` re-inserts, so the first key is oldest. */
   const sessions = new Map();
   /**
-   * Children that have been spawned and not yet reaped, including ones already
-   * dropped from `sessions`. Shutdown waits on this, not on `sessions`.
+   * Sessions whose child has been spawned and not yet reaped, including ones
+   * already dropped from `sessions` and still draining. Shutdown and the
+   * process cap both count this, not `sessions`. Insertion order is spawn
+   * order.
    */
-  const liveChildren = new Set();
+  const liveSessions = new Set();
   let shuttingDown = false;
 
   function touch(session) {
@@ -585,8 +642,8 @@ export function createShim(config) {
 
   /**
    * Signal the child to stop and fail everything in flight now, rather than
-   * waiting for `exit`: the caller is owed an answer immediately, and the
-   * session must stop routing before the process is actually gone.
+   * waiting for the process to go: the caller is owed an answer immediately,
+   * and the session must stop routing before the process is actually gone.
    */
   function terminateSession(session, reason) {
     if (session.terminating) return;
@@ -603,14 +660,77 @@ export function createShim(config) {
     } catch {
       // Already reaped.
     }
-    session.killTimer = setTimeout(() => {
-      try {
-        session.child.kill("SIGKILL");
-      } catch {
-        // Already reaped.
-      }
-    }, KILL_GRACE_MS);
+    session.killTimer = setTimeout(() => hardKill(session), KILL_GRACE_MS);
     session.killTimer.unref();
+  }
+
+  /** Escalate past a child that did not honour SIGTERM. */
+  function hardKill(session) {
+    if (session.hardKilled) return;
+    session.hardKilled = true;
+    if (session.killTimer !== undefined) clearTimeout(session.killTimer);
+    try {
+      session.child.kill("SIGKILL");
+    } catch {
+      // Already reaped.
+    }
+  }
+
+  /**
+   * Release the child's resources once the process is gone AND its stdio has
+   * drained. Idempotent: whichever of `close` and the flush-grace timer wins
+   * runs it, and `close` is also what a failed spawn emits in place of `exit`.
+   */
+  function reapSession(session) {
+    if (session.reaped) return;
+    session.reaped = true;
+    if (session.closeTimer !== undefined) clearTimeout(session.closeTimer);
+    if (session.killTimer !== undefined) clearTimeout(session.killTimer);
+    flushChildStderr(session);
+    session.child.stdout.removeAllListeners();
+    session.child.stderr.removeAllListeners();
+    session.child.stdin.removeAllListeners();
+    session.child.removeAllListeners("error");
+    session.terminating = true;
+    sessions.delete(session.id);
+    liveSessions.delete(session);
+    settleAllPending(
+      session,
+      session.exitReason ?? "the plugin server is no longer running"
+    );
+    if (shuttingDown && liveSessions.size === 0) process.exit(0);
+  }
+
+  /**
+   * Bound the number of children that are still running by their own choice.
+   *
+   * `sessions` alone does not bound processes: eviction drops a session from
+   * the map at once while its child lives on through the SIGTERM grace, so a
+   * caller looping on `initialize` could stack up children that ignore
+   * SIGTERM. A child that has already been SIGKILLed cannot refuse to die, so
+   * it stops counting here even though the OS has not reaped it yet.
+   *
+   * Eviction runs first and leaves at most `maxSessions - 1` ACTIVE sessions,
+   * so whenever this finds itself over budget there is always a draining child
+   * available to escalate on.
+   */
+  function enforceChildCap() {
+    const escapable = [...liveSessions].filter(
+      (session) => session.hardKilled !== true
+    );
+    let over = escapable.length - (config.maxSessions - 1);
+    if (over <= 0) return;
+    // Insertion order: the child that has had the longest chance to exit
+    // cleanly is the one that loses its grace first.
+    for (const session of escapable) {
+      if (over <= 0) break;
+      if (session.terminating !== true) continue;
+      diagnostic(
+        `session ${session.shortId}: SIGKILL, draining children exceed the process cap`
+      );
+      hardKill(session);
+      over -= 1;
+    }
   }
 
   function createSession() {
@@ -627,6 +747,7 @@ export function createShim(config) {
         );
       }
     }
+    enforceChildCap();
 
     const id = randomUUID();
     const child = spawn(config.launch.command, config.launch.args, {
@@ -645,7 +766,11 @@ export function createShim(config) {
       stderrBuffer: "",
       lastUsedAt: Date.now(),
       terminating: false,
+      hardKilled: false,
+      reaped: false,
+      exitReason: undefined,
       killTimer: undefined,
+      closeTimer: undefined,
     };
 
     child.stdout.setEncoding("utf8");
@@ -656,38 +781,38 @@ export function createShim(config) {
     // would take the whole shim down with it.
     child.stdin.on("error", () => {});
     child.on("error", (error) => {
-      terminateSession(
-        session,
-        `the plugin server failed to start: ${error.message}`
+      // The reason handed to the caller stays generic. Node builds spawn
+      // failures as `spawn <command> ENOENT`, and the launch command is not
+      // something an HTTP response should carry; the errno is what actually
+      // diagnoses this, and it goes to the operator's log instead.
+      session.exitReason = "the plugin server could not be started";
+      diagnostic(
+        `session ${session.shortId}: spawn failed (${error.code ?? "unknown"})`
       );
-      // A command that never resolved to a process has no pid and emits no
-      // `exit`, so the bookkeeping the exit handler owns has to happen here or
-      // shutdown would wait out its backstop on a child that never existed.
-      if (child.pid === undefined) {
-        liveChildren.delete(child);
-        if (shuttingDown && liveChildren.size === 0) process.exit(0);
-      }
+      terminateSession(session, session.exitReason);
     });
     child.once("exit", (code, signal) => {
-      flushChildStderr(session);
-      child.stdout.removeAllListeners();
-      child.stderr.removeAllListeners();
-      child.stdin.removeAllListeners();
-      child.removeAllListeners("error");
-      if (session.killTimer !== undefined) clearTimeout(session.killTimer);
-      session.terminating = true;
-      sessions.delete(session.id);
-      liveChildren.delete(child);
-      settleAllPending(
-        session,
+      session.exitReason =
         signal === null
           ? `the plugin server exited with code ${code}`
-          : `the plugin server was terminated by ${signal}`
+          : `the plugin server was terminated by ${signal}`;
+      // Stop routing now, but leave the stdout listener attached: `exit` can
+      // be delivered before the last chunk the child wrote, and a response it
+      // produced just before dying is still owed to its caller. `close` does
+      // the teardown; the timer is the bound on a grandchild that inherited
+      // the pipes and would otherwise keep them open forever.
+      session.terminating = true;
+      sessions.delete(session.id);
+      session.closeTimer = setTimeout(
+        () => reapSession(session),
+        STREAM_FLUSH_GRACE_MS
       );
-      if (shuttingDown && liveChildren.size === 0) process.exit(0);
+      session.closeTimer.unref();
     });
+    // Also the event a spawn failure emits in place of `exit`.
+    child.once("close", () => reapSession(session));
 
-    liveChildren.add(child);
+    liveSessions.add(session);
     sessions.set(id, session);
     return session;
   }
@@ -721,6 +846,11 @@ export function createShim(config) {
         if (session.pending.get(key)?.settle === settle) {
           session.pending.delete(key);
         }
+        // Idle time starts when the work finishes, not when it arrived. The
+        // sweep only spares a session while something is pending, so a request
+        // that ran longer than the idle TTL would otherwise be reaped the
+        // instant it answered.
+        touch(session);
         resolve(response);
       };
 
@@ -828,10 +958,14 @@ export function createShim(config) {
       raw = await readRequestBody(req, MAX_REQUEST_BODY_BYTES);
     } catch (error) {
       if (error instanceof BodyTooLargeError) {
+        // The caller is still uploading, so the rest of its body is never
+        // read: announce the close, flush the refusal, then drop the socket.
+        res.once("finish", () => req.destroy());
         sendJson(
           res,
           413,
-          jsonRpcError(null, JSONRPC_INVALID_REQUEST, "request body too large")
+          jsonRpcError(null, JSONRPC_INVALID_REQUEST, "request body too large"),
+          { connection: "close" }
         );
         return;
       }
@@ -1036,7 +1170,7 @@ export function createShim(config) {
    * The backstop timer is deliberately NOT unref'd: it is the only thing
    * keeping the loop alive long enough for the SIGKILL escalation to fire, and
    * exiting before it would orphan a child that ignored SIGTERM. The common
-   * case never reaches it — the last child's `exit` handler exits immediately.
+   * case never reaches it — the last child is reaped and exits immediately.
    */
   function shutdown(reason) {
     if (shuttingDown) return;
@@ -1044,14 +1178,16 @@ export function createShim(config) {
     clearInterval(sweep);
     server.close();
     server.closeAllConnections?.();
-    for (const session of [...sessions.values()]) {
+    // Every live session, not just the routable ones: a session already
+    // dropped from the map is still a process this shim owns.
+    for (const session of [...liveSessions]) {
       terminateSession(session, `the shim is shutting down (${reason})`);
     }
-    if (liveChildren.size === 0) {
+    if (liveSessions.size === 0) {
       process.exit(0);
       return;
     }
-    setTimeout(() => process.exit(0), KILL_GRACE_MS + 500);
+    setTimeout(() => process.exit(0), KILL_GRACE_MS + STREAM_FLUSH_GRACE_MS);
   }
 
   return { server, sessions, shutdown };

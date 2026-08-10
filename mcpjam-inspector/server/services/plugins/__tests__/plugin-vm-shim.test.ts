@@ -82,6 +82,8 @@ function readListeningPort(child: ShimProcess): Promise<number> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     child.stdout.setEncoding("utf8");
+    const onExit = (code: number | null) =>
+      reject(new Error(`shim exited before listening (code ${code})`));
     const onData = (chunk: string) => {
       buffer += chunk;
       let index = buffer.indexOf("\n");
@@ -93,6 +95,9 @@ function readListeningPort(child: ShimProcess): Promise<number> {
           const parsed = JSON.parse(line);
           if (parsed?.event === "listening") {
             child.stdout.off("data", onData);
+            // Dropped with the stdout listener: left attached it would build
+            // a rejection for an already-settled promise on every shutdown.
+            child.off("exit", onExit);
             resolve(parsed.port);
             return;
           }
@@ -102,9 +107,7 @@ function readListeningPort(child: ShimProcess): Promise<number> {
       }
     };
     child.stdout.on("data", onData);
-    child.once("exit", (code) =>
-      reject(new Error(`shim exited before listening (code ${code})`))
-    );
+    child.once("exit", onExit);
   });
 }
 
@@ -249,6 +252,11 @@ describe("plugin vm shim: message classification", () => {
     expect(classifyClientMessage({ id: 1, method: "tools/list" })).toBe(
       "invalid"
     );
+    // Absence of the member is what makes a notification. An explicit null id
+    // is forbidden by every MCP revision, so it is neither.
+    expect(
+      classifyClientMessage({ jsonrpc: "2.0", id: null, method: "x" })
+    ).toBe("invalid");
     expect(classifyClientMessage({ jsonrpc: "2.0", id: {}, method: "x" })).toBe(
       "invalid"
     );
@@ -293,6 +301,19 @@ describe("plugin vm shim: configuration parsing", () => {
     expect(() =>
       parseShimConfig({ ...baseEnv, MCPJAM_SHIM_TOKEN: "tiny" })
     ).toThrow(/32 characters/);
+    // Node clamps a delay past 2147483647 to 1ms, which would invert the knob.
+    expect(() =>
+      parseShimConfig({
+        ...baseEnv,
+        MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "2147483648",
+      })
+    ).toThrow(/at most 2147483647/);
+    expect(
+      parseShimConfig({
+        ...baseEnv,
+        MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "2147483647",
+      }).requestTimeoutMs
+    ).toBe(2147483647);
   });
 
   it("validates the launch spec strictly", () => {
@@ -322,6 +343,13 @@ describe("plugin vm shim: configuration parsing", () => {
     expect(() =>
       parseLaunchSpec(JSON.stringify({ command: "node", shell: true }))
     ).toThrow(/unknown key "shell"/);
+    // The child must never see a variable in the shim's own namespace, and
+    // the spec's env is the one path that could reintroduce one.
+    expect(() =>
+      parseLaunchSpec(
+        JSON.stringify({ command: "node", env: { MCPJAM_SHIM_TOKEN: "x" } })
+      )
+    ).toThrow(/reserved MCPJAM_SHIM_ prefix/);
   });
 });
 
@@ -497,6 +525,80 @@ describe("plugin vm shim: session routing", () => {
     expect(secondBody.result.content[0]!.text).toContain(`:${second.pid}`);
   });
 
+  it("keeps a session alive that answered after longer than the idle ttl", async () => {
+    // A 1000ms TTL puts the sweep on a 500ms interval. The call outlasts the
+    // TTL, so idle time has to start when it answers rather than when it
+    // arrived — otherwise the first sweep after the response reaps a session
+    // that has just done work.
+    const idleMs = 1000;
+    const shim = await startShim({
+      env: { MCPJAM_SHIM_SESSION_IDLE_MS: String(idleMs) },
+    });
+    const { sessionId } = await openSession(shim);
+
+    const response = await post(
+      shim,
+      toolCall("slow", { text: "long", delayMs: idleMs + 400 }),
+      { sessionId }
+    );
+    expect(response.status).toBe(200);
+
+    // Long enough that a sweep has certainly run, short enough that a
+    // correctly refreshed session has not gone idle on its own yet.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect((await health(shim)).body.sessions).toBe(1);
+
+    const followUp = await post(
+      shim,
+      toolCall("echo", { text: "still here" }),
+      {
+        sessionId,
+      }
+    );
+    expect(followUp.status).toBe(200);
+  });
+
+  it("bounds live children when they refuse to honour SIGTERM", async () => {
+    const shim = await startShim({
+      env: { MCPJAM_SHIM_MAX_SESSIONS: "2" },
+      childEnv: { FAKE_MCP_IGNORE_SIGTERM: "1" },
+    });
+
+    const pids: number[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      pids.push((await openSession(shim)).pid);
+    }
+
+    const alive = () =>
+      pids.filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+
+    // Two active sessions plus at most one child still inside its SIGTERM
+    // grace. The deadline is deliberately far below that 2s grace: without
+    // the escalation all six sit there ignoring SIGTERM until their kill
+    // timers fire, so a longer wait would pass either way.
+    await waitFor(
+      () => alive().length <= 3,
+      "the evicted children to be reaped",
+      600
+    );
+    expect((await health(shim)).body.sessions).toBe(2);
+
+    for (const pid of alive()) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+  });
+
   it("rejects a non-initialize request without a session header", async () => {
     const shim = await startShim();
     await openSession(shim);
@@ -651,6 +753,60 @@ describe("plugin vm shim: failure handling", () => {
 
     const response = await post(shim, { jsonrpc: "2.0", id: 1, result: {} });
     expect(response.status).toBe(400);
+
+    // MCP forbids a null id ("Unlike base JSON-RPC, the ID MUST NOT be
+    // `null`"), so this is neither a notification nor a usable request.
+    const nullId = await post(shim, {
+      jsonrpc: "2.0",
+      id: null,
+      method: "tools/list",
+    });
+    expect(nullId.status).toBe(400);
+    expect(
+      ((await nullId.json()) as { error: { code: number } }).error.code
+    ).toBe(-32600);
+  });
+
+  it("answers an oversized body with 413 rather than resetting the connection", async () => {
+    const shim = await startShim();
+
+    const response = await fetch(`${shim.url}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "echo", arguments: { text: "x".repeat(5_000_000) } },
+      }),
+    });
+
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("too large");
+  });
+
+  it("delivers a response the child wrote just before exiting", async () => {
+    const shim = await startShim();
+    const { sessionId } = await openSession(shim);
+
+    const response = await post(shim, toolCall("farewell"), { sessionId });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      result?: { content: Array<{ text: string }> };
+      error?: unknown;
+    };
+    expect(body.error).toBeUndefined();
+    expect(body.result?.content[0]!.text).toBe("farewell");
+
+    // The child is gone all the same, so the session must not linger.
+    await waitFor(
+      async () => (await health(shim)).body.sessions === 0,
+      "the exited session to be dropped"
+    );
   });
 });
 
@@ -714,6 +870,13 @@ describe("plugin vm shim: startup configuration", () => {
         JSON.stringify({ command: "node", workingDirectory: "/tmp" }),
         'unknown key "workingDirectory"',
       ],
+      [
+        JSON.stringify({
+          command: "node",
+          env: { MCPJAM_SHIM_TOKEN: "stolen" },
+        }),
+        "reserved MCPJAM_SHIM_ prefix",
+      ],
     ];
 
     for (const [launch, expected] of cases) {
@@ -753,6 +916,36 @@ describe("plugin vm shim: startup configuration", () => {
     });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("0-65535");
+  });
+
+  it("exits 2 on a timer knob Node would clamp to 1ms", async () => {
+    // 2147483648 is one past Node's timer ceiling; accepting it would turn a
+    // very long timeout into one that fires immediately.
+    const timeout = await runWithEnv({
+      MCPJAM_SHIM_PORT: "0",
+      MCPJAM_SHIM_TOKEN: TOKEN,
+      MCPJAM_SHIM_LAUNCH: validLaunch,
+      MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "2147483648",
+    });
+    expect(timeout.code).toBe(2);
+    expect(timeout.stderr).toContain("at most 2147483647");
+
+    const idle = await runWithEnv({
+      MCPJAM_SHIM_PORT: "0",
+      MCPJAM_SHIM_TOKEN: TOKEN,
+      MCPJAM_SHIM_LAUNCH: validLaunch,
+      MCPJAM_SHIM_SESSION_IDLE_MS: "9999999999",
+    });
+    expect(idle.code).toBe(2);
+
+    const sessions = await runWithEnv({
+      MCPJAM_SHIM_PORT: "0",
+      MCPJAM_SHIM_TOKEN: TOKEN,
+      MCPJAM_SHIM_LAUNCH: validLaunch,
+      MCPJAM_SHIM_MAX_SESSIONS: "100000",
+    });
+    expect(sessions.code).toBe(2);
+    expect(sessions.stderr).toContain("at most 256");
   });
 
   it("keeps its own MCPJAM_SHIM_ variables out of the child's environment", async () => {

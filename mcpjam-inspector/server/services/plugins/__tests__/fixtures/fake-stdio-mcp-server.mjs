@@ -16,6 +16,16 @@ import process from "node:process";
 
 const splitWrites = process.env.FAKE_MCP_SPLIT_WRITES === "1";
 
+if (process.env.FAKE_MCP_IGNORE_SIGTERM === "1") {
+  // Stands in for a child that refuses to shut down politely, so the shim's
+  // SIGKILL escalation and its process cap are exercised for real. The ref'd
+  // timer matters as much as the signal handler: closing stdin alone drains
+  // this process's event loop, and a child that exits on its own would make
+  // the escalation look effective when it never ran.
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 60_000);
+}
+
 let buffer = "";
 /** Tool calls parked until the server's own request gets an answer. */
 const awaitingHostReply = new Map();
@@ -100,6 +110,7 @@ function handle(message) {
         { name: "hang", inputSchema: { type: "object" } },
         { name: "provoke", inputSchema: { type: "object" } },
         { name: "env-keys", inputSchema: { type: "object" } },
+        { name: "farewell", inputSchema: { type: "object" } },
       ],
     });
     return;
@@ -112,6 +123,18 @@ function handle(message) {
     if (name === "boom") {
       process.stderr.write("fake-stdio-mcp-server: exiting mid-request\n");
       process.exit(3);
+    }
+    if (name === "farewell") {
+      // Answer and die in the same tick, without the split-write helper: the
+      // response and the process exit race each other to the shim.
+      process.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { content: [{ type: "text", text: "farewell" }] },
+        })}\n`
+      );
+      process.exit(0);
     }
     if (name === "hang") {
       process.stderr.write("fake-stdio-mcp-server: swallowing a request\n");
