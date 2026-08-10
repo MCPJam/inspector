@@ -444,11 +444,44 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
           mcpProfile: {
             profileVersion: 1,
             mcpProtocolVersion: "2025-06-18",
-            initialize: { supportedProtocolVersions: ["2025-11-25"] },
+            supportedProtocolVersions: ["2025-11-25"],
           },
         })
       )
     ).toThrow(/ConflictingProtocolVersionPin/);
+  });
+
+  it("stores automatic dual-era identity without an initialize envelope", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "auto",
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          clientInfo: { name: "openai-mcp", version: "1.0.0" },
+        },
+      })
+    );
+    expect(c.mcpProfile).toMatchObject({
+      mcpProtocolVersion: "auto",
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+      clientInfo: { name: "openai-mcp", version: "1.0.0" },
+    });
+    expect(c.mcpProfile?.initialize).toBeUndefined();
+  });
+
+  it("derives a stateful pin onto the era-neutral sibling for new profiles", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "2025-11-25",
+          clientInfo: { name: "new-client", version: "1" },
+        },
+      })
+    );
+    expect(c.mcpProfile?.supportedProtocolVersions).toEqual(["2025-11-25"]);
+    expect(c.mcpProfile?.initialize).toBeUndefined();
   });
 });
 

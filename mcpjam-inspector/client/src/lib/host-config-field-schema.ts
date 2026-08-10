@@ -21,11 +21,7 @@ import {
   resolveEffectiveCompatRuntime,
   resolveEffectiveMcpAppsCapabilities,
 } from "@/lib/client-config-v2";
-import type {
-  HostConfigDtoV2,
-  HostStyleId,
-  McpProtocolVersion,
-} from "@/lib/client-config-v2";
+import type { HostConfigDtoV2, HostStyleId } from "@/lib/client-config-v2";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import {
   ALL_DISPLAY_MODES,
@@ -471,15 +467,10 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Protocol version",
     path: "mcpProfile.mcpProtocolVersion",
     description:
-      "Host default pin. Per-server overrides win. Undefined = SDK chooses at request time.",
+      'Host default selection. "auto" negotiates 2026 with legacy fallback; per-server overrides win.',
     kind: {
       kind: "enum",
-      options: [
-        "2025-03-26",
-        "2025-06-18",
-        "2025-11-25",
-        "2026-07-28",
-      ] as ReadonlyArray<McpProtocolVersion>,
+      options: ["auto", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"],
     },
     read: (cfg) => mcpProfile(cfg)?.mcpProtocolVersion,
   },
@@ -488,10 +479,12 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     section: "protocol",
     subsection: "Version",
     label: "Supported protocol versions",
-    path: "mcpProfile.initialize.supportedProtocolVersions",
-    description: "Accept-list supported in the initialize handshake.",
+    path: "mcpProfile.supportedProtocolVersions",
+    description: "Protocol revisions this client can speak across both eras.",
     kind: { kind: "string-array" },
-    read: (cfg) => mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
+    read: (cfg) =>
+      mcpProfile(cfg)?.supportedProtocolVersions ??
+      mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
   // ============================================================
@@ -502,11 +495,13 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     section: "protocol",
     subsection: "clientInfo",
     label: "Client name",
-    path: "mcpProfile.initialize.clientInfo.name",
-    description: "`initialize.clientInfo.name` sent to the server.",
+    path: "mcpProfile.clientInfo.name",
+    description:
+      "Client identity sent in legacy initialize or modern metadata.",
     kind: { kind: "string" },
     read: (cfg) => {
-      const info = mcpProfile(cfg)?.initialize?.clientInfo;
+      const info =
+        mcpProfile(cfg)?.clientInfo ?? mcpProfile(cfg)?.initialize?.clientInfo;
       return typeof info?.name === "string" ? info.name : undefined;
     },
   },
@@ -515,11 +510,12 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     section: "protocol",
     subsection: "clientInfo",
     label: "Client version",
-    path: "mcpProfile.initialize.clientInfo.version",
-    description: "`initialize.clientInfo.version` sent to the server.",
+    path: "mcpProfile.clientInfo.version",
+    description: "Client version sent in legacy initialize or modern metadata.",
     kind: { kind: "string" },
     read: (cfg) => {
-      const info = mcpProfile(cfg)?.initialize?.clientInfo;
+      const info =
+        mcpProfile(cfg)?.clientInfo ?? mcpProfile(cfg)?.initialize?.clientInfo;
       return typeof info?.version === "string" ? info.version : undefined;
     },
   },

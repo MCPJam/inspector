@@ -33,7 +33,30 @@ async function connectModern() {
   );
   const client = new Client(
     { name: "dual-era-fixture-test", version: "1.0.0" },
-    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    {
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+      versionNegotiation: { mode: { pin: "2026-07-28" } },
+    },
+  );
+  const transport = new StreamableHTTPClientTransport(
+    new URL("http://fixture.local/mcp"),
+    { fetch: cap.fetch },
+  );
+  await client.connect(transport);
+  return { client, cap };
+}
+
+async function connectAutomatic() {
+  const handler = createFixtureHandler();
+  const cap = createCapturingFetch((input, init) =>
+    handler.fetch(new Request(input as string | URL, init)),
+  );
+  const client = new Client(
+    { name: "dual-era-fixture-test", version: "1.0.0" },
+    {
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+      versionNegotiation: { mode: "auto" },
+    },
   );
   const transport = new StreamableHTTPClientTransport(
     new URL("http://fixture.local/mcp"),
@@ -99,6 +122,7 @@ describe("dual-era fixture — modern (2026-07-28)", () => {
 
     // server/discover fired during connect (SEP-2575).
     expect(byMethod(cap.exchanges, "server/discover")).toBeDefined();
+    expect(byMethod(cap.exchanges, "initialize")).toBeUndefined();
 
     // resultType is REQUIRED on every modern result (SEP-2322).
     const list = byMethod(cap.exchanges, "tools/list");
@@ -133,6 +157,16 @@ describe("dual-era fixture — modern (2026-07-28)", () => {
   });
 });
 
+describe("dual-era fixture — automatic selection", () => {
+  it("selects modern via server/discover without initialize", async () => {
+    const { client, cap } = await connectAutomatic();
+    expect(client.getProtocolEra()).toBe("modern");
+    expect(byMethod(cap.exchanges, "server/discover")).toBeDefined();
+    expect(byMethod(cap.exchanges, "initialize")).toBeUndefined();
+    await client.close();
+  });
+});
+
 describe("dual-era fixture — legacy (2025-era)", () => {
   it("serves the same handler over the legacy era with no modern wire members", async () => {
     const { client, cap } = await connectLegacy();
@@ -140,6 +174,7 @@ describe("dual-era fixture — legacy (2025-era)", () => {
 
     const tools = await client.listTools();
     expect(tools.tools.map((t) => t.name)).toContain("echo");
+    expect(byMethod(cap.exchanges, "initialize")).toBeDefined();
 
     // The legacy era carries no `resultType` on the wire — the modern-only
     // member must not leak onto a 2025-era result.

@@ -842,12 +842,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // an MCP app can never reach a domain ChatGPT itself wouldn't allow.
       base.mcpProfile = {
         profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          // Base MCP protocol: clientInfo sent to MCP servers during
-          // `initialize`. Matches what real ChatGPT publishes.
-          clientInfo: { name: "openai-mcp", version: "1.0.0" },
-        },
+        mcpProtocolVersion: "auto",
+        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+        // Era-neutral identity: the runtime sends this in legacy initialize
+        // or modern request metadata according to the negotiated protocol.
+        clientInfo: { name: "openai-mcp", version: "1.0.0" },
         apps: {
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo

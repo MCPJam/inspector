@@ -83,17 +83,18 @@ export type HostConnectionDefaults = HostConfigConnectionDefaults;
 
 /**
  * A host's MCP settings — the host-facing rename of the internal `mcpProfile`.
- * Spec-aligned vocabulary: `protocolVersion`, `initialize` (clientInfo,
- * supported versions), and `apps` (sandbox, ui/initialize hostInfo, compat
- * runtime, MCP-Apps overrides). The internal schema-version marker
+ * Spec-aligned vocabulary: `protocolVersion`, era-neutral `clientInfo` and
+ * `supportedProtocolVersions`, and `apps` (sandbox, ui/initialize hostInfo,
+ * compat runtime, MCP-Apps overrides). The deprecated `initialize` envelope
+ * remains readable for old snapshots. The internal schema-version marker
  * (`profileVersion`) is supplied by the SDK; authors never set it.
  */
 export type HostMcp = Omit<
   HostConfigMcpProfileV1,
   "profileVersion" | "mcpProtocolVersion"
 > & {
-  /** Host-default pinned MCP protocol version (e.g. "2025-11-25"). */
-  protocolVersion?: McpProtocolVersion;
+  /** Host-default selection: automatic negotiation or one concrete wire era. */
+  protocolVersion?: McpProtocolVersion | "auto";
 };
 
 /**

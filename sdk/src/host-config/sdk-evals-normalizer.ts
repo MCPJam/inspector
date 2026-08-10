@@ -80,6 +80,10 @@ function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
   if (mcp.protocolVersion !== undefined) {
     profile.mcpProtocolVersion = mcp.protocolVersion;
   }
+  if (mcp.supportedProtocolVersions !== undefined) {
+    profile.supportedProtocolVersions = mcp.supportedProtocolVersions;
+  }
+  if (mcp.clientInfo !== undefined) profile.clientInfo = mcp.clientInfo;
   if (mcp.toolParamHeaderMirroring !== undefined) {
     profile.toolParamHeaderMirroring = mcp.toolParamHeaderMirroring;
   }

@@ -408,6 +408,18 @@ describe("resolveEffectiveMcpProtocolVersion — per-server override precedence"
     );
   });
 
+  test("reduces the stored auto policy to no wire pin", () => {
+    expect(resolveEffectiveMcpProtocolVersion(undefined, "auto")).toBe(
+      undefined,
+    );
+  });
+
+  test("a concrete server override wins over the host auto policy", () => {
+    expect(resolveEffectiveMcpProtocolVersion("2025-11-25", "auto")).toBe(
+      "2025-11-25",
+    );
+  });
+
   test("stateful server override wins over stateless host default", () => {
     // Symmetric scenario: host pinned to 2026-07-28 globally for a
     // migration test, one legacy server overridden back to 2025-11-25.

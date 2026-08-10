@@ -41,7 +41,8 @@ function Harness({ initial }: { initial: HostConfigInputV2 }) {
         {draft.mcpProfile?.mcpProtocolVersion ?? "<undefined>"}
       </div>
       <div data-testid="advertised">
-        {draft.mcpProfile?.initialize?.supportedProtocolVersions?.join(",") ??
+        {(draft.mcpProfile?.supportedProtocolVersions ??
+          draft.mcpProfile?.initialize?.supportedProtocolVersions)?.join(",") ??
           "<undefined>"}
       </div>
       <ProtocolTab
@@ -116,7 +117,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     expect(screen.getByTestId("pin").textContent).toBe("2025-06-18");
   });
 
-  it("defaults an unpinned host to Automatic and stores no pin", () => {
+  it("renders a legacy host with no selection as Automatic", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     expect(
@@ -125,7 +126,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
   });
 
-  it("selecting Latest pins 2026-07-28; returning to Automatic clears it", async () => {
+  it("selecting Latest pins 2026-07-28; returning to Automatic stores auto", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
@@ -135,14 +136,12 @@ describe("ProtocolTab protocol-version dropdown", () => {
     await user.click(screen.getByRole("option", { name: /Latest/i }));
     expect(screen.getByTestId("pin").textContent).toBe("2026-07-28");
 
-    // Back to Automatic must restore ABSENCE, not a 2025 literal — a stored
-    // literal would churn the canonical config hash against every
-    // pre-feature row.
+    // Automatic is explicit selection policy, not a wire protocol literal.
     await user.click(
       screen.getByRole("combobox", { name: "MCP protocol version" })
     );
     await user.click(screen.getByRole("option", { name: "Automatic" }));
-    expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
+    expect(screen.getByTestId("pin").textContent).toBe("auto");
   });
 
   it("shows a stored legacy pin as itself instead of collapsing it", () => {
@@ -177,7 +176,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
 
 /**
  * The backend (`canonicalizeMcpProfile`) refuses to store a STATEFUL pin that
- * is absent from `initialize.supportedProtocolVersions` —
+ * is absent from `supportedProtocolVersions` —
  * `ConflictingProtocolVersionPin`. Preset-backed clients carry that list, so
  * offering the full set on them produced choices that failed at Save with an
  * opaque "Server Error". Offer only what saves.
@@ -225,7 +224,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
       hostStyle: "claude",
       mcpProfile: {
         profileVersion: 1,
-        initialize: { supportedProtocolVersions },
+        supportedProtocolVersions,
         ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
       },
     } as unknown as Partial<HostConfigInputV2>);
@@ -260,8 +259,8 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     // The backend WOULD accept a stateless pin here (it only validates
     // stateful ones), but accepting it is not the same as the client speaking
     // it: offering 2026-07-28 to a client that never advertised it emulates a
-    // capability the real product does not have. Only Automatic — which claims
-    // nothing — survives alongside the advertised revision.
+    // capability the real product does not have. Automatic selection survives
+    // alongside the revisions this client actually advertises.
     expect(
       (await screen.findAllByRole("option")).map((o) => o.textContent)
     ).toEqual(["Automatic", "2025-11-25"]);

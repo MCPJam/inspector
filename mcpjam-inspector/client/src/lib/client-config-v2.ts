@@ -756,6 +756,9 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
         profile.initialize.supportedProtocolVersions.length > 0));
   return (
     !hasInitialize &&
+    profile.clientInfo === undefined &&
+    (profile.supportedProtocolVersions === undefined ||
+      profile.supportedProtocolVersions.length === 0) &&
     profile.mcpProtocolVersion === undefined &&
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&

@@ -53,10 +53,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Derive a {@link HostConnectionProfile} from a **seeded host config** — the
  * internal `mcpProfile` shape that `seedHostTemplate(id)` returns. Pure read, no
- * I/O. `clientInfo` + `supportedProtocolVersions` live under
- * `mcpProfile.initialize`; the protocol-version pin lives at
- * `mcpProfile.mcpProtocolVersion` (sibling of `initialize`); the advertised
- * capabilities and visibility policy live at the top level.
+ * I/O. `clientInfo` + `supportedProtocolVersions` are era-neutral siblings
+ * under `mcpProfile`; legacy rows may still carry them under the deprecated
+ * `mcpProfile.initialize` envelope. `mcpProtocolVersion: "auto"` is reduced
+ * to no wire pin so the SDK negotiates the era at connect time.
  *
  * (Not the public `Host.toJSON()` shape, which uses `mcp.protocolVersion` etc.)
  */
@@ -71,23 +71,30 @@ export function hostConnectionProfile(
       ? mcpProfile.initialize
       : undefined;
 
-  const clientInfo = isRecord(initialize?.clientInfo)
-    ? (initialize.clientInfo as {
+  const rawClientInfo = isRecord(mcpProfile?.clientInfo)
+    ? mcpProfile.clientInfo
+    : initialize?.clientInfo;
+  const clientInfo = isRecord(rawClientInfo)
+    ? (rawClientInfo as {
         name?: string;
         version?: string;
       } & Record<string, unknown>)
     : undefined;
 
-  const supportedProtocolVersions = Array.isArray(
-    initialize?.supportedProtocolVersions,
+  const rawSupportedProtocolVersions = Array.isArray(
+    mcpProfile?.supportedProtocolVersions,
   )
-    ? (initialize.supportedProtocolVersions as unknown[]).filter(
+    ? mcpProfile.supportedProtocolVersions
+    : initialize?.supportedProtocolVersions;
+  const supportedProtocolVersions = Array.isArray(rawSupportedProtocolVersions)
+    ? (rawSupportedProtocolVersions as unknown[]).filter(
         (v): v is string => typeof v === "string",
       )
     : undefined;
 
   const mcpProtocolVersion =
-    typeof mcpProfile?.mcpProtocolVersion === "string"
+    typeof mcpProfile?.mcpProtocolVersion === "string" &&
+    mcpProfile.mcpProtocolVersion !== "auto"
       ? mcpProfile.mcpProtocolVersion
       : undefined;
 

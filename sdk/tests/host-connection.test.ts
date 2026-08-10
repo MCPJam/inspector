@@ -58,6 +58,36 @@ describe("hostConnectionProfile", () => {
     ).toBeUndefined();
   });
 
+  it("reduces automatic dual-era selection to an unpinned wire profile", () => {
+    const p = hostConnectionProfile({
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+        clientInfo: { name: "openai-mcp", version: "1.0.0" },
+      },
+    });
+    expect(p).toMatchObject({
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+      clientInfo: { name: "openai-mcp", version: "1.0.0" },
+    });
+    expect(p.mcpProtocolVersion).toBeUndefined();
+  });
+
+  it("keeps reading the deprecated initialize envelope", () => {
+    const p = hostConnectionProfile({
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "legacy", version: "1" },
+        },
+      },
+    });
+    expect(p.supportedProtocolVersions).toEqual(["2025-11-25"]);
+    expect(p.clientInfo).toMatchObject({ name: "legacy", version: "1" });
+  });
+
   describe("toolParamHeaderMirroring → mirrorToolParamHeaders", () => {
     it('reduces "omit" to mirrorToolParamHeaders: false', () => {
       const p = hostConnectionProfile({
