@@ -643,6 +643,12 @@ export function UserTestingScenarioDetail({
               <ChatboxPreviewPane
                 publishLink={environmentError ? null : publishLink}
                 mcpProfile={previewHost?.config.mcpProfile}
+                // A rebind repoints this scenario at a different environment
+                // without touching the share link, so the frame would keep
+                // testing the pre-rebind setup. `chatbox` comes from a
+                // reactive Convex query, so a committed rebind changes this
+                // and remounts the frame onto the new configuration.
+                remountKey={chatbox.environmentId ?? ""}
                 emptyTitle={
                   environmentError
                     ? "This scenario can't be previewed"

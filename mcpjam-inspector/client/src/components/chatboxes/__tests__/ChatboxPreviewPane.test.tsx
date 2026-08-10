@@ -157,4 +157,73 @@ describe("ChatboxPreviewPane", () => {
 
     expect(screen.getByTestId("user-testing-preview-frame")).toBeInTheDocument();
   });
+
+  describe("remountKey", () => {
+    // A rebind keeps the share link — same token, same slug — so `src` alone
+    // can't tell the frame its configuration moved. The frame would go on
+    // testing the pre-rebind setup with the bootstrap already in memory.
+    // A key change is observable as a new DOM node: React tears the old
+    // iframe down instead of reusing it, and the embed re-redeems on mount.
+    it("remounts the frame when the bound environment changes", () => {
+      const { rerender } = render(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_a"
+        />,
+      );
+      const before = screen.getByTestId("user-testing-preview-frame");
+
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_b"
+        />,
+      );
+
+      expect(screen.getByTestId("user-testing-preview-frame")).not.toBe(before);
+    });
+
+    it("does NOT remount on unrelated prop churn", () => {
+      const { rerender } = render(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_a"
+        />,
+      );
+      const before = screen.getByTestId("user-testing-preview-frame");
+
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_a"
+          emptyTitle="a different empty-state title"
+        />,
+      );
+
+      expect(screen.getByTestId("user-testing-preview-frame")).toBe(before);
+    });
+
+    it("omitting remountKey keeps the pre-existing src-only behavior", () => {
+      const { rerender } = render(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+        />,
+      );
+      const before = screen.getByTestId("user-testing-preview-frame");
+
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+        />,
+      );
+
+      expect(screen.getByTestId("user-testing-preview-frame")).toBe(before);
+    });
+  });
 });
