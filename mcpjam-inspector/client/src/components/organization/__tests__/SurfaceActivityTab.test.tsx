@@ -129,4 +129,60 @@ describe("SurfaceActivityTab", () => {
       screen.queryByRole("button", { name: "Load more" })
     ).not.toBeInTheDocument();
   });
+
+  it("ignores the Slack-only legacy actor key on another surface", () => {
+    // Not reachable today — `slackUserId` is written only by
+    // `slackAccountLinks`, which emits `slack.agent.*`. Pinned anyway because
+    // reading a surface-specific key on every surface is the shape of the bug
+    // this component exists to remove.
+    activity.events = [
+      event({
+        _id: "d",
+        action: "discord.agent.account_linked",
+        metadata: { slackUserId: "U_SLACK" },
+      }),
+    ];
+
+    render(<SurfaceActivityTab organizationId="org-1" surfaceKind="discord" />);
+    expect(screen.queryByText("Discord U_SLACK")).not.toBeInTheDocument();
+    expect(screen.getByText("MCPJam")).toBeInTheDocument();
+  });
+
+  describe("retrying a failed page", () => {
+    // `error` is one shared state for the first fetch and for `loadMore`, and
+    // `refresh` resets the cursor. Once this tab began filtering, "no rows"
+    // stopped meaning "nothing loaded" — so the two failures need telling
+    // apart or a failed page hands the user a button that restarts paging.
+    it("offers loadMore, not refresh, when a page failed but events exist", () => {
+      activity.events = [
+        event({ _id: "s", action: "slack.agent.channel_binding_created" }),
+      ];
+      activity.hasMore = true;
+      activity.error = new Error("network");
+
+      render(
+        <SurfaceActivityTab organizationId="org-1" surfaceKind="discord" />
+      );
+      expect(
+        screen.getByRole("button", { name: "Load more" })
+      ).toBeInTheDocument();
+      // "Try again" is the cursor-resetting refresh; it must not be the offer
+      // here, or the user loops over the same page forever.
+      expect(
+        screen.queryByRole("button", { name: "Try again" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("still offers refresh when nothing loaded at all", () => {
+      activity.events = [];
+      activity.error = new Error("network");
+
+      render(
+        <SurfaceActivityTab organizationId="org-1" surfaceKind="discord" />
+      );
+      expect(
+        screen.getByRole("button", { name: "Try again" })
+      ).toBeInTheDocument();
+    });
+  });
 });
