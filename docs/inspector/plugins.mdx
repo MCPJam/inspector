@@ -203,7 +203,20 @@ Click the **⋮** menu on a plugin card to:
 
 ## Credential setup
 
-After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
+After installing a plugin, each MCP server component that requires credentials shows a **Needs configuration** readiness badge in the plugin card. Click **Configure** next to that server to open the inline setup editor.
+
+The editor lists every declared environment variable and header name for that server:
+
+- **Required values** — enter the value in the masked input field.
+- **Optional values** — marked `optional`; you can leave them blank.
+- **Bundle-declared literals** — non-secret values the bundle ships (for example `MODE=production`) appear read-only. Click **Override** to replace the bundle value with your own; overriding pre-fills the declared value so you can edit from it. An override that is unchanged from the bundle value has nothing to save.
+- **Pre-configured values** — entries backed by a runtime-resolved template (for example `${PLUGIN_ROOT}/data`) show **Pre-configured** with no input and no override. The runtime fills these at launch; there is nothing to enter.
+
+Click **Save values** to apply. The card's readiness badge updates once the backend confirms the new state.
+
+<Note>
+The setup editor sends the complete set of values for each group you edit in one save. Values you entered in an earlier session are not pre-filled — re-enter them in the same save to keep them. Leaving a group's editor without saving leaves that group's existing values unchanged.
+</Note>
 
 ## Plugin provenance in runs and sessions
 
