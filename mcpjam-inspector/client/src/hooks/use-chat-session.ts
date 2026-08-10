@@ -2387,8 +2387,16 @@ export function useChatSession(
     // body, so it can't land in a persisted transcript. Only on a direct
     // (non-chatbox) turn whose resolved engine is local; the server re-checks
     // !HOSTED_MODE + non-guest + non-chatbox + verifies the token.
+    //
+    // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
+    // local engine only exists on the local server's mcp route (both this
+    // transmission AND the server-side resolver live there). An org-runtime
+    // model routes to /api/web/chat-v2, which has no local engine — so we send
+    // nothing local there (no stray consent header on the web route) and that
+    // turn's bash resolves cloud, as it must. Local engine + org model is a
+    // deliberate non-combo in v1.
     const sendLocalEngine =
-      !HOSTED_MODE &&
+      !shouldUseOrgAwareChatApi &&
       resolvedLocalEngine &&
       !hostedChatboxId &&
       Boolean(localConsentToken);

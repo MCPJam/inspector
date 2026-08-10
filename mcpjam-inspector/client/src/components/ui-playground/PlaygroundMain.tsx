@@ -745,6 +745,16 @@ export function PlaygroundMain({
   // chat hook. Hosted mode / no local engine ⇒ cloud, and the turn sends
   // nothing extra.
   const playgroundComputerEngine = useComputerEngine(convexProjectId);
+  // The resolved engine passed to every chat session on this tab — the root
+  // and each comparison column — so "This machine" runs bash consistently
+  // across model/host comparison, not just the primary session.
+  const personalComputerEngineOption = useMemo(
+    () => ({
+      engine: playgroundComputerEngine.engine,
+      consentToken: playgroundComputerEngine.consent.token,
+    }),
+    [playgroundComputerEngine.engine, playgroundComputerEngine.consent.token],
+  );
 
   // COMP-14: when the previewed host attaches a personal computer, composer
   // attachments are ALSO uploaded into the sandbox (reserve → mint → upload,
@@ -978,10 +988,7 @@ export function PlaygroundMain({
     // execution-context helper, so this also flows through chatbox sessions
     // (where the persisted host config wins via the runtime-config fetch).
     builtInToolIds: previewedHost?.config?.builtInToolIds,
-    personalComputerEngine: {
-      engine: playgroundComputerEngine.engine,
-      consentToken: playgroundComputerEngine.consent.token,
-    },
+    personalComputerEngine: personalComputerEngineOption,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -4786,6 +4793,7 @@ export function PlaygroundMain({
                             hostId: column.compareId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
+                          personalComputerEngine={personalComputerEngineOption}
                           displayMode={displayMode}
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
@@ -4886,6 +4894,7 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
+                            personalComputerEngine={personalComputerEngineOption}
                             displayMode={displayMode}
                             onDisplayModeChange={handleDisplayModeChange}
                             hostStyle={hostStyle}

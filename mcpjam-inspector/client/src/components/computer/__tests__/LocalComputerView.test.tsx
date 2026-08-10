@@ -68,7 +68,7 @@ describe("LocalComputerView", () => {
     expect(setEngine).toHaveBeenCalledWith("local");
   });
 
-  it("does not pin the engine if the grant fails", async () => {
+  it("does not pin the engine if the grant resolves false", async () => {
     const grant = vi.fn().mockResolvedValue(false);
     const setEngine = vi.fn();
     render(
@@ -80,6 +80,25 @@ describe("LocalComputerView", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Allow$/ }));
     await waitFor(() =>
       expect(screen.getByTestId("consent-error")).toBeInTheDocument(),
+    );
+    expect(setEngine).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the error and does not pin the engine if the grant REJECTS", async () => {
+    const grant = vi.fn().mockRejectedValue(new Error("network down"));
+    const setEngine = vi.fn();
+    render(
+      <LocalComputerView
+        projectId="proj_1"
+        engine={engineState({ setEngine, consent: { grant } })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Allow$/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId("consent-error")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("consent-error").textContent).toMatch(
+      /Couldn't enable the local computer/i,
     );
     expect(setEngine).not.toHaveBeenCalled();
   });
