@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { MaskedValueInput } from "@/components/connection/shared/MaskedValueInput";
 import type {
-  PluginEnvRequirementEntry,
-  PluginHeaderRequirementEntry,
+  PluginComponentEnvRequirement,
+  PluginComponentHeaderRequirement,
 } from "@/lib/plugins/plugin-api-types";
 
 /**
@@ -34,8 +34,8 @@ export interface PluginServerSetupValues {
 
 /** Whether a component projection carries anything this editor can edit. */
 export function hasPluginServerSetupEntries(component: {
-  envRequirements?: PluginEnvRequirementEntry[];
-  headerRequirements?: PluginHeaderRequirementEntry[];
+  envRequirements?: PluginComponentEnvRequirement[];
+  headerRequirements?: PluginComponentHeaderRequirement[];
 }): boolean {
   return Boolean(
     component.envRequirements?.length || component.headerRequirements?.length,
@@ -49,6 +49,9 @@ interface SetupRow {
   name: string;
   /** Screened non-secret literal declared by the bundle, when present. */
   declaredValue?: string;
+  /** Template-supplied (`${PLUGIN_ROOT}`-style): the runtime resolves it at
+   * launch — pre-configured, never user-editable text. */
+  template: boolean;
   optional: boolean;
 }
 
@@ -59,8 +62,8 @@ export function PluginServerSetupEditor({
   onSave,
   onCancel,
 }: {
-  envRequirements?: PluginEnvRequirementEntry[];
-  headerRequirements?: PluginHeaderRequirementEntry[];
+  envRequirements?: PluginComponentEnvRequirement[];
+  headerRequirements?: PluginComponentHeaderRequirement[];
   busy?: boolean;
   onSave: (values: PluginServerSetupValues) => void | Promise<void>;
   onCancel: () => void;
@@ -72,13 +75,20 @@ export function PluginServerSetupEditor({
         group: "env" as const,
         name: entry.name,
         declaredValue: entry.value,
-        optional: !entry.required && entry.value === undefined,
+        template: entry.hasTemplate === true,
+        // Only an EXPLICIT required:false is rendered as optional — an
+        // omitted flag must not claim optionality the bundle never declared.
+        optional:
+          entry.required === false &&
+          entry.value === undefined &&
+          entry.hasTemplate !== true,
       })),
       ...headerRequirements.map((entry) => ({
         rowKey: `header:${entry.name}`,
         group: "header" as const,
         name: entry.name,
         declaredValue: entry.value,
+        template: false,
         optional: false,
       })),
     ],
@@ -100,6 +110,9 @@ export function PluginServerSetupEditor({
     const env: Record<string, string> = {};
     const headers: Record<string, string> = {};
     for (const row of rows) {
+      // Template-supplied values are resolved by the runtime at launch —
+      // never written from here.
+      if (row.template) continue;
       // A literal that was never overridden is already part of the stored
       // config server-side — nothing to write.
       if (row.declaredValue !== undefined && !overridden.has(row.rowKey)) {
@@ -141,7 +154,16 @@ export function PluginServerSetupEditor({
               {row.optional ? (
                 <span className="shrink-0 text-muted-foreground">optional</span>
               ) : null}
-              {isLiteral ? (
+              {row.template ? (
+                // Runtime-resolved template: nothing to enter, nothing to
+                // override — the value does not exist until launch.
+                <span
+                  className="ml-auto text-muted-foreground"
+                  title="Supplied by the bundle and resolved at launch"
+                >
+                  Pre-configured
+                </span>
+              ) : isLiteral ? (
                 <>
                   <span
                     className="min-w-0 truncate font-mono text-muted-foreground"

@@ -54,25 +54,22 @@ export interface PluginImportPreviewSkill {
 }
 
 /**
- * One declared env var, mirroring sdk `PluginEnvRequirement` (field names are
- * the SDK's — `name`/`required`/`value`). `value` is a SCREENED NON-SECRET
- * literal the bundle declared (e.g. `{"MODE": "production"}`): the parser
- * never stores secret-looking values, so its presence is safe to render.
- * Absent until the backend's sdk dependency bump forwards it — treat absence
- * as "no declared literal".
+ * One declared env var in the SANITIZED import preview. Names only — the
+ * preview never carries values. `preconfigured` means the bundle supplied a
+ * template or a screened non-secret literal for this name, so the user has
+ * nothing to enter. Optional fields land with mcpjam-backend#919.
  */
-export interface PluginEnvRequirementEntry {
+export interface PluginImportPreviewEnvRequirement {
   name: string;
   required: boolean;
-  value?: string;
+  preconfigured?: boolean;
 }
 
-/** One declared header, mirroring sdk `PluginHeaderRequirement`. */
-export interface PluginHeaderRequirementEntry {
+/** One declared header in the sanitized import preview. Names only. */
+export interface PluginImportPreviewHeaderRequirement {
   name: string;
   secret: boolean;
-  /** Screened non-secret literal header value, when declared. */
-  value?: string;
+  preconfigured?: boolean;
 }
 
 export interface PluginImportPreviewServer {
@@ -80,14 +77,14 @@ export interface PluginImportPreviewServer {
   transport: "stdio" | "http";
   /**
    * Declared wire transport for http servers (sdk
-   * `NormalizedPluginMcpServer.httpVariant`). Optional until the backend's
-   * sdk bump forwards it.
+   * `NormalizedPluginMcpServer.httpVariant`; forwarded per
+   * mcpjam-backend#919). Absent for stdio servers and on older previews.
    */
-  httpVariant?: "streamable-http" | "sse" | (string & {});
-  /** Requested env var names (stdio), plus screened non-secret literals. */
-  envRequirements?: PluginEnvRequirementEntry[];
-  /** Requested header names (http), plus screened non-secret literals. */
-  headerRequirements?: PluginHeaderRequirementEntry[];
+  httpVariant?: "streamable-http" | "sse";
+  /** Requested env var NAMES only (stdio). Never values. */
+  envRequirements?: PluginImportPreviewEnvRequirement[];
+  /** Requested header NAMES only (http). Never values. */
+  headerRequirements?: PluginImportPreviewHeaderRequirement[];
   oauth?: { timing?: "on_install" | "on_use"; scopes?: string[] };
   /** Presence only — never the (possibly path-bearing) working-dir string. */
   hasWorkingDirectory?: boolean;
@@ -124,7 +121,8 @@ export interface PluginImportPreviewWarning {
  * One component the parser skipped under the spec's failure-isolation
  * boundaries (one bad server entry / skill / the whole mcp.json document).
  * Field names mirror sdk `PluginSkippedComponent` exactly (`kind`/`key`/
- * `reason`). `kind` is widened: render unknown kinds verbatim.
+ * `reason`; persisted verbatim per mcpjam-backend#919). `kind` is widened:
+ * render unknown kinds verbatim.
  */
 export interface PluginImportPreviewSkippedComponent {
   kind: "server" | "skill" | "mcp-config" | (string & {});
@@ -147,6 +145,11 @@ export interface PluginImportPreview {
     displayName?: string;
     version?: string;
     description?: string;
+    /**
+     * Agent Plugins schema version the bundle targets (sdk
+     * `ParsedPluginBundle.schemaVersion`; forwarded per mcpjam-backend#919).
+     */
+    schemaVersion?: string;
   };
   bundleHash: string;
   manifestHash: string;
@@ -166,12 +169,14 @@ export interface PluginImportPreview {
   unsupported: PluginImportPreviewUnsupported[];
   warnings: PluginImportPreviewWarning[];
   /**
-   * Components skipped by the parser's per-entry failure isolation (sdk
-   * `ParsedPluginBundle.skipped`). Optional: the deployed backend does not
-   * forward these yet — absent means "none reported", and import surfaces
-   * must render nothing rather than inventing rows.
+   * Components skipped by the parser's per-entry failure isolation. The
+   * backend persists this under `skipped`, matching sdk
+   * `ParsedPluginBundle.skipped` (mcpjam-backend#919). Optional: the
+   * deployed backend does not forward it yet — absent means "none
+   * reported", and import surfaces must render nothing rather than
+   * inventing rows.
    */
-  skippedComponents?: PluginImportPreviewSkippedComponent[];
+  skipped?: PluginImportPreviewSkippedComponent[];
 }
 
 /** Stable sanitized `{code, message}` persisted on a failed import. */
@@ -236,6 +241,31 @@ export interface PluginDetail extends PluginSummary {
   versions: PluginVersionSummary[];
 }
 
+/**
+ * One declared env var on a version's server component projection
+ * (`plugins.getPluginVersion`; shape pinned by mcpjam-backend#919).
+ *
+ * `value` is a SCREENED NON-SECRET literal the bundle declared (e.g.
+ * `{"MODE": "production"}`): the parser never stores secret-looking values,
+ * so its presence is safe to render. `hasTemplate` marks a
+ * `${PLUGIN_ROOT}`-style template-supplied value the runtime resolves at
+ * launch — pre-configured, never user-editable text.
+ */
+export interface PluginComponentEnvRequirement {
+  name: string;
+  required?: boolean;
+  value?: string;
+  hasTemplate?: boolean;
+}
+
+/** One declared header on a version's server component projection. */
+export interface PluginComponentHeaderRequirement {
+  name: string;
+  secret?: boolean;
+  /** Screened non-secret literal header value, when declared. */
+  value?: string;
+}
+
 export interface PluginVersionServerComponent {
   componentId: string;
   componentKey: string;
@@ -245,19 +275,18 @@ export interface PluginVersionServerComponent {
   materializedServerId?: string;
   /**
    * Declared wire transport for http servers (sdk
-   * `NormalizedPluginMcpServer.httpVariant`). Optional until the backend's
-   * sdk bump forwards it; absent for stdio servers.
+   * `NormalizedPluginMcpServer.httpVariant`; projected per
+   * mcpjam-backend#919). Absent for stdio servers and on older projections.
    */
-  httpVariant?: "streamable-http" | "sse" | (string & {});
+  httpVariant?: "streamable-http" | "sse";
   /**
-   * Declared env/header requirement entries for this server (sdk
-   * `envRequirements`/`headerRequirements` on the normalized config, names
-   * only plus screened non-secret literals). Optional: the deployed backend
-   * does not project these yet — absent means the setup editor simply does
-   * not render, never that requirements were checked and found empty.
+   * Declared env/header requirement entries for this server. Absent on a
+   * backend that predates mcpjam-backend#919 — the setup editor simply does
+   * not render then, never claiming requirements were checked and found
+   * empty.
    */
-  envRequirements?: PluginEnvRequirementEntry[];
-  headerRequirements?: PluginHeaderRequirementEntry[];
+  envRequirements?: PluginComponentEnvRequirement[];
+  headerRequirements?: PluginComponentHeaderRequirement[];
 }
 
 export interface PluginVersionSkillComponent {

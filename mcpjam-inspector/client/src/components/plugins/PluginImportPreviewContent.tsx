@@ -85,6 +85,20 @@ function Section({
   );
 }
 
+/**
+ * " (N of M pre-configured)" when the bundle supplies some of a server's
+ * values itself (template or screened literal — names only, the preview
+ * never carries values). Empty when nothing is pre-configured, including on
+ * a backend that predates the flag.
+ */
+function preconfiguredSuffix(
+  entries: Array<{ preconfigured?: boolean }>,
+): string {
+  const count = entries.filter((entry) => entry.preconfigured).length;
+  if (count === 0) return "";
+  return ` (${count} of ${entries.length} pre-configured)`;
+}
+
 function RequirementLine({ requirement }: { requirement: PluginSetupRequirement }) {
   return (
     <li className="flex items-center gap-2 text-xs">
@@ -123,6 +137,11 @@ export function PluginImportPreviewContent({
               v{identity.version}
             </span>
           ) : null}
+          {identity.schemaVersion ? (
+            <span className="text-xs text-muted-foreground">
+              Agent Plugins {identity.schemaVersion}
+            </span>
+          ) : null}
           <code
             className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
             title="Content-addressed revision identity"
@@ -151,22 +170,22 @@ export function PluginImportPreviewContent({
           would later read the absent server as a runtime bug. Never behind an
           expander, always before the commit buttons. Absent/empty (including
           on a backend that predates the field) renders nothing at all. */}
-      {preview.skippedComponents?.length ? (
+      {preview.skipped?.length ? (
         <div
           className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2"
           data-testid="plugin-preview-skipped"
         >
           <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">
             <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
-            {pluralize(preview.skippedComponents.length, "component")} will not
-            be installed
+            {pluralize(preview.skipped.length, "component")} will not be
+            installed
           </div>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             These entries failed validation and are skipped. The rest of the
             plugin installs normally.
           </p>
           <ul className="mt-1.5 space-y-1">
-            {preview.skippedComponents.map((skip, index) => (
+            {preview.skipped.map((skip, index) => (
               <li
                 key={`${skip.kind}-${skip.key}-${index}`}
                 className="text-xs text-muted-foreground"
@@ -319,12 +338,14 @@ export function PluginImportPreviewContent({
                 {server.envRequirements?.length ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     env: {server.envRequirements.map((e) => e.name).join(", ")}
+                    {preconfiguredSuffix(server.envRequirements)}
                   </p>
                 ) : null}
                 {server.headerRequirements?.length ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     headers:{" "}
                     {server.headerRequirements.map((h) => h.name).join(", ")}
+                    {preconfiguredSuffix(server.headerRequirements)}
                   </p>
                 ) : null}
               </li>

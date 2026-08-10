@@ -41,7 +41,7 @@ describe("PluginImportPreviewContent — skipped components", () => {
     render(
       <PluginImportPreviewContent
         preview={makePreview({
-          skippedComponents: [
+          skipped: [
             {
               kind: "server",
               key: "legacy",
@@ -67,7 +67,7 @@ describe("PluginImportPreviewContent — skipped components", () => {
     render(
       <PluginImportPreviewContent
         preview={makePreview({
-          skippedComponents: [
+          skipped: [
             { kind: "future-kind", key: "x", reason: "because" },
           ],
         })}
@@ -87,7 +87,7 @@ describe("PluginImportPreviewContent — skipped components", () => {
 
     render(
       <PluginImportPreviewContent
-        preview={makePreview({ skippedComponents: [] })}
+        preview={makePreview({ skipped: [] })}
       />,
     );
     expect(screen.queryByTestId("plugin-preview-skipped")).toBeNull();
@@ -130,5 +130,66 @@ describe("PluginImportPreviewContent — dotted plugin names", () => {
       />,
     );
     expect(screen.getByText("com.acme.tools")).toBeTruthy();
+  });
+});
+
+describe("PluginImportPreviewContent — identity schema version", () => {
+  it("renders the Agent Plugins schema version only when forwarded", () => {
+    const { unmount } = render(
+      <PluginImportPreviewContent
+        preview={makePreview({
+          identity: { name: "demo", schemaVersion: "1.0.0" },
+        })}
+      />,
+    );
+    expect(screen.getByText("Agent Plugins 1.0.0")).toBeTruthy();
+    unmount();
+
+    render(<PluginImportPreviewContent preview={makePreview()} />);
+    expect(screen.queryByText(/Agent Plugins/)).toBeNull();
+  });
+});
+
+describe("PluginImportPreviewContent — pre-configured requirement hint", () => {
+  it("counts bundle-supplied names without ever rendering values", () => {
+    render(
+      <PluginImportPreviewContent
+        preview={makePreview({
+          servers: [
+            {
+              key: "api",
+              transport: "stdio",
+              envRequirements: [
+                { name: "API_KEY", required: true },
+                { name: "MODE", required: false, preconfigured: true },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /MCP servers/ }));
+    expect(
+      screen.getByText(/env: API_KEY, MODE \(1 of 2 pre-configured\)/),
+    ).toBeTruthy();
+  });
+
+  it("adds no hint when nothing is pre-configured (older backend included)", () => {
+    render(
+      <PluginImportPreviewContent
+        preview={makePreview({
+          servers: [
+            {
+              key: "api",
+              transport: "stdio",
+              envRequirements: [{ name: "API_KEY", required: true }],
+            },
+          ],
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /MCP servers/ }));
+    expect(screen.getByText(/env: API_KEY$/)).toBeTruthy();
+    expect(screen.queryByText(/pre-configured/)).toBeNull();
   });
 });

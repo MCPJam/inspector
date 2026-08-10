@@ -265,6 +265,7 @@ describe("PluginGroupCard — inline component setup", () => {
       envRequirements: [
         { name: "API_KEY", required: true },
         { name: "MODE", required: false, value: "production" },
+        { name: "CONFIG_PATH", hasTemplate: true },
       ],
       headerRequirements: [{ name: "X-Api-Key", secret: true }],
     });
@@ -280,6 +281,10 @@ describe("PluginGroupCard — inline component setup", () => {
     expect(screen.getByText("production")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Override" })).toBeTruthy();
     expect(screen.queryByLabelText("Value for MODE")).toBeNull();
+    // A template-supplied value is pre-configured: no input, no override —
+    // the runtime resolves it at launch.
+    expect(screen.getByText("Pre-configured")).toBeTruthy();
+    expect(screen.queryByLabelText("Value for CONFIG_PATH")).toBeNull();
 
     fireEvent.change(screen.getByLabelText("Value for API_KEY"), {
       target: { value: "sk-test-123" },
@@ -293,8 +298,9 @@ describe("PluginGroupCard — inline component setup", () => {
 
     // Credential-only payload: the server id plus values, never structural
     // fields (the backend rejects structural edits on plugin rows). The
-    // untouched literal is not re-sent either — it is already part of the
-    // stored config.
+    // untouched literal and the template-supplied entry are not sent either
+    // — one already lives in the stored config, the other never exists
+    // before launch.
     expect(h.updateServerWithClientSecret).toHaveBeenCalledWith({
       serverId: "s_1",
       env: { API_KEY: "sk-test-123" },
