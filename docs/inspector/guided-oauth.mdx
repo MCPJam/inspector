@@ -133,7 +133,13 @@ In hosted mode, a **Reveal** button appears next to the **Bearer Token** label. 
 Bearer tokens are stored securely and are never written to your browser's local storage in hosted mode. In local mode, the token is stored in your browser's local storage alongside the rest of your server configuration.
 </Note>
 
-## Pre-registered client secrets
+## Pre-registered clients
+
+When you select **Pre-registered** as the registration strategy, a **Client ID** is required before you can save the configuration. Because the pre-registered flow skips Dynamic Client Registration entirely, there is no way to obtain a client ID at runtime — the flow will fail without one.
+
+If you try to save without a Client ID, the form blocks the save and shows an inline error. The **Advanced settings** section expands automatically so you can enter the Client ID without having to find and open it yourself. Switching the **Registration** dropdown away from **Pre-registered** (for example, to **Dynamic (DCR)**) clears the error.
+
+### Pre-registered client secrets
 
 When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
 
