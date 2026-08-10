@@ -29,6 +29,7 @@ import { SandboxImagePill } from "@/components/environment-composer/sandbox-imag
 import {
   composerStateFromEnvironments,
   emptyEnvironmentStack,
+  environmentsCarryPluginPins,
   environmentsExceedOneStack,
   isComposeMode,
   type EnvironmentComposerState,
@@ -84,26 +85,41 @@ export function EnvironmentComposer({
   );
   const composeMode = isComposeMode(value);
   /**
-   * The selection cannot be represented as a stack: two of its environments run
-   * on the same client, and the stack fans out over `hostIds`. Editing any slot
-   * flips `customized` and hands resolution to the stack, which would resolve
-   * them to ONE row and drop a target. So the slots are disabled while that is
-   * true — the user can still change the SELECTION, which is the way out.
+   * The selection cannot be round-tripped through a stack, so slot edits are
+   * blocked — the user can still change the SELECTION, which is the way out.
+   * Two distinct reasons, each with its own hint below:
+   *
+   *  - `"pins"`: an environment pins plugin versions. The stack has no plugin
+   *    slot, so the first edit would resolve rows without the pins and the run
+   *    would silently shed them. Holds even for a single environment.
+   *  - `"collapse"`: two environments run on the same client (the stack fans
+   *    out over `hostIds`, so they'd resolve to ONE row and drop a target), or
+   *    they disagree on a shared slot the project has enabled.
    *
    * Only while `customized` is false: once the stack is authoritative there is
    * no saved selection left to lose.
    */
-  const selectionExceedsOneStack = useMemo(() => {
-    if (value.customized || value.environmentIds.length < 2) return false;
+  const stackEditBlock = useMemo<"pins" | "collapse" | null>(() => {
+    if (value.customized || value.environmentIds.length === 0) return null;
     const selected = value.environmentIds
       .map((id) => liveEnvironments.find((e) => e.environmentId === id))
       .filter((e): e is NonNullable<typeof e> => Boolean(e));
-    return (
-      selected.length === value.environmentIds.length &&
-      environmentsExceedOneStack(selected)
-    );
-  }, [liveEnvironments, value.customized, value.environmentIds]);
-  const slotsDisabled = disabled || selectionExceedsOneStack;
+    if (selected.length !== value.environmentIds.length) return null;
+    if (environmentsCarryPluginPins(selected)) return "pins";
+    return environmentsExceedOneStack(selected, {
+      skillsEnabled,
+      computersEnabled,
+    })
+      ? "collapse"
+      : null;
+  }, [
+    computersEnabled,
+    liveEnvironments,
+    skillsEnabled,
+    value.customized,
+    value.environmentIds,
+  ]);
+  const slotsDisabled = disabled || stackEditBlock !== null;
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
 
@@ -246,6 +262,7 @@ export function EnvironmentComposer({
           max={maxTargets}
           disabled={slotsDisabled}
           testId={testId("clients-picker")}
+          inModal={inModal}
         />
         <ServerGroupPicker
           projectId={projectId}
@@ -264,6 +281,7 @@ export function EnvironmentComposer({
             onChange={(skillSelection) => patchStack({ skillSelection })}
             disabled={slotsDisabled}
             testId={testId("skills-picker")}
+            inModal={inModal}
           />
         ) : null}
         {computersEnabled ? (
@@ -283,14 +301,14 @@ export function EnvironmentComposer({
           may already be disabling everything and saying its own version of
           this, and "change the selection above" would then name a control the
           user cannot reach. */}
-      {selectionExceedsOneStack && !disabled ? (
+      {stackEditBlock && !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("collapse-hint")}
         >
-          These environments don&apos;t share one setup — they differ by client
-          or by their server group, skills or image — so editing below would
-          change what some of them run. Change the selection above instead.
+          {stackEditBlock === "pins"
+            ? "This selection pins plugin versions, which this strip can't carry — editing below would run without them. Change the selection above instead."
+            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing below would change what some of them run. Change the selection above instead."}
         </p>
       ) : null}
     </div>

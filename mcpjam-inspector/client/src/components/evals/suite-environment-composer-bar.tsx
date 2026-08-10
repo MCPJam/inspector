@@ -28,6 +28,7 @@ import { SandboxImagePill } from "@/components/environment-composer/sandbox-imag
 import {
   composerHasTarget,
   composerStateFromEnvironments,
+  environmentsCarryPluginPins,
   environmentsExceedOneStack,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
@@ -38,6 +39,7 @@ import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/enviro
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -187,19 +189,6 @@ function EnvironmentModeBar({
   const unresolvedCount = environmentsLoading
     ? 0
     : attachedIds.length - attachedEnvironments.length;
-  /**
-   * The ATTACHMENTS cannot be represented as one stack — two on a single client,
-   * or disagreeing on a shared slot — so editing any pill would change what some
-   * of them run.
-   *
-   * The composer has its own guard for the same shape, but only for a live NAMED
-   * selection. This one is computed from the PERSISTED attachments, which is the
-   * case it cannot see: two ad-hoc rows seed as a composition
-   * (`customized: true`), where the composer has no saved selection left to
-   * protect.
-   */
-  const collapsesByHost = environmentsExceedOneStack(attachedEnvironments);
-
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
       return composerStateFromEnvironments(attachedEnvironments);
@@ -224,6 +213,29 @@ function EnvironmentModeBar({
     suite.hostAttachments,
     suite.serverAttachmentId,
   ]);
+
+  const skillsEnabled = useSkillsEnabled();
+  const computersEnabled = useComputersEnabled();
+  /**
+   * The ATTACHMENTS cannot be represented as one stack — two on a single client,
+   * disagreeing on an enabled shared slot, or (for a seed the composer treats as
+   * a pure composition) carrying plugin pins — so editing any pill would change
+   * what some of them run.
+   *
+   * The composer has its own guard for the same shapes, but only for a live
+   * NAMED selection. This one is computed from the PERSISTED attachments, which
+   * is the case it cannot see: ad-hoc or mixed rows seed as a composition
+   * (`customized: true`), where the composer has no saved selection left to
+   * protect. Pins on an all-named attachment are deliberately NOT handled here —
+   * the composer's guard catches those while keeping the selection picker
+   * usable, which is the way out.
+   */
+  const collapsesByHost =
+    environmentsExceedOneStack(attachedEnvironments, {
+      skillsEnabled,
+      computersEnabled,
+    }) ||
+    (seeded.customized && environmentsCarryPluginPins(attachedEnvironments));
 
   const [state, setState] = useState<EnvironmentComposerState>(seeded);
   const [saving, setSaving] = useState(false);
@@ -323,9 +335,10 @@ function EnvironmentModeBar({
           className="text-[11px] text-muted-foreground"
           data-testid="suite-env-attachments-collapse-hint"
         >
-          This suite&apos;s environments don&apos;t share one setup, so this
-          strip can&apos;t change them without changing what some of them run.
-          Adjust them in suite settings.
+          This suite&apos;s environments don&apos;t fit one editable setup —
+          they differ by client, server group, skills or image, or pin plugin
+          versions — so this strip can&apos;t change them without changing what
+          some of them run. Adjust them in suite settings.
         </p>
       ) : null}
     </div>

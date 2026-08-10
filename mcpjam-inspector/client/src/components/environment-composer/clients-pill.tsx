@@ -27,6 +27,7 @@ export function ClientsPill({
   max,
   disabled,
   testId,
+  inModal = false,
 }: {
   projectId: string;
   value: string[];
@@ -35,6 +36,13 @@ export function ClientsPill({
   max: number;
   disabled?: boolean;
   testId?: string;
+  /**
+   * Render the popover INLINE rather than portalled, for callers inside a Radix
+   * Dialog — a portalled popover lands outside the dialog, where the modal
+   * overlay swallows every click. Same escape hatch, same name, as
+   * `EnvironmentPicker` and `ServerGroupPicker`.
+   */
+  inModal?: boolean;
 }) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
@@ -109,7 +117,12 @@ export function ClientsPill({
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-1" align="start" sideOffset={4}>
+      <PopoverContent
+        className="w-64 p-1"
+        align="start"
+        sideOffset={4}
+        portalled={!inModal}
+      >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           {single ? "Client" : "Clients · fan-out"}
         </div>

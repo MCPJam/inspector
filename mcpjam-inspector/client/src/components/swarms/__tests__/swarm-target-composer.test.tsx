@@ -125,6 +125,7 @@ function Harness({
     revision: number;
     createdAt: number;
     updatedAt: number;
+    pluginVersionIds?: string[];
   }>;
 }) {
   const [value, setValue] = useState<EnvironmentComposerState>(
@@ -164,6 +165,34 @@ describe("SwarmTargetComposer", () => {
     // Toggle off the seeded client to mark customized.
     fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
     expect(screen.getByTestId("new-swarm-target-custom-badge")).toBeVisible();
+  });
+
+  it("blocks stack edits when a selected environment pins plugin versions", () => {
+    // The stack has no plugin slot and the resolver never reuses a pinned named
+    // row, so an edit would silently run without the pins. The picker stays
+    // usable — changing the selection is the way out.
+    render(
+      <Harness
+        environments={[
+          {
+            environmentId: "env-1",
+            projectId: "proj-1",
+            name: "Prod-like",
+            hostId: "host-1",
+            revision: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            pluginVersionIds: ["pv-1"],
+          },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-collapse-hint")).toHaveTextContent(
+      /pins plugin versions/i
+    );
+    expect(screen.getByTestId("new-swarm-environments-picker")).toBeEnabled();
   });
 
   it("saves a tentative draft from the lego strip", () => {

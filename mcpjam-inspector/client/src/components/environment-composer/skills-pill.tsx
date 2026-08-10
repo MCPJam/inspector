@@ -20,12 +20,20 @@ export function SkillsPill({
   onChange,
   disabled,
   testId,
+  inModal = false,
 }: {
   projectId: string;
   value: ProjectEnvironmentSkillSelection | null;
   onChange: (next: ProjectEnvironmentSkillSelection | null) => void;
   disabled?: boolean;
   testId?: string;
+  /**
+   * Render the popover INLINE rather than portalled, for callers inside a Radix
+   * Dialog — a portalled popover lands outside the dialog, where the modal
+   * overlay swallows every click. Same escape hatch, same name, as
+   * `EnvironmentPicker` and `ServerGroupPicker`.
+   */
+  inModal?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selectedCount = value?.skillIds.length ?? 0;
@@ -65,7 +73,12 @@ export function SkillsPill({
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-2" align="start" sideOffset={4}>
+      <PopoverContent
+        className="w-72 p-2"
+        align="start"
+        sideOffset={4}
+        portalled={!inModal}
+      >
         <div className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Skills · shared pins
         </div>

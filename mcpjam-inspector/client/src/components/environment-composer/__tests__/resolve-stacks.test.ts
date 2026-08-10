@@ -8,6 +8,7 @@ import {
 import {
   composerStateFromEnvironments,
   emptyEnvironmentStack,
+  environmentsCarryPluginPins,
   environmentsExceedOneStack,
   type EnvironmentComposerState,
 } from "../environment-stack";
@@ -403,6 +404,24 @@ describe("composerStateFromEnvironments", () => {
     expect(state.stack.serverAttachmentId).toBeNull();
   });
 
+  it("keeps an agreed slot when a DIFFERENT slot disagrees", () => {
+    // Agreement is per slot. All-or-nothing seeding would null the server
+    // group both environments share just because their skills differ — its own
+    // silent change once the guard lets the selection stay editable (e.g. when
+    // the disagreeing slot is flag-disabled).
+    const state = composerStateFromEnvironments([
+      named({
+        environmentId: "a",
+        hostId: "h1",
+        serverAttachmentId: "g1",
+        skillSelection: { mode: "explicit", skillIds: ["s1"] },
+      }),
+      named({ environmentId: "b", hostId: "h2", serverAttachmentId: "g1" }),
+    ]);
+    expect(state.stack.serverAttachmentId).toBe("g1");
+    expect(state.stack.skillSelection).toBeNull();
+  });
+
   it("seeds ad-hoc rows as a COMPOSITION, not a selection", () => {
     // Ad-hoc rows are never offerable in the saved-environment picker, so
     // presenting them there would render undetachable generic chips.
@@ -416,23 +435,31 @@ describe("composerStateFromEnvironments", () => {
 });
 
 describe("environmentsExceedOneStack", () => {
+  const allSlots = { skillsEnabled: true, computersEnabled: true };
+
   it("flags two environments sharing a client", () => {
     // The stack fans out over hostIds, so these two would resolve to ONE row —
     // a lost target, not just a homogenized slot.
     expect(
-      environmentsExceedOneStack([
-        named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
-        named({ environmentId: "b", hostId: "h1", serverAttachmentId: "g2" }),
-      ])
+      environmentsExceedOneStack(
+        [
+          named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
+          named({ environmentId: "b", hostId: "h1", serverAttachmentId: "g2" }),
+        ],
+        allSlots
+      )
     ).toBe(true);
   });
 
   it("passes a selection with one environment per client and agreeing slots", () => {
     expect(
-      environmentsExceedOneStack([
-        named({ environmentId: "a", hostId: "h1" }),
-        named({ environmentId: "b", hostId: "h2" }),
-      ])
+      environmentsExceedOneStack(
+        [
+          named({ environmentId: "a", hostId: "h1" }),
+          named({ environmentId: "b", hostId: "h2" }),
+        ],
+        allSlots
+      )
     ).toBe(false);
   });
 
@@ -441,16 +468,69 @@ describe("environmentsExceedOneStack", () => {
     // reads the slot as empty, so an edit would resolve both with defaults and
     // silently replace each environment's execution context.
     expect(
-      environmentsExceedOneStack([
-        named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
-        named({ environmentId: "b", hostId: "h2", serverAttachmentId: "g2" }),
-      ])
+      environmentsExceedOneStack(
+        [
+          named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
+          named({ environmentId: "b", hostId: "h2", serverAttachmentId: "g2" }),
+        ],
+        allSlots
+      )
     ).toBe(true);
+  });
+
+  it("ignores a disagreement on a flag-DISABLED slot", () => {
+    // The resolver drops disabled slots (`sharedFields`), so these two resolve
+    // to the same run — blocking edits over the difference costs the user a
+    // working strip for nothing.
+    const selection = [
+      named({
+        environmentId: "a",
+        hostId: "h1",
+        skillSelection: { mode: "explicit", skillIds: ["s1"] },
+        computerEnvironmentId: "img-1",
+      }),
+      named({ environmentId: "b", hostId: "h2" }),
+    ];
+    expect(
+      environmentsExceedOneStack(selection, {
+        skillsEnabled: false,
+        computersEnabled: false,
+      })
+    ).toBe(false);
+    expect(environmentsExceedOneStack(selection, allSlots)).toBe(true);
   });
 
   it("passes a single environment, which is always one stack", () => {
     expect(
-      environmentsExceedOneStack([named({ environmentId: "a", hostId: "h1" })])
+      environmentsExceedOneStack(
+        [named({ environmentId: "a", hostId: "h1" })],
+        allSlots
+      )
+    ).toBe(false);
+  });
+});
+
+describe("environmentsCarryPluginPins", () => {
+  it("flags a selection that pins plugin versions, even a single one", () => {
+    // The stack has no plugin slot and the resolver never reuses a pinned named
+    // row, so an edit would silently shed the pins. Callers block stack edits.
+    expect(
+      environmentsCarryPluginPins([
+        named({
+          environmentId: "a",
+          hostId: "h1",
+          pluginVersionIds: ["pv-1"],
+        }),
+      ])
+    ).toBe(true);
+  });
+
+  it("passes unpinned rows, including an empty pins array", () => {
+    expect(
+      environmentsCarryPluginPins([
+        named({ environmentId: "a", hostId: "h1", pluginVersionIds: [] }),
+        named({ environmentId: "b", hostId: "h2" }),
+      ])
     ).toBe(false);
   });
 });

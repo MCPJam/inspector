@@ -79,13 +79,47 @@ export function stackFromEnvironment(
   };
 }
 
-/** The three slots a stack shares across every client it fans out to. */
-function sharedSlotsOf(env: ProjectEnvironmentView) {
-  return {
-    serverAttachmentId: env.serverAttachmentId ?? null,
-    skillSelection: env.skillSelection ?? null,
-    computerEnvironmentId: env.computerEnvironmentId ?? null,
-  };
+/**
+ * Which shared slots this project actually runs. Mirrors the resolver's
+ * `sharedFields`: a flag-disabled slot is dropped at resolution, so two
+ * environments differing only there produce the SAME run and must compare equal
+ * here too — otherwise the guard blocks edits over a difference that costs
+ * nothing.
+ */
+export type EnabledStackSlots = {
+  skillsEnabled: boolean;
+  computersEnabled: boolean;
+};
+
+/** Slot-by-slot equality over the slots the project has enabled. */
+function enabledSlotsEqual(
+  a: ProjectEnvironmentView,
+  b: ProjectEnvironmentView,
+  enabled: EnabledStackSlots
+): boolean {
+  return (
+    (a.serverAttachmentId ?? null) === (b.serverAttachmentId ?? null) &&
+    (!enabled.computersEnabled ||
+      (a.computerEnvironmentId ?? null) === (b.computerEnvironmentId ?? null)) &&
+    (!enabled.skillsEnabled ||
+      sameSkillSelection(a.skillSelection, b.skillSelection))
+  );
+}
+
+/**
+ * A selection with plugin pins cannot be represented as a stack AT ALL: the
+ * stack has no plugin slot, and the resolver deliberately never reuses a pinned
+ * named row — so the first stack edit resolves rows WITHOUT the pins and the run
+ * silently sheds the plugin versions the user picked. Callers block stack edits
+ * while this holds, exactly like {@link environmentsExceedOneStack}; it is a
+ * separate predicate because it holds even for a SINGLE environment, and a
+ * surface may want to keep its selection picker usable while only the slots are
+ * blocked.
+ */
+export function environmentsCarryPluginPins(
+  environments: ProjectEnvironmentView[]
+): boolean {
+  return environments.some((env) => (env.pluginVersionIds?.length ?? 0) > 0);
 }
 
 /**
@@ -99,20 +133,24 @@ function sharedSlotsOf(env: ProjectEnvironmentView) {
  *    selection, ONE image for all of its clients. Seeding a disagreement reads
  *    the slot as empty, so the first edit would resolve every client with
  *    defaults and quietly replace each environment's distinct execution context.
+ *    Only slots the project has ENABLED count — a disabled slot is dropped at
+ *    resolution, so disagreeing there changes nothing.
  *
  * Neither is the deliberate homogenizing the compose model is allowed to do (the
  * user picking a shared value and applying it) — both are silent losses. Callers
  * block stack edits while this holds; changing the SELECTION is the way out.
+ * (Plugin pins are the third way a selection can't round-trip — see
+ * {@link environmentsCarryPluginPins}.)
  */
 export function environmentsExceedOneStack(
-  environments: ProjectEnvironmentView[]
+  environments: ProjectEnvironmentView[],
+  enabled: EnabledStackSlots
 ): boolean {
   if (environments.length < 2) return false;
   const hosts = new Set(environments.map((e) => e.hostId));
   if (hosts.size !== environments.length) return true;
-  const first = sharedSlotsOf(environments[0]);
-  return !environments.every((env) =>
-    stackFieldsEqual(sharedSlotsOf(env), first)
+  return environments.some(
+    (env) => !enabledSlotsEqual(env, environments[0], enabled)
   );
 }
 
@@ -120,10 +158,13 @@ export function environmentsExceedOneStack(
  * Composer state for a surface whose `environmentIds` are already PERSISTED.
  *
  * The stack is what the selection has in common: every attached environment's
- * client, plus the shared slots when all of them agree. When they disagree the
- * slot reads empty rather than picking a winner — editing another slot would
- * otherwise silently impose one environment's server group on the rest, which is
- * why {@link environmentsExceedOneStack} blocks editing in exactly that case.
+ * client, plus each shared slot's value when all of them agree ON THAT SLOT.
+ * A disagreeing slot reads empty rather than picking a winner — editing another
+ * slot would otherwise silently impose one environment's server group on the
+ * rest, which is why {@link environmentsExceedOneStack} blocks editing in
+ * exactly that case. Agreement is per slot, not all-or-nothing: a selection that
+ * disagrees only on a flag-disabled slot stays editable, and imposing null on
+ * the server group everyone shares would be its own silent change.
  *
  * Ad-hoc rows seed as a COMPOSITION, not a selection: they are deliberately not
  * offerable in the saved-environment picker, so presenting them there would
@@ -138,22 +179,31 @@ export function composerStateFromEnvironments(
     if (env.hostId && !hostIds.includes(env.hostId)) hostIds.push(env.hostId);
   }
   const first = environments[0];
-  const shared =
-    first &&
-    environments.every((env) =>
-      stackFieldsEqual(sharedSlotsOf(env), sharedSlotsOf(first))
-    )
-      ? first
-      : undefined;
+  const sharedSlot = <T>(
+    pick: (env: ProjectEnvironmentView) => T | null,
+    equal: (a: T | null, b: T | null) => boolean
+  ): T | null =>
+    first && environments.every((env) => equal(pick(env), pick(first)))
+      ? pick(first)
+      : null;
 
   const allNamed = environments.length > 0 && environments.every(isNamedEnvironment);
   return {
     environmentIds: allNamed ? environments.map((e) => e.environmentId) : [],
     stack: {
       hostIds,
-      serverAttachmentId: shared?.serverAttachmentId ?? null,
-      skillSelection: shared?.skillSelection ?? null,
-      computerEnvironmentId: shared?.computerEnvironmentId ?? null,
+      serverAttachmentId: sharedSlot(
+        (env) => env.serverAttachmentId ?? null,
+        (a, b) => a === b
+      ),
+      skillSelection: sharedSlot(
+        (env) => env.skillSelection ?? null,
+        sameSkillSelection
+      ),
+      computerEnvironmentId: sharedSlot(
+        (env) => env.computerEnvironmentId ?? null,
+        (a, b) => a === b
+      ),
     },
     customized: !allNamed,
   };
