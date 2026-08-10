@@ -83,7 +83,7 @@ why the nonce is single-use with a short TTL.
 
 ## Kill switch
 
-```
+```dotenv
 MCPJAM_LOCAL_COMPUTER_ENABLED=false
 ```
 

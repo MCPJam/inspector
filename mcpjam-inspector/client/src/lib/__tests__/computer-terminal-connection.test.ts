@@ -336,6 +336,18 @@ describe("terminal route selection", () => {
     expect(url).toContain("cwd=%2Fhome%2Fme%2Fwork");
   });
 
+  it("omits cwd entirely when it is empty, keeping the local route", () => {
+    const url = buildTerminalWsUrl({
+      cols: 80,
+      rows: 24,
+      baseUrl: "ws://h",
+      cwd: "",
+      path: LOCAL_TERMINAL_WS_PATH,
+    });
+    expect(url).toBe("ws://h/api/web/computers/local-terminal?cols=80&rows=24");
+    expect(url).not.toContain("cwd");
+  });
+
   it("openTerminalConnection dials the requested path with the nonce as subprotocol", () => {
     FakeWebSocket.instances.length = 0;
     openTerminalConnection({

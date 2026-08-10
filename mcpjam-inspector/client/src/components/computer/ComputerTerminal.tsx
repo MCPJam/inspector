@@ -274,29 +274,51 @@ export function ComputerTerminal({
   const hasDraggedFiles = (e: React.DragEvent) =>
     Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    if (!hasDraggedFiles(e)) return;
-    e.preventDefault();
-    dragDepthRef.current += 1;
-    setDragActive(true);
-  }, []);
+  const handleDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      if (!hasDraggedFiles(e)) return;
+      // Cancel the browser default even when uploads are OFF (see handleDrop);
+      // only the overlay state is upload-specific.
+      e.preventDefault();
+      if (!uploadEnabled) return;
+      dragDepthRef.current += 1;
+      setDragActive(true);
+    },
+    [uploadEnabled]
+  );
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!hasDraggedFiles(e)) return;
-    // Required for the drop event to fire.
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-  }, []);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!hasDraggedFiles(e)) return;
+      // Required for the drop event to fire — and required on the
+      // uploads-disabled pane too, so `drop` reaches our handler instead of
+      // the browser's default navigation.
+      e.preventDefault();
+      if (!uploadEnabled) return;
+      e.dataTransfer.dropEffect = "copy";
+    },
+    [uploadEnabled]
+  );
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (!hasDraggedFiles(e)) return;
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) setDragActive(false);
-  }, []);
+  const handleDragLeave = useCallback(
+    (e: React.DragEvent) => {
+      if (!hasDraggedFiles(e)) return;
+      if (!uploadEnabled) return;
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) setDragActive(false);
+    },
+    [uploadEnabled]
+  );
 
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
+      // ALWAYS cancel the default, uploads enabled or not. A file dropped onto
+      // an element with no drop handler makes the browser NAVIGATE to that
+      // local file, unloading the inspector and losing the session — so the
+      // uploads-disabled pane still has to swallow the event; it just does
+      // nothing with it.
       e.preventDefault();
+      if (!uploadEnabled) return;
       dragDepthRef.current = 0;
       setDragActive(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
@@ -344,7 +366,7 @@ export function ComputerTerminal({
         setUploading(false);
       }
     },
-    [state, mintToken, baseUrl, cwd]
+    [state, mintToken, baseUrl, cwd, uploadEnabled]
   );
 
   // Create the xterm instance once; wire input + resize; auto-connect.
@@ -479,14 +501,10 @@ export function ComputerTerminal({
         {/* Terminal canvas + overlay */}
         <div
           className="relative min-h-0 flex-1"
-          {...(uploadEnabled
-            ? {
-                onDragEnter: handleDragEnter,
-                onDragOver: handleDragOver,
-                onDragLeave: handleDragLeave,
-                onDrop: handleDrop,
-              }
-            : {})}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
           <div ref={containerRef} className="absolute inset-0 p-1" onClick={() => termRef.current?.focus()} />
           {uploadEnabled && (dragActive || uploading) ? (

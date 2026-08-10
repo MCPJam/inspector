@@ -115,6 +115,8 @@ describe("readToolRunLocation", () => {
   });
 
   it("ignores an absent, unknown, or non-object result", () => {
+    expect(readToolRunLocation("bash", {})).toBeNull();
+    expect(readToolRunLocation("bash", { engine: "" })).toBeNull();
     expect(readToolRunLocation("bash", { stdout: "hi" })).toBeNull();
     expect(readToolRunLocation("bash", { engine: "quantum" })).toBeNull();
     expect(readToolRunLocation("bash", null)).toBeNull();

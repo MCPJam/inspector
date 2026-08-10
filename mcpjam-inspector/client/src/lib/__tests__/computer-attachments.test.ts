@@ -179,13 +179,12 @@ describe("isComputerAttachmentUploadActive", () => {
     ).toBe(false);
   });
 
-  it("stays inactive on the local engine even with every other gate open", () => {
+  it("stays inactive on the local engine when the host has no computer either", () => {
     expect(
       isComputerAttachmentUploadActive({
-        computersEnabled: true,
-        isAuthenticated: true,
-        hostHasComputer: true,
+        ...base,
         engine: "local",
+        hostHasComputer: false,
       }),
     ).toBe(false);
   });

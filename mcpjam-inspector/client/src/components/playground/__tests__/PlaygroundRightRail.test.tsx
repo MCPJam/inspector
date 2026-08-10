@@ -253,4 +253,18 @@ describe("PlaygroundRightRail — no computer attached", () => {
     expect(screen.getByTestId("logger-view")).toBeInTheDocument();
     expect(screen.queryByTestId("rail-engine-chip")).not.toBeInTheDocument();
   });
+
+  it("falls back to the log viewer for a null hostConfig too", () => {
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={null}
+        hostId={null}
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+    expect(screen.getByTestId("logger-view")).toBeInTheDocument();
+    expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
+  });
 });
