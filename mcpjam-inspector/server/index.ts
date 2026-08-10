@@ -508,8 +508,13 @@ app.route("/api/cli/auth", cliAuthRoutes);
 // whose catch-all only skips /api/* and would otherwise swallow /relay GETs
 // with index.html. Mirror of the mount in server/app.ts::createHonoApp —
 // both production entries must wire this up.
+// Mounted on BOTH prefixes — see RELAY_MOUNT_PREFIXES in routes/relay.ts:
+// /tlm is the alias new clients use because Railway's edge 403s GETs under
+// /relay/static and /relay/array on hosted; /relay stays for old builds.
 app.use("/relay/*", relayBodyLimit());
 app.route("/relay", relayRoutes);
+app.use("/tlm/*", relayBodyLimit());
+app.route("/tlm", relayRoutes);
 
 // XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
 // target authorization server fetches it anonymously) and mounted before

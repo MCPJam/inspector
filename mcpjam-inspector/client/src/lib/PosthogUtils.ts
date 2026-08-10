@@ -16,7 +16,13 @@ export function getPostHogApiHost(): string {
     typeof window !== "undefined" &&
     window.location?.origin?.startsWith("http")
   ) {
-    return `${window.location.origin}/relay`;
+    // `/tlm`, not `/relay`: Railway's edge in front of the hosted app 403s
+    // GETs under `/relay/static/*` and `/relay/array/*` (block is scoped to
+    // the /relay prefix — verified with decoy-prefix probes), which starved
+    // posthog-js of its remote config and kept session recording `disabled`.
+    // The server mounts the same proxy on both prefixes; see
+    // RELAY_MOUNT_PREFIXES in server/routes/relay.ts.
+    return `${window.location.origin}/tlm`;
   }
   // Non-browser context (tests) — no relay origin to derive.
   return VITE_PUBLIC_POSTHOG_HOST;
