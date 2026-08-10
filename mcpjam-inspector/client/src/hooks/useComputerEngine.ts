@@ -33,8 +33,20 @@ import {
 import { useComputersDataPlaneConfig } from "@/hooks/useProjectComputer";
 
 export interface ComputerEngineState {
-  /** Resolved engine — honest under the one rule above, never aspirational. */
+  /**
+   * Resolved engine for EXECUTION — consent-gated: `local` only when consent
+   * is granted. Chat/rail/terminal run against this; the badge follows it, so
+   * it never says "This machine" while commands go to the cloud.
+   */
   engine: ComputerEngineChoice;
+  /**
+   * The user's SELECTED engine — the same candidate order as `engine` but
+   * consent-BLIND (`local` qualifies on availability alone). This is what the
+   * Local⇄Cloud toggle shows and which FACE the Computer tab renders: picking
+   * "This machine" before consenting must show the local face's consent gate,
+   * not bounce to cloud. Execution still waits on `engine`/consent.
+   */
+  selectedEngine: ComputerEngineChoice;
   /** Persist a preference for this project (and notify every consumer). */
   setEngine: (engine: ComputerEngineChoice) => void;
   /** Config fetch settled (the answer below is real, not loading defaults). */
@@ -83,23 +95,36 @@ export function useComputerEngine(
   const cloudAvailable = config?.engines.cloud.available ?? false;
 
   let engine: ComputerEngineChoice = "cloud";
+  let selectedEngine: ComputerEngineChoice = "cloud";
   if (!HOSTED_MODE && config) {
-    const qualifies = (candidate: ComputerEngineChoice | null): boolean => {
-      if (candidate === "local") return localAvailable && consent.granted;
-      if (candidate === "cloud") return cloudAvailable;
-      return false;
-    };
     const candidates: Array<ComputerEngineChoice | null> = [
       storedPref,
       config.defaultEngine,
       "local",
       "cloud",
     ];
+    // Consent-blind: which engine the user has SELECTED / would default to.
+    const selectable = (candidate: ComputerEngineChoice | null): boolean =>
+      candidate === "local"
+        ? localAvailable
+        : candidate === "cloud"
+          ? cloudAvailable
+          : false;
+    selectedEngine =
+      (candidates.find(selectable) as ComputerEngineChoice) ?? "cloud";
+    // Execution-resolved: `local` additionally requires granted consent.
+    const qualifies = (candidate: ComputerEngineChoice | null): boolean =>
+      candidate === "local"
+        ? localAvailable && consent.granted
+        : candidate === "cloud"
+          ? cloudAvailable
+          : false;
     engine = (candidates.find(qualifies) as ComputerEngineChoice) ?? "cloud";
   }
 
   return {
     engine,
+    selectedEngine,
     setEngine,
     resolved: config !== undefined,
     localAvailable,
