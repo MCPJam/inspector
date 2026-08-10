@@ -27,6 +27,7 @@ import {
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
+  getPluginVersionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
@@ -37,6 +38,7 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   listEnvironmentsOperation,
+  listProjectPluginsOperation,
   listProjectsOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
@@ -111,6 +113,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listEnvironmentsOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
+  // Agent Plugins: the READ half only. Every plugin write (import, activate,
+  // enable/disable, uninstall) stays off this unattended surface by policy —
+  // there is no excluded write operation to list because the SDK ships none.
+  listProjectPluginsOperation,
+  getPluginVersionOperation,
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,

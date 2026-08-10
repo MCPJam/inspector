@@ -89,7 +89,10 @@ import {
   runtimeSkills as environmentRuntimeSkills,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
-import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  fetchPluginRuntimeAttribution,
+  type PluginRuntimeAttribution,
+} from "../../services/environments/plugin-attribution.js";
 import {
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
@@ -401,15 +404,65 @@ chatV2.post("/", async (c) => {
         }
         if (environmentRead.kind === "present") {
           chatboxEnvironment = environmentRead.environment;
+          // Phase 6.1: attribution for chatbox turns, from the payload's own
+          // pinned plugin versions. Guarded on their presence — a backend
+          // that predates `pluginVersions` (or an environment pinning none)
+          // costs zero extra reads — and FAIL-OPEN like the environment
+          // target's probe: this turn is guest-reachable, and the probe is
+          // member-gated backend-side, so a guest (or any probe failure)
+          // degrades to "origin unknown" rather than stopping the send.
+          let attribution: PluginRuntimeAttribution | null = null;
+          const pinnedVersionIds = (
+            chatboxEnvironment.pluginVersions ?? []
+          ).map((plugin) => plugin.pluginVersionId);
+          if (pinnedVersionIds.length > 0) {
+            try {
+              attribution = await fetchPluginRuntimeAttribution(
+                createConvexClient(await getConvexBearerForRequest(c)),
+                {
+                  projectId: hostedBody.projectId,
+                  pluginVersionIds: pinnedVersionIds,
+                }
+              );
+            } catch (error) {
+              // `fetchPluginRuntimeAttribution` already swallows probe
+              // failures; this catches client construction (missing
+              // CONVEX_URL on a deployment that never configured it).
+              logger.warn(
+                "[chat-v2] chatbox attribution unavailable; running without plugin origin",
+                {
+                  chatboxId,
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                }
+              );
+            }
+          }
           // Same projection the environment target uses, so the EMULATED
           // engine advertises the environment's skills (skillsSource:
-          // "resolved") instead of silently delivering zero. Attribution is
-          // null on purpose: the payload pins no plugin versions (the backend
-          // already re-gated plugins before serving it), so there is nothing
-          // to attribute and no probe to degrade on a guest-reachable turn.
+          // "resolved") instead of silently delivering zero.
           effectiveCapabilities = resolveEffectiveCapabilities(
             chatboxEnvironment,
-            null
+            attribution
+          );
+          if (effectiveCapabilities.problems.length > 0) {
+            // Codes and ids only — same redaction rationale as the
+            // environment-target log above.
+            logger.warn("[chat-v2] effective capability problems", {
+              environmentId: chatboxEnvironment.environmentRef.environmentId,
+              codes: effectiveCapabilities.problems.map(
+                (problem) => problem.code
+              ),
+              skillIds: effectiveCapabilities.problems.flatMap((problem) =>
+                "skillId" in problem ? [problem.skillId] : []
+              ),
+            });
+          }
+          // Plugin origin on this turn's RPC frames, exactly as the
+          // environment target stamps it. Empty (no-op) until the backend
+          // serves `pluginVersions` and the probe attributes them.
+          rpcCollector?.setPluginOriginByServerId(
+            pluginOriginByServerId(effectiveCapabilities)
           );
         }
         hostRuntimeConfig = runtime.config as unknown as Record<
