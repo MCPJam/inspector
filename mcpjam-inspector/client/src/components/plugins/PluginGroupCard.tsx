@@ -35,6 +35,11 @@ import {
   usePluginSetupStatus,
   usePluginVersion,
 } from "@/hooks/usePluginImportApi";
+import { useServerMutations } from "@/hooks/useProjects";
+import {
+  PluginServerSetupEditor,
+  hasPluginServerSetupEntries,
+} from "./PluginServerSetup";
 import {
   describePluginHealth,
   describePluginPlacement,
@@ -70,7 +75,16 @@ export function PluginGroupCard({ plugin }: { plugin: PluginSummary }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingAction, setPendingAction] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
+  /** componentId of the server whose inline setup editor is open. */
+  const [configuringComponentId, setConfiguringComponentId] = useState<
+    string | null
+  >(null);
   const management = usePluginManagementActions();
+  // Plugin server rows are structural read-only, but the backend's
+  // credential-only write path accepts them for env/header values — the same
+  // `servers:updateServerWithClientSecret` action the generic server settings
+  // use.
+  const { updateServerWithClientSecret } = useServerMutations();
 
   const activeVersionId = plugin.activeVersionId ?? null;
   const setupStatus = usePluginSetupStatus(activeVersionId);
@@ -203,6 +217,9 @@ export function PluginGroupCard({ plugin }: { plugin: PluginSummary }) {
                 {version.declaredVersion ? (
                   <span>v{version.declaredVersion}</span>
                 ) : null}
+                {version.schemaVersion ? (
+                  <span>Agent Plugins {version.schemaVersion}</span>
+                ) : null}
               </div>
 
               {version.servers.length > 0 ? (
@@ -218,31 +235,97 @@ export function PluginGroupCard({ plugin }: { plugin: PluginSummary }) {
                       const described = readiness
                         ? describePluginReadiness(readiness)
                         : null;
+                      // The editor only exists when the projection carries
+                      // requirement entries AND the server row was
+                      // materialized — absent entries mean the backend has
+                      // not projected them, not that setup is complete.
+                      const materializedServerId =
+                        component.materializedServerId;
+                      const canConfigure =
+                        materializedServerId !== undefined &&
+                        hasPluginServerSetupEntries(component);
+                      const isConfiguring =
+                        configuringComponentId === component.componentId;
                       return (
                         <li
                           key={component.componentId}
-                          className="flex items-center gap-2 text-xs"
+                          className="space-y-1.5 text-xs"
                         >
-                          <Wrench
-                            className="h-3 w-3 shrink-0 text-muted-foreground"
-                            aria-hidden
-                          />
-                          <span className="truncate font-medium">
-                            {component.declaredName}
-                          </span>
-                          <span className="text-muted-foreground">
-                            {describePluginPlacement(component.placement)}
-                          </span>
-                          {described ? (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                "ml-auto font-normal",
-                                TONE_CLASSES[described.tone],
-                              )}
-                            >
-                              {described.label}
-                            </Badge>
+                          <div className="flex items-center gap-2">
+                            <Wrench
+                              className="h-3 w-3 shrink-0 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <span className="truncate font-medium">
+                              {component.declaredName}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {describePluginPlacement(component.placement)}
+                            </span>
+                            {component.httpVariant ? (
+                              <span className="text-muted-foreground">
+                                {component.httpVariant}
+                              </span>
+                            ) : null}
+                            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                              {described ? (
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    "font-normal",
+                                    TONE_CLASSES[described.tone],
+                                  )}
+                                >
+                                  {described.label}
+                                </Badge>
+                              ) : null}
+                              {canConfigure ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 text-xs"
+                                  disabled={pendingAction}
+                                  aria-expanded={isConfiguring}
+                                  onClick={() =>
+                                    setConfiguringComponentId(
+                                      isConfiguring
+                                        ? null
+                                        : component.componentId,
+                                    )
+                                  }
+                                  data-testid="plugin-component-configure"
+                                >
+                                  Configure
+                                </Button>
+                              ) : null}
+                            </span>
+                          </div>
+                          {isConfiguring ? (
+                            <PluginServerSetupEditor
+                              envRequirements={component.envRequirements}
+                              headerRequirements={component.headerRequirements}
+                              busy={pendingAction}
+                              onCancel={() => setConfiguringComponentId(null)}
+                              onSave={(values) =>
+                                runAction("save the setup values", async () => {
+                                  await updateServerWithClientSecret({
+                                    serverId: materializedServerId,
+                                    ...(values.env
+                                      ? { env: values.env }
+                                      : {}),
+                                    ...(values.headers
+                                      ? { headers: values.headers }
+                                      : {}),
+                                  } as any);
+                                  track("plugin_component_configured", {
+                                    location: "plugin_card",
+                                    env: Boolean(values.env),
+                                    headers: Boolean(values.headers),
+                                  });
+                                  setConfiguringComponentId(null);
+                                })
+                              }
+                            />
                           ) : null}
                         </li>
                       );

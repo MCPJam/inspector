@@ -53,13 +53,41 @@ export interface PluginImportPreviewSkill {
   allowImplicitInvocation?: boolean;
 }
 
+/**
+ * One declared env var, mirroring sdk `PluginEnvRequirement` (field names are
+ * the SDK's — `name`/`required`/`value`). `value` is a SCREENED NON-SECRET
+ * literal the bundle declared (e.g. `{"MODE": "production"}`): the parser
+ * never stores secret-looking values, so its presence is safe to render.
+ * Absent until the backend's sdk dependency bump forwards it — treat absence
+ * as "no declared literal".
+ */
+export interface PluginEnvRequirementEntry {
+  name: string;
+  required: boolean;
+  value?: string;
+}
+
+/** One declared header, mirroring sdk `PluginHeaderRequirement`. */
+export interface PluginHeaderRequirementEntry {
+  name: string;
+  secret: boolean;
+  /** Screened non-secret literal header value, when declared. */
+  value?: string;
+}
+
 export interface PluginImportPreviewServer {
   key: string;
   transport: "stdio" | "http";
-  /** Requested env var NAMES only (stdio). Never values. */
-  envRequirements?: Array<{ name: string; required: boolean }>;
-  /** Requested header NAMES only (http). Never values. */
-  headerRequirements?: Array<{ name: string; secret: boolean }>;
+  /**
+   * Declared wire transport for http servers (sdk
+   * `NormalizedPluginMcpServer.httpVariant`). Optional until the backend's
+   * sdk bump forwards it.
+   */
+  httpVariant?: "streamable-http" | "sse" | (string & {});
+  /** Requested env var names (stdio), plus screened non-secret literals. */
+  envRequirements?: PluginEnvRequirementEntry[];
+  /** Requested header names (http), plus screened non-secret literals. */
+  headerRequirements?: PluginHeaderRequirementEntry[];
   oauth?: { timing?: "on_install" | "on_use"; scopes?: string[] };
   /** Presence only — never the (possibly path-bearing) working-dir string. */
   hasWorkingDirectory?: boolean;
@@ -90,6 +118,19 @@ export interface PluginImportPreviewWarning {
   severity: string;
   componentKey?: string;
   message: string;
+}
+
+/**
+ * One component the parser skipped under the spec's failure-isolation
+ * boundaries (one bad server entry / skill / the whole mcp.json document).
+ * Field names mirror sdk `PluginSkippedComponent` exactly (`kind`/`key`/
+ * `reason`). `kind` is widened: render unknown kinds verbatim.
+ */
+export interface PluginImportPreviewSkippedComponent {
+  kind: "server" | "skill" | "mcp-config" | (string & {});
+  /** Server key, skill directory name, or the config path. */
+  key: string;
+  reason: string;
 }
 
 export interface PluginSetupRequirement {
@@ -124,6 +165,13 @@ export interface PluginImportPreview {
   setupRequirements: PluginSetupRequirement[];
   unsupported: PluginImportPreviewUnsupported[];
   warnings: PluginImportPreviewWarning[];
+  /**
+   * Components skipped by the parser's per-entry failure isolation (sdk
+   * `ParsedPluginBundle.skipped`). Optional: the deployed backend does not
+   * forward these yet — absent means "none reported", and import surfaces
+   * must render nothing rather than inventing rows.
+   */
+  skippedComponents?: PluginImportPreviewSkippedComponent[];
 }
 
 /** Stable sanitized `{code, message}` persisted on a failed import. */
@@ -195,6 +243,21 @@ export interface PluginVersionServerComponent {
   placement: "remote" | "local" | "computer";
   authenticationPolicy: "on_install" | "on_use";
   materializedServerId?: string;
+  /**
+   * Declared wire transport for http servers (sdk
+   * `NormalizedPluginMcpServer.httpVariant`). Optional until the backend's
+   * sdk bump forwards it; absent for stdio servers.
+   */
+  httpVariant?: "streamable-http" | "sse" | (string & {});
+  /**
+   * Declared env/header requirement entries for this server (sdk
+   * `envRequirements`/`headerRequirements` on the normalized config, names
+   * only plus screened non-secret literals). Optional: the deployed backend
+   * does not project these yet — absent means the setup editor simply does
+   * not render, never that requirements were checked and found empty.
+   */
+  envRequirements?: PluginEnvRequirementEntry[];
+  headerRequirements?: PluginHeaderRequirementEntry[];
 }
 
 export interface PluginVersionSkillComponent {
@@ -208,15 +271,28 @@ export interface PluginVersionSkillComponent {
 /** `plugins.getPluginVersion` — version summary plus component projections. */
 export interface PluginVersionDetail extends PluginVersionSummary {
   manifestHash: string;
+  /**
+   * Agent Plugins schema version the bundle targets (sdk
+   * `ParsedPluginBundle.schemaVersion`, e.g. "1.0.0"). Optional until the
+   * backend's sdk bump forwards it.
+   */
+  schemaVersion?: string;
   servers: PluginVersionServerComponent[];
   skills: PluginVersionSkillComponent[];
 }
 
+/**
+ * Widened: the credential-aware backend already reports values this mirror
+ * may not list (`needs_setup` landed after the first deploy). Unknown values
+ * must render as a neutral "setup required", never as ready.
+ */
 export type PluginComponentReadiness =
   | "needs_auth"
+  | "needs_setup"
   | "local_runtime_required"
   | "computer_required"
-  | "ready";
+  | "ready"
+  | (string & {});
 
 /** `plugins.getPluginSetupStatus`. */
 export interface PluginSetupStatus {

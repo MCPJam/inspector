@@ -208,6 +208,7 @@ export const ANALYTICS_EVENTS = {
   // display names OUT of these payloads: counts, closed enums, stable codes,
   // and a bundle-hash prefix only.
   add_plugin_button_clicked: { source: "client" },
+  plugin_component_configured: { source: "client" },
   plugin_disabled: { source: "client" },
   plugin_import_completed: { source: "client" },
   plugin_import_failed: { source: "client" },

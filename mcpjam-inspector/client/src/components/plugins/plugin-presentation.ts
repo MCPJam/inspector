@@ -51,6 +51,12 @@ export function describePluginReadiness(
         detail: "Authorize this server before its first tool call.",
         tone: "attention",
       };
+    case "needs_setup":
+      return {
+        label: "Needs configuration",
+        detail: "Provide the required environment or header values.",
+        tone: "attention",
+      };
     case "local_runtime_required":
       return {
         label: "Local runtime",
@@ -64,11 +70,12 @@ export function describePluginReadiness(
         tone: "info",
       };
     default:
-      // A readiness value this client does not know yet. Report the raw code
-      // rather than inventing a friendly label that might claim readiness.
+      // A readiness value this client does not know yet. A neutral "setup
+      // required" never claims readiness; the raw code stays visible in the
+      // detail line so the state is still diagnosable.
       return {
-        label: String(readiness),
-        detail: "Unrecognized component state.",
+        label: "Setup required",
+        detail: `Unrecognized component state "${String(readiness)}" — additional setup may be required.`,
         tone: "attention",
       };
   }
@@ -110,6 +117,7 @@ export type PluginHealth =
  */
 const READINESS_SEVERITY: Record<string, number> = {
   needs_auth: 3,
+  needs_setup: 3,
   computer_required: 2,
   local_runtime_required: 2,
   ready: 0,
@@ -237,6 +245,29 @@ export function describeUnsupportedKind(kind: string): string {
       return "Scheduled task template";
     case "unknown_field":
       return "Unrecognized manifest field";
+    default:
+      return kind;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Skipped components (parser failure isolation).
+// ---------------------------------------------------------------------------
+
+/**
+ * Human label for a skipped component's `kind` (sdk `PluginSkippedComponent`),
+ * defaulting to the raw kind. Distinct from "unsupported": an unsupported
+ * component is preserved by design, a skipped one FAILED validation and is
+ * not installed at all — which is why the preview surfaces skips loudly.
+ */
+export function describeSkippedComponentKind(kind: string): string {
+  switch (kind) {
+    case "server":
+      return "MCP server";
+    case "skill":
+      return "Skill";
+    case "mcp-config":
+      return "MCP configuration";
     default:
       return kind;
   }
