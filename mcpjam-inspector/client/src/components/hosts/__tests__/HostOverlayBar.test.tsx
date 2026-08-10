@@ -159,6 +159,59 @@ describe("HostOverlayBar", () => {
     );
   });
 
+  it("falls back to the generic MCP mark for a client it cannot place", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...oneHost[0], name: "Acme Internal Bot" }],
+      isLoading: false,
+    });
+
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Client used for preview" })
+    );
+
+    // Not an empty circle — HostCanvasSelector shows /mcp.svg for the same
+    // unknown-name case, and the two pickers must agree.
+    const logo = await screen.findByTestId("host-overlay-logo-host-a");
+    expect(logo.tagName).toBe("IMG");
+    expect(logo).toHaveAttribute("src", "/mcp.svg");
+  });
+
+  it("places a decorated client name the exact-match resolver would miss", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...oneHost[0], name: "Cursor (staging)" }],
+      isLoading: false,
+    });
+
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Client used for preview" })
+    );
+
+    expect(await screen.findByTestId("host-overlay-logo-host-a")).toHaveAttribute(
+      "src",
+      expect.stringContaining("cursor")
+    );
+  });
+
   it("marks the selected row with a single primary-colored dot", async () => {
     const user = userEvent.setup();
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });

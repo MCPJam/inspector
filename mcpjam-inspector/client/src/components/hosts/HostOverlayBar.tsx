@@ -20,7 +20,7 @@ import { CreateHostDialog } from "./CreateHostDialog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
@@ -290,10 +290,7 @@ export function HostOverlayBar({
                 onValueChange={handleChange}
               >
                 {sortedHosts.map((host) => {
-                  const rowLogo = resolveHostLogoByDisplayName(
-                    host.name,
-                    themeMode
-                  );
+                  const rowLogo = resolveHostLogoByName(host.name, themeMode);
                   return (
                     <DropdownMenuRadioItem
                       key={host.hostId}
@@ -301,20 +298,12 @@ export function HostOverlayBar({
                       hideIndicator
                       className="group pr-1.5"
                     >
-                      {rowLogo ? (
-                        <img
-                          src={rowLogo}
-                          alt=""
-                          data-testid={`host-overlay-logo-${host.hostId}`}
-                          className="size-3.5 shrink-0 object-contain"
-                        />
-                      ) : (
-                        <span
-                          aria-hidden
-                          data-testid={`host-overlay-logo-${host.hostId}`}
-                          className="size-3.5 shrink-0 rounded-full bg-muted"
-                        />
-                      )}
+                      <img
+                        src={rowLogo}
+                        alt=""
+                        data-testid={`host-overlay-logo-${host.hostId}`}
+                        className="size-3.5 shrink-0 object-contain"
+                      />
                       <span
                         className="flex-1 truncate"
                         data-testid={`host-overlay-label-${host.hostId}`}

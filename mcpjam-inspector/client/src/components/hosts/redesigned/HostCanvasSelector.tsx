@@ -16,6 +16,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { buildHostsPath } from "@/lib/app-navigation";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { track } from "@/lib/analytics";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
@@ -50,36 +51,6 @@ const PILL_CLASS =
 
 /** Height of the interactive controls inside each pill. */
 const CONTROL_HEIGHT = "h-8";
-
-/**
- * Hosts don't persist which catalog template they came from, so the logo is
- * inferred from the display name. Unknown names fall back to the generic MCP
- * mark — never wrong, just anonymous.
- */
-const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
-  [/mcpjam/i, "mcpjam"],
-  [/claude[ -]?code/i, "claude-code"],
-  [/claude/i, "claude"],
-  [/chatgpt|openai/i, "chatgpt"],
-  [/copilot/i, "copilot"],
-  [/cursor/i, "cursor"],
-  [/vs ?code/i, "vscode"],
-  [/goose/i, "goose"],
-  [/cline/i, "cline"],
-  [/perplexity/i, "perplexity"],
-  [/notion/i, "notion"],
-  [/slack/i, "slack"],
-  [/mistral/i, "mistral"],
-];
-
-const FALLBACK_LOGO = "/mcp.svg";
-
-function inferLogoId(name: string): string | null {
-  for (const [re, id] of LOGO_NAME_HINTS) {
-    if (re.test(name)) return id;
-  }
-  return null;
-}
 
 interface HostCanvasSelectorProps {
   projectId: string;
@@ -191,10 +162,7 @@ export function HostCanvasSelector({
     }
   };
 
-  const logoFor = (name: string) => {
-    const id = inferLogoId(name);
-    return id ? getHostLogoSrc(id, themeMode) : FALLBACK_LOGO;
-  };
+  const logoFor = (name: string) => resolveHostLogoByName(name, themeMode);
 
   if (isLoading || !active) {
     return (
