@@ -95,13 +95,15 @@ tested in the inspector's local plugin runtime,
   substitute only in `args`, `env` values, and `cwd`, in a single pass at
   spawn time (`plugin-root.ts`); a leftover placeholder refuses the spawn so
   a child process never sees a literal `${…}` token.
-- **Client-controlled variables set last** — the injected
-  `PLUGIN_ROOT`/`PLUGIN_DATA` env aliases are applied AFTER the bundle's own
-  `env`, so a bundle cannot shadow them (the parser already rejects bundles
-  whose `env` declares the reserved keys).
-- **Bare commands resolve through platform executable search rules; `cwd`
-  defaults to the plugin root** — the local stdio materializer
-  (`local-stdio.ts`).
+- **Client-controlled variables cannot be shadowed** — satisfied by PARSE-TIME
+  rejection, not by ordering. `resolvePluginStdioLaunch` seeds the env with the
+  injected `PLUGIN_ROOT`/`PLUGIN_DATA` aliases and then writes the bundle's own
+  `env` over them, so an internally constructed launch spec could shadow an
+  alias; no imported bundle can, because the parser rejects any bundle whose
+  `env` declares the reserved keys. The spec phrases this MUST as "set last" —
+  MCPJam meets the guarantee by a different mechanism.
+- **Bare commands resolve through platform executable search rules** — the
+  local stdio materializer (`local-stdio.ts`).
 - **`PLUGIN_DATA` created before launch and preserved across plugin
   updates** — `plugin-data.ts` (see deviation 10 for hosted boxes).
 - **Continue loading when one server fails to start/connect/authenticate** —
@@ -109,6 +111,20 @@ tested in the inspector's local plugin runtime,
   failure is a connection failure, not invalid package configuration.
 - **Materialized-bundle boundary enforcement** — extraction and cache
   containment in `bundle-cache.ts` / `bundle-file-sources.ts`.
+
+## Known gaps (runtime MUSTs not yet met)
+
+- **`cwd` does not default to the plugin root.** The spec says an entry that
+  omits `cwd` runs with the plugin root as its working directory.
+  `resolvePluginStdioLaunch` emits `workingDirectory` only when the entry
+  supplied one, and the local resolver forwards `cwd` only when present, so
+  the stdio transport inherits the inspector process's working directory
+  instead. An entry with a relative entrypoint or relative resource paths and
+  no explicit `cwd` will therefore misbehave. Entries that DO declare a `cwd`
+  (including `./`-relative ones) are unaffected, as are `${PLUGIN_ROOT}`-
+  prefixed commands, which resolve to absolute paths. Fixing this is a
+  behavior change to the launch path and is deliberately not bundled into
+  this docs-and-tests PR.
 
 ## Out of scope (per the spec's portable vs client-owned split)
 
