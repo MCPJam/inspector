@@ -156,6 +156,192 @@ describe("web auth manager batching", () => {
     );
   });
 
+  it("diverts stdio servers to the local resolver in local mode (mixed batch)", async () => {
+    // This suite runs with HOSTED_MODE unset (local). The hosted authorize
+    // batch answers for BOTH servers but strips the stdio row's
+    // command/args/env by contract; the divert re-reads that one server
+    // through /web/authorize-batch-local with the same bearer and builds a
+    // spawnable stdio config, while the http sibling stays on the hosted
+    // mint path untouched.
+    //
+    // Captured, not asserted inside the mock: `authorizeBatchLocal` wraps any
+    // throw from fetch (including a failed expect) into a 502 WebRouteError,
+    // which would surface as a misleading transport error.
+    let localInit: RequestInit | undefined;
+    global.fetch = vi.fn(async (input, init) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-http": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://srv-http.example.com/mcp",
+                  headers: { "X-Test": "yes" },
+                },
+              },
+              "srv-stdio": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "stdio",
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/authorize-batch-local")) {
+        localInit = init;
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-stdio": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "stdio",
+                  command: "node",
+                  args: ["plugin-server.js"],
+                  env: { FOO: "bar" },
+                  cwd: "/srv/plugin-root",
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["srv-http", "srv-stdio"],
+      10_000
+    );
+
+    expect((localInit?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer bearer-token"
+    );
+    expect(JSON.parse(localInit?.body as string)).toEqual({
+      projectId: "project-1",
+      serverIds: ["srv-stdio"],
+    });
+    expect(mcpClientManagerMock).toHaveBeenCalledWith(
+      {
+        "srv-http": expect.objectContaining({
+          url: "https://srv-http.example.com/mcp",
+        }),
+        "srv-stdio": expect.objectContaining({
+          command: "node",
+          args: ["plugin-server.js"],
+          env: { FOO: "bar" },
+          cwd: "/srv/plugin-root",
+          timeout: 10_000,
+        }),
+      },
+      expect.any(Object)
+    );
+  });
+
+  // Codex P2 regression: the harness proxy authenticates via WorkOS API key
+  // and deliberately passes an EMPTY bearer — the caller context carries the
+  // service-token + acting-as exchange instead. The stdio divert's local
+  // reread must forward that delegated identity, not send `Bearer ` verbatim
+  // (which failed every local harness turn against a stdio server).
+  it("diverts stdio with the delegated exchange when the caller used a WorkOS API key", async () => {
+    const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    mockVars.authMethod = "workos_api_key";
+    mockVars.workosUserId = "user_workos_1";
+    mockVars.mcpjamOrganizationId = "org_1";
+
+    let hostedInit: RequestInit | undefined;
+    let localInit: RequestInit | undefined;
+    global.fetch = vi.fn(async (input, init) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        hostedInit = init;
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-stdio": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: { transportType: "stdio" },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/authorize-batch-local")) {
+        localInit = init;
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-stdio": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "stdio",
+                  command: "node",
+                  args: ["server.js"],
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    try {
+      await createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "", // bearer ignored on the workos_api_key path (harness proxy)
+        "project-1",
+        ["srv-stdio"],
+        10_000
+      );
+
+      // Both the hosted batch and the local reread ride the same exchange.
+      for (const init of [hostedInit, localInit]) {
+        const headers = init?.headers as Record<string, string>;
+        expect(headers.Authorization).toBe("Bearer service-token");
+        expect(headers["x-mcpjam-acting-as"]).toBe("user_workos_1");
+        expect(headers["x-mcpjam-acting-in-org"]).toBe("org_1");
+      }
+    } finally {
+      delete mockVars.authMethod;
+      delete mockVars.workosUserId;
+      delete mockVars.mcpjamOrganizationId;
+      if (originalServiceToken === undefined) {
+        delete process.env.INSPECTOR_SERVICE_TOKEN;
+      } else {
+        process.env.INSPECTOR_SERVICE_TOKEN = originalServiceToken;
+      }
+    }
+  });
+
   it("attaches hosted OAuth onUnauthorized and force-refreshes through Convex", async () => {
     global.fetch = vi.fn(async (input, init) => {
       const url = fetchUrl(input);

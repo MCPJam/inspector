@@ -1,5 +1,3 @@
-// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
-// migrated off its slack-app twin; the marker tracks that remaining work.
 import { McpjamApiError } from "./api-client.js";
 
 const MAX_MESSAGES = 50;
@@ -7,6 +5,7 @@ const MAX_MESSAGE_CHARS = 8_000;
 const MAX_MESSAGE_BYTES = 8_192;
 const MAX_TOTAL_MESSAGE_BYTES = 98_304;
 
+/** @param {string} text */
 const utf8Length = (text) => Buffer.byteLength(text, "utf8");
 
 /** @param {string} text */
@@ -31,20 +30,25 @@ export function capMessageContent(text) {
 }
 
 export class EventDedupe {
+	/** @param {{ttlMs?: number, now?: () => number}} [options] */
 	constructor(options = {}) {
 		this.ttlMs = options.ttlMs ?? 30 * 60_000;
 		this.now = options.now ?? Date.now;
+		/** @type {Map<string, number>} */
 		this.seen = new Map();
 	}
+	/** @param {string} key */
 	claim(key) {
 		this.sweep();
 		if (this.seen.has(key)) return false;
 		this.seen.set(key, Infinity);
 		return true;
 	}
+	/** @param {string} key */
 	complete(key) {
 		if (this.seen.has(key)) this.seen.set(key, this.now());
 	}
+	/** @param {string} key */
 	release(key) {
 		this.seen.delete(key);
 	}
@@ -60,8 +64,10 @@ export class EventDedupe {
 
 export class KeyedQueue {
 	constructor() {
+		/** @type {Map<string, Promise<any>>} */
 		this.chains = new Map();
 	}
+	/** @param {string} key @param {() => Promise<any>} job */
 	enqueue(key, job) {
 		const previous = this.chains.get(key) || Promise.resolve();
 		const next = previous.then(job, job);
@@ -102,6 +108,7 @@ export function normalizeEnvelope(raw, opts) {
 		if (!content) continue;
 		const timestampMs = Number(message.timestampMs);
 		if (
+			typeof triggerMs === "number" &&
 			Number.isFinite(triggerMs) &&
 			Number.isFinite(timestampMs) &&
 			timestampMs > triggerMs
@@ -146,6 +153,8 @@ export function normalizeEnvelope(raw, opts) {
  * without this translation would have the newer-than-trigger cutoff in
  * `normalizeEnvelope` silently never fire, because `triggerTimestampMs` would
  * stay undefined.
+ * @param {Array<Record<string,any>>} raw
+ * @param {{triggerMessageId?:string,triggerTimestampMs?:number,triggerTs?:string,botUserId?:string}} [opts]
  */
 export function normalizeThreadMessages(raw, opts = {}) {
 	return normalizeEnvelope(
@@ -194,7 +203,7 @@ export function normalizeThreadMessages(raw, opts = {}) {
  * `undefined` can — an adapter that always has SOME truthy threadId needs to
  * say so itself.
  *
- * @param {{fetchHistory:(args:any)=>Promise<any[]>,delivery:any,apiClient:any,eventClaims?:any,ctx:any,conversationId:string,threadId?:string,triggerMessageId:string,triggerTimestampMs?:number,fallbackText:string,eventId?:string,botUserId?:string,queueKey?:string,onStart?:()=>Promise<void>,onResult:(result:any)=>Promise<void>,onReplay?:(result:any)=>Promise<void>,dedupe?:EventDedupe,queue?:KeyedQueue}} args
+ * @param {{fetchHistory:(args:any)=>Promise<any[]>,apiClient:any,eventClaims?:any,ctx:any,conversationId:string,threadId?:string,triggerMessageId:string,triggerTimestampMs?:number,fallbackText:string,eventId?:string,botUserId?:string,queueKey?:string,onStart?:()=>Promise<void>,onResult:(result:any)=>Promise<void>,onReplay?:(result:any)=>Promise<void>,dedupe?:EventDedupe,queue?:KeyedQueue}} args
  */
 export async function runTurnForEvent(args) {
 	const claimDedupe = args.dedupe || dedupe;
@@ -207,6 +216,7 @@ export async function runTurnForEvent(args) {
 	const conversationKey =
 		args.queueKey ??
 		`${args.ctx.tenantId}:${args.conversationId}:${args.threadId || "root"}`;
+	/** @type {any} */
 	let durable = null;
 	if (args.eventClaims?.hasClaimBackend?.()) {
 		try {
@@ -224,10 +234,11 @@ export async function runTurnForEvent(args) {
 			return false;
 		}
 		if (durable.outcome === "completed") {
-			if (durable.resultEnvelope && args.onReplay) {
+			const onReplay = args.onReplay;
+			if (durable.resultEnvelope && onReplay) {
 				try {
 					await claimQueue.enqueue(conversationKey, () =>
-						args.onReplay(normalizeResult(durable.resultEnvelope)),
+						onReplay(normalizeResult(durable.resultEnvelope)),
 					);
 				} catch (error) {
 					// The stored answer never reached the surface. RELEASE the
@@ -304,7 +315,7 @@ export async function runTurnForEvent(args) {
 			throw error;
 		}
 		if (!state.started) {
-			const details = error?.details || {};
+			const details = /** @type {any} */ (error)?.details || {};
 			const envelope = {
 				reply:
 					error instanceof McpjamApiError
@@ -319,7 +330,7 @@ export async function runTurnForEvent(args) {
 				await args.eventClaims
 					.completeEvent(dedupeKey, envelope)
 					.catch(() => {});
-			error.failureEnvelope = envelope;
+			/** @type {any} */ (error).failureEnvelope = envelope;
 			throw error;
 		}
 		claimDedupe.complete(eventKey);
@@ -331,7 +342,10 @@ export async function runTurnForEvent(args) {
 	}
 }
 
-/** Small DeliverySurface adapter for callers that do not need durable claims. */
+/**
+ * Small DeliverySurface adapter for callers that do not need durable claims.
+ * @param {{ref:any, fetchHistory:(args:any)=>Promise<any[]>, deliver:(ref:any,result:any)=>Promise<any>, turn:(history:any[])=>Promise<any>, triggerTimestampMs?:number, limit?:number}} args
+ */
 export async function runTurn({
 	ref,
 	fetchHistory,
@@ -354,6 +368,7 @@ export async function runTurn({
 	return { envelope: result, handles: delivery?.handles || [] };
 }
 
+/** @param {any} value */
 function normalizeResult(value) {
 	return {
 		reply: typeof value?.reply === "string" ? value.reply : "",

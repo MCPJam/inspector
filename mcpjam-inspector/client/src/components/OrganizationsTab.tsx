@@ -85,7 +85,13 @@ import {
   SlackAgentSettingsSection,
   type SlackSettingsTabId,
 } from "./organization/slack/SlackAgentSettingsSection";
+import {
+  DiscordAgentSettingsSection,
+  resolveDiscordSettingsTab,
+  type DiscordSettingsTabId,
+} from "./organization/discord/DiscordAgentSettingsSection";
 import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabled";
+import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import {
   useAppNavigate,
   useCurrentSearchParam,
@@ -603,7 +609,11 @@ function OrganizationPage({
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
-  const rawSlackTab = useCurrentSearchParam("tab");
+  const discordAgentEnabled = useDiscordAgentEnabled();
+  // One `?tab=` param, read once and resolved per section — each resolver
+  // falls back to its own Connections, so a Slack tab id in a Discord URL
+  // lands somewhere real instead of on a blank panel.
+  const rawSurfaceTab = useCurrentSearchParam("tab");
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
@@ -614,12 +624,18 @@ function OrganizationPage({
       // flagged-in session should land somewhere real.
       section === "slack" && slackAgentSettingsEnabled
       ? "slack"
+      : // Same collapse for Discord, and it matters more here: the agent is
+      // dark, so nearly everyone hitting this URL is flagged OFF.
+      section === "discord" && discordAgentEnabled
+      ? "discord"
       : "overview";
-  // The sub-tab lives in `?tab=` — three views of one settings section, not
-  // three org routes. Read from the URL rather than component state so a link
-  // to a specific tab works, and through the router's location context so
-  // switching tabs actually re-renders.
-  const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSlackTab);
+  // The sub-tab lives in `?tab=` — views of one settings section, not separate
+  // org routes. Read from the URL rather than component state so a link to a
+  // specific tab works, and through the router's location context so switching
+  // tabs actually re-renders.
+  const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSurfaceTab);
+  const discordTab: DiscordSettingsTabId =
+    resolveDiscordSettingsTab(rawSurfaceTab);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -941,11 +957,19 @@ function OrganizationPage({
     ...(slackAgentSettingsEnabled
       ? ([{ id: "slack", label: "Slack" }] as const)
       : []),
+    ...(discordAgentEnabled
+      ? ([{ id: "discord", label: "Discord" }] as const)
+      : []),
     { id: "billing", label: "Billing" },
   ];
   const navigateToSlackTab = (tab: SlackSettingsTabId) => {
     appNavigate(
       `${buildOrganizationPath(organization._id, "slack")}?tab=${tab}`
+    );
+  };
+  const navigateToDiscordTab = (tab: DiscordSettingsTabId) => {
+    appNavigate(
+      `${buildOrganizationPath(organization._id, "discord")}?tab=${tab}`
     );
   };
   const handleViewBilling = () => navigateToSection("billing");
@@ -1269,6 +1293,13 @@ function OrganizationPage({
           isAdmin={canEdit}
           tab={slackTab}
           onTabChange={navigateToSlackTab}
+        />
+      ) : activeSection === "discord" ? (
+        <DiscordAgentSettingsSection
+          organizationId={organization._id}
+          isAdmin={canEdit}
+          tab={discordTab}
+          onTabChange={navigateToDiscordTab}
         />
       ) : activeSection === "billing" ? (
         <>

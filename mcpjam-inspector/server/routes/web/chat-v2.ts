@@ -103,6 +103,7 @@ import {
 } from "../../utils/built-in-tools/registry.js";
 import {
   ackChatboxSandboxNotices,
+  isChatboxSandboxNotice,
   isComputersDataPlaneConfigured,
   provisionChatboxSandbox,
 } from "../../utils/computers/control-plane-client.js";
@@ -1185,10 +1186,15 @@ chatV2.post("/", async (c) => {
         const sandboxRowId = provisioned.value.sandboxRowId;
         if (provisioned.value.noticeAckPending && notices.length > 0) {
           ackSandboxNotices = (delivered) => {
+            // Only BACKEND-mintable notices enter the ack protocol —
+            // inspector-minted reasons (`sandbox_unavailable`) have no
+            // backend row to ack against.
+            const ackable = delivered.filter(isChatboxSandboxNotice);
+            if (ackable.length === 0) return;
             void ackChatboxSandboxNotices({
               bearer: bearerToken,
               sandboxRowId,
-              notices: delivered,
+              notices: ackable,
             });
           };
         }
@@ -1440,6 +1446,7 @@ chatV2.post("/", async (c) => {
           // versions that fork an incompatible resumed sandbox.
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
+          ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
           // prepare resolved temperature into `buildDirectHostConfig`.

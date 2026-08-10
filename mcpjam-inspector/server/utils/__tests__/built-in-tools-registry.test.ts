@@ -148,6 +148,64 @@ describe("resolveHostTools — computer-backed bash", () => {
   });
 });
 
+describe("resolveHostTools — local engine actor coercion (structural)", () => {
+  // The observables: the LOCAL engine forces needsApproval:true whatever the
+  // host says, and its description names the user's own machine — so a tool
+  // built with approval OFF that still requires approval PROVES local
+  // survived, and one that doesn't PROVES the downgrade fired.
+  function bashTool(extraCtx: Record<string, unknown>) {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        requireToolApproval: false,
+        computerEngine: "local",
+        ...extraCtx,
+      } as never
+    );
+    return tools?.[BASH_TOOL_NAME] as
+      | { needsApproval?: boolean; description?: string }
+      | undefined;
+  }
+
+  it("honors local for a signed-in member's direct turn", () => {
+    const bash = bashTool({});
+    expect(bash?.needsApproval).toBe(true);
+    expect(bash?.description).toMatch(/user's own machine/);
+  });
+
+  it("downgrades local for a chatbox session", () => {
+    const bash = bashTool({ isChatboxSession: true });
+    expect(bash?.needsApproval).toBe(false);
+    expect(bash?.description).not.toMatch(/user's own machine/);
+  });
+
+  it("downgrades local for a guest on a host-funded swarm scope", () => {
+    const bash = bashTool({
+      isGuest: true,
+      executionScope: {
+        kind: "swarm",
+        swarmId: "swarm-1",
+        accessVersion: 1,
+        projectId: "project-1",
+        workspaceId: "ws-1",
+      },
+    });
+    // Bash IS advertised on the swarm grant — but never on the local engine.
+    expect(bash).toBeDefined();
+    expect(bash?.needsApproval).toBe(false);
+    expect(bash?.description).not.toMatch(/user's own machine/);
+  });
+
+  it("never reaches the personal path at all in a journey session", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      { ...ctx, computerEngine: "local", isJourneySession: true } as never
+    );
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+});
+
 describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
   it("suppresses bash and reports a visible reason", () => {
     const suppressed: Array<{ id: string; reason: string }> = [];

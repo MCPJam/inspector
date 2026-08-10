@@ -414,6 +414,8 @@ describe("web chat-v2 — environment execution target", () => {
         projectId: "project-1",
         environmentId: "env_1",
         serverOverrideIds: [],
+        // This suite runs un-hosted; the service declares the local venue.
+        runtimeVenue: "local",
       }
     );
   });
@@ -459,7 +461,7 @@ describe("web chat-v2 — environment execution target", () => {
     // no plugin argument, and sending one would fail its validator.
     expect(convexQueryMock).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForRuntime",
-      { projectId: "project-1", environmentId: "env_1" }
+      { projectId: "project-1", environmentId: "env_1", runtimeVenue: "local" }
     );
 
     // The plugin's server is gone from the turn; the host's own remains.

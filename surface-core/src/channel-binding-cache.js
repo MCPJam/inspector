@@ -1,6 +1,3 @@
-// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
-// migrated off its slack-app twin; the marker tracks that remaining work.
-
 /**
  * TTL cache for channel→project bindings, extracted from the correctness
  * properties slack-app/agent/binding-cache.js has carried in production.
@@ -84,6 +81,7 @@ export function createChannelBindingCache(options = {}) {
 			cache.delete(key);
 	}
 
+	/** @param {string} key */
 	function get(key) {
 		const hit = cache.get(key);
 		if (!hit) return undefined;
@@ -94,11 +92,13 @@ export function createChannelBindingCache(options = {}) {
 		return hit.value;
 	}
 
+	/** @param {string} key @param {any} value */
 	function set(key, value) {
 		cache.set(key, { value, expiresAt: Date.now() + ttlMs });
 		evictIfNeeded();
 	}
 
+	/** @param {string} key @param {() => Promise<any>} read */
 	function coalesce(key, read) {
 		const existing = inflight.get(key);
 		if (existing) return existing;
@@ -118,6 +118,7 @@ export function createChannelBindingCache(options = {}) {
 		return pending;
 	}
 
+	/** @param {string} prefix */
 	function clearTenant(prefix) {
 		for (const key of cache.keys())
 			if (key.startsWith(prefix)) cache.delete(key);

@@ -138,6 +138,15 @@ interface MultiModelPlaygroundCardProps {
   executionConfig: ExecutionConfig;
   hostedContext?: HostedRuntimeContext;
   hostedOrgModelConfig?: OrgVisibleConfig;
+  /**
+   * Resolved Local⇄Cloud engine for the project's personal computer, so a
+   * comparison column runs bash on the same engine ("This machine") the tab
+   * root does — omitted ⇒ cloud, like every other surface.
+   */
+  personalComputerEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
   hostStyle: ChatboxHostStyle;
@@ -217,6 +226,7 @@ export function MultiModelPlaygroundCard({
   executionConfig,
   hostedContext,
   hostedOrgModelConfig,
+  personalComputerEngine,
   displayMode,
   onDisplayModeChange,
   hostStyle,
@@ -332,6 +342,7 @@ export function MultiModelPlaygroundCard({
     selectedServers,
     hostedContext,
     hostedOrgModelConfig,
+    ...(personalComputerEngine ? { personalComputerEngine } : {}),
     executionConfig: {
       ...executionConfig,
       modelId: String(model.id),

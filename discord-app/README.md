@@ -19,9 +19,15 @@ npm start
 
 You need a Discord application with a bot user, the **Message Content** intent
 enabled (the bot reads the message it was mentioned in), and the bot invited to
-a test server. Set `DISCORD_APPLICATION_ID` + `DISCORD_GUILD_ID` to register
+a test server. Set `DISCORD_APPLICATION_ID` + `DISCORD_DEV_GUILD_ID` to register
 `/mcpjam connect` in that one server — guild-scoped commands appear instantly,
 global ones take up to an hour.
+
+In production leave `DISCORD_DEV_GUILD_ID` unset: commands then register
+globally, which is what gets `/mcpjam` into every server the bot is added to.
+The older `DISCORD_GUILD_ID` is ignored (it used to be required, so honouring
+it would pin existing deployments to one server); the bot warns at boot if it
+is still set.
 
 `npm test` runs the unit tests; none of them need a Discord connection.
 
