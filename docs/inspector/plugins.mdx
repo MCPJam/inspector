@@ -142,13 +142,14 @@ Before you confirm the install, MCPJam shows a preview of what the bundle declar
 
 | Section | What it shows |
 |---------|---------------|
-| Identity | Plugin name, version, and a short content-addressed revision ID |
+| Identity | Plugin name, version, schema version (when present), and a short content-addressed revision ID |
 | Census | Counts of skills, MCP servers, app mappings, and assets |
-| Warnings | Non-fatal issues, including every skipped component with its reason |
+| Skipped components | A prominent warning block listing every component that **failed validation** and will not be installed — shown before the commit buttons so a partial install is never a surprise. Absent when all components passed. |
+| Warnings | Non-fatal issues such as `MCP_CONFIG_IGNORED` or secret-field omissions |
 | Unsupported components | One line per component MCPJam stores but does not run — lifecycle hooks, browser extensions, scheduled-task templates, and unrecognized manifest fields — each with its key and the reason it is inert |
-| Setup required | Environment variable and header names the bundle declares — you supply values per server after installing, not here |
+| Setup required | Environment variable and header names the bundle declares — you supply values per server after installing, not here. Names the bundle pre-configures itself (non-secret literals or runtime-resolved templates) are noted as pre-configured. |
 | Skills | Declared skill model references and descriptions |
-| MCP servers | Server keys, transports, and any OAuth or credential requirements |
+| MCP servers | Server keys, transport (including the specific HTTP variant — `streamable-http` or `sse` — when declared), and any OAuth or credential requirements |
 | App mappings | Metadata entries preserved from `.app.json` files |
 | Assets | Icons and other static files included in the bundle |
 
