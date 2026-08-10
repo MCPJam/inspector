@@ -12,6 +12,7 @@ import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import type { ThemeMode } from "@/types/preferences/theme";
 
 interface UpdateHostToLatestButtonProps {
+  hostId?: string;
   draft: HostConfigInputV2;
   savedDraft?: HostConfigInputV2;
   hostDisplayName: string;
@@ -47,6 +48,7 @@ function applyCatalogTemplateToDraft(
 }
 
 export function UpdateHostToLatestButton({
+  hostId,
   draft,
   savedDraft = draft,
   hostDisplayName,
@@ -64,15 +66,28 @@ export function UpdateHostToLatestButton({
     catalogState.status === "live"
       ? getCatalogTemplate(catalogState.catalog, draft.hostStyle)
       : undefined;
+  const savedCatalogHost =
+    catalogState.status === "live"
+      ? getCatalogHost(catalogState.catalog, savedDraft.hostStyle)
+      : undefined;
+  const savedCatalogTemplate =
+    catalogState.status === "live"
+      ? getCatalogTemplate(catalogState.catalog, savedDraft.hostStyle)
+      : undefined;
   const latestDraft =
     catalogTemplate === undefined
       ? undefined
       : applyCatalogTemplateToDraft(catalogTemplate, draft, themeMode);
   const latestSavedDraft =
-    catalogTemplate === undefined
+    savedCatalogTemplate === undefined
       ? undefined
-      : applyCatalogTemplateToDraft(catalogTemplate, savedDraft, themeMode);
+      : applyCatalogTemplateToDraft(
+          savedCatalogTemplate,
+          savedDraft,
+          themeMode
+        );
   const latestDisplayName = catalogHost?.label;
+  const latestSavedDisplayName = savedCatalogHost?.label;
 
   const alreadyCurrent =
     latestDraft !== undefined &&
@@ -81,15 +96,19 @@ export function UpdateHostToLatestButton({
     hostConfigInputsEqual(draft, latestDraft);
   const savedAlreadyCurrent =
     latestSavedDraft !== undefined &&
-    latestDisplayName !== undefined &&
-    savedHostDisplayName === latestDisplayName &&
+    latestSavedDisplayName !== undefined &&
+    savedHostDisplayName === latestSavedDisplayName &&
     hostConfigInputsEqual(savedDraft, latestSavedDraft);
   const updateAvailable =
     catalogState.status === "live" &&
     latestSavedDraft !== undefined &&
-    latestDisplayName !== undefined &&
+    latestSavedDisplayName !== undefined &&
     !savedAlreadyCurrent &&
     !alreadyCurrent;
+  const updateKey =
+    catalogState.status === "live"
+      ? `${hostId ?? "current-client"}:${savedDraft.hostStyle}:${catalogState.version}`
+      : undefined;
 
   const disabled =
     catalogState.status !== "live" ||
@@ -128,16 +147,19 @@ export function UpdateHostToLatestButton({
   // changing a field in the editor does not look like a new catalog release.
   const handleClickRef = useRef(handleClick);
   handleClickRef.current = handleClick;
+  const offeredUpdateKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!updateAvailable) {
+    if (!updateAvailable || updateKey === undefined) {
       toast.dismiss(UPDATE_TOAST_ID);
       return;
     }
+    if (offeredUpdateKeyRef.current === updateKey) return;
+    offeredUpdateKeyRef.current = updateKey;
 
     toast.info("Client update available", {
       id: UPDATE_TOAST_ID,
-      description: `${latestDisplayName} has a newer configuration.`,
+      description: `${latestSavedDisplayName} has a newer configuration.`,
       duration: 10_000,
       action: {
         label: "Update to latest",
@@ -148,7 +170,7 @@ export function UpdateHostToLatestButton({
     return () => {
       toast.dismiss(UPDATE_TOAST_ID);
     };
-  }, [latestDisplayName, updateAvailable]);
+  }, [latestSavedDisplayName, updateAvailable, updateKey]);
 
   return (
     <Button

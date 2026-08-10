@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { act, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -66,14 +66,19 @@ function renderButton(args: {
   const nameRef: { current: string } = {
     current: args.initialName ?? "Custom Host",
   };
+  const setDraftRef: {
+    current: (next: HostConfigInputV2) => void;
+  } = { current: () => undefined };
 
   function Harness() {
     const [draft, setDraft] = useState(args.initialDraft);
     const [name, setName] = useState(nameRef.current);
+    setDraftRef.current = setDraft;
     draftRef.current = draft;
     nameRef.current = name;
     return (
       <UpdateHostToLatestButton
+        hostId="host-test"
         draft={draft}
         savedDraft={args.savedDraft}
         hostDisplayName={name}
@@ -95,7 +100,12 @@ function renderButton(args: {
   }
 
   const utils = render(<Harness />);
-  return { draftRef, nameRef, ...utils };
+  return {
+    draftRef,
+    nameRef,
+    setDraft: (next: HostConfigInputV2) => setDraftRef.current(next),
+    ...utils,
+  };
 }
 
 describe("UpdateHostToLatestButton", () => {
@@ -114,7 +124,7 @@ describe("UpdateHostToLatestButton", () => {
     expect(options?.action).toMatchObject({ label: "Update to latest" });
 
     const action = options?.action as { onClick: () => void };
-    action.onClick();
+    act(() => action.onClick());
 
     expect(draftRef.current).toEqual(catalogDraftFor("mistral"));
     expect(nameRef.current).toBe(catalogLabelFor("mistral"));
@@ -131,6 +141,39 @@ describe("UpdateHostToLatestButton", () => {
     });
 
     expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("checks saved freshness against the saved host style", () => {
+    const savedDraft = catalogDraftFor("claude");
+    renderButton({
+      initialDraft: { ...savedDraft, hostStyle: "mistral" },
+      savedDraft,
+      initialName: catalogLabelFor("claude"),
+      savedName: catalogLabelFor("claude"),
+    });
+
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("does not offer the same catalog update again after local edits", async () => {
+    const savedDraft = emptyHostConfigInputV2({
+      hostStyle: "mistral",
+      modelId: "old-model",
+    });
+    const { draftRef, setDraft } = renderButton({
+      initialDraft: savedDraft,
+      savedDraft,
+      initialName: "Old Mistral",
+      savedName: "Old Mistral",
+    });
+
+    await waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
+    const [, options] = vi.mocked(toast.info).mock.calls[0];
+    const action = options?.action as { onClick: () => void };
+    act(() => action.onClick());
+    act(() => setDraft({ ...draftRef.current, modelId: "local-edit" }));
+
+    expect(toast.info).toHaveBeenCalledTimes(1);
   });
 
   it("copies the latest catalog template, including image settings", async () => {

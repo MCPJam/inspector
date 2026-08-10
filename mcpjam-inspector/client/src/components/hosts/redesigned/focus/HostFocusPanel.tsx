@@ -101,6 +101,7 @@ export function HostFocusPanel({
         logoSrc={logoSrc}
         action={
           <UpdateHostToLatestButton
+            hostId={hostId}
             draft={draft}
             savedDraft={savedDraft}
             hostDisplayName={hostDisplayName}
