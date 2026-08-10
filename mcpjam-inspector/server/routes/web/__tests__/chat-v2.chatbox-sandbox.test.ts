@@ -18,6 +18,7 @@ const {
   disconnectAllServersMock,
   provisionChatboxSandboxMock,
   ackChatboxSandboxNoticesMock,
+  isComputersDataPlaneConfiguredMock,
   maybeAppendEnvironmentContextMock,
   buildSandboxBashToolMock,
   buildBashToolMock,
@@ -29,6 +30,7 @@ const {
   disconnectAllServersMock: vi.fn(),
   provisionChatboxSandboxMock: vi.fn(),
   ackChatboxSandboxNoticesMock: vi.fn(),
+  isComputersDataPlaneConfiguredMock: vi.fn(),
   maybeAppendEnvironmentContextMock: vi.fn(),
   buildSandboxBashToolMock: vi.fn(),
   buildBashToolMock: vi.fn(),
@@ -104,6 +106,10 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
     ...actual,
     provisionChatboxSandbox: provisionChatboxSandboxMock,
     ackChatboxSandboxNotices: ackChatboxSandboxNoticesMock,
+    // Env-derived in the real module (false in a bare test process). The
+    // preflight consults it BEFORE provisioning, so the suite pins it `true`
+    // by default and individual tests flip it to model a local inspector.
+    isComputersDataPlaneConfigured: isComputersDataPlaneConfiguredMock,
   };
 });
 
@@ -209,6 +215,7 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
       async (args: { systemPrompt?: string }) => args.systemPrompt
     );
     ackChatboxSandboxNoticesMock.mockResolvedValue(undefined);
+    isComputersDataPlaneConfiguredMock.mockReturnValue(true);
     provisionChatboxSandboxMock.mockResolvedValue({
       ok: true,
       value: {
@@ -695,6 +702,68 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
     expect(provisionChatboxSandboxMock).not.toHaveBeenCalled();
     expect(buildBashToolMock).not.toHaveBeenCalled();
     expect(buildSandboxBashToolMock).not.toHaveBeenCalled();
+  });
+
+  it("never provisions from a server that is not a computers data plane", async () => {
+    // `provisionChatboxSandbox` is bearer-authed and would SUCCEED from a
+    // credential-less local inspector — stranding a BILLABLE box that
+    // `sandbox-bash` (which has no remote delegation) could never exec in.
+    // The capability check must therefore come before the reserve.
+    isComputersDataPlaneConfiguredMock.mockReturnValue(false);
+    const writes: unknown[] = [];
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      options.onStreamWriterReady?.({ write: (c: unknown) => writes.push(c) });
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    expect(provisionChatboxSandboxMock).not.toHaveBeenCalled();
+    expect(buildSandboxBashToolMock).not.toHaveBeenCalled();
+    expect(buildBashToolMock).not.toHaveBeenCalled();
+    expect(builtInToolsFromLastTurn()?.bash).toBeUndefined();
+
+    // The tester is told, instead of watching every command fail opaquely.
+    expect(
+      writes.filter((chunk: any) => chunk?.type === "data-sandbox-notice")
+    ).toEqual([
+      {
+        type: "data-sandbox-notice",
+        data: { reason: "sandbox_unavailable" },
+        transient: true,
+      },
+    ]);
+    // Inspector-minted notice: there is no backend notice row, nothing to ack.
+    expect(ackChatboxSandboxNoticesMock).not.toHaveBeenCalled();
+  });
+
+  it("tells the MODEL bash is unavailable, not only the tester's toast", async () => {
+    isComputersDataPlaneConfiguredMock.mockReturnValue(false);
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    const prompt = prepareChatV2Mock.mock.calls.at(-1)![0].systemPrompt;
+    expect(prompt).toMatch(/NO bash tool this conversation/);
+  });
+
+  it("leaves a legacy marker-absent config untouched by the data-plane preflight", async () => {
+    // Absent marker = personal-computer behavior. The preflight governs only
+    // the ephemeral path; the personal path's own cloud-family resolution is a
+    // different seam and must not start suppressing here.
+    isComputersDataPlaneConfiguredMock.mockReturnValue(false);
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: chatboxConfig(),
+    });
+
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(provisionChatboxSandboxMock).not.toHaveBeenCalled();
+    expect((builtInToolsFromLastTurn()?.bash as any)?.__path).toBe("personal");
   });
 
   it("tells the model the box survives between turns", async () => {

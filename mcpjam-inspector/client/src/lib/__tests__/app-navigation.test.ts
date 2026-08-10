@@ -273,12 +273,23 @@ describe("organization route sections", () => {
     expect(buildOrganizationPath("org_1", "slack")).toBe(
       "/organizations/org_1/slack",
     );
+    expect(buildOrganizationPath("org_1", "discord")).toBe(
+      "/organizations/org_1/discord",
+    );
   });
 
   it("parses the slack section off the URL", () => {
     window.history.replaceState({}, "", "/organizations/org_1/slack");
     const { result } = renderHook(() => useCurrentOrgRoute());
     expect(result.current).toEqual({ orgId: "org_1", orgSection: "slack" });
+  });
+
+  it("parses the discord section off the URL", () => {
+    // Its own section rather than a `?tab=` on Slack's: they are two
+    // integrations, not two views of one.
+    window.history.replaceState({}, "", "/organizations/org_1/discord");
+    const { result } = renderHook(() => useCurrentOrgRoute());
+    expect(result.current).toEqual({ orgId: "org_1", orgSection: "discord" });
   });
 
   it("keeps the sub-tab in the query string, not the path", () => {

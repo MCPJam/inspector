@@ -103,6 +103,7 @@ import type {
   ScopeStepUpCancelRequest,
   ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
+import type { ChatRewind } from "@/shared/chat-v2";
 import {
   bridgeHarnessRpcLogsToCollector,
   startCrossInstanceRpcLogPoll,
@@ -174,6 +175,8 @@ export interface WebChatTurnPersistContext {
   originalMessages: UIMessage[] | unknown[];
   /** Direct-chat only. */
   directVisibility?: "private" | "project";
+  /** Direct-chat lineage when this session was created by message edit. */
+  rewind?: ChatRewind;
   /**
    * Direct-chat only. May be a pre-built payload, `null` to opt out (e.g.
    * agent surfaces), or a builder closure that receives the post-prepare
@@ -853,6 +856,7 @@ export async function streamWebChatTurn(
         ...(isDirectChat
           ? {
               directVisibility: persist.directVisibility,
+              ...(persist.rewind ? { rewind: persist.rewind } : {}),
               resumeConfig: {
                 systemPrompt: persist.systemPrompt,
                 temperature: persist.temperature,

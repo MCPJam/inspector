@@ -1,12 +1,24 @@
 import { defineConfig } from "tsup";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(serverDir, "..");
 
+// Baked at build time so the bundled server can tag Sentry events with a
+// release. There is no package.json next to `dist/server/index.js` at runtime,
+// and in dev (tsx, no bundler) the define is absent — `server/sentry.ts` falls
+// back to `npm_package_version`.
+const packageVersion = JSON.parse(
+  readFileSync(join(rootDir, "package.json"), "utf8"),
+).version as string;
+
 export default defineConfig({
   entry: ["server/index.ts"],
+  define: {
+    "process.env.MCPJAM_INSPECTOR_VERSION": JSON.stringify(packageVersion),
+  },
   format: ["esm"],
   target: "node22",
   outDir: join(rootDir, "dist/server"),

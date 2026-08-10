@@ -8,15 +8,23 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     return true;
   } catch {
     // Fallback for older browsers or permission denied
+    const textarea = document.createElement("textarea");
     try {
-      const textarea = document.createElement("textarea");
       textarea.value = text;
       textarea.style.position = "fixed";
       textarea.style.opacity = "0";
       document.body.appendChild(textarea);
       textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
+      // execCommand REPORTS failure by returning false rather than throwing, so
+      // the result has to be forwarded — swallowing it makes every caller show a
+      // success toast for a copy that never happened.
+      const copied = document.execCommand("copy");
+      if (!copied) {
+        console.warn(
+          "Clipboard copy failed: execCommand fallback reported failure",
+        );
+        return false;
+      }
       console.warn(
         "Clipboard API unavailable, used deprecated execCommand fallback",
       );
@@ -26,6 +34,11 @@ export async function copyToClipboard(text: string): Promise<boolean> {
         "Clipboard copy failed: both modern and fallback methods failed",
       );
       return false;
+    } finally {
+      // In `finally`, not on the success path: the scratch textarea must not
+      // outlive the attempt even when execCommand THROWS, or a fixed-position
+      // invisible node is left in the document.
+      textarea.remove();
     }
   }
 }
