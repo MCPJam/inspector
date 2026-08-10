@@ -107,6 +107,29 @@ These components appear in the preview and in the expanded card under **Unsuppor
 
 After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
 
+## Local runtime placeholders
+
+Plugin bundles that declare local stdio MCP server components can use two runtime placeholders in their `command`, `args`, `env`, and `workingDirectory` fields. MCPJam substitutes these before spawning the component:
+
+| Placeholder | Resolves to |
+|-------------|-------------|
+| `${PLUGIN_ROOT}` | The immutable, content-addressed directory where MCPJam unpacked the plugin bundle. Read-only. |
+| `${PLUGIN_DATA}` | A writable directory dedicated to this plugin, preserved across version activations. Use it for caches, state, or any data the component needs to persist between runs. |
+
+`${PLUGIN_DATA}` is keyed by plugin identity, not by bundle version — activating a new revision of a plugin keeps the same data directory, so the component's state carries across updates.
+
+Both environment variables (`PLUGIN_ROOT` and `PLUGIN_DATA`) are also injected into the component's environment automatically, so the process can read them at runtime without the bundle having to declare them explicitly.
+
+### Troubleshooting: plugin data directory unavailable
+
+If MCPJam cannot create the `${PLUGIN_DATA}` directory when launching a local plugin component, the component fails to start and the Connect tab shows a **plugin_data_unavailable** error. Common causes:
+
+- `~/.mcpjam` is not writable by the current user.
+- The disk is full.
+- A file (not a directory) already exists at the expected path.
+
+Fix the filesystem condition and reconnect the server to retry.
+
 ## Plugin provenance in runs and sessions
 
 When an eval run or swarm simulation executes against an environment that pins a plugin, MCPJam records the exact bundle hash alongside the run. This record is immutable: re-importing the plugin after a run completes does not change what that run reports.
