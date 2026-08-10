@@ -19,7 +19,8 @@ export type OrganizationRouteSection =
   | "overview"
   | "billing"
   | "models"
-  | "slack";
+  | "slack"
+  | "discord";
 
 /** Typed canonical paths used across the app. */
 export const routePaths = {
@@ -218,6 +219,9 @@ export function buildOrganizationPath(
   // them out of the path means the nav, the surface manifest and the route
   // table each gain exactly one entry.
   if (section === "slack") return `/organizations/${orgId}/slack`;
+  // Discord has no sub-tabs at all (see DiscordAgentSettingsSection), so it
+  // needs even less than Slack does — one segment, no `?tab=`.
+  if (section === "discord") return `/organizations/${orgId}/discord`;
   return `/organizations/${orgId}`;
 }
 
@@ -487,6 +491,8 @@ export function useCurrentOrgRoute(): CurrentOrgRoute | null {
       ? "models"
       : sectionSegment === "slack"
       ? "slack"
+      : sectionSegment === "discord"
+      ? "discord"
       : "overview";
   return { orgId: decodePathSegment(orgId), orgSection };
 }
