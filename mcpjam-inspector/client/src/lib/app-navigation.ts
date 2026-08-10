@@ -15,12 +15,43 @@ import type { EvalRoutePrefix } from "./eval-route-url";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
 
+/**
+ * Every organization settings section.
+ *
+ * A runtime list rather than a bare union so the route-coverage test can walk
+ * it. `buildOrganizationPath` below is the only thing that decides these URLs,
+ * and nothing used to check that the paths it produced were actually
+ * registered — the Discord section shipped that way and was unreachable: the
+ * nav sent you to `/organizations/:id/discord`, no route matched, and the
+ * router's `"*"` wildcard rendered Servers instead. Adding a member here now
+ * fails the test until the route table, the element map and the surface
+ * manifest all know about it.
+ */
+export const ORGANIZATION_ROUTE_SECTIONS = [
+  "overview",
+  "billing",
+  "models",
+  "slack",
+  "discord",
+] as const;
+
 export type OrganizationRouteSection =
-  | "overview"
-  | "billing"
-  | "models"
-  | "slack"
-  | "discord";
+  (typeof ORGANIZATION_ROUTE_SECTIONS)[number];
+
+/**
+ * Third path segment → section. "overview" is the section with no segment, so
+ * an unknown segment lands there too; that is what makes an unregistered
+ * section fail quietly rather than 404, and why the coverage test exists.
+ */
+export function parseOrganizationSection(
+  segment: string | undefined
+): OrganizationRouteSection {
+  if (segment === "billing") return "billing";
+  if (segment === "models") return "models";
+  if (segment === "slack") return "slack";
+  if (segment === "discord") return "discord";
+  return "overview";
+}
 
 /** Typed canonical paths used across the app. */
 export const routePaths = {
@@ -483,17 +514,7 @@ export function useCurrentOrgRoute(): CurrentOrgRoute | null {
   if (segments[0] !== "organizations") return null;
   const orgId = segments[1];
   if (!orgId) return null;
-  const sectionSegment = segments[2];
-  const orgSection: OrganizationRouteSection =
-    sectionSegment === "billing"
-      ? "billing"
-      : sectionSegment === "models"
-      ? "models"
-      : sectionSegment === "slack"
-      ? "slack"
-      : sectionSegment === "discord"
-      ? "discord"
-      : "overview";
+  const orgSection = parseOrganizationSection(segments[2]);
   return { orgId: decodePathSegment(orgId), orgSection };
 }
 
