@@ -318,9 +318,13 @@ describe("ChatboxUsagePanel flow selection", () => {
     const user = userEvent.setup();
     renderInsightsPanel();
 
+    // Clusters is exclusive with Session flow — open the map to write a chip,
+    // then return so the breakdown still reflects it on the flow view.
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
     await user.click(
       screen.getByRole("button", { name: "pick map community" })
     );
+    await user.click(screen.getByRole("button", { name: "Session flow" }));
 
     expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
   });
@@ -333,9 +337,11 @@ describe("ChatboxUsagePanel flow selection", () => {
     const user = userEvent.setup();
     renderInsightsPanel();
 
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
     await user.click(
       screen.getByRole("button", { name: "pick map community" })
     );
+    await user.click(screen.getByRole("button", { name: "Session flow" }));
     await user.click(
       screen.getByRole("button", { name: "pick same theme as map" })
     );
@@ -355,9 +361,11 @@ describe("ChatboxUsagePanel flow selection", () => {
     // Both chips are on the SAME axis, which is exactly the case that used to
     // break: clearing by axis took the map's community with it.
     await user.click(screen.getByRole("button", { name: "pick goal theme" }));
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
     await user.click(
       screen.getByRole("button", { name: "pick map community" })
     );
+    await user.click(screen.getByRole("button", { name: "Session flow" }));
 
     const keys = lastBreakdownChipKeys();
     // The map's chip survives into the diagram's own query…
