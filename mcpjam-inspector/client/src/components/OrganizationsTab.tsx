@@ -85,7 +85,9 @@ import {
   SlackAgentSettingsSection,
   type SlackSettingsTabId,
 } from "./organization/slack/SlackAgentSettingsSection";
+import { DiscordAgentSettingsSection } from "./organization/discord/DiscordAgentSettingsSection";
 import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabled";
+import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import {
   useAppNavigate,
   useCurrentSearchParam,
@@ -603,6 +605,7 @@ function OrganizationPage({
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
+  const discordAgentEnabled = useDiscordAgentEnabled();
   const rawSlackTab = useCurrentSearchParam("tab");
   const activeSection: OrganizationRouteSection =
     section === "models"
@@ -614,6 +617,10 @@ function OrganizationPage({
       // flagged-in session should land somewhere real.
       section === "slack" && slackAgentSettingsEnabled
       ? "slack"
+      : // Same collapse for Discord, and it matters more here: the agent is
+      // dark, so nearly everyone hitting this URL is flagged OFF.
+      section === "discord" && discordAgentEnabled
+      ? "discord"
       : "overview";
   // The sub-tab lives in `?tab=` — three views of one settings section, not
   // three org routes. Read from the URL rather than component state so a link
@@ -940,6 +947,9 @@ function OrganizationPage({
     { id: "models", label: "Models" },
     ...(slackAgentSettingsEnabled
       ? ([{ id: "slack", label: "Slack" }] as const)
+      : []),
+    ...(discordAgentEnabled
+      ? ([{ id: "discord", label: "Discord" }] as const)
       : []),
     { id: "billing", label: "Billing" },
   ];
@@ -1269,6 +1279,11 @@ function OrganizationPage({
           isAdmin={canEdit}
           tab={slackTab}
           onTabChange={navigateToSlackTab}
+        />
+      ) : activeSection === "discord" ? (
+        <DiscordAgentSettingsSection
+          organizationId={organization._id}
+          isAdmin={canEdit}
         />
       ) : activeSection === "billing" ? (
         <>
