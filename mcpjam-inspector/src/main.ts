@@ -1,16 +1,28 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
 import * as Sentry from "@sentry/electron/main";
-import { app } from "electron";
-import { electronMainSentryConfig } from "../shared/sentry-config.js";
+import { app, BrowserWindow, shell, Menu, dialog } from "electron";
+import { buildElectronSentryConfig } from "../shared/sentry-config.js";
+import {
+  crashReportingIntegrations,
+  registerMainProcessCrashHandlers,
+} from "./crash-reporting.js";
 
+// `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
+// a packaged build, so the previous NODE_ENV check reported every shipped
+// desktop event as `environment: "dev"`.
 Sentry.init({
-  // `app.isPackaged`, not NODE_ENV: the packaged app never sets NODE_ENV, so
-  // the shared default would tag every shipped release as "dev".
-  ...electronMainSentryConfig(app.isPackaged),
+  ...buildElectronSentryConfig({
+    environment: app.isPackaged ? "prod" : "dev",
+    release: app.getVersion(),
+    deployment: "self_hosted",
+  }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
+  // Promotes crashed/oom/killed from breadcrumbs to captured events — see
+  // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
+  // already on by default in @sentry/electron 5.12 and is left alone.
+  integrations: crashReportingIntegrations,
 });
 
-import { BrowserWindow, shell, Menu, dialog } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
 import path from "path";
@@ -40,6 +52,11 @@ import {
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+
+// Sentry's default integrations capture these; this puts them in the log file
+// the user actually attaches to a bug report (and is the only diagnostic when
+// reporting is offline or opted out).
+registerMainProcessCrashHandlers(log);
 
 // Wire autoUpdater event handlers BEFORE update-electron-app starts polling,
 // otherwise an early `update-available` event could fire before our listener exists.

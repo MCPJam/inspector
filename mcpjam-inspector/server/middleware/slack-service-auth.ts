@@ -30,6 +30,10 @@ import {
 } from "../services/slack-backend.js";
 import { logger } from "../utils/logger.js";
 import {
+  composeAllowedPaths,
+  SLACK_ALLOWED_PATH_DELTAS,
+} from "./surface-allowed-paths.js";
+import {
   handleSurfaceServiceAuth,
   isDiscordServiceToken as isDiscordSurfaceToken,
   isValidDiscordServiceToken as isValidDiscordSurfaceToken,
@@ -50,27 +54,16 @@ export const DISCORD_TOKEN_PREFIX = "dsc_";
  * picker). Everything the bot does today is on this list; anything it does
  * tomorrow has to be added here on purpose.
  */
-const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
-  /^\/api\/v1\/projects\/[^/]+\/agent$/,
-  // POST creates a run. Reachable only for the RETIRED Run-it button, whose
-  // handler survives as a shim for buttons on messages posted before the
-  // switch to proposals. This entry goes with that shim.
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs$/,
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+$/,
-  /^\/api\/v1\/projects$/,
-  // Executing an action a human approved. Safe to reach with `slk_` for the
-  // same reason the agent turn is: the token only names the bot, and the
-  // clicker named in the headers is who the execution is authorized as.
-  /^\/api\/v1\/projects\/[^/]+\/proposed-actions\/[^/]+\/execute$/,
-  // Run EVIDENCE, for posting screenshots when a watched run finishes.
-  //
-  // Two entries because steps are ITERATION-scoped: the bot lists a run's
-  // iterations, then fetches bounded step pages per iteration. Both are reads
-  // of a run the acting user can already see (the delegated JWT enforces
-  // that), and neither can start or change anything.
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/,
-];
+/**
+ * Composed from the SHARED base plus Slack's declared deltas — see
+ * `surface-allowed-paths.ts`. Slack and Discord kept separate copies of this
+ * list and they had already diverged; the base makes every remaining
+ * difference an explicit, reasoned entry rather than something you find by
+ * diffing two files.
+ */
+const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = composeAllowedPaths(
+  SLACK_ALLOWED_PATH_DELTAS
+);
 
 function isAllowedSlackPath(path: string): boolean {
   return SLACK_ALLOWED_PATHS.some((pattern) => pattern.test(path));

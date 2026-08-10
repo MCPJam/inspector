@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "@/lib/toast";
+import { reportCaught } from "@/lib/error-reporting";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -203,8 +204,15 @@ export function ServerDetailModal({
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
     void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
-      () => {
-        // Reconnect failures surface their own toast inside the handler.
+      (err) => {
+        // The handler surfaces its own toast; report so a systematically
+        // failing reconnect is visible. Same source/level as the 1.5s
+        // safety-net path below — this is the branch that runs when the
+        // reactive read-back arrives in time, i.e. the common one.
+        reportCaught(err, {
+          source: "server_detail_wire_mode_reconnect",
+          level: "warning",
+        });
       }
     );
   }, [
@@ -273,7 +281,15 @@ export function ServerDetailModal({
           pendingReconnectRef.current = null;
           void onReconnect(server.name, {
             allowInteractiveOAuthFlow: false,
-          }).catch(() => {});
+          }).catch((err) => {
+            // Deliberately not toasted: this is the 1.5s safety-net
+            // reconnect and the toggle has its own error path. Reported so a
+            // systematically failing fallback is visible rather than dropped.
+            reportCaught(err, {
+              source: "server_detail_wire_mode_reconnect",
+              level: "warning",
+            });
+          });
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the

@@ -10,6 +10,51 @@ function clientWith(
 
 const PREVIEW = "plugins:resolvePluginRuntimePreview";
 
+/** A well-formed probe response for two pinned versions. */
+function twoVersionResponse() {
+  return {
+    pluginVersions: [
+      {
+        pluginId: "p_a",
+        pluginVersionId: "pv_a",
+        name: "alpha",
+        bundleHash: "hash_a",
+      },
+      {
+        pluginId: "p_b",
+        pluginVersionId: "pv_b",
+        name: "beta",
+        bundleHash: "hash_b",
+      },
+    ],
+    effectiveServerIds: ["srv_a", "srv_b"],
+    serverComponents: [
+      {
+        pluginVersionId: "pv_a",
+        componentKey: "server:api",
+        placement: "remote",
+        authenticationPolicy: "on_use",
+        materializedServerId: "srv_a",
+      },
+      {
+        pluginVersionId: "pv_b",
+        componentKey: "server:tools",
+        placement: "remote",
+        authenticationPolicy: "on_use",
+        materializedServerId: "srv_b",
+      },
+    ],
+    pluginSkills: [
+      {
+        pluginVersionId: "pv_b",
+        modelRef: "beta/summarize",
+        materializedSkillId: "sk_b",
+      },
+    ],
+    unavailableComponents: [],
+  };
+}
+
 describe("fetchPluginRuntimeAttribution", () => {
   it("costs zero reads when the environment pins no plugins", async () => {
     const query = vi.fn();
@@ -25,75 +70,43 @@ describe("fetchPluginRuntimeAttribution", () => {
     });
   });
 
-  it("probes ONE version per call so components are attributable to a version", async () => {
-    const client = clientWith((_ref, args) => {
-      const id = args.pluginVersionIds[0];
-      return {
-        pluginVersions: [
-          {
-            pluginId: `p_${id}`,
-            pluginVersionId: id,
-            name: id === "pv_a" ? "alpha" : "beta",
-            bundleHash: `hash_${id}`,
-          },
-        ],
-        effectiveServerIds: [`srv_${id}`],
-        pluginSkills: [
-          {
-            modelRef: `${id === "pv_a" ? "alpha" : "beta"}/summarize`,
-            materializedSkillId: `sk_${id}`,
-          },
-        ],
-        unavailableComponents: [],
-      };
-    });
+  it("attributes every component from ONE call covering the whole pin set", async () => {
+    const client = clientWith(() => twoVersionResponse());
 
     const result = await fetchPluginRuntimeAttribution(client, {
       projectId: "prj",
       pluginVersionIds: ["pv_a", "pv_b"],
     });
 
-    expect(client.query).toHaveBeenCalledTimes(2);
+    // The historical per-version fan-out is gone: one probe, all edges.
+    expect(client.query).toHaveBeenCalledTimes(1);
     expect(client.query).toHaveBeenCalledWith(PREVIEW, {
       projectId: "prj",
-      pluginVersionIds: ["pv_a"],
+      pluginVersionIds: ["pv_a", "pv_b"],
     });
-    expect(result?.serverOrigins.get("srv_pv_a")).toEqual({
-      pluginId: "p_pv_a",
+    expect(result?.serverOrigins.get("srv_a")).toEqual({
+      pluginId: "p_a",
       pluginVersionId: "pv_a",
       name: "alpha",
-      bundleHash: "hash_pv_a",
+      bundleHash: "hash_a",
     });
-    expect(result?.skillOrigins.get("sk_pv_b")).toEqual({
+    expect(result?.serverOrigins.get("srv_b")?.name).toBe("beta");
+    expect(result?.skillOrigins.get("sk_b")).toEqual({
       modelRef: "beta/summarize",
       plugin: {
-        pluginId: "p_pv_b",
+        pluginId: "p_b",
         pluginVersionId: "pv_b",
         name: "beta",
-        bundleHash: "hash_pv_b",
+        bundleHash: "hash_b",
       },
     });
+    expect(result?.unattributedVersionIds).toEqual([]);
   });
 
-  it("returns null — never a partial map — when a probe fails", async () => {
-    let calls = 0;
+  it("returns null — never a partial map — when the probe fails", async () => {
     const client = clientWith(() => {
-      calls += 1;
-      if (calls === 2) throw new Error("Could not find public function");
-      return {
-        pluginVersions: [
-          {
-            pluginId: "p",
-            pluginVersionId: "pv_a",
-            name: "alpha",
-            bundleHash: "h",
-          },
-        ],
-        effectiveServerIds: ["srv_a"],
-        pluginSkills: [],
-      };
+      throw new Error("Could not find public function");
     });
-
     const result = await fetchPluginRuntimeAttribution(client, {
       projectId: "prj",
       pluginVersionIds: ["pv_a", "pv_b"],
@@ -101,30 +114,34 @@ describe("fetchPluginRuntimeAttribution", () => {
     expect(result).toBeNull();
   });
 
-  it("skips a version the probe reports as unavailable rather than inventing an origin", async () => {
-    const client = clientWith((_ref, args) =>
-      args.pluginVersionIds[0] === "pv_a"
-        ? {
-            pluginVersions: [],
-            effectiveServerIds: [],
-            pluginSkills: [],
-            unavailableComponents: [
-              { pluginVersionId: "pv_a", reason: "disabled" },
-            ],
-          }
-        : {
-            pluginVersions: [
-              {
-                pluginId: "p_b",
-                pluginVersionId: "pv_b",
-                name: "beta",
-                bundleHash: "h_b",
-              },
-            ],
-            effectiveServerIds: ["srv_b"],
-            pluginSkills: [],
-          }
+  it("returns null when the deployed backend omits serverComponents (deploy skew)", async () => {
+    // An older probe without component rows cannot supply the version edge —
+    // guessing from the flat effectiveServerIds list would misattribute.
+    const client = clientWith(() => ({
+      pluginVersions: twoVersionResponse().pluginVersions,
+      effectiveServerIds: ["srv_a", "srv_b"],
+      pluginSkills: [],
+    }));
+    const result = await fetchPluginRuntimeAttribution(client, {
+      projectId: "prj",
+      pluginVersionIds: ["pv_a", "pv_b"],
+    });
+    expect(result).toBeNull();
+  });
+
+  it("reports a version the probe drops as unattributed rather than inventing an origin", async () => {
+    const response = twoVersionResponse();
+    // pv_a became unavailable between the environment read and this probe.
+    response.pluginVersions = response.pluginVersions.filter(
+      (version) => version.pluginVersionId !== "pv_a"
     );
+    response.serverComponents = response.serverComponents.filter(
+      (component) => component.pluginVersionId !== "pv_a"
+    );
+    response.unavailableComponents = [
+      { pluginVersionId: "pv_a", reason: "disabled" },
+    ] as never[];
+    const client = clientWith(() => response);
 
     const result = await fetchPluginRuntimeAttribution(client, {
       projectId: "prj",
@@ -161,6 +178,9 @@ describe("fetchPluginRuntimeAttribution", () => {
         { pluginId: "p", pluginVersionId: "pv_a", name: "alpha" },
       ],
       effectiveServerIds: ["srv_a"],
+      serverComponents: [
+        { pluginVersionId: "pv_a", materializedServerId: "srv_a" },
+      ],
       pluginSkills: [],
     }));
     const result = await fetchPluginRuntimeAttribution(client, {

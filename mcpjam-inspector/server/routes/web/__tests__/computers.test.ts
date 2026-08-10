@@ -1,6 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
+
+// Controllable HOSTED_MODE / kill switch: both are import-time consts in the
+// real config module, so env stubs can't reach them.
+const configState = vi.hoisted(() => ({ hosted: false, localEnabled: true }));
+vi.mock("../../../config.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../config.js")>(
+    "../../../config.js"
+  );
+  return {
+    ...actual,
+    get HOSTED_MODE() {
+      return configState.hosted;
+    },
+    get LOCAL_COMPUTER_ENABLED() {
+      return configState.localEnabled;
+    },
+  };
+});
+
 import { createComputersRoutes } from "../computers";
+import { isLocalComputerEngineAvailable } from "../../../utils/computers/local-machine";
 import type { BashRunner } from "../../../utils/computers/run-command";
 
 // Route-level tests: GET /config (data-plane discovery) and POST /exec (the
@@ -90,6 +110,8 @@ function stubLocalDataPlaneEnv() {
 
 beforeEach(() => {
   installFetchStub();
+  configState.hosted = false;
+  configState.localEnabled = true;
 });
 
 afterEach(() => {
@@ -99,34 +121,115 @@ afterEach(() => {
 });
 
 describe("GET /api/web/computers/config", () => {
-  it("reports an unconfigured server", async () => {
+  // The local-engine block depends on the host running the tests (bash on
+  // PATH); compose the expectation from the same probe the route consults so
+  // the suite is honest on a bash-less machine instead of failing on it.
+  function expectedLocalEngineBlock() {
+    const availability = isLocalComputerEngineAvailable();
+    return availability.available
+      ? {
+          available: true,
+          terminalAvailable: false,
+          workspaceDisplayRoot: "~/.mcpjam/computer",
+        }
+      : {
+          available: false,
+          terminalAvailable: false,
+          workspaceDisplayRoot: null,
+          reason: availability.reason,
+        };
+  }
+
+  it("reports an unconfigured server — legacy fields intact, engines added", async () => {
+    const localBlock = expectedLocalEngineBlock();
     const response = await createApp().request("/api/web/computers/config");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       localConfigured: false,
       remoteDataPlaneUrl: null,
+      engines: {
+        // Terminal stays off until the node-pty PR wires its probe.
+        local: localBlock,
+        cloud: { available: false },
+      },
+      capabilities: {
+        personalCloudAvailable: false,
+        ephemeralCloudAvailable: false,
+      },
+      // No cloud anywhere ⇒ local when the machine can serve it, else the
+      // honest "no engine exists" null.
+      defaultEngine: localBlock.available ? "local" : null,
     });
   });
 
-  it("reports a locally configured data plane", async () => {
+  it("reports a locally configured data plane — BOTH cloud capabilities", async () => {
     stubLocalDataPlaneEnv();
     const response = await createApp().request("/api/web/computers/config");
-    expect(await response.json()).toEqual({
-      localConfigured: true,
-      remoteDataPlaneUrl: null,
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.localConfigured).toBe(true);
+    expect(body.remoteDataPlaneUrl).toBeNull();
+    expect(body.engines.cloud).toEqual({ available: true });
+    expect(body.capabilities).toEqual({
+      personalCloudAvailable: true,
+      ephemeralCloudAvailable: true,
     });
   });
 
-  it("advertises the remote data plane origin", async () => {
+  it("remote-only: personal cloud works, ephemeral does NOT — the capability split", async () => {
+    // `remoteDataPlaneUrl` delegates only personal-computer exec/terminal;
+    // eval/swarm/chatbox sandboxes need THIS process to hold the creds. A
+    // single "cloud available" bit would lie to exactly those surfaces.
     vi.stubEnv(
       "COMPUTERS_REMOTE_DATA_PLANE_URL",
       "https://dp.example.test/ignored-path"
     );
     const response = await createApp().request("/api/web/computers/config");
-    expect(await response.json()).toEqual({
-      localConfigured: false,
-      remoteDataPlaneUrl: "https://dp.example.test",
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.localConfigured).toBe(false);
+    expect(body.remoteDataPlaneUrl).toBe("https://dp.example.test");
+    expect(body.capabilities).toEqual({
+      personalCloudAvailable: true,
+      ephemeralCloudAvailable: false,
     });
+  });
+
+  it("hosted: no local engine, cloud default — and no reason leaks paths", async () => {
+    configState.hosted = true;
+    stubLocalDataPlaneEnv();
+    const response = await createApp().request("/api/web/computers/config");
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.engines.local.available).toBe(false);
+    expect(body.engines.local.workspaceDisplayRoot).toBeNull();
+    expect(body.defaultEngine).toBe("cloud");
+  });
+
+  it("kill switch off + no cloud: NO contradictory default — defaultEngine is null", async () => {
+    // Telling the client "the default engine is cloud" while every
+    // availability flag says cloud doesn't exist would send the engine UI
+    // chasing a phantom; null lets it fall through to its empty state.
+    configState.localEnabled = false;
+    const response = await createApp().request("/api/web/computers/config");
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.engines.local.available).toBe(false);
+    expect(body.engines.local.reason).toMatch(/disabled/);
+    expect(body.defaultEngine).toBeNull();
+  });
+
+  it("kill switch off with a cloud data plane: default falls back to cloud", async () => {
+    configState.localEnabled = false;
+    stubLocalDataPlaneEnv();
+    const response = await createApp().request("/api/web/computers/config");
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.defaultEngine).toBe("cloud");
+  });
+
+  it("never leaks an absolute home path — the display root is a tilde literal", async () => {
+    const response = await createApp().request("/api/web/computers/config");
+    const raw = JSON.stringify(await response.json());
+    expect(raw).not.toContain(process.env.HOME ?? "::never::");
+    if (isLocalComputerEngineAvailable().available) {
+      expect(raw).toContain("~/.mcpjam/computer");
+    }
   });
 });
 

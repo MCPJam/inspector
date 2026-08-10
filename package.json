@@ -9,8 +9,7 @@
     "chat-ui",
     "widget-react",
     "soundcheck",
-    "quality-labeler",
-    "mcp",
+        "mcp",
     "slack-app",
     "surface-core",
     "discord-app"
