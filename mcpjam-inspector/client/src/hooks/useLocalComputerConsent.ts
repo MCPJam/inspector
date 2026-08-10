@@ -14,8 +14,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   clearStoredLocalComputerConsent,
-  grantLocalComputerConsent,
   loadStoredLocalComputerConsent,
+  mintLocalComputerConsent,
+  persistLocalComputerConsent,
   revokeLocalComputerConsent,
   subscribeLocalComputerConsent,
   verifyStoredLocalComputerConsent,
@@ -55,14 +56,25 @@ export function useLocalComputerConsent(): LocalComputerConsent {
   // claim-before-await — is what makes a later revoke beat an earlier in-flight
   // grant, not merely a faster one.
   const opSeqRef = useRef(0);
-  // grant/revoke write storage, and `persist()` dispatches the same-tab
-  // consent event SYNCHRONOUSLY — so the subscription below would re-enter
-  // refresh() and bump the sequence mid-operation, making an op supersede
-  // itself. This depth counter marks writes WE cause: while it's non-zero the
-  // subscription ignores the notification (we set the resulting state
-  // directly). Genuinely external changes (cross-tab, or a sibling hook)
-  // still refresh.
+  // Local storage writes dispatch the same-tab consent event SYNCHRONOUSLY, so
+  // the subscription below would re-enter refresh() and bump the sequence for
+  // OUR OWN write, making an op supersede itself. This depth counter marks the
+  // SYNCHRONOUS write region we cause; while it's non-zero the subscription
+  // ignores the notification (we set the resulting state directly).
+  //
+  // Critically, it wraps only the synchronous persist/clear — NEVER a network
+  // await. An external revoke (another tab/hook) arriving while a grant's
+  // request is still in flight must stay visible, so it can advance the
+  // sequence and make the completing grant discard itself.
   const selfWriteDepthRef = useRef(0);
+  const selfWrite = useCallback(<T>(write: () => T): T => {
+    selfWriteDepthRef.current += 1;
+    try {
+      return write();
+    } finally {
+      selfWriteDepthRef.current -= 1;
+    }
+  }, []);
   const apply = useCallback((seq: number, next: ConsentSnapshot) => {
     if (seq !== opSeqRef.current) return;
     setSnapshot((prev) =>
@@ -104,33 +116,22 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     // CLAIM before awaiting: a revoke that starts after this line gets a higher
     // sequence and wins, even if the grant request resolves later.
     const seq = ++opSeqRef.current;
-    selfWriteDepthRef.current += 1;
-    let ok = false;
-    try {
-      ok = await grantLocalComputerConsent();
-    } finally {
-      selfWriteDepthRef.current -= 1;
+    // Mint on the server WITHOUT persisting — the network wait is UNGUARDED so
+    // an external revoke during it stays visible and advances the sequence.
+    const minted = await mintLocalComputerConsent();
+    if (!minted) return false;
+    if (seq !== opSeqRef.current) {
+      // A genuinely later op (a revoke, possibly cross-tab) landed while the
+      // mint was in flight. Do NOT persist; drop the just-minted server
+      // capability so the later revoke stays final.
+      void revokeLocalComputerConsent();
+      return false;
     }
-    if (!ok) return false;
-    if (seq === opSeqRef.current) {
-      apply(seq, {
-        status: "granted",
-        token: loadStoredLocalComputerConsent()?.token ?? null,
-      });
-      return true;
-    }
-    // Superseded by a genuinely later op (a revoke). The grant already
-    // persisted a token; undo it so the later revoke stays final — cross-tab
-    // included. This undo is itself a self-write.
-    selfWriteDepthRef.current += 1;
-    try {
-      clearStoredLocalComputerConsent();
-    } finally {
-      selfWriteDepthRef.current -= 1;
-    }
-    void revokeLocalComputerConsent();
-    return false;
-  }, [apply]);
+    // Persist is synchronous and fires the same-tab event — guard only THIS.
+    selfWrite(() => persistLocalComputerConsent(minted));
+    apply(seq, { status: "granted", token: minted.token });
+    return true;
+  }, [apply, selfWrite]);
 
   const revoke = useCallback(async (): Promise<void> => {
     if (HOSTED_MODE) return;
@@ -139,15 +140,10 @@ export function useLocalComputerConsent(): LocalComputerConsent {
     // sequence makes any in-flight grant/verify discard itself on resolve; the
     // server call is best-effort on top of the guaranteed local forget.
     const seq = ++opSeqRef.current;
-    selfWriteDepthRef.current += 1;
-    try {
-      clearStoredLocalComputerConsent();
-    } finally {
-      selfWriteDepthRef.current -= 1;
-    }
+    selfWrite(() => clearStoredLocalComputerConsent());
     apply(seq, { status: "absent", token: null });
     await revokeLocalComputerConsent();
-  }, [apply]);
+  }, [apply, selfWrite]);
 
   return {
     status: snapshot.status,

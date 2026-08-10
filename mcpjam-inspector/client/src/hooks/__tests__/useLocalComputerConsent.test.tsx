@@ -34,13 +34,16 @@ vi.mock("@/lib/local-computer-consent", () => ({
   loadStoredLocalComputerConsent: () =>
     lib.storedToken ? { token: lib.storedToken, grantedAt: "now" } : null,
   verifyStoredLocalComputerConsent: () => lib.verify(),
-  grantLocalComputerConsent: async () => {
+  // mint = network only, NO persist, NO event (matches the real split).
+  mintLocalComputerConsent: async () => {
     const ok = await lib.grant();
-    if (ok) {
-      lib.storedToken = lib.grantToken; // persist
-      lib.fireSubscribers(); // persist()'s synchronous same-tab event
-    }
-    return ok;
+    return ok ? { token: lib.grantToken, grantedAt: "now" } : null;
+  },
+  // persist = synchronous storage write + same-tab event.
+  persistLocalComputerConsent: (c: { token: string }) => {
+    lib.storedToken = c.token;
+    lib.fireSubscribers();
+    return true;
   },
   revokeLocalComputerConsent: () => lib.revoke(),
   clearStoredLocalComputerConsent: () => {
@@ -157,10 +160,10 @@ describe("useLocalComputerConsent", () => {
   });
 
   it("a later revoke beats an EARLIER in-flight grant (claim-before-await)", async () => {
-    // grant claims its sequence before awaiting; a revoke that starts after
-    // gets a higher sequence and wins even though the grant resolves later.
-    // The stale grant must also undo its persisted token (clear + server
-    // revoke) so the revoke stays final.
+    // grant claims its sequence before minting; a revoke that starts after
+    // gets a higher sequence and wins even though the mint resolves later.
+    // The stale grant never persists, and drops the just-minted server
+    // capability so the revoke stays final.
     lib.verify.mockResolvedValue(false);
     let resolveGrant: (ok: boolean) => void = () => {};
     lib.grant.mockReturnValue(
@@ -177,20 +180,60 @@ describe("useLocalComputerConsent", () => {
     act(() => {
       grantResult = result.current.grant();
     });
-    // Revoke starts AFTER grant claimed its slot but BEFORE grant resolves.
+    // Revoke starts AFTER grant claimed its slot but BEFORE the mint resolves.
     await act(async () => {
       await result.current.revoke();
     });
     expect(result.current.status).toBe("absent");
 
-    // The grant server call finally succeeds — but it's stale.
+    // The mint finally succeeds — but it's stale.
     await act(async () => {
       resolveGrant(true);
       await grantResult;
     });
     expect(await grantResult).toBe(false);
     expect(result.current.status).toBe("absent");
-    // The stale grant undid its own persistence via the server revoke.
-    expect(lib.revoke).toHaveBeenCalledTimes(2); // explicit revoke + stale undo
+    expect(lib.storedToken).toBeNull(); // never persisted
+    // explicit revoke + the stale grant dropping its minted capability.
+    expect(lib.revoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("an EXTERNAL revoke during a pending grant is not overwritten (mint wait is unguarded)", async () => {
+    // The round-4 regression: guarding the whole grant network wait also hid
+    // genuine cross-tab events. Now only the synchronous persist is guarded, so
+    // an external revoke arriving mid-mint advances the sequence and the
+    // completing grant discards itself.
+    lib.storedToken = null;
+    lib.verify.mockResolvedValue(false);
+    let resolveMint: (ok: boolean) => void = () => {};
+    lib.grant.mockReturnValue(
+      new Promise<boolean>((r) => {
+        resolveMint = r;
+      }),
+    );
+    lib.revoke.mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useLocalComputerConsent());
+    await waitFor(() => expect(result.current.status).toBe("absent"));
+
+    let grantResult: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      grantResult = result.current.grant();
+    });
+    // Another tab revokes while the mint is in flight — its storage clear fires
+    // the same-tab subscribers here. The unguarded mint await lets it through.
+    await act(async () => {
+      lib.storedToken = null;
+      lib.fireSubscribers();
+    });
+
+    await act(async () => {
+      resolveMint(true);
+      await grantResult;
+    });
+    expect(await grantResult).toBe(false);
+    expect(result.current.status).toBe("absent");
+    expect(lib.storedToken).toBeNull();
+    expect(lib.revoke).toHaveBeenCalled(); // dropped the minted capability
   });
 });

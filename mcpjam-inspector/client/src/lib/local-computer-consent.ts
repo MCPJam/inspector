@@ -92,27 +92,53 @@ function consentRequest(
   });
 }
 
-/** Mint + store a fresh capability. Returns whether the grant succeeded. */
-export async function grantLocalComputerConsent(): Promise<boolean> {
+/**
+ * Mint a fresh capability on the SERVER, without persisting it locally.
+ *
+ * Split from the persist step so a caller can keep the network wait
+ * OUT of any "my own write" guard — an external revoke arriving mid-mint must
+ * stay visible — and then persist (which dispatches the synchronous same-tab
+ * event) in a tightly-scoped, guarded region. Returns null on any failure.
+ */
+export async function mintLocalComputerConsent(): Promise<StoredLocalComputerConsent | null> {
   try {
     const response = await consentRequest("grant");
-    if (!response.ok) return false;
+    if (!response.ok) return null;
     const json = (await response.json()) as {
       token?: unknown;
       grantedAt?: unknown;
     };
-    if (typeof json.token !== "string" || json.token.length < 16) return false;
-    // Persistence is the whole point — a granted capability the UI can't read
-    // back (storage disabled/full) would let the engine resolve local while
-    // no `X-MCPJam-Local-Consent` header exists to send. Report the failure.
-    return persist({
+    if (typeof json.token !== "string" || json.token.length < 16) return null;
+    return {
       token: json.token,
       grantedAt:
         typeof json.grantedAt === "string" ? json.grantedAt : "unknown",
-    });
+    };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * Persist a minted capability locally (storage + same-tab event). Returns
+ * whether the write landed — a granted capability the UI can't read back
+ * (storage disabled/full) would let the engine resolve local while no
+ * `X-MCPJam-Local-Consent` header exists to send.
+ */
+export function persistLocalComputerConsent(
+  consent: StoredLocalComputerConsent,
+): boolean {
+  return persist(consent);
+}
+
+/**
+ * Convenience: mint + persist in one call. The React hook uses the split
+ * primitives above so it can guard only the persist; this stays for
+ * standalone/non-hook use and lib-level tests.
+ */
+export async function grantLocalComputerConsent(): Promise<boolean> {
+  const minted = await mintLocalComputerConsent();
+  return minted ? persistLocalComputerConsent(minted) : false;
 }
 
 /**
