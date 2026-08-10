@@ -6,13 +6,19 @@ import { Hono } from "hono";
 // static published-package metadata read from the harness registry — so the
 // auth seams are stubbed only to satisfy the shared bearer middleware.
 
-const { validateGuestTokenMock, validateApiKeyMock, resolveUserByExternalIdMock, lookupWorkosKeyBindingMock } =
-  vi.hoisted(() => ({
-    validateGuestTokenMock: vi.fn(),
-    validateApiKeyMock: vi.fn(),
-    resolveUserByExternalIdMock: vi.fn(),
-    lookupWorkosKeyBindingMock: vi.fn(),
-  }));
+const {
+  validateGuestTokenMock,
+  validateApiKeyMock,
+  resolveUserByExternalIdMock,
+  lookupWorkosKeyBindingMock,
+  verifyAuthKitTokenMock,
+} = vi.hoisted(() => ({
+  validateGuestTokenMock: vi.fn(),
+  validateApiKeyMock: vi.fn(),
+  resolveUserByExternalIdMock: vi.fn(),
+  lookupWorkosKeyBindingMock: vi.fn(),
+  verifyAuthKitTokenMock: vi.fn(),
+}));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
@@ -27,6 +33,15 @@ vi.mock("../../../services/identity.js", () => ({
 }));
 vi.mock("../../../services/workos-key-bindings.js", () => ({
   lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
+}));
+// This route mounts `requireVerifiedAuth` (it never calls Convex, so nothing
+// downstream would re-check the bearer). The JWT here is a placeholder string,
+// so verification is stubbed; the middleware's own branches — verified,
+// rejected, and AuthKit-unconfigured — are covered in
+// server/middleware/__tests__/require-verified-auth.test.ts.
+vi.mock("../../../services/authkit-jwt.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  verifyAuthKitToken: verifyAuthKitTokenMock,
 }));
 
 import v1Routes from "../index.js";
@@ -62,6 +77,7 @@ describe("v1 harness routes", () => {
     vi.clearAllMocks();
     // Non-guest WorkOS JWT (neither a guest token nor an `sk_` key).
     validateGuestTokenMock.mockResolvedValue({ valid: false });
+    verifyAuthKitTokenMock.mockResolvedValue({ sub: "user_harness" });
   });
   afterEach(() => vi.clearAllMocks());
 

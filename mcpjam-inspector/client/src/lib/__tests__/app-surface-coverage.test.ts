@@ -18,7 +18,12 @@ import {
   isAppSurfaceId,
   listAppSurfaceNavSegments,
 } from "@/shared/app-surfaces";
-import { routePaths } from "../app-navigation";
+import {
+  buildOrganizationPath,
+  ORGANIZATION_ROUTE_SECTIONS,
+  parseOrganizationSection,
+  routePaths,
+} from "../app-navigation";
 import {
   HOSTED_HASH_ALLOWED_TABS,
   HOSTED_HASH_BLOCKED_TABS,
@@ -75,6 +80,38 @@ describe("route table ↔ surface manifests", () => {
     const ids = APP_SURFACES.map((s) => s.id);
     expect(ids.length).toBe(new Set(ids).size);
   });
+});
+
+describe("every organization section is actually reachable", () => {
+  // The failure this catches: a section can be added to the nav, given a path
+  // by `buildOrganizationPath`, and rendered by OrganizationsTab while no
+  // route ever matches it. There is no 404 to notice — the router's `"*"`
+  // falls through to Servers, so the nav item silently navigates to the wrong
+  // screen. Discord shipped exactly that way.
+  //
+  // Passing ":orgId" as the id makes the built path come out as the literal
+  // route pattern, so this is an exact comparison rather than a regex.
+  const patterns = new Set(screenRoutes.map((r) => `/${r.path}`));
+
+  it.each([...ORGANIZATION_ROUTE_SECTIONS])(
+    "%s has a registered route",
+    (section) => {
+      const built = buildOrganizationPath(":orgId", section);
+      expect(patterns.has(built), `${section} → ${built}`).toBe(true);
+    },
+  );
+
+  it.each([...ORGANIZATION_ROUTE_SECTIONS])(
+    "%s round-trips back out of its own path",
+    (section) => {
+      // The other direction: a registered route whose segment the parser does
+      // not know lands on "overview", which looks like the nav item doing
+      // nothing rather than like a bug.
+      const built = buildOrganizationPath("org-1", section);
+      const segment = built.split("/")[3];
+      expect(parseOrganizationSection(segment)).toBe(section);
+    },
+  );
 });
 
 describe("surface manifests are model-usable", () => {
