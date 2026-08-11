@@ -32,3 +32,75 @@ describe("HTTPHistoryEntry split views", () => {
     expect(screen.queryByText("Response Body")).not.toBeInTheDocument();
   });
 });
+
+// The probe step advances on a 403 that carries a Bearer challenge, so the card
+// recording that exchange must not read as a failure — the flow reports the
+// status violation as a warning instead.
+describe("HTTPHistoryEntry unauthenticated probe", () => {
+  const PRM =
+    "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+
+  const renderProbe = (props: {
+    step?: string;
+    status: number;
+    responseHeaders?: Record<string, string>;
+  }) =>
+    render(
+      <HTTPHistoryEntry
+        method="POST"
+        url="https://mcp.example.com/mcp"
+        statusText="Forbidden"
+        view="response"
+        step="request_without_token"
+        {...props}
+      />,
+    ).container;
+
+  /** The card's failure styling, which also gates the inline error message. */
+  const isFlaggedAsError = (container: HTMLElement) =>
+    container.querySelector(".border-red-400") !== null;
+
+  it("does not flag a 403 carrying a Bearer challenge", () => {
+    expect(
+      isFlaggedAsError(
+        renderProbe({
+          status: 403,
+          responseHeaders: {
+            "www-authenticate": `Bearer resource_metadata="${PRM}"`,
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag the spec-compliant 401", () => {
+    expect(isFlaggedAsError(renderProbe({ status: 401 }))).toBe(false);
+  });
+
+  it("flags a bare 403, which the flow cannot continue from", () => {
+    expect(isFlaggedAsError(renderProbe({ status: 403 }))).toBe(true);
+  });
+
+  it("flags a 403 whose only challenge is a scheme OAuth cannot use", () => {
+    expect(
+      isFlaggedAsError(
+        renderProbe({
+          status: 403,
+          responseHeaders: { "www-authenticate": 'Basic realm="admin"' },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags a challenge-carrying 403 outside the probe step", () => {
+    expect(
+      isFlaggedAsError(
+        renderProbe({
+          step: "authenticated_mcp_request",
+          status: 403,
+          responseHeaders: { "www-authenticate": "Bearer" },
+        }),
+      ),
+    ).toBe(true);
+  });
+});

@@ -7,6 +7,7 @@ import {
 import {
   classifyUnauthenticatedProbe,
   hasBearerChallenge,
+  isUnauthenticatedProbeChallenge,
   parseBearerAuthenticateParameters,
   parseInsufficientScopeChallenge,
 } from "../../src/oauth/state-machines/shared/challenges.js";
@@ -206,6 +207,69 @@ describe("classifyUnauthenticatedProbe", () => {
       });
       if (outcome.kind !== "unexpected") throw new Error("expected unexpected");
       expect(outcome.message).not.toContain("Failed to request MCP server");
+    }
+  });
+});
+
+// The surface that renders the flow decides "was this exchange expected?" from
+// this predicate, so it has to admit exactly what the flow advances on. A
+// mismatch paints an accepted 403 red next to the warning explaining it.
+describe("isUnauthenticatedProbeChallenge", () => {
+  const probe = (
+    over: Partial<Parameters<typeof isUnauthenticatedProbeChallenge>[0]> = {}
+  ) =>
+    isUnauthenticatedProbeChallenge({
+      step: "request_without_token",
+      status: 401,
+      statusText: "Unauthorized",
+      ...over,
+    });
+
+  it("admits the spec-compliant 401", () => {
+    expect(probe()).toBe(true);
+  });
+
+  it("admits a 403 that carries a Bearer challenge", () => {
+    expect(
+      probe({
+        status: 403,
+        statusText: "Forbidden",
+        wwwAuthenticateHeader: 'Bearer scope="mcp:read"',
+      })
+    ).toBe(true);
+  });
+
+  it("rejects a bare 403", () => {
+    expect(probe({ status: 403, statusText: "Forbidden" })).toBe(false);
+  });
+
+  it("rejects a challenge on any other step", () => {
+    expect(probe({ step: "authenticated_mcp_request" })).toBe(false);
+  });
+
+  it("rejects an exchange with no response yet", () => {
+    expect(probe({ status: undefined })).toBe(false);
+  });
+
+  // 200 means the server served the request; it is not an error either, but it
+  // is not a challenge, and callers already treat sub-400 as success.
+  it("rejects anonymous access", () => {
+    expect(probe({ status: 200, statusText: "OK" })).toBe(false);
+  });
+
+  it("agrees with the flow gate on every status it admits", () => {
+    for (const [status, header] of [
+      [401, undefined],
+      [403, 'Bearer resource_metadata="https://mcp.example.com/prm"'],
+      [403, undefined],
+      [500, undefined],
+    ] as Array<[number, string | undefined]>) {
+      const admitted = probe({ status, wwwAuthenticateHeader: header });
+      const gate = classifyUnauthenticatedProbe({
+        status,
+        wwwAuthenticateHeader: header,
+      });
+      expect(admitted).toBe(gate.kind === "challenged");
     }
   });
 });

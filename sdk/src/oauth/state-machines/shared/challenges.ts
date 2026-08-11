@@ -267,6 +267,35 @@ export function classifyUnauthenticatedProbe(input: {
   };
 }
 
+/** The flow step that sends the unauthenticated `initialize` probe. */
+export const UNAUTHENTICATED_PROBE_STEP = "request_without_token";
+
+/**
+ * True when a recorded exchange is the unauthenticated probe being answered
+ * with an auth challenge — the outcome the debugger expects, so surfaces must
+ * not paint it as a failure. Reads the same classification the step itself
+ * gates on, so a 403 the flow continued from cannot render as an error beside
+ * the warning explaining it.
+ */
+export function isUnauthenticatedProbeChallenge(input: {
+  step?: string;
+  status?: number;
+  statusText?: string;
+  wwwAuthenticateHeader?: string;
+}): boolean {
+  if (input.step !== UNAUTHENTICATED_PROBE_STEP || input.status === undefined) {
+    return false;
+  }
+
+  return (
+    classifyUnauthenticatedProbe({
+      status: input.status,
+      statusText: input.statusText,
+      wwwAuthenticateHeader: input.wwwAuthenticateHeader,
+    }).kind === "challenged"
+  );
+}
+
 export function parseInsufficientScopeChallenge(
   header?: string,
 ): InsufficientScopeChallenge {
