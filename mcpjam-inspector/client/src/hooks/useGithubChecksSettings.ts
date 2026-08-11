@@ -23,6 +23,11 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * organization (the backend throws there deliberately — answering `disabled`
  * would confirm the org exists). Both callers wrap these in an `ErrorBoundary`
  * for exactly that reason; see `SettingsNav` and `GithubChecksSettingsRoute`.
+ *
+ * The membership refusal arrives as a `ConvexError` with `kind: 'forbidden'`,
+ * which `reportCaught` recognizes and does not send to Sentry/PostHog — a
+ * refusal is expected, not a defect. The not-yet-deployed case is a plain throw
+ * and still reports, which is right: that one means the two repos drifted.
  */
 
 /**

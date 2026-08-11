@@ -19,7 +19,60 @@ vi.mock("../PosthogUtils", () => ({
   isCredentialBearingPath: () => false,
 }));
 
+import { ConvexError } from "convex/values";
+
 import { reportBoundaryError, reportCaught } from "../error-reporting";
+
+// A refusal is not a defect. The backend says so explicitly with
+// `kind: 'forbidden'`; everything else — including a Convex error that carries
+// no kind, and the `Server Error` string a production deployment substitutes
+// for a plain throw — is still a defect until proven otherwise.
+describe("authorization refusals", () => {
+  beforeEach(() => {
+    captureException.mockReset();
+    posthogCaptureException.mockReset();
+  });
+
+  it("drops a forbidden ConvexError before it reaches either sink", () => {
+    reportCaught(
+      new ConvexError({
+        kind: "forbidden",
+        message: "Not a member of this organization",
+      }),
+      { source: "react_boundary:integrations_github_checks" },
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("drops it through the boundary entry point too", () => {
+    reportBoundaryError(
+      new ConvexError({ kind: "forbidden", message: "nope" }),
+      { componentStack: "\n  at GithubChecksCard" },
+      "integrations_github_checks",
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("still reports a ConvexError that is not a refusal", () => {
+    reportCaught(new ConvexError({ kind: "rate_limited" }), {
+      source: "unit",
+    });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reports the masked production throw", () => {
+    reportCaught(new Error("[CONVEX Q(a:b)] Server Error"), {
+      source: "unit",
+    });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("reportCaught", () => {
   beforeEach(() => {
