@@ -38,7 +38,7 @@ import {
   assertNoCredentialsFileAuthConflicts,
   resolveCredentialsFileAccessToken,
 } from "../lib/credentials-file.js";
-import { redactSensitiveValue } from "../lib/redaction.js";
+import { redactForTelemetry } from "../lib/redaction.js";
 import {
   parseReporterFormat,
   writeJsonArtifact,
@@ -203,7 +203,7 @@ export function registerServerCommands(program: Command): void {
       }
 
       writeResult(
-        redactSensitiveValue(result) as typeof result,
+        redactForTelemetry(result) as typeof result,
         globalOptions.format,
       );
       if (result.status === "error") {
@@ -242,7 +242,7 @@ export function registerServerCommands(program: Command): void {
     const rawPayload = globalOptions.rpc
       ? attachCliRpcLogs(result, collector)
       : result;
-    const jsonPayload = redactSensitiveValue(rawPayload) as typeof rawPayload;
+    const jsonPayload = redactForTelemetry(rawPayload) as typeof rawPayload;
     const artifactPath = options.out
       ? await writeDebugArtifact(options.out as string, jsonPayload)
       : undefined;

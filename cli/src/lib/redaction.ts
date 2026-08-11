@@ -1,1 +1,1 @@
-export { redactSensitiveValue } from "@mcpjam/sdk";
+export { redactForTelemetry } from "@mcpjam/sdk";

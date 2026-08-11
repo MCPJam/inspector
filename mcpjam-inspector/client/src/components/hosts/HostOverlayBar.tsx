@@ -20,6 +20,7 @@ import { CreateHostDialog } from "./CreateHostDialog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
@@ -288,48 +289,72 @@ export function HostOverlayBar({
                 value={effectiveHostId ?? undefined}
                 onValueChange={handleChange}
               >
-                {sortedHosts.map((host) => (
-                  <DropdownMenuRadioItem
-                    key={host.hostId}
-                    value={host.hostId}
-                    className="group pr-1.5"
-                  >
-                    <span className="flex-1 truncate">{host.name}</span>
-                    <span className="ml-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
-                      <button
-                        type="button"
-                        aria-label={`Edit ${host.name}`}
-                        data-testid={`host-overlay-edit-${host.hostId}`}
-                        className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setMenuOpen(false);
-                          onEditHost(host.hostId);
-                        }}
+                {sortedHosts.map((host) => {
+                  const rowLogo = resolveHostLogoByName(host.name, themeMode);
+                  return (
+                    <DropdownMenuRadioItem
+                      key={host.hostId}
+                      value={host.hostId}
+                      hideIndicator
+                      className="group pr-1.5"
+                    >
+                      <img
+                        src={rowLogo}
+                        alt=""
+                        data-testid={`host-overlay-logo-${host.hostId}`}
+                        className="size-3.5 shrink-0 object-contain"
+                      />
+                      <span
+                        className="flex-1 truncate"
+                        data-testid={`host-overlay-label-${host.hostId}`}
                       >
-                        <Pencil className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Delete ${host.name}`}
-                        data-testid={`host-overlay-delete-${host.hostId}`}
-                        disabled={isDeleting || !canDelete}
-                        title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}
-                        className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void handleDelete(host.hostId);
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    </span>
-                  </DropdownMenuRadioItem>
-                ))}
+                        {host.name}
+                      </span>
+                      <span className="ml-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
+                        <button
+                          type="button"
+                          aria-label={`Edit ${host.name}`}
+                          data-testid={`host-overlay-edit-${host.hostId}`}
+                          className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setMenuOpen(false);
+                            onEditHost(host.hostId);
+                          }}
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${host.name}`}
+                          data-testid={`host-overlay-delete-${host.hostId}`}
+                          disabled={isDeleting || !canDelete}
+                          title={
+                            !canDelete ? LAST_HOST_DELETE_REASON : undefined
+                          }
+                          className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void handleDelete(host.hostId);
+                          }}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </span>
+                      {host.hostId === effectiveHostId ? (
+                        <span
+                          aria-hidden
+                          data-testid={`host-overlay-selected-dot-${host.hostId}`}
+                          className="size-1.5 shrink-0 rounded-full bg-primary"
+                        />
+                      ) : null}
+                    </DropdownMenuRadioItem>
+                  );
+                })}
               </DropdownMenuRadioGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem

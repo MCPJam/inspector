@@ -63,7 +63,7 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   "skills",
 ] as const;
 
-export const HOSTED_HASH_BLOCKED_TABS = ["tracing", "auth"] as const;
+export const HOSTED_HASH_BLOCKED_TABS = ["tracing"] as const;
 
 const hostedSidebarAllowedSet = new Set<string>(HOSTED_SIDEBAR_ALLOWED_TABS);
 const hostedHashAllowedSet = new Set<string>(HOSTED_HASH_ALLOWED_TABS);

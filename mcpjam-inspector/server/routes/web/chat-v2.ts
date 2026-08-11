@@ -54,6 +54,7 @@ import {
   ErrorCode,
   WebRouteError,
   webError,
+  webErrorFromRoute,
   mapRuntimeError,
   extractMcpInitializeOptions,
 } from "./auth.js";
@@ -1626,13 +1627,16 @@ chatV2.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
-    const routeError = mapRuntimeError(error);
-    return webError(
+    // `webErrorFromRoute`, not `webError` — this call dropped
+    // `routeError.normalized`, so the envelope carried no `origin` and no
+    // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,
+    // the one the client actually selects, and the client's reporter has
+    // nothing but the status by the time it runs: without the verdict it
+    // guesses `mcpjam` from the 500 and pages us for the user's own MCP
+    // server.
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      mapRuntimeError(error),
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }

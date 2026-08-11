@@ -2,9 +2,14 @@ import { z } from "zod";
 import {
   describeError,
   isUnauthorized401,
+  originOf,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-serialize.js";
+import {
+  markOriginCaptureHandled,
+  maybeCaptureOriginError,
+} from "../../utils/error-origin-capture.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -119,8 +124,21 @@ export function webError(
   // *returns* an error response (rather than throwing) leaves the middleware
   // with nothing but a status code, so every such 5xx used to log as the
   // catch-all "internal_error" regardless of its actual cause.
+  //
+  // `origin`/`slug` ride along so `http.request.failed` can be sliced by whose
+  // fault the failure was. That measurement is the reason the Sentry policy can
+  // afford to be strict: `ambiguous` volume is visible in Axiom for free, so
+  // promoting it to a paging bucket later is a data decision rather than a
+  // guess.
   if (typeof c?.set === "function") {
-    c.set("webErrorMeta", { status, code, message });
+    c.set("webErrorMeta", {
+      status,
+      code,
+      message,
+      ...(normalized
+        ? { origin: originOf(normalized), slug: normalized.slug }
+        : {}),
+    });
   }
   return c.json(
     {
@@ -128,9 +146,48 @@ export function webError(
       code,
       message,
       ...(details ? { details } : {}),
-      ...(normalized ? { normalized } : {}),
+      ...(normalized ? { normalized, origin: originOf(normalized) } : {}),
     },
-    status
+    status,
+    // Also a HEADER, because the body does not always survive to the reader
+    // that needs it. The chat client's reporter runs after the AI SDK has
+    // consumed the Response into `new Error(await response.text())`, leaving
+    // only the status — from which it would guess `mcpjam` for any 5xx and
+    // page us for a user's own MCP server. `/api/web/chat-v2` is the primary
+    // hosted chat path, so putting this on `webError` rather than on one
+    // route covers every `/api/web/*` envelope at once.
+    normalized ? { "x-mcpjam-error-origin": originOf(normalized) } : undefined
+  );
+}
+
+/**
+ * Send a mapped `WebRouteError` as a `webError`, WITH its normalized block.
+ *
+ * Exists because forgetting the last argument is silent and costly: several
+ * hosted connect/auth catches called `mapRuntimeError(error)` and then passed
+ * `routeError.details` but not `routeError.normalized`, so the failure was
+ * classified for capture and still produced no `origin`/`slug` on
+ * `http.request.failed` and no attribution in the client's error card. That is
+ * the measurement half of this work quietly missing on exactly the paths the
+ * reported 502s travel.
+ *
+ * Prefer this over calling `webError` with a mapped error by hand.
+ */
+export function webErrorFromRoute(
+  c: any,
+  routeError: WebRouteError,
+  extras?: Record<string, unknown>
+) {
+  return webError(
+    c,
+    routeError.status,
+    routeError.code,
+    routeError.message,
+    routeError.details,
+    {
+      ...(extras ?? {}),
+      ...(routeError.normalized ? { normalized: routeError.normalized } : {}),
+    }
   );
 }
 
@@ -159,6 +216,59 @@ const CONNECTION_ERROR_PATTERNS: readonly RegExp[] = [
   /\bgetaddrinfo\b/i,
 ];
 
+/**
+ * Preserve the original throw as a `cause` link on a mapper-constructed
+ * `WebRouteError`.
+ *
+ * Load-bearing for capture dedupe, not just for debugging: when the input is
+ * not already a `WebRouteError`, this mapper builds a brand-new error object,
+ * and the capture stamp lives on the ORIGINAL. Without this link a later
+ * `logger.error(originalError)` would see an unstamped object and re-capture a
+ * failure the origin policy already declined. Non-enumerable, matching the
+ * shape `new Error(msg, { cause })` produces, so it never leaks into a JSON
+ * body.
+ */
+function attachCause<T extends Error>(target: T, cause: unknown): T {
+  if (cause === undefined || cause === target) return target;
+  if ((target as { cause?: unknown }).cause !== undefined) return target;
+  try {
+    Object.defineProperty(target, "cause", {
+      value: cause,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    // Frozen target; the dedupe degrades to a possible duplicate event.
+  }
+  return target;
+}
+
+/**
+ * DELIBERATELY no ownership inference here.
+ *
+ * There is a real gap: a `TypeError` thrown by a hosted web handler is
+ * MCPJam's, but `describeError` resolves it to `internal/unknown` — i.e.
+ * `ambiguous` — which the strict policy declines. `web.onError` converts the
+ * throw into a response without rethrowing and this mapper stamps it as
+ * decided, so such a bug currently reaches Sentry through no path at all.
+ *
+ * The tempting fix is to declare `mcpjam_internal` here for native
+ * programmer-fault types. It was tried and reverted, because this mapper is a
+ * SHARED envelope: it handles our own bugs and proxied user-server failures
+ * with equal frequency, and it has no hop information to tell them apart. A
+ * `TypeError` raised while reading a malformed tool result from somebody
+ * else's MCP server satisfies exactly the same predicate, so the rule pages
+ * the on-call for another person's server — the failure mode this whole change
+ * exists to remove. Guessing in either direction is a guess; the policy says
+ * guesses resolve toward not paging.
+ *
+ * The gap is closed by DECLARATION, not inference: a catch-site that knows the
+ * hop was ours calls `reportRouteFailure(..., { hop: "mcpjam_internal" })`.
+ * Until a given web route does, its unclassified failures are measured in
+ * Axiom (`http.request.failed` carries `origin` and `slug`) rather than paged,
+ * so promoting the bucket later is a data decision.
+ */
 export function mapRuntimeError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) {
     // Backfill normalized on existing WebRouteErrors so onError forwarding
@@ -167,9 +277,36 @@ export function mapRuntimeError(error: unknown): WebRouteError {
     if (!error.normalized) {
       error.normalized = describeError(error);
     }
+    maybeCaptureOriginError(error, error.normalized, {
+      source: "web.mapRuntimeError",
+      extra: { status: error.status, code: error.code },
+    });
     return error;
   }
 
+  const routeError = classifyRuntimeError(error);
+  attachCause(routeError, error);
+  maybeCaptureOriginError(routeError, routeError.normalized, {
+    source: "web.mapRuntimeError",
+    extra: { status: routeError.status, code: routeError.code },
+  });
+  // Stamp the ORIGINAL as well. The cause link above makes the original
+  // reachable from `routeError`, but the walk only goes that direction: a
+  // handler that keeps its own reference and later calls `logger.error(error)`
+  // — several do — would hand over an unstamped object and capture a second
+  // time for the same failure. `attachCause` is also allowed to decline (a
+  // pre-existing `cause`, a frozen target), so the link cannot be relied on
+  // for dedupe on its own.
+  markOriginCaptureHandled(error);
+  return routeError;
+}
+
+/**
+ * Status/code/message mapping only. Split out from `mapRuntimeError` so the
+ * capture decision happens exactly once, on whichever `WebRouteError` the
+ * branches below produce, instead of being duplicated down five return paths.
+ */
+function classifyRuntimeError(error: unknown): WebRouteError {
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);
