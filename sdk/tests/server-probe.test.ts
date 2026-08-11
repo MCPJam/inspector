@@ -447,4 +447,191 @@ describe("probeMcpServer", () => {
       expect(result.status).not.toBe("oauth_required");
     });
   });
+
+  // Both metadata destinations are named by the server under test: the RFC 9728
+  // pointer comes from its challenge, and the authorization server comes from
+  // the document that pointer reached. The probe runs in MCPJam's hosted
+  // backend, so an unguarded hop is an SSRF pivot into the private network.
+  describe("metadata destination guard", () => {
+    const challenge = (resourceMetadata: string) =>
+      new Response(null, {
+        status: 401,
+        headers: {
+          "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"`,
+        },
+      });
+
+    /** Every URL the probe actually requested. */
+    const requestedUrls = (fetchFn: unknown) =>
+      (fetchFn as jest.Mock).mock.calls.map((call) => String(call[0]));
+
+    it("refuses a challenge pointing at link-local metadata", async () => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const internal = "http://169.254.169.254/latest/meta-data/";
+      const fetchFn: typeof fetch = jest.fn(async (input) =>
+        String(input) === serverUrl
+          ? challenge(internal)
+          : jsonResponse({ error: "unexpected" }, 404)
+      ) as typeof fetch;
+
+      const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+      expect(result.status).toBe("oauth_required");
+      expect(result.oauth.discoveryError).toMatch(/private\/reserved/);
+      expect(requestedUrls(fetchFn)).not.toContain(internal);
+    });
+
+    it("refuses an authorization server on a private address", async () => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const prm =
+        "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) return challenge(prm);
+        if (url === prm) {
+          return jsonResponse({
+            resource: serverUrl,
+            authorization_servers: ["http://10.0.0.5/"],
+          });
+        }
+        return jsonResponse({ error: "unexpected" }, 404);
+      }) as typeof fetch;
+
+      const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+      // The document we already fetched is kept; only the second hop is refused.
+      expect(result.oauth.resourceMetadata).toBeDefined();
+      expect(result.oauth.discoveryError).toMatch(/private\/reserved/);
+      expect(
+        requestedUrls(fetchFn).some((url) => url.includes("10.0.0.5"))
+      ).toBe(false);
+    });
+
+    // Following a redirect makes the guard on the requested URL meaningless, so
+    // the destination is re-checked against where the response actually landed.
+    it("refuses a metadata response redirected to a private address", async () => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const prm = "https://metadata.example.com/prm";
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) return challenge(prm);
+        if (url === prm) {
+          return new Response(
+            JSON.stringify({ resource: serverUrl, authorization_servers: [] }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+        return jsonResponse({ error: "unexpected" }, 404);
+      }) as typeof fetch;
+
+      // Response.url is read-only, so model the redirect the way fetch reports
+      // it: the request succeeds but lands on an internal host.
+      const redirected: typeof fetch = jest.fn(async (input, init) => {
+        const response = await (fetchFn as typeof fetch)(input, init);
+        if (String(input) === prm) {
+          Object.defineProperty(response, "url", {
+            value: "http://192.168.1.10/prm",
+          });
+        }
+        return response;
+      }) as typeof fetch;
+
+      const result = await probeMcpServer({
+        url: serverUrl,
+        fetchFn: redirected,
+      });
+
+      expect(result.oauth.discoveryError).toMatch(/private\/reserved/);
+      expect(result.oauth.resourceMetadata).toBeUndefined();
+    });
+
+    // The carve-out that keeps the guard from breaking real usage: the origin
+    // the caller pointed the probe at is not a pivot, whatever tier it is on.
+    it.each([
+      ["loopback", "http://127.0.0.1:3000/mcp", "http://127.0.0.1:3000"],
+      ["LAN", "http://192.168.1.5:3000/mcp", "http://192.168.1.5:3000"],
+    ])(
+      "discovers same-origin metadata on a %s server",
+      async (_label, serverUrl, origin) => {
+        const prm = `${origin}/.well-known/oauth-protected-resource/mcp`;
+        const fetchFn: typeof fetch = jest.fn(async (input) => {
+          const url = String(input);
+          if (url === serverUrl) return challenge(prm);
+          if (url === prm) {
+            return jsonResponse({
+              resource: serverUrl,
+              authorization_servers: [origin],
+            });
+          }
+          if (url.startsWith(origin)) {
+            return jsonResponse({
+              issuer: origin,
+              authorization_endpoint: `${origin}/authorize`,
+              token_endpoint: `${origin}/token`,
+              response_types_supported: ["code"],
+            });
+          }
+          return jsonResponse({ error: "unexpected" }, 404);
+        }) as typeof fetch;
+
+        const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+        expect(result.status).toBe("oauth_required");
+        expect(result.oauth.resourceMetadataUrl).toBe(prm);
+        expect(result.oauth.discoveryError).toBeUndefined();
+      }
+    );
+
+    // Local dev routinely runs the authorization server on another loopback
+    // port. That is cross-origin, so it needs the opt-in the server URL grants.
+    it("follows a loopback server to an authorization server on another port", async () => {
+      const serverUrl = "http://localhost:3000/mcp";
+      const prm =
+        "http://localhost:3000/.well-known/oauth-protected-resource/mcp";
+      const authServer = "http://localhost:9000";
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) return challenge(prm);
+        if (url === prm) {
+          return jsonResponse({
+            resource: serverUrl,
+            authorization_servers: [authServer],
+          });
+        }
+        if (url.startsWith(authServer)) {
+          return jsonResponse({
+            issuer: authServer,
+            authorization_endpoint: `${authServer}/authorize`,
+            token_endpoint: `${authServer}/token`,
+            response_types_supported: ["code"],
+          });
+        }
+        return jsonResponse({ error: "unexpected" }, 404);
+      }) as typeof fetch;
+
+      const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+      expect(result.oauth.authorizationServerMetadata).toBeDefined();
+      expect(result.oauth.discoveryError).toBeUndefined();
+    });
+
+    // A public server must never borrow the loopback opt-in.
+    it("refuses a public server steering the probe at loopback", async () => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const loopback = "http://127.0.0.1:9000/prm";
+      const fetchFn: typeof fetch = jest.fn(async (input) =>
+        String(input) === serverUrl
+          ? challenge(loopback)
+          : jsonResponse({ error: "unexpected" }, 404)
+      ) as typeof fetch;
+
+      const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+      expect(result.oauth.discoveryError).toMatch(/loopback/);
+      expect(requestedUrls(fetchFn)).not.toContain(loopback);
+    });
+  });
 });

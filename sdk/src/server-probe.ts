@@ -4,6 +4,10 @@ import {
   hasBearerChallenge,
   parseBearerAuthenticateParameters,
 } from "./oauth/state-machines/shared/challenges.js";
+import {
+  assertOutboundOAuthUrlAllowed,
+  isLoopbackOAuthUrl,
+} from "./oauth/ssrf-guard.js";
 import { resolveRegistrationStrategies } from "./oauth/authorization-plan.js";
 import {
   type RetryPolicy,
@@ -95,6 +99,13 @@ type ParsedHttpResponse = {
   headers: Record<string, string>;
   body?: unknown;
   contentType?: string;
+  /**
+   * Where the request actually landed. Requests follow redirects, so checking
+   * only the URL we asked for lets a `302` reach a destination the guard would
+   * have refused; metadata fetches re-check this before reading the body. Empty
+   * for a `fetchFn` that does not report a URL.
+   */
+  finalUrl?: string;
 };
 
 function normalizeProtocolVersion(
@@ -221,6 +232,37 @@ function buildAuthServerMetadataUrls(
     new URL("/.well-known/oauth-authorization-server", url.origin).toString()
   );
   return urls;
+}
+
+/**
+ * Refuse a metadata destination the probed server chose for us. Both the RFC
+ * 9728 `resource_metadata` pointer and the authorization server it advertises
+ * come from upstream, so without this a hostile challenge steers the probe —
+ * which runs in MCPJam's hosted backend, reachable on a guest-allowed doctor
+ * route — at cloud metadata or a service on the private network.
+ *
+ * Same origin as the configured server URL is always allowed: that is the
+ * origin the caller already asked the probe to contact, so a loopback or LAN
+ * MCP server keeps discovering its own metadata. Everything else goes through
+ * the shared guard, with the loopback opt-in derived from the server URL so
+ * local dev can host its authorization server on another loopback port while a
+ * public server can never reach the user's.
+ */
+function assertMetadataDestinationAllowed(
+  candidate: string,
+  serverUrl: string
+): void {
+  try {
+    if (new URL(candidate).origin === new URL(serverUrl).origin) {
+      return;
+    }
+  } catch {
+    // Unparseable: leave the rejection to the guard, which reports it uniformly.
+  }
+
+  assertOutboundOAuthUrlAllowed(candidate, {
+    allowLoopback: isLoopbackOAuthUrl(serverUrl),
+  });
 }
 
 function parseJsonBody(text: string): unknown {
@@ -375,6 +417,7 @@ async function performRequest(
       headers: lowerCaseHeaders(normalizedHeaders),
       body: parsedBody.body,
       contentType: parsedBody.contentType,
+      finalUrl: response.url || undefined,
     };
   } catch (error) {
     const requestError = didTimeout() ? createTimeoutError(timeoutMs) : error;
@@ -517,9 +560,18 @@ async function discoverOAuthDetails(
     },
     durationMs: 0,
   };
-  attempts.push(resourceMetadataAttempt);
 
   try {
+    // Guard before recording the attempt: a refused pointer produces no request,
+    // so an attempt entry with no response would misreport what happened.
+    if (resourceMetadataUrlFromHeader) {
+      assertMetadataDestinationAllowed(
+        resourceMetadataUrlFromHeader,
+        config.url
+      );
+    }
+    attempts.push(resourceMetadataAttempt);
+
     const loggingFetch: typeof fetch = async (input, init = {}) => {
       const url = typeof input === "string" ? input : input.toString();
       const mergedHeaders = {
@@ -551,6 +603,13 @@ async function discoverOAuthDetails(
         config.timeoutMs
       );
 
+      // Redirects are followed, so the guard on the requested URL says nothing
+      // about where the body came from. Refuse to read one fetched from a
+      // destination the guard would have blocked.
+      if (response.finalUrl) {
+        assertMetadataDestinationAllowed(response.finalUrl, config.url);
+      }
+
       return new Response(
         response.body === undefined ? null : JSON.stringify(response.body),
         {
@@ -569,15 +628,30 @@ async function discoverOAuthDetails(
       loggingFetch
     );
 
-    const authorizationServerUrl =
-      metadata.authorization_servers?.[0] ?? config.url;
-    const authMetadataUrls = buildAuthServerMetadataUrls(
-      protocolVersion,
-      authorizationServerUrl
-    );
+    const advertisedAuthServer = metadata.authorization_servers?.[0];
+    const authorizationServerUrl = advertisedAuthServer ?? config.url;
     let authorizationServerMetadata: Record<string, unknown> | undefined;
     let authorizationServerMetadataUrl: string | undefined;
     let lastAuthError: string | undefined;
+    let authMetadataUrls: string[] = [];
+
+    try {
+      // Second hop, same problem: the PRM document that named this origin came
+      // from a pointer the server chose. Guard the origin once rather than each
+      // candidate — they share it by construction — and only when the document
+      // advertised one, so the `?? config.url` fallback never blocks a LAN or
+      // loopback server discovering its own metadata. This also keeps a
+      // malformed entry from aborting discovery inside `new URL()` below.
+      if (advertisedAuthServer) {
+        assertMetadataDestinationAllowed(advertisedAuthServer, config.url);
+      }
+      authMetadataUrls = buildAuthServerMetadataUrls(
+        protocolVersion,
+        authorizationServerUrl
+      );
+    } catch (error) {
+      lastAuthError = error instanceof Error ? error.message : String(error);
+    }
 
     for (const authMetadataUrl of authMetadataUrls) {
       const authAttempt: ProbeHttpAttempt = {
@@ -597,6 +671,10 @@ async function discoverOAuthDetails(
           authAttempt,
           config.timeoutMs
         );
+
+        if (response.finalUrl) {
+          assertMetadataDestinationAllowed(response.finalUrl, config.url);
+        }
 
         if (
           response.status >= 200 &&
