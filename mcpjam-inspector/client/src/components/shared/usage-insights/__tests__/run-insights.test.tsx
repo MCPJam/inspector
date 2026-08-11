@@ -324,9 +324,8 @@ describe("generation lifecycle", () => {
   });
 
   it("auto-requests once per chip, not once per popover open", async () => {
-    // Radix unmounts `PopoverContent` on close. With the lifecycle inside it,
-    // every reopen would re-fire the request a guest had already been refused,
-    // because the hook's latches die with the content.
+    // Radix unmounts `PopoverContent` on close, so a lifecycle owned in there
+    // loses its once-per-cohort latch on every open.
     state.dto = null;
     render(
       <RunInsightsChip
@@ -342,6 +341,40 @@ describe("generation lifecycle", () => {
 
     fireEvent.click(screen.getByTestId("run-insights-chip"));
     await screen.findByTestId("run-insights");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("run-insights")).toBeNull());
+    fireEvent.click(screen.getByTestId("run-insights-chip"));
+    await screen.findByTestId("run-insights");
+
+    expect(state.requestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-ask on reopen after the viewer was refused", async () => {
+    // The case the latch exists for: a hosted guest whose auto-request is
+    // refused. Held in a ref, it died with the popover content and the doomed
+    // request went out again on every open.
+    state.dto = null;
+    state.requestMock = vi
+      .fn()
+      .mockRejectedValue(new Error("Not a member of this workspace"));
+    render(
+      <RunInsightsChip
+        surface={{
+          kind: "swarm",
+          projectId: "proj-1",
+          swarmRunGroupId: "run-1",
+        }}
+        onOpenSession={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId("run-insights-chip"));
+    // The refusal belongs to the chip's lifecycle, and the popover renders
+    // from that same one — so the message and its retry are reachable.
+    expect(await screen.findByTestId("run-insights-error")).toHaveTextContent(
+      /Ask a workspace member/,
+    );
     fireEvent.keyDown(document.body, { key: "Escape" });
     await waitFor(() => expect(screen.queryByTestId("run-insights")).toBeNull());
     fireEvent.click(screen.getByTestId("run-insights-chip"));

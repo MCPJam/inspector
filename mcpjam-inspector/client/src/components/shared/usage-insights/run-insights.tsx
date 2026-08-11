@@ -43,6 +43,7 @@ import {
 import {
   useRunInsights,
   type RunInsightsScope,
+  type UseRunInsightsResult,
 } from "@/hooks/use-run-insights";
 import {
   CHATBOX_INSIGHTS_QUERIES,
@@ -91,6 +92,8 @@ type RailSignals = {
   judgeCoverage?: { graded: number; total: number };
   /** User Testing only — direct user voice in the window. */
   feedbackCount?: number;
+  /** The feedback scan hit its cap: `feedbackCount` is a floor, not a total. */
+  feedbackTruncated?: boolean;
   /** Ready to narrate: swarm runs must be terminal, windows must be frozen. */
   terminal: boolean;
   /** The frozen window this rail is showing (User Testing only). */
@@ -295,6 +298,7 @@ function useRailData(surface: RunInsightsSurface): {
           lowConfidence: windowSignals.lowConfidence,
           truncated: windowSignals.truncated,
           feedbackCount: windowSignals.feedbackCount,
+          feedbackTruncated: windowSignals.feedbackTruncated,
           // A window is narratable once an analysis has frozen one. Before
           // that there is no group id to attach narration to.
           terminal: windowSignals.latestGroupId !== null,
@@ -335,43 +339,33 @@ function useNarrationScope(
   }, [surface, latestGroupId]);
 }
 
-export function RunInsights({
-  surface,
+/**
+ * The rail itself: signals joined to narration and to registry findings.
+ *
+ * PURELY DRIVEN. Both entry points below own the data and the lifecycle and
+ * hand them in, so the same rail can render standalone or inside the chip's
+ * popover without a second subscription — and, more importantly, without a
+ * second COPY of the lifecycle. An auto-request rejected before any row
+ * exists (a daily limit, a guest refusal) leaves its error on the hook that
+ * fired it; a body with its own hook would show neither the message nor the
+ * retry, and the failure would be silent.
+ */
+function RunInsightsBody({
+  rail,
+  lifecycle,
   onOpenSession,
-  canRequest = true,
-  canDismiss = true,
-  autoRequest = true,
+  canRequest,
+  canDismiss,
 }: {
-  surface: RunInsightsSurface;
+  rail: ReturnType<typeof useRailData>;
+  lifecycle: UseRunInsightsResult;
   onOpenSession: (sessionId: string) => void;
-  /**
-   * May this viewer SPEND? Generation is member-gated while viewing is not, so
-   * a guest sees the signals and the findings and simply never auto-requests
-   * narration — rather than watching a request fail.
-   */
-  canRequest?: boolean;
-  /** May this viewer dismiss a finding? Same split: a judgment, not a view. */
-  canDismiss?: boolean;
-  /**
-   * Off when an ancestor already drives the auto-request. `RunInsightsChip`
-   * does, because this component lives inside a popover: Radix unmounts the
-   * content on close, so a latch held here would forget on every open.
-   */
-  autoRequest?: boolean;
+  canRequest: boolean;
+  canDismiss: boolean;
 }) {
-  const { signals, findings, cohort } = useRailData(surface);
+  const { signals, findings, cohort } = rail;
   const terminal = signals?.terminal === true;
-  // Nothing concentrated anywhere means there is nothing to explain, so a
-  // clean cohort never spends a model call — "no anomalies" IS the answer.
-  const hasSignals = (signals?.candidates.length ?? 0) > 0;
-
-  const scope = useNarrationScope(surface, signals?.latestGroupId);
-
-  const { insights, discovery, busy, unavailable, error, request } =
-    useRunInsights(scope, {
-      terminal,
-      autoRequest: autoRequest && hasSignals && canRequest,
-    });
+  const { insights, discovery, busy, unavailable, error, request } = lifecycle;
 
   const [showAll, setShowAll] = useState(false);
 
@@ -429,6 +423,16 @@ export function RunInsights({
   }
   if (cohort === "window" && signals.feedbackCount === 0) {
     caveats.push("no feedback left yet");
+  }
+  // A capped rating scan makes `feedbackCount` a floor, and every feedback
+  // number beside it partial. Read from the narration too, because that one
+  // describes the FROZEN window the explanations are about, which can differ
+  // from the live one this rail is otherwise showing.
+  if (
+    signals.feedbackTruncated ||
+    (insights && "feedbackTruncated" in insights && insights.feedbackTruncated)
+  ) {
+    caveats.push("some ratings unread");
   }
   if (signals.lowConfidence) caveats.push("most sessions still analyzing");
   if (signals.truncated) caveats.push("newest sessions only");
@@ -524,6 +528,60 @@ export function RunInsights({
   );
 }
 
+/**
+ * Read the rail's data and drive its narration lifecycle. Shared by both entry
+ * points so a signal and the narration beside it can never describe different
+ * cohorts — on User Testing the group id comes out of the signals payload, and
+ * a second reader could latch a different one.
+ */
+function useRail(
+  surface: RunInsightsSurface,
+  canRequest: boolean,
+): {
+  rail: ReturnType<typeof useRailData>;
+  lifecycle: UseRunInsightsResult;
+} {
+  const rail = useRailData(surface);
+  const scope = useNarrationScope(surface, rail.signals?.latestGroupId);
+  const lifecycle = useRunInsights(scope, {
+    terminal: rail.signals?.terminal === true,
+    // Nothing concentrated anywhere means there is nothing to explain, so a
+    // clean cohort never spends a model call — "no anomalies" IS the answer.
+    autoRequest: (rail.signals?.candidates.length ?? 0) > 0 && canRequest,
+  });
+  return { rail, lifecycle };
+}
+
+/** The rail, standalone. */
+export function RunInsights({
+  surface,
+  onOpenSession,
+  canRequest = true,
+  canDismiss = true,
+}: {
+  surface: RunInsightsSurface;
+  onOpenSession: (sessionId: string) => void;
+  /**
+   * May this viewer SPEND? Generation is member-gated while viewing is not, so
+   * a guest sees the signals and the findings and simply never auto-requests
+   * narration — rather than watching a request fail.
+   */
+  canRequest?: boolean;
+  /** May this viewer dismiss a finding? Same split: a judgment, not a view. */
+  canDismiss?: boolean;
+}) {
+  const { rail, lifecycle } = useRail(surface, canRequest);
+  return (
+    <RunInsightsBody
+      rail={rail}
+      lifecycle={lifecycle}
+      onOpenSession={onOpenSession}
+      canRequest={canRequest}
+      canDismiss={canDismiss}
+    />
+  );
+}
+
 /** Compact statline chip for the signal/finding detail popover. */
 export function RunInsightsChip({
   surface,
@@ -536,23 +594,16 @@ export function RunInsightsChip({
   canRequest?: boolean;
   canDismiss?: boolean;
 }) {
-  // Signals FIRST. On User Testing the group id the narration is addressed by
-  // comes out of this payload, so the chip cannot engage the insights hook
-  // before it lands — and it must not guess one.
-  const { signals, findings, cohort } = useRailData(surface);
-
-  // THE LIFECYCLE LIVES HERE, not in the popover. `RunInsights` renders inside
-  // `PopoverContent`, which Radix unmounts on close — taking the hook's
-  // once-per-cohort and permission latches with it, so every reopen would
-  // re-fire an auto-request a guest was already refused. The chip is mounted
-  // for as long as the statline is, so driving it from here makes those
-  // latches mean what they say. The inner instance subscribes to the same
-  // query with the same args, which the Convex client dedupes.
-  const scope = useNarrationScope(surface, signals?.latestGroupId);
-  useRunInsights(scope, {
-    terminal: signals?.terminal === true,
-    autoRequest: (signals?.candidates.length ?? 0) > 0 && canRequest,
-  });
+  // THE LIFECYCLE LIVES HERE, not in the popover. Radix unmounts
+  // `PopoverContent` on close, and a hook mounted in there would lose its
+  // once-per-cohort and permission latches every time — re-firing on reopen a
+  // request a guest was already refused. The chip is mounted as long as the
+  // statline is, and it HANDS the lifecycle to the body rather than letting it
+  // start a second one: a request rejected before any row exists leaves its
+  // error on the hook that fired it, and a body with its own copy would show
+  // neither the message nor the retry.
+  const { rail, lifecycle } = useRail(surface, canRequest);
+  const { signals, findings, cohort } = rail;
 
   const activeCount = useMemo(() => {
     if (!signals || !findings) return 0;
@@ -601,12 +652,12 @@ export function RunInsightsChip({
         align="start"
         className="max-h-[65vh] w-[34rem] max-w-[90vw] overflow-y-auto p-0"
       >
-        <RunInsights
-          surface={surface}
+        <RunInsightsBody
+          rail={rail}
+          lifecycle={lifecycle}
           onOpenSession={onOpenSession}
           canRequest={canRequest}
           canDismiss={canDismiss}
-          autoRequest={false}
         />
       </PopoverContent>
     </Popover>
