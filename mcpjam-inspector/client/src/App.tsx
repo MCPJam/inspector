@@ -760,18 +760,91 @@ export function HostsRoute() {
     }
   }, [routeHostId]);
 
+  const { hosts: routeHosts, isLoading: isRouteHostListLoading } = useHostList({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+
+  // Where the URL's id stands against the project's client list. Client URLs
+  // are permalinks, so bookmarks and history outlive the client itself, and
+  // `dead` — deleted, or a link from a project this session isn't in — is
+  // reachable from ordinary navigation.
+  //
+  // `pending` is a real state, not a rounding of `dead`: the list is empty for
+  // a beat on every cold start (and `useHostList` also reports loading while
+  // signed out, or while `convexProjectId` is still a placeholder, because it
+  // skips the query in both cases). Calling an id dead in that window would
+  // break every working deep link.
+  const urlHostState: "none" | "pending" | "live" | "dead" =
+    urlHostId === null
+      ? "none"
+      : isRouteHostListLoading
+        ? "pending"
+        : routeHosts.some((h) => h.hostId === urlHostId)
+          ? "live"
+          : "dead";
+
+  // The id the canvas may open. A dead id resolves to null HERE, before it
+  // reaches shared state, which is what keeps this route out of a fight with
+  // `HostsTab`: that component reconciles selection and the previewed host
+  // against the same list and clears anything missing, so a route that kept
+  // re-syncing the dead id from the URL would have it cleared and re-set on
+  // every pass. The corrective navigation below is a React Router transition,
+  // and the resulting stream of higher-priority state updates starves it — the
+  // canvas never lands on `/hosts`, the loop never ends, and it surfaces either
+  // as a pegged CPU core or, when the updates chain synchronously, as "Maximum
+  // update depth exceeded" (INSPECTOR-CLIENT-224).
+  //
+  // A `pending` id stays openable so a legitimate permalink opens its canvas
+  // immediately rather than flashing the client list for the length of the
+  // query. That optimism is safe because it never leaves memory — see the
+  // persistence rule below.
+  const openableHostId = urlHostState === "dead" ? null : urlHostId;
+
+  // Only a CONFIRMED id is written to the project's previewed client, because
+  // that store is on disk and outlives the URL that seeded it. Persisting a
+  // `pending` id would file an unverified — possibly deleted — client as the
+  // project's preview, and closing the tab mid-load would leave it there to be
+  // reopened on the next visit.
+  const persistableHostId = urlHostState === "live" ? urlHostId : null;
+
+  // Bounce a dead permalink to bare `/hosts`, so the user lands on the client
+  // list (or their previously previewed client) instead of on a canvas stuck
+  // rendering skeletons for a client that isn't there.
+  //
+  // `replace`, so the dead URL leaves the history stack: a plain push would
+  // leave Back pointing at it, and the bounce would repeat on every Back.
+  // Keyed by id so it fires once per arrival rather than once per render —
+  // and CLEARED whenever the route isn't sitting on a dead id, because this
+  // component stays mounted across `/hosts` ↔ `/hosts/:hostId` (both paths
+  // render it, so React reuses the instance and the ref survives). Without the
+  // reset, returning to a dead id already bounced once this session would skip
+  // both the redirect and the toast, stranding the user on the dead URL.
+  const bouncedDeadHostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (urlHostState !== "dead" || !urlHostId) {
+      bouncedDeadHostIdRef.current = null;
+      return;
+    }
+    if (bouncedDeadHostIdRef.current === urlHostId) return;
+    bouncedDeadHostIdRef.current = urlHostId;
+    navigate(routePaths.hosts, { replace: true });
+    toast.error("That client no longer exists. It may have been deleted.");
+  }, [urlHostState, urlHostId, navigate]);
+
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
-    if (hostsTabSelectedHostId !== urlHostId) {
-      setHostsTabSelectedHostId(urlHostId);
+    if (hostsTabSelectedHostId !== openableHostId) {
+      setHostsTabSelectedHostId(openableHostId);
     }
-    if (urlHostId && previewedHostId !== urlHostId) {
-      setPreviewedHostId(urlHostId);
+    if (persistableHostId && previewedHostId !== persistableHostId) {
+      setPreviewedHostId(persistableHostId);
     }
   }, [
-    urlHostId,
+    openableHostId,
+    persistableHostId,
     hostsTabSelectedHostId,
     previewedHostId,
     setHostsTabSelectedHostId,
@@ -799,7 +872,7 @@ export function HostsRoute() {
     <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      selectedHostId={urlHostId ?? previewedHostId}
+      selectedHostId={openableHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
