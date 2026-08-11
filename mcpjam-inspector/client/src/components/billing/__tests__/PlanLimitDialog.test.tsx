@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlanLimitDialog } from "../PlanLimitDialog";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
@@ -282,23 +282,57 @@ describe("PlanLimitDialog", () => {
       );
     });
 
-    it("stays silent when the user bailed at checkout", async () => {
+    it("waits for delayed billing state before confirming checkout", async () => {
       billingState.plan = "free";
       window.history.replaceState(
         null,
         "",
         "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
       );
-      render(<PlanLimitDialog />);
+      const view = render(<PlanLimitDialog />);
 
+      expect(window.location.search).toContain("upgrade=return");
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.anything()
+      );
+
+      billingState.plan = "team";
+      view.rerender(<PlanLimitDialog />);
       await waitFor(() => {
+        expect(toastSuccess).toHaveBeenCalledWith(
+          expect.stringMatching(/You're on our Team plan/)
+        );
+      });
+      expect(window.location.search).toBe("");
+    });
+
+    it("stays silent after the settlement window when checkout was abandoned", async () => {
+      vi.useFakeTimers();
+      try {
+        billingState.plan = "free";
+        window.history.replaceState(
+          null,
+          "",
+          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        );
+        render(<PlanLimitDialog />);
+
+        expect(window.location.search).toContain("upgrade=return");
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(30_000);
+        });
+
         expect(trackMock).toHaveBeenCalledWith(
           "plan_limit_upgrade_returned",
           expect.objectContaining({ upgraded: false })
         );
-      });
-      expect(toastSuccess).not.toHaveBeenCalled();
-      expect(window.location.search).toBe("");
+        expect(toastSuccess).not.toHaveBeenCalled();
+        expect(window.location.search).toBe("");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("uses credit wording when the user came from the credits wall", async () => {
