@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   useOrganizationBilling,
   type BillingInterval,
@@ -57,6 +57,18 @@ interface UseUpgradeCheckoutParams {
   limitKind: string;
 }
 
+export function resolveUpgradeInterval(
+  selected: BillingInterval,
+  annualSupported: boolean,
+  monthlySupported: boolean
+): BillingInterval | null {
+  if (selected === "annual" && annualSupported) return "annual";
+  if (selected === "monthly" && monthlySupported) return "monthly";
+  if (annualSupported) return "annual";
+  if (monthlySupported) return "monthly";
+  return null;
+}
+
 /**
  * Shared upgrade path for the free-plan limit walls. Starts hosted checkout
  * directly instead of routing through the billing page, and returns the user
@@ -84,6 +96,17 @@ export function useUpgradeCheckout({
     annualSupported ? "annual" : "monthly"
   );
 
+  useEffect(() => {
+    const availableInterval = resolveUpgradeInterval(
+      interval,
+      annualSupported,
+      monthlySupported
+    );
+    if (availableInterval && availableInterval !== interval) {
+      setInterval(availableInterval);
+    }
+  }, [annualSupported, interval, monthlySupported]);
+
   const annualPriceLabel = formatSeatMonthlyPrice(
     teamEntry?.prices.annual ?? null,
     planCatalog?.currency,
@@ -97,11 +120,21 @@ export function useUpgradeCheckout({
 
   const start = useCallback(async () => {
     if (!organizationId) return;
+    const checkoutInterval = resolveUpgradeInterval(
+      interval,
+      annualSupported,
+      monthlySupported
+    );
+    if (!checkoutInterval) {
+      toast.error("Checkout is not available for this plan right now.");
+      return { redirected: false as const };
+    }
+
     track("plan_limit_upgrade_clicked", {
       location: "plan_limit_dialog",
       limit_kind: limitKind,
       origin,
-      billing_interval: interval,
+      billing_interval: checkoutInterval,
     });
 
     const url = new URL(window.location.href);
@@ -110,9 +143,14 @@ export function useUpgradeCheckout({
     url.searchParams.set(UPGRADE_RETURN_ORIGIN_PARAM, origin);
 
     try {
-      const result = await startPlanChange(url.toString(), "team", interval, {
-        confirmPaidPlanChange: false,
-      });
+      const result = await startPlanChange(
+        url.toString(),
+        "team",
+        checkoutInterval,
+        {
+          confirmPaidPlanChange: false,
+        }
+      );
       const nextUrl =
         result.kind === "checkout"
           ? result.checkoutUrl
@@ -133,7 +171,15 @@ export function useUpgradeCheckout({
       );
       return { redirected: false as const };
     }
-  }, [interval, limitKind, organizationId, origin, startPlanChange]);
+  }, [
+    annualSupported,
+    interval,
+    limitKind,
+    monthlySupported,
+    organizationId,
+    origin,
+    startPlanChange,
+  ]);
 
   return {
     interval,
