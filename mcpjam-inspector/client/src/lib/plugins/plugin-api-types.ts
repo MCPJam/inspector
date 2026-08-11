@@ -53,13 +53,38 @@ export interface PluginImportPreviewSkill {
   allowImplicitInvocation?: boolean;
 }
 
+/**
+ * One declared env var in the SANITIZED import preview. Names only — the
+ * preview never carries values. `preconfigured` means the bundle supplied a
+ * template or a screened non-secret literal for this name, so the user has
+ * nothing to enter. Optional fields land with mcpjam-backend#919.
+ */
+export interface PluginImportPreviewEnvRequirement {
+  name: string;
+  required: boolean;
+  preconfigured?: boolean;
+}
+
+/** One declared header in the sanitized import preview. Names only. */
+export interface PluginImportPreviewHeaderRequirement {
+  name: string;
+  secret: boolean;
+  preconfigured?: boolean;
+}
+
 export interface PluginImportPreviewServer {
   key: string;
   transport: "stdio" | "http";
+  /**
+   * Declared wire transport for http servers (sdk
+   * `NormalizedPluginMcpServer.httpVariant`; forwarded per
+   * mcpjam-backend#919). Absent for stdio servers and on older previews.
+   */
+  httpVariant?: "streamable-http" | "sse";
   /** Requested env var NAMES only (stdio). Never values. */
-  envRequirements?: Array<{ name: string; required: boolean }>;
+  envRequirements?: PluginImportPreviewEnvRequirement[];
   /** Requested header NAMES only (http). Never values. */
-  headerRequirements?: Array<{ name: string; secret: boolean }>;
+  headerRequirements?: PluginImportPreviewHeaderRequirement[];
   oauth?: { timing?: "on_install" | "on_use"; scopes?: string[] };
   /** Presence only — never the (possibly path-bearing) working-dir string. */
   hasWorkingDirectory?: boolean;
@@ -92,6 +117,20 @@ export interface PluginImportPreviewWarning {
   message: string;
 }
 
+/**
+ * One component the parser skipped under the spec's failure-isolation
+ * boundaries (one bad server entry / skill / the whole mcp.json document).
+ * Field names mirror sdk `PluginSkippedComponent` exactly (`kind`/`key`/
+ * `reason`; persisted verbatim per mcpjam-backend#919). `kind` is widened:
+ * render unknown kinds verbatim.
+ */
+export interface PluginImportPreviewSkippedComponent {
+  kind: "server" | "skill" | "mcp-config" | (string & {});
+  /** Server key, skill directory name, or the config path. */
+  key: string;
+  reason: string;
+}
+
 export interface PluginSetupRequirement {
   serverKey: string;
   kind: "env" | "header" | "oauth";
@@ -106,6 +145,11 @@ export interface PluginImportPreview {
     displayName?: string;
     version?: string;
     description?: string;
+    /**
+     * Agent Plugins schema version the bundle targets (sdk
+     * `ParsedPluginBundle.schemaVersion`; forwarded per mcpjam-backend#919).
+     */
+    schemaVersion?: string;
   };
   bundleHash: string;
   manifestHash: string;
@@ -124,6 +168,15 @@ export interface PluginImportPreview {
   setupRequirements: PluginSetupRequirement[];
   unsupported: PluginImportPreviewUnsupported[];
   warnings: PluginImportPreviewWarning[];
+  /**
+   * Components skipped by the parser's per-entry failure isolation. The
+   * backend persists this under `skipped`, matching sdk
+   * `ParsedPluginBundle.skipped` (mcpjam-backend#919). Optional: the
+   * deployed backend does not forward it yet — absent means "none
+   * reported", and import surfaces must render nothing rather than
+   * inventing rows.
+   */
+  skipped?: PluginImportPreviewSkippedComponent[];
 }
 
 /** Stable sanitized `{code, message}` persisted on a failed import. */
@@ -188,6 +241,38 @@ export interface PluginDetail extends PluginSummary {
   versions: PluginVersionSummary[];
 }
 
+/**
+ * One declared env var on a version's server component projection
+ * (`plugins.getPluginVersion`; shape pinned by mcpjam-backend#919).
+ *
+ * `value` is a SCREENED NON-SECRET literal the bundle declared (e.g.
+ * `{"MODE": "production"}`): the parser never stores secret-looking values,
+ * so its presence is safe to render. `hasTemplate` marks a
+ * `${PLUGIN_ROOT}`-style template-supplied value the runtime resolves at
+ * launch — pre-configured, never user-editable text; `valueTemplate` carries
+ * that template STRING (a path shape, not a secret — same rationale as `cwd`
+ * on the authorize payload).
+ *
+ * Both declared forms must survive a credential save: the backend's
+ * env/header maps are REPLACED, not merged, so a payload that omits them
+ * drops them from the runtime launch (see `PluginServerSetupEditor`).
+ */
+export interface PluginComponentEnvRequirement {
+  name: string;
+  required?: boolean;
+  value?: string;
+  valueTemplate?: string;
+  hasTemplate?: boolean;
+}
+
+/** One declared header on a version's server component projection. */
+export interface PluginComponentHeaderRequirement {
+  name: string;
+  secret?: boolean;
+  /** Screened non-secret literal header value, when declared. */
+  value?: string;
+}
+
 export interface PluginVersionServerComponent {
   componentId: string;
   componentKey: string;
@@ -195,6 +280,20 @@ export interface PluginVersionServerComponent {
   placement: "remote" | "local" | "computer";
   authenticationPolicy: "on_install" | "on_use";
   materializedServerId?: string;
+  /**
+   * Declared wire transport for http servers (sdk
+   * `NormalizedPluginMcpServer.httpVariant`; projected per
+   * mcpjam-backend#919). Absent for stdio servers and on older projections.
+   */
+  httpVariant?: "streamable-http" | "sse";
+  /**
+   * Declared env/header requirement entries for this server. Absent on a
+   * backend that predates mcpjam-backend#919 — the setup editor simply does
+   * not render then, never claiming requirements were checked and found
+   * empty.
+   */
+  envRequirements?: PluginComponentEnvRequirement[];
+  headerRequirements?: PluginComponentHeaderRequirement[];
 }
 
 export interface PluginVersionSkillComponent {
@@ -208,15 +307,28 @@ export interface PluginVersionSkillComponent {
 /** `plugins.getPluginVersion` — version summary plus component projections. */
 export interface PluginVersionDetail extends PluginVersionSummary {
   manifestHash: string;
+  /**
+   * Agent Plugins schema version the bundle targets (sdk
+   * `ParsedPluginBundle.schemaVersion`, e.g. "1.0.0"). Optional until the
+   * backend's sdk bump forwards it.
+   */
+  schemaVersion?: string;
   servers: PluginVersionServerComponent[];
   skills: PluginVersionSkillComponent[];
 }
 
+/**
+ * Widened: the credential-aware backend already reports values this mirror
+ * may not list (`needs_setup` landed after the first deploy). Unknown values
+ * must render as a neutral "setup required", never as ready.
+ */
 export type PluginComponentReadiness =
   | "needs_auth"
+  | "needs_setup"
   | "local_runtime_required"
   | "computer_required"
-  | "ready";
+  | "ready"
+  | (string & {});
 
 /** `plugins.getPluginSetupStatus`. */
 export interface PluginSetupStatus {

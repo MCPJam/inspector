@@ -23,8 +23,13 @@
  */
 
 /**
- * Every MCP protocol version a server connection can be pinned to. Order
- * is purely historical; UI ordering lives in the inspector's dropdown.
+ * Every MCP protocol version a server connection can be pinned to.
+ *
+ * MUST stay chronological: `protocolVersionLabel` reads the last element as
+ * the newest revision, so every protocol dropdown in the inspector marks
+ * whatever sits at the tail as "Latest". Append new revisions; never insert
+ * or reorder. UI ordering is separate — the dropdowns reverse this for
+ * display.
  */
 export const MCP_PROTOCOL_VERSIONS = [
   "2025-03-26",
@@ -33,6 +38,30 @@ export const MCP_PROTOCOL_VERSIONS = [
   "2026-07-28",
 ] as const;
 export type McpProtocolVersion = (typeof MCP_PROTOCOL_VERSIONS)[number];
+
+/**
+ * Newest known revision. Derived from the tail of
+ * `MCP_PROTOCOL_VERSIONS` so the "Latest" marker walks forward on its own
+ * when a revision is appended.
+ */
+const LATEST_PROTOCOL_VERSION: McpProtocolVersion | undefined =
+  MCP_PROTOCOL_VERSIONS[MCP_PROTOCOL_VERSIONS.length - 1];
+
+/**
+ * Product label for a revision, shared by every protocol dropdown so they
+ * cannot disagree about which revision is current:
+ *
+ * - **Latest** = newest known revision, derived above.
+ * - **November** = the 2025-11-25 revision.
+ *
+ * Older revisions render bare — a fixed marker on them would be one more
+ * string to walk forward by hand.
+ */
+export function protocolVersionLabel(version: McpProtocolVersion): string {
+  if (version === LATEST_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === "2025-11-25") return `November (${version})`;
+  return version;
+}
 
 /**
  * Closed list of stateful (pre-2026) protocol versions. Hardcoded by

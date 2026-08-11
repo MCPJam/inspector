@@ -777,16 +777,100 @@ export function HostsRoute() {
   // never resolve to a host. `useHost` skips it; what this adds is keeping it
   // out of the project's PERSISTED previewed host, where it would outlive the
   // URL and reopen a dead id on every later visit to `/hosts`.
-  const openableHostId =
+  //
+  // This gate is SHAPE only, so it settles with no host list at all — which is
+  // what separates it from the liveness gate below. A slug never resolves for
+  // any project, so it is rejected on the first render rather than waiting out
+  // a query that would fail argument validation anyway.
+  const idShapedHostId =
     urlHostId && shouldQueryHostId(urlHostId) ? urlHostId : null;
 
   useEffect(() => {
     // Keyed off the raw segment, so `/hosts/%20` (nothing left after trimming)
     // is cleaned up too rather than sitting on a URL that opens nothing.
-    if (routeHostId && !openableHostId) {
+    // No toast: a slug was never a client of theirs, so "no longer exists"
+    // (what a dead permalink says below) would be telling them the wrong story.
+    if (routeHostId && !idShapedHostId) {
       navigate(routePaths.hosts, { replace: true });
     }
-  }, [routeHostId, openableHostId, navigate]);
+  }, [routeHostId, idShapedHostId, navigate]);
+
+  const { hosts: routeHosts, isLoading: isRouteHostListLoading } = useHostList({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+
+  // Where the URL's id stands against the project's client list. Client URLs
+  // are permalinks, so bookmarks and history outlive the client itself, and
+  // `dead` — deleted, or a link from a project this session isn't in — is
+  // reachable from ordinary navigation.
+  //
+  // `pending` is a real state, not a rounding of `dead`: the list is empty for
+  // a beat on every cold start (and `useHostList` also reports loading while
+  // signed out, or while `convexProjectId` is still a placeholder, because it
+  // skips the query in both cases). Calling an id dead in that window would
+  // break every working deep link.
+  //
+  // Reads `idShapedHostId`, not the raw URL id: a non-id has already been sent
+  // to `/hosts` by the shape gate above, and routing it through here too would
+  // stall it in `pending` on a cold start and then fire the dead-permalink
+  // toast at someone who never had that client.
+  const urlHostState: "none" | "pending" | "live" | "dead" =
+    idShapedHostId === null
+      ? "none"
+      : isRouteHostListLoading
+        ? "pending"
+        : routeHosts.some((h) => h.hostId === idShapedHostId)
+          ? "live"
+          : "dead";
+
+  // The id the canvas may open. A dead id resolves to null HERE, before it
+  // reaches shared state, which is what keeps this route out of a fight with
+  // `HostsTab`: that component reconciles selection and the previewed host
+  // against the same list and clears anything missing, so a route that kept
+  // re-syncing the dead id from the URL would have it cleared and re-set on
+  // every pass. The corrective navigation below is a React Router transition,
+  // and the resulting stream of higher-priority state updates starves it — the
+  // canvas never lands on `/hosts`, the loop never ends, and it surfaces either
+  // as a pegged CPU core or, when the updates chain synchronously, as "Maximum
+  // update depth exceeded" (INSPECTOR-CLIENT-224).
+  //
+  // A `pending` id stays openable so a legitimate permalink opens its canvas
+  // immediately rather than flashing the client list for the length of the
+  // query. That optimism is safe because it never leaves memory — see the
+  // persistence rule below.
+  const openableHostId = urlHostState === "dead" ? null : idShapedHostId;
+
+  // Only a CONFIRMED id is written to the project's previewed client, because
+  // that store is on disk and outlives the URL that seeded it. Persisting a
+  // `pending` id would file an unverified — possibly deleted — client as the
+  // project's preview, and closing the tab mid-load would leave it there to be
+  // reopened on the next visit.
+  const persistableHostId = urlHostState === "live" ? idShapedHostId : null;
+
+  // Bounce a dead permalink to bare `/hosts`, so the user lands on the client
+  // list (or their previously previewed client) instead of on a canvas stuck
+  // rendering skeletons for a client that isn't there.
+  //
+  // `replace`, so the dead URL leaves the history stack: a plain push would
+  // leave Back pointing at it, and the bounce would repeat on every Back.
+  // Keyed by id so it fires once per arrival rather than once per render —
+  // and CLEARED whenever the route isn't sitting on a dead id, because this
+  // component stays mounted across `/hosts` ↔ `/hosts/:hostId` (both paths
+  // render it, so React reuses the instance and the ref survives). Without the
+  // reset, returning to a dead id already bounced once this session would skip
+  // both the redirect and the toast, stranding the user on the dead URL.
+  const bouncedDeadHostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (urlHostState !== "dead" || !idShapedHostId) {
+      bouncedDeadHostIdRef.current = null;
+      return;
+    }
+    if (bouncedDeadHostIdRef.current === idShapedHostId) return;
+    bouncedDeadHostIdRef.current = idShapedHostId;
+    navigate(routePaths.hosts, { replace: true });
+    toast.error("That client no longer exists. It may have been deleted.");
+  }, [urlHostState, idShapedHostId, navigate]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
@@ -795,11 +879,12 @@ export function HostsRoute() {
     if (hostsTabSelectedHostId !== openableHostId) {
       setHostsTabSelectedHostId(openableHostId);
     }
-    if (openableHostId && previewedHostId !== openableHostId) {
-      setPreviewedHostId(openableHostId);
+    if (persistableHostId && previewedHostId !== persistableHostId) {
+      setPreviewedHostId(persistableHostId);
     }
   }, [
     openableHostId,
+    persistableHostId,
     hostsTabSelectedHostId,
     previewedHostId,
     setHostsTabSelectedHostId,
@@ -4404,7 +4489,13 @@ export default function App() {
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
-          hidden={playgroundOnboarding || activeTab === "home"}
+          // "make nux clean" (#2868) hid this on Home for everyone, but that
+          // also hid guests' only Sign in / Create account affordance there
+          // (PUR-35). Keep Home clean for signed-in users; show the header
+          // for guests so they still get sign-in/sign-up.
+          hidden={
+            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
+          }
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />

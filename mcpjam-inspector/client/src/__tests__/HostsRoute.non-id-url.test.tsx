@@ -21,6 +21,7 @@ const {
   mockRouteContext,
   mockNavigate,
   mockParams,
+  mockHostList,
   mockPreviewed,
   mockSetPreviewedHostId,
   mockSetHostsTabSelectedHostId,
@@ -33,6 +34,14 @@ const {
   },
   mockNavigate: vi.fn(),
   mockParams: { hostId: undefined as string | undefined },
+  // The route only PERSISTS an id the project's client list confirms, so a
+  // shape-valid id has to be IN the list for these cases to reach persistence
+  // — an empty loaded list means "deleted", which is the other route guard's
+  // subject (see `HostsRoute.deleted-host-permalink.test.tsx`).
+  mockHostList: {
+    hosts: [] as Array<{ hostId: string }>,
+    isLoading: false,
+  },
   mockPreviewed: { value: null as string | null },
   mockSetPreviewedHostId: vi.fn(),
   mockSetHostsTabSelectedHostId: vi.fn(),
@@ -60,6 +69,22 @@ vi.mock("../components/HostsTab", () => ({
 vi.mock("../hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: () => [mockPreviewed.value, mockSetPreviewedHostId],
 }));
+
+// `importOriginal` on purpose: the route's shape gate IS `shouldQueryHostId`
+// from this module, so stubbing the module wholesale would test a stub.
+vi.mock("../hooks/useClients", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../hooks/useClients")>();
+  return {
+    ...actual,
+    useHostList: () => mockHostList,
+    useHostMutations: () => ({
+      createHost: vi.fn(),
+      updateHostServers: vi.fn(),
+      deleteHost: vi.fn(),
+      duplicateHost: vi.fn(),
+    }),
+  };
+});
 
 vi.mock("../lib/app-navigation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/app-navigation")>();
@@ -120,6 +145,9 @@ beforeEach(() => {
   mockRouteContext.setHostsTabSelectedHostId = mockSetHostsTabSelectedHostId;
   mockPreviewed.value = null;
   mockParams.hostId = undefined;
+  // Loaded, and the id this suite opens is a live client of the project.
+  mockHostList.hosts = [{ hostId: CONVEX_HOST_ID }];
+  mockHostList.isLoading = false;
 });
 
 afterEach(() => {

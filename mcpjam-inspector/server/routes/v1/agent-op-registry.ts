@@ -643,6 +643,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   resolve_project_environment:
     "Resolution detail the agent has no use for; get_environment suffices.",
 
+  // Agent Plugins. Read-only inventory, shipped for the MCP catalog surface
+  // first; registering them here is a deliberate widening of the public
+  // agent's brief, to be made when plugin questions become a turn concern.
+  list_project_plugins:
+    "Plugin inventory is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+  get_plugin_version:
+    "Plugin version detail is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+
   // Sandbox images and computers: minutes-long builds and billable compute.
   list_sandbox_images:
     "Image lifecycle is an operator surface, exposed via the CLI.",

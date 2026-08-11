@@ -29,6 +29,8 @@ import {
   validateHostedServer,
   type HostedServerValidateContext,
 } from "@/lib/apis/web/servers-api";
+import { describeHostedOAuthFailure } from "@/lib/hosted-oauth-failure";
+import { toast } from "@/lib/toast";
 import { slugify } from "@/lib/chatbox-session";
 import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
@@ -218,7 +220,6 @@ export interface UseHostedOAuthGateOptions {
   servers: HostedOAuthServerDescriptor[];
   projectId?: string | null;
   chatboxId?: string;
-  accessVersion?: number;
   isAuthenticated?: boolean;
 }
 
@@ -239,7 +240,6 @@ export function useHostedOAuthGate({
   servers,
   projectId,
   chatboxId,
-  accessVersion,
   isAuthenticated = false,
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
   const oauthServers = useMemo(
@@ -290,6 +290,59 @@ export function useHostedOAuthGate({
       )
     );
   }, [oauthServers, surface, isVaultBacked, verifyVaultCredentialOnLoad]);
+
+  // `authorizeServer` is declared below and changes identity with its deps.
+  // Reaching it through a ref keeps the Reconnect action current without
+  // adding a dependency that would re-run the processing effect.
+  const authorizeServerRef = useRef<
+    ((server: HostedOAuthServerDescriptor) => Promise<void>) | null
+  >(null);
+
+  const showHostedOAuthFailureToast = useCallback(
+    (error: unknown, server: HostedOAuthServerDescriptor) => {
+      const copy = describeHostedOAuthFailure(error, server.serverName);
+      if (!copy) {
+        return;
+      }
+
+      toast.error(copy.title, {
+        id: `hosted-oauth-failure-${server.serverId}`,
+        description: copy.detail.join("\n"),
+        descriptionClassName: "whitespace-pre-wrap break-all font-mono text-xs",
+        ...(copy.action === "reconnect"
+          ? {
+              action: {
+                label: "Reconnect",
+                onClick: () => {
+                  void authorizeServerRef.current?.(server);
+                },
+              },
+            }
+          : {}),
+        ...(copy.action === "retry"
+          ? {
+              action: {
+                label: "Retry",
+                onClick: () => {
+                  setOAuthStateByServerId((previous) => ({
+                    ...previous,
+                    [server.serverId]: {
+                      status: "verifying",
+                      errorMessage: null,
+                      serverUrl:
+                        previous[server.serverId]?.serverUrl ??
+                        server.serverUrl ??
+                        null,
+                    },
+                  }));
+                },
+              },
+            }
+          : {}),
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     if (oauthServers.length === 0) {
@@ -361,7 +414,6 @@ export function useHostedOAuthGate({
                 serverName: server.serverName,
                 accessScope: "chat_v2",
                 chatboxId,
-                ...(Number.isFinite(accessVersion) ? { accessVersion } : {}),
               }
             : undefined
         );
@@ -389,6 +441,10 @@ export function useHostedOAuthGate({
           serverName: server.serverName,
           error: validation.error,
         });
+        // The inline banner carries the generic copy. A refresh that failed
+        // upstream gets a toast on top of it, because the two upstream causes
+        // need opposite actions from the user and the banner cannot say which.
+        showHostedOAuthFailureToast(validation.error, server);
         clearHostedOAuthResumeMarker();
         setStoredOAuthTokenState(
           server.serverName,
@@ -422,8 +478,8 @@ export function useHostedOAuthGate({
     surface,
     isVaultBacked,
     chatboxId,
-    accessVersion,
     projectId,
+    showHostedOAuthFailureToast,
   ]);
 
   const authorizeServer = useCallback(
@@ -470,7 +526,6 @@ export function useHostedOAuthGate({
           ? "project_member"
           : undefined,
         chatboxId,
-        accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
         returnPath,
       });
       // The sentinel is a legacy boolean; the structured marker written just
@@ -558,11 +613,14 @@ export function useHostedOAuthGate({
       isVaultBacked,
       pendingKey,
       chatboxId,
-      accessVersion,
       surface,
       projectId,
     ]
   );
+
+  useEffect(() => {
+    authorizeServerRef.current = authorizeServer;
+  }, [authorizeServer]);
 
   const markOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {

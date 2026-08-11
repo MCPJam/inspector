@@ -23,7 +23,6 @@ export interface HostedOAuthPendingMarker {
   sessionId?: string | null;
   accessScope?: "project_member" | "chat_v2";
   chatboxId?: string | null;
-  accessVersion?: number | null;
   returnPath: string | null;
   startedAt: number;
 }
@@ -130,7 +129,6 @@ export function writeHostedOAuthPendingMarker(
         sessionId: marker.sessionId ?? null,
         accessScope: marker.accessScope ?? null,
         chatboxId: marker.chatboxId ?? null,
-        accessVersion: marker.accessVersion ?? null,
         returnPath: normalizeHostedOAuthReturnPath(
           marker.returnPath,
           marker.surface
@@ -184,11 +182,6 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
           ? parsed.accessScope
           : undefined,
       chatboxId: typeof parsed.chatboxId === "string" ? parsed.chatboxId : null,
-      accessVersion:
-        typeof parsed.accessVersion === "number" &&
-        Number.isFinite(parsed.accessVersion)
-          ? parsed.accessVersion
-          : null,
       returnPath: normalizeHostedOAuthReturnPath(
         typeof parsed.returnPath === "string"
           ? parsed.returnPath
@@ -300,7 +293,6 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     sessionId: null,
     accessScope: undefined,
     chatboxId: null,
-    accessVersion: null,
     returnPath: normalizeHostedOAuthReturnPath(storedReturnTarget, surface),
     startedAt: Date.now(),
   };

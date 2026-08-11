@@ -6,10 +6,15 @@
  * elsewhere:
  *
  *   1. HOSTED_MODE ⇒ cloud. Toggle hidden, storage never read.
- *   2. Candidates in order: stored preference → server defaultEngine →
+ *   2. The `local-computer-enabled` PostHog flag gates local CANDIDACY: while
+ *      a user isn't flagged in, `local` is never available/selectable, so the
+ *      toggle, faces, rail body, and transmission all stay dark even though
+ *      the server advertises the engine (dark launch — see
+ *      `useComputersEnabled.ts`).
+ *   3. Candidates in order: stored preference → server defaultEngine →
  *      local → cloud. The first candidate that is AVAILABLE — and, for
  *      `local`, whose consent capability is SERVER-VERIFIED — wins.
- *   3. Nothing qualifies ⇒ `cloud` with `cloudAvailable:false`; consumers
+ *   4. Nothing qualifies ⇒ `cloud` with `cloudAvailable:false`; consumers
  *      render the existing unavailable state.
  *
  * Consent GATES the engine: an unconsented machine never resolves local —
@@ -30,6 +35,7 @@ import {
   useLocalComputerConsent,
   type LocalComputerConsent,
 } from "@/hooks/useLocalComputerConsent";
+import { useLocalComputerEnabled } from "@/hooks/useComputersEnabled";
 import { useComputersDataPlaneConfig } from "@/hooks/useProjectComputer";
 
 export interface ComputerEngineState {
@@ -67,6 +73,9 @@ export function useComputerEngine(
 ): ComputerEngineState {
   const config = useComputersDataPlaneConfig();
   const consent = useLocalComputerConsent();
+  // Dark-launch flag: false (including still-loading) kills local candidacy
+  // outright — the one choke point every local-engine surface derives from.
+  const localFlagEnabled = useLocalComputerEnabled();
   // Read the stored preference SYNCHRONOUSLY, keyed to the CURRENT projectId —
   // via useSyncExternalStore rather than a passive effect, so a project switch
   // never renders once with the previous project's preference (and switching
@@ -91,7 +100,10 @@ export function useComputerEngine(
     [projectId],
   );
 
-  const localAvailable = !HOSTED_MODE && (config?.engines.local.available ?? false);
+  const localAvailable =
+    !HOSTED_MODE &&
+    localFlagEnabled &&
+    (config?.engines.local.available ?? false);
   const cloudAvailable = config?.engines.cloud.available ?? false;
 
   let engine: ComputerEngineChoice = "cloud";
@@ -129,7 +141,9 @@ export function useComputerEngine(
     resolved: config !== undefined,
     localAvailable,
     localTerminalAvailable:
-      !HOSTED_MODE && (config?.engines.local.terminalAvailable ?? false),
+      !HOSTED_MODE &&
+      localFlagEnabled &&
+      (config?.engines.local.terminalAvailable ?? false),
     workspaceDisplayRoot: HOSTED_MODE
       ? null
       : (config?.engines.local.workspaceDisplayRoot ?? null),

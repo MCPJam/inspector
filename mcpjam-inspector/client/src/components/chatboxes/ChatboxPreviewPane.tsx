@@ -43,11 +43,20 @@ import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
 export function ChatboxPreviewPane({
   publishLink,
   mcpProfile,
+  remountKey = "",
   emptyTitle = "No share link yet",
   emptyBody = "Publish this scenario to get a share link, then come back here to preview it.",
 }: {
   publishLink: string | null;
   mcpProfile: HostConfigMcpProfileV1 | undefined;
+  /**
+   * Extra discriminator folded into the iframe key. The share link survives a
+   * rebind by design — same token, same slug — so `src` alone cannot tell the
+   * frame its configuration moved, and it would keep testing the pre-rebind
+   * setup with the bootstrap it already holds. Callers pass whatever
+   * identifies the configuration behind the link (the bound environment id).
+   */
+  remountKey?: string;
   emptyTitle?: string;
   emptyBody?: string;
 }) {
@@ -69,7 +78,18 @@ export function ChatboxPreviewPane({
     );
   }
 
-  return <PreviewFrame src={src} link={publishLink} mcpProfile={mcpProfile} />;
+  return (
+    <PreviewFrame
+      // Remount the whole frame — iframe AND its hand-off state — whenever
+      // the src or the configuration behind the link changes. The embedded
+      // runtime re-redeems on every mount by design, so a remount is a fresh
+      // bootstrap of the CURRENT setup.
+      key={`${src}|${remountKey}`}
+      src={src}
+      link={publishLink}
+      mcpProfile={mcpProfile}
+    />
+  );
 }
 
 function PreviewFrame({
@@ -112,7 +132,9 @@ function PreviewFrame({
     <div className="flex h-full min-h-0 flex-col bg-muted/10">
       <iframe
         // Keyed on the src so a rotated link remounts the runtime rather than
-        // leaving the previous token's session on screen.
+        // leaving the previous token's session on screen. Changes the link
+        // SURVIVES (a rebind keeps the token) are caught one level up, by the
+        // key on this component.
         key={src}
         ref={frameRef}
         src={src}
