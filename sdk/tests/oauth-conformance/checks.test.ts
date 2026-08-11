@@ -1141,17 +1141,12 @@ describe("oauth catalog obligation checks", () => {
   // S16 — discovery must tolerate rmcp's hardcoded MCP-Protocol-Version.
   describe("discovery stale protocol header", () => {
     it("re-requests the recorded PRM URL with rmcp's hardcoded protocol version", async () => {
-      const trackedRequest = jest.fn().mockImplementation(async (request) => {
-        expect(request.method).toBe("GET");
-        expect(request.url).toBe(PRM_URL);
-        expect(request.headers["MCP-Protocol-Version"]).toBe("2024-11-05");
-        return {
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          headers: {},
-          body: { resource: PRM_RESOURCE, authorization_servers: [AS_ISSUER] },
-        };
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { resource: PRM_RESOURCE, authorization_servers: [AS_ISSUER] },
       });
 
       const result = await runDiscoveryStaleProtocolHeaderCheck({
@@ -1161,6 +1156,10 @@ describe("oauth catalog obligation checks", () => {
       });
 
       expect(trackedRequest).toHaveBeenCalledTimes(1);
+      const sent = trackedRequest.mock.calls[0][0];
+      expect(sent.method).toBe("GET");
+      expect(sent.url).toBe(PRM_URL);
+      expect(sent.headers["MCP-Protocol-Version"]).toBe("2024-11-05");
       expect(result).toMatchObject({
         step: "oauth_discovery_stale_protocol_header",
         status: "passed",
@@ -1226,6 +1225,59 @@ describe("oauth catalog obligation checks", () => {
         step: "oauth_discovery_stale_protocol_header",
         status: "passed",
       });
+    });
+
+    it("strips Authorization from an AS metadata probe that is same-origin with the MCP server", async () => {
+      const sameOriginIssuer = "https://mcp.example.com";
+      const sameOriginMetadataUrl = `${sameOriginIssuer}/.well-known/oauth-authorization-server`;
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { issuer: sameOriginIssuer },
+      });
+
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        config: {
+          ...baseCatalogInput.config,
+          customHeaders: {
+            Authorization: "Bearer gateway-token",
+            "X-Gateway": "bypass",
+          },
+        },
+        state: {
+          authorizationServerMetadata: { issuer: sameOriginIssuer },
+          httpHistory: [
+            {
+              step: "request_authorization_server_metadata",
+              timestamp: 1,
+              request: {
+                method: "GET",
+                url: sameOriginMetadataUrl,
+                headers: {},
+              },
+              response: {
+                status: 200,
+                statusText: "OK",
+                headers: {},
+                body: { issuer: sameOriginIssuer },
+              },
+            },
+          ],
+        },
+        trackedRequest,
+      });
+
+      // The flow's own AS metadata leg strips Authorization whatever the origin,
+      // so the probe must too — otherwise the protocol header is not the only
+      // difference from the request that succeeded.
+      const sent = trackedRequest.mock.calls[0][0];
+      expect(sent.url).toBe(sameOriginMetadataUrl);
+      expect(sent.headers.Authorization).toBeUndefined();
+      expect(sent.headers["X-Gateway"]).toBe("bypass");
+      expect(result.status).toBe("passed");
     });
 
     it("fails when the stale protocol header turns a working discovery URL into a non-2xx", async () => {

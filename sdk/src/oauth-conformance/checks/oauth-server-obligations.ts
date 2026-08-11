@@ -3,7 +3,10 @@ import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
 } from "../../oauth/state-machines/shared/initialize.js";
-import { mergeHeadersForResourceMetadataRequest } from "../../oauth/state-machines/shared/headers.js";
+import {
+  mergeHeadersForAuthServer,
+  mergeHeadersForResourceMetadataRequest,
+} from "../../oauth/state-machines/shared/headers.js";
 import type {
   NormalizedOAuthConformanceConfig,
   OAuthConformanceCheckId,
@@ -837,21 +840,28 @@ export async function runDiscoveryStaleProtocolHeaderCheck(
   }
 
   const startedAt = Date.now();
-  // Mirror the header set the flow's own discovery leg sent (which strips a
-  // user-supplied Authorization when the document is cross-origin) so the ONLY
-  // difference from the request that succeeded is MCP-Protocol-Version.
+  // Mirror the header set the flow's own discovery leg sent so the ONLY
+  // difference from the request that succeeded is MCP-Protocol-Version. The two
+  // legs differ: the PRM fetch keeps a user-supplied Authorization when the
+  // document is same-origin with the MCP server, while the AS metadata fetch
+  // strips it whatever the origin — sending it to the AS here would change two
+  // things at once and could fail a server that rejects the extra credential.
+  const probeHeaders = {
+    Accept: "application/json",
+    "MCP-Protocol-Version": RMCP_DISCOVERY_PROTOCOL_VERSION,
+  };
   const request = {
     method: "GET",
     url: target.url,
-    headers: mergeHeadersForResourceMetadataRequest(
-      input.config.serverUrl,
-      target.url,
-      input.config.customHeaders,
-      {
-        Accept: "application/json",
-        "MCP-Protocol-Version": RMCP_DISCOVERY_PROTOCOL_VERSION,
-      },
-    ),
+    headers:
+      target.kind === "protected-resource metadata"
+        ? mergeHeadersForResourceMetadataRequest(
+            input.config.serverUrl,
+            target.url,
+            input.config.customHeaders,
+            probeHeaders,
+          )
+        : mergeHeadersForAuthServer(input.config.customHeaders, probeHeaders),
   };
   let response: Awaited<ReturnType<TrackedRequestFn>>;
 
