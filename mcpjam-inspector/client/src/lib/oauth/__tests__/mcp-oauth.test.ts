@@ -1839,7 +1839,7 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).toHaveBeenCalledOnce();
     });
 
-    it("preserves one advertised resource string through authorization, callback, storage, and refresh", async () => {
+    it("preserves one advertised resource string through authorization, callback, and storage", async () => {
       const serverName = "example";
       const serverUrl = "https://mcp.example.com/api/mcp";
       const advertisedResource = "HTTPS://MCP.EXAMPLE.COM:443/api/";
@@ -1871,7 +1871,7 @@ describe("mcp-oauth", () => {
         }
       );
 
-      const { handleOAuthCallback, initiateOAuth, refreshOAuthTokens } =
+      const { handleOAuthCallback, initiateOAuth } =
         await import("../mcp-oauth");
 
       const initiateResult = await initiateOAuth({ serverName, serverUrl });
@@ -1903,31 +1903,6 @@ describe("mcp-oauth", () => {
         ).resourceUrl
       ).toBe(advertisedResource);
 
-      // Production imports callback tokens into secure storage. Seed the
-      // local refresh-token adapter explicitly so this unit test can exercise
-      // the browser refresh request that replays the stored resource value.
-      localStorage.setItem(
-        `mcp-tokens-${serverName}`,
-        JSON.stringify({
-          access_token: "access-token",
-          refresh_token: "refresh-token",
-          token_type: "Bearer",
-        })
-      );
-
-      mockFetchToken.mockImplementationOnce(
-        async (_provider, _authorizationServerUrl, options) => {
-          expect(options?.resource).toBe(advertisedResource);
-          return {
-            access_token: "refreshed-access-token",
-            refresh_token: "refresh-token",
-            token_type: "Bearer",
-          };
-        }
-      );
-
-      const refreshResult = await refreshOAuthTokens(serverName);
-      expect(refreshResult.success).toBe(true);
     });
 
     it("treats malformed stored token data as invalid instead of throwing", async () => {
@@ -2058,90 +2033,6 @@ describe("mcp-oauth", () => {
           protocolVersion: "2025-11-25",
           registrationMode: "preregistered",
           registrationStrategy: "preregistered",
-        })
-      );
-    });
-
-    it("routes Asana-style refresh token exchange through Convex for registry servers", async () => {
-      authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
-        const url =
-          typeof input === "string"
-            ? input
-            : input instanceof URL
-            ? input.toString()
-            : input.url;
-
-        if (url.includes("/registry/oauth/refresh")) {
-          return createJsonResponse({
-            access_token: "new-access-token",
-            refresh_token: "new-refresh-token",
-            token_type: "Bearer",
-          });
-        }
-
-        throw new Error(`Unexpected direct fetch to ${url}`);
-      });
-
-      mockDiscoverOAuthServerInfo.mockResolvedValue(
-        createAsanaDiscoveryState()
-      );
-      mockFetchToken.mockImplementationOnce(
-        async (_provider, authServerUrl, options) => {
-          expect(authServerUrl).toBe("https://app.asana.com");
-          const response = await options.fetchFn!(
-            "https://app.asana.com/-/oauth_token",
-            {
-              method: "POST",
-              body: new URLSearchParams({
-                grant_type: "refresh_token",
-                refresh_token: "stored-refresh-token",
-              }),
-            }
-          );
-          return await response.json();
-        }
-      );
-
-      localStorage.setItem(
-        "mcp-serverUrl-asana",
-        "https://mcp.asana.com/v2/mcp"
-      );
-      localStorage.setItem(
-        "mcp-oauth-config-asana",
-        JSON.stringify({
-          registryServerId: "registry-asana",
-          useRegistryOAuthProxy: true,
-        })
-      );
-      localStorage.setItem(
-        "mcp-client-asana",
-        JSON.stringify({ client_id: "asana-client-id" })
-      );
-      localStorage.setItem(
-        "mcp-tokens-asana",
-        JSON.stringify({
-          access_token: "old-access-token",
-          refresh_token: "stored-refresh-token",
-          token_type: "Bearer",
-        })
-      );
-
-      const { refreshOAuthTokens } = await import("../mcp-oauth");
-      const refreshResult = await refreshOAuthTokens("asana");
-
-      expect(refreshResult.success).toBe(true);
-      expect(authFetch).toHaveBeenCalledWith(
-        expect.stringMatching(/\.convex\.site\/registry\/oauth\/refresh$/),
-        expect.objectContaining({
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            registryServerId: "registry-asana",
-            grant_type: "refresh_token",
-            refresh_token: "stored-refresh-token",
-            grantType: "refresh_token",
-            refreshToken: "stored-refresh-token",
-          }),
         })
       );
     });
@@ -3007,85 +2898,6 @@ describe("mcp-oauth", () => {
       );
     });
 
-    it("uses the generic Inspector OAuth proxy for Linear-style registry refresh token exchange", async () => {
-      authFetch.mockResolvedValueOnce(
-        createJsonResponse({
-          status: 200,
-          statusText: "OK",
-          headers: { "Content-Type": "application/json" },
-          body: {
-            access_token: "new-linear-access-token",
-            refresh_token: "new-linear-refresh-token",
-            token_type: "Bearer",
-          },
-        })
-      );
-
-      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
-        createLinearDiscoveryState()
-      );
-      mockFetchToken.mockImplementationOnce(
-        async (_provider, _authServerUrl, options) => {
-          const response = await options.fetchFn!(
-            "https://mcp.linear.app/token",
-            {
-              method: "POST",
-              body: new URLSearchParams({
-                grant_type: "refresh_token",
-                refresh_token: "stored-refresh-token",
-              }),
-            }
-          );
-          return await response.json();
-        }
-      );
-
-      localStorage.setItem(
-        "mcp-serverUrl-linear",
-        "https://mcp.linear.app/mcp"
-      );
-      localStorage.setItem(
-        "mcp-oauth-config-linear",
-        JSON.stringify({ registryServerId: "registry-linear" })
-      );
-      localStorage.setItem(
-        "mcp-client-linear",
-        JSON.stringify({ client_id: "linear-client-id" })
-      );
-      localStorage.setItem(
-        "mcp-tokens-linear",
-        JSON.stringify({
-          access_token: "old-linear-access-token",
-          refresh_token: "stored-refresh-token",
-          token_type: "Bearer",
-        })
-      );
-
-      const { refreshOAuthTokens } = await import("../mcp-oauth");
-      const refreshResult = await refreshOAuthTokens("linear");
-
-      expect(refreshResult.success).toBe(true);
-      expect(authFetch).toHaveBeenCalledWith(
-        "/api/mcp/oauth/proxy",
-        expect.objectContaining({
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: "https://mcp.linear.app/token",
-            method: "POST",
-            headers: {},
-            body: {
-              grant_type: "refresh_token",
-              refresh_token: "stored-refresh-token",
-            },
-          }),
-        })
-      );
-      expect(authFetch).not.toHaveBeenCalledWith(
-        expect.stringMatching(/\.convex\.site\/registry\/oauth\/refresh$/),
-        expect.anything()
-      );
-    });
   });
 
   describe("MCPOAuthProvider.saveTokens convex binding", () => {

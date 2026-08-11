@@ -364,9 +364,6 @@ vi.mock("../components/client-config/ProjectClientConfigSync", () => ({
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
 }));
-vi.mock("../components/AuthTab", () => ({
-  AuthTab: () => <div />,
-}));
 vi.mock("../components/OAuthFlowTab", () => ({
   OAuthFlowTab: (props: unknown) => {
     mockOAuthFlowTabState.lastProps = props;
