@@ -1221,7 +1221,7 @@ describe("useServerState OAuth callback failures", () => {
       errorToastMessage(
         "OAuth authorization failed: access_denied: User denied access",
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(window.location.pathname).toBe("/servers");
@@ -1251,7 +1251,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage("Error completing OAuth flow: Token exchange failed"),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
@@ -1797,7 +1797,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(
       dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST")
@@ -1821,7 +1821,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(testConnectionMock).not.toHaveBeenCalled();
     expect(mockCreateServer).not.toHaveBeenCalled();
@@ -1858,7 +1858,7 @@ describe("useServerState OAuth callback failures", () => {
     });
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
@@ -2443,7 +2443,7 @@ describe("useServerState OAuth callback failures", () => {
       errorToastMessage(
         "Network error: Failed to resolve registry OAuth config: registry lookup failed",
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
@@ -3211,7 +3211,7 @@ describe("syncServerToConvex name-collision recovery", () => {
       errorToastMessage(
         'A server named "taken-name" already exists. Choose a different name.'
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(dispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "REMOVE_SERVER" })
