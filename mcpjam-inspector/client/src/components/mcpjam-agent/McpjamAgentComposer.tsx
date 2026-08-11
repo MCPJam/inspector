@@ -50,7 +50,7 @@ export function McpjamAgentComposer({
   onChange,
   onSubmit,
   ready = true,
-  placeholder = "Ask anything…",
+  placeholder = "Ask a question or give a task…",
   loadingMessage = "Loading…",
   isStreaming = false,
   onStop,
