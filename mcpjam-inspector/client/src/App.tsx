@@ -760,18 +760,67 @@ export function HostsRoute() {
     }
   }, [routeHostId]);
 
+  const { hosts: routeHosts, isLoading: isRouteHostListLoading } = useHostList({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+
+  // A `/hosts/:hostId` permalink whose id the project's list doesn't contain:
+  // the client was deleted, or the link came from a project this session isn't
+  // in. Client URLs are permalinks, so bookmarks and history outlive the client
+  // itself and this is reachable from ordinary navigation.
+  //
+  // Only decidable once the list has actually LOADED. `useHostList` reports
+  // loading until its query resolves — and stays loading while signed out or
+  // while `convexProjectId` is still a placeholder, because it skips the query
+  // in both cases — so this is never true on a cold render, and a real host
+  // never reads as dead while its list is still in flight.
+  const isDeadUrlHost =
+    urlHostId !== null &&
+    !isRouteHostListLoading &&
+    !routeHosts.some((h) => h.hostId === urlHostId);
+
+  // The id this route may open, sync into shared state, and persist. A dead id
+  // resolves to null HERE, before any of those, which is what keeps the route
+  // out of a fight with `HostsTab`: that component reconciles selection and the
+  // previewed host against the same list and clears anything missing, so a
+  // route that kept re-syncing the dead id from the URL would have it cleared
+  // and re-set on every pass. The corrective navigation below is a React Router
+  // transition, and the resulting stream of higher-priority state updates
+  // starves it — the canvas never lands on `/hosts`, the loop never ends, and
+  // it surfaces either as a pegged CPU core or, when the updates chain
+  // synchronously, as "Maximum update depth exceeded" (INSPECTOR-CLIENT-224).
+  const openableHostId = isDeadUrlHost ? null : urlHostId;
+
+  // Bounce a dead permalink to the client list — `/hosts` with no id is the
+  // Connect hub, so the user lands somewhere they can act instead of on a
+  // canvas stuck rendering skeletons for a client that isn't there.
+  //
+  // `replace`, so the dead URL leaves the history stack: a plain push would
+  // leave Back pointing at it, and the bounce would repeat on every Back.
+  // Keyed by id so it fires once per dead permalink rather than once per
+  // render, and so a later visit to a DIFFERENT dead id still reports itself.
+  const bouncedDeadHostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isDeadUrlHost || !urlHostId) return;
+    if (bouncedDeadHostIdRef.current === urlHostId) return;
+    bouncedDeadHostIdRef.current = urlHostId;
+    navigate(routePaths.hosts, { replace: true });
+    toast.error("That client no longer exists. It may have been deleted.");
+  }, [isDeadUrlHost, urlHostId, navigate]);
+
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
-    if (hostsTabSelectedHostId !== urlHostId) {
-      setHostsTabSelectedHostId(urlHostId);
+    if (hostsTabSelectedHostId !== openableHostId) {
+      setHostsTabSelectedHostId(openableHostId);
     }
-    if (urlHostId && previewedHostId !== urlHostId) {
-      setPreviewedHostId(urlHostId);
+    if (openableHostId && previewedHostId !== openableHostId) {
+      setPreviewedHostId(openableHostId);
     }
   }, [
-    urlHostId,
+    openableHostId,
     hostsTabSelectedHostId,
     previewedHostId,
     setHostsTabSelectedHostId,
@@ -799,7 +848,7 @@ export function HostsRoute() {
     <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      selectedHostId={urlHostId ?? previewedHostId}
+      selectedHostId={openableHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
