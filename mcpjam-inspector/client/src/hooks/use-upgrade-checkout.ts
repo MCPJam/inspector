@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import {
   useOrganizationBilling,
   type BillingInterval,
@@ -81,20 +81,20 @@ export function useUpgradeCheckout({
   const annualSupported = supportedIntervals.includes("annual");
   const monthlySupported = supportedIntervals.includes("monthly");
 
-  // Annual leads: it is the cheaper per-seat number and matches the pricing
-  // page. Monthly stays one click away so nobody has to commit to a year to
-  // get unblocked.
-  const [interval, setInterval] = useState<BillingInterval>(
-    annualSupported ? "annual" : "monthly",
-  );
-
-  const priceLabel = formatSeatMonthlyPrice(
-    teamEntry?.prices[interval] ?? null,
+  // Both prices are shown at once, so the interval is chosen by which card the
+  // user presses rather than by a toggle they have to find first.
+  const annualPriceLabel = formatSeatMonthlyPrice(
+    teamEntry?.prices.annual ?? null,
     planCatalog?.currency,
-    interval,
+    "annual",
+  );
+  const monthlyPriceLabel = formatSeatMonthlyPrice(
+    teamEntry?.prices.monthly ?? null,
+    planCatalog?.currency,
+    "monthly",
   );
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (interval: BillingInterval) => {
     if (!organizationId) return;
     track("plan_limit_upgrade_clicked", {
       location: "plan_limit_dialog",
@@ -132,12 +132,11 @@ export function useUpgradeCheckout({
       );
       return { redirected: false as const };
     }
-  }, [interval, limitKind, organizationId, origin, startPlanChange]);
+  }, [limitKind, organizationId, origin, startPlanChange]);
 
   return {
-    interval,
-    setInterval,
-    priceLabel,
+    annualPriceLabel,
+    monthlyPriceLabel,
     annualDiscountPct: getAnnualDiscountPercent(planCatalog),
     annualSupported,
     monthlySupported,

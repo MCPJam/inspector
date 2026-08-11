@@ -158,15 +158,16 @@ export function MCPJamLimitDialog() {
               <>
                 {showCreditsUpgrade ? (
                   <UpgradeIntervalPicker
-                    interval={creditsUpgrade.interval}
-                    onIntervalChange={creditsUpgrade.setInterval}
-                    priceLabel={creditsUpgrade.priceLabel}
+                    annualPriceLabel={creditsUpgrade.annualPriceLabel}
+                    monthlyPriceLabel={creditsUpgrade.monthlyPriceLabel}
                     annualDiscountPct={creditsUpgrade.annualDiscountPct}
                     annualSupported={creditsUpgrade.annualSupported}
                     monthlySupported={creditsUpgrade.monthlySupported}
                     teamName={creditsUpgrade.teamName}
                     isStarting={creditsUpgrade.isStarting}
-                    onUpgrade={() => void creditsUpgrade.start()}
+                    onUpgrade={(interval) =>
+                      void creditsUpgrade.start(interval)
+                    }
                   />
                 ) : null}
                 <DialogFooter className="sm:justify-between">

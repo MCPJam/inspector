@@ -27,9 +27,8 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
   return {
     ...actual,
     useUpgradeCheckout: () => ({
-      interval: "annual" as const,
-      setInterval: vi.fn(),
-      priceLabel: "$30/seat/mo",
+      annualPriceLabel: "$30/seat/mo",
+      monthlyPriceLabel: "$38/seat/mo",
       annualDiscountPct: 21,
       annualSupported: true,
       monthlySupported: true,
@@ -106,20 +105,32 @@ describe("PlanLimitDialog", () => {
     );
   });
 
-  it("offers both billing intervals with the upgrade CTA", () => {
+  it("shows both prices at once, no toggle to discover", () => {
     openEvalLimit();
     render(<PlanLimitDialog />);
 
-    expect(
-      screen.getByRole("button", { name: /annual/i })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /monthly/i })
-    ).toBeInTheDocument();
-    expect(screen.getByText("$30/seat/mo")).toBeInTheDocument();
-    expect(screen.getByTestId("upgrade-plan-cta")).toHaveTextContent(
-      /Upgrade to Team/
+    expect(screen.getByTestId("upgrade-annual")).toHaveTextContent(
+      "$30/seat/mo"
     );
+    expect(screen.getByTestId("upgrade-annual")).toHaveTextContent("Save 21%");
+    expect(screen.getByTestId("upgrade-monthly")).toHaveTextContent(
+      "$38/seat/mo"
+    );
+    expect(
+      screen.getByText(/confirm on Stripe before paying/i)
+    ).toBeInTheDocument();
+  });
+
+  it("starts checkout on the interval the user pressed", async () => {
+    const user = userEvent.setup();
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    await user.click(screen.getByTestId("upgrade-monthly"));
+    expect(startMock).toHaveBeenCalledWith("monthly");
+
+    await user.click(screen.getByTestId("upgrade-annual"));
+    expect(startMock).toHaveBeenLastCalledWith("annual");
   });
 
   it("has no wait-for-reset button; the close control is the only dismissal", () => {
@@ -134,15 +145,6 @@ describe("PlanLimitDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("starts checkout from the CTA", async () => {
-    const user = userEvent.setup();
-    openEvalLimit();
-    render(<PlanLimitDialog />);
-
-    await user.click(screen.getByTestId("upgrade-plan-cta"));
-    expect(startMock).toHaveBeenCalledTimes(1);
-  });
-
   it("explains who can upgrade instead of showing a CTA the server would reject", () => {
     upgradeState.canManageBilling = false;
     openEvalLimit();
@@ -151,7 +153,7 @@ describe("PlanLimitDialog", () => {
     expect(
       screen.getByTestId("plan-limit-dialog-description")
     ).toHaveTextContent(/Only an organization owner or admin can upgrade/);
-    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("upgrade-annual")).not.toBeInTheDocument();
   });
 
   it("points an org already on Team at Enterprise instead of Team", () => {
@@ -163,7 +165,7 @@ describe("PlanLimitDialog", () => {
     expect(description).toHaveTextContent(/Your plan includes 5,000 a month/);
     expect(description).toHaveTextContent(/Enterprise adds negotiated usage/);
     expect(description).not.toHaveTextContent(/Our Team plan/);
-    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("upgrade-annual")).not.toBeInTheDocument();
     expect(
       screen.getByTestId("plan-limit-enterprise-cta")
     ).toHaveTextContent(/Request upgrade/);

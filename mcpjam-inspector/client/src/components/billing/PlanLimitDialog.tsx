@@ -249,15 +249,14 @@ export function PlanLimitDialog() {
         </DialogHeader>
         {showUpgrade ? (
           <UpgradeIntervalPicker
-            interval={upgrade.interval}
-            onIntervalChange={upgrade.setInterval}
-            priceLabel={upgrade.priceLabel}
+            annualPriceLabel={upgrade.annualPriceLabel}
+            monthlyPriceLabel={upgrade.monthlyPriceLabel}
             annualDiscountPct={upgrade.annualDiscountPct}
             annualSupported={upgrade.annualSupported}
             monthlySupported={upgrade.monthlySupported}
             teamName={upgrade.teamName}
             isStarting={upgrade.isStarting}
-            onUpgrade={() => void upgrade.start()}
+            onUpgrade={(interval) => void upgrade.start(interval)}
           />
         ) : null}
         {showEnterprise ? (

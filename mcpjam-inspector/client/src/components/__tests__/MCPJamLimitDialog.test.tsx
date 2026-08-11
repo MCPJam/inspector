@@ -29,9 +29,8 @@ const upgradeState = {
 // useConvexAuth.
 vi.mock("@/hooks/use-upgrade-checkout", () => ({
   useUpgradeCheckout: () => ({
-    interval: "annual",
-    setInterval: vi.fn(),
-    priceLabel: "$30/seat/mo",
+    annualPriceLabel: "$30/seat/mo",
+    monthlyPriceLabel: "$38/seat/mo",
     annualDiscountPct: 21,
     annualSupported: true,
     monthlySupported: true,
