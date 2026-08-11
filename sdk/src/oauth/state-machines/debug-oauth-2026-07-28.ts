@@ -1331,7 +1331,7 @@ export const createDebugOAuthStateMachine = (
               // Only reachable under `"observe"`. The substitution is not a
               // silent fallback even there — the debugger's whole value is
               // showing that this server did not name an authorization server.
-              if (authorizationServerSelection.substituted) {
+              if (authorizationServerSelection.error) {
                 infoLogs = addInfoLog(
                   { ...getCurrentState(), infoLogs },
                   "received_resource_metadata",

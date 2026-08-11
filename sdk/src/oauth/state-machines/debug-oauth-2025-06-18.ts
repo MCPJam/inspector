@@ -35,6 +35,7 @@ import {
   generateCodeChallenge,
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
+import { selectAuthorizationServerFromResourceMetadata } from "./shared/required-metadata.js";
 import {
   resolveDiscoveryResourceIndicator,
   resolveFlowResourceValue,
@@ -451,6 +452,7 @@ export const createDebugOAuthStateMachine = (
     hasClientSecret = false,
     strictConformance = false,
     resourceIndicatorEnforcement = "warn",
+    requiredMetadataEnforcement = "reject",
     registrationStrategy = "dcr", // Default to DCR for 2025-06-18
     emulation,
   } = config;
@@ -926,13 +928,58 @@ export const createDebugOAuthStateMachine = (
               const finalHistory = [...historyWithoutPlaceholder, ...attempts];
 
               const lastAttempt = attempts[attempts.length - 1];
+              // 2025-06-18 already required the PRM document to name at least
+              // one authorization server, so substituting the MCP server's own
+              // URL invents one the resource never named here too. The PKCE
+              // S256 check is NOT mirrored: this revision says nothing about
+              // `code_challenge_methods_supported`, and inventing a rule it
+              // does not state would make this machine unfaithful to its era.
+              const authorizationServerSelection =
+                selectAuthorizationServerFromResourceMetadata({
+                  authorizationServers: resourceMetadata.authorization_servers,
+                  fallbackServerUrl: serverUrl,
+                  protocolVersion: "2025-06-18",
+                });
               const authorizationServerUrl =
-                resourceMetadata.authorization_servers?.[0] || serverUrl;
+                authorizationServerSelection.authorizationServerUrl;
+
+              if (
+                authorizationServerSelection.error &&
+                requiredMetadataEnforcement !== "observe"
+              ) {
+                updateState({
+                  resourceMetadata,
+                  resourceMetadataUrl:
+                    lastAttempt?.request?.url || state.resourceMetadataUrl,
+                  lastRequest: lastAttempt?.request,
+                  lastResponse: lastAttempt?.response,
+                  httpHistory: finalHistory,
+                  error: authorizationServerSelection.error,
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
 
               // The response card is the complete protected-resource metadata.
               // Keep existing logs only for distinct findings, such as a
               // resource identifier mismatch below.
-              const existingInfoLogs = state.infoLogs ?? [];
+              let existingInfoLogs = state.infoLogs ?? [];
+
+              // Only reachable under `"observe"`. The substitution is not a
+              // silent fallback even there — the debugger's whole value is
+              // showing that this server did not name an authorization server.
+              if (authorizationServerSelection.error) {
+                existingInfoLogs = addInfoLog(
+                  { ...getCurrentState(), infoLogs: existingInfoLogs },
+                  "received_resource_metadata",
+                  "authorization-server-substituted",
+                  "Derived: Authorization Server (not advertised)",
+                  {
+                    Finding: authorizationServerSelection.error,
+                    "Using instead": authorizationServerUrl,
+                  },
+                );
+              }
 
               // Resolve the resource indicator ONCE (rejecting/warning per
               // the surface's enforcement mode); every later request and
