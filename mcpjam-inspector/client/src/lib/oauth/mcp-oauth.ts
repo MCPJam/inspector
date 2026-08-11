@@ -2450,10 +2450,9 @@ function buildConvexBindingForServer(input: {
 
 /**
  * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
- * The three OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`,
- * `refreshOAuthTokens`) all need an identical instance shape; this factory
- * keeps that wiring in one place so adding a constructor argument doesn't
- * require touching three call sites.
+ * Both OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`) need an
+ * identical instance shape; this factory keeps that wiring in one place so
+ * adding a constructor argument doesn't require touching both call sites.
  */
 function createMCPOAuthProvider(input: {
   serverName: string;
