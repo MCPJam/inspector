@@ -552,6 +552,25 @@ describe("MCP OAuth wire invariants — failure paths", () => {
     expect(find(server.requests, "/token")).toHaveLength(0);
   });
 
+  // The counterpart to the no-session recovery guard: a callback that DOES
+  // have a stored session goes through the SDK machine, which is the only
+  // remaining wire implementation. Proven by the token request reaching the
+  // fixture, not by inspecting our own branch.
+  it("redeems through the SDK machine when a stored session exists", async () => {
+    const { server, callback } = await track(
+      runFullFlow("integration-session-present"),
+    );
+
+    expect(callback.success, callback.error).toBe(true);
+    const tokenRequests = find(server.requests, "/token");
+    expect(tokenRequests).toHaveLength(1);
+    // The era machine's exchange: PKCE verifier and the bound resource. The
+    // retired legacy path sent neither of these the same way.
+    const body = tokenRequests[0]?.body as Record<string, string>;
+    expect(body.code_verifier).toBeTruthy();
+    expect(body.resource).toBe(server.serverUrl);
+  });
+
   // Invariant 8: a connect-time `resourceUrl` that does not identify the
   // configured MCP server must be rejected before the browser is redirected.
   it("rejects a foreign configured resourceUrl before redirect", async () => {

@@ -8,7 +8,6 @@ import {
   discoverAuthorizationServerMetadata,
   discoverOAuthServerInfo,
   evaluateResourceIndicator,
-  exchangeAuthorization,
   getBrowserDebugDynamicRegistrationMetadata,
   getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
@@ -45,6 +44,7 @@ import {
   writeIssuerKeyed,
 } from "./issuer-keyed-storage";
 import { authFetch } from "@/lib/session-token";
+import { track } from "@/lib/analytics";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import {
   importHostedOAuthTokens,
@@ -128,6 +128,15 @@ interface StoredOAuthDiscoveryState {
 }
 
 const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
+
+/**
+ * The global "an authorization is in flight for this server" marker.
+ *
+ * Global rather than per-server because the callback arrives on a bare
+ * `/oauth/callback` URL with nothing but the code and state — there is no
+ * server name in it to key off.
+ */
+const OAUTH_PENDING_STORAGE_KEY = "mcp-oauth-pending";
 
 interface StoredOAuthClientInformation {
   client_id?: string;
@@ -516,7 +525,7 @@ async function resolveOAuthExecutionPlan(
     return basePlan;
   }
 
-  const discoveryState = await loadCallbackDiscoveryState(
+  const discoveryState = await loadOAuthDiscoveryState(
     provider,
     options.serverUrl,
     fetchFn,
@@ -1185,7 +1194,14 @@ function toConvexOAuthPayload(
   return payload;
 }
 
-async function loadCallbackDiscoveryState(
+/**
+ * Load (or refresh) the discovery state a plan decision needs.
+ *
+ * Named for the callback path it used to serve; that path is gone — the only
+ * caller left is authorization-plan resolution, which reads discovery to pick a
+ * registration strategy and never redeems anything.
+ */
+async function loadOAuthDiscoveryState(
   provider: MCPOAuthProvider,
   serverUrl: string,
   fetchFn: typeof fetch,
@@ -2232,7 +2248,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     const authorizationUrlString = authorizationUrl.toString();
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
-    localStorage.setItem("mcp-oauth-pending", this.serverName);
+    localStorage.setItem(OAUTH_PENDING_STORAGE_KEY, this.serverName);
     // Store the current route to restore after OAuth callback.
     const returnTarget = captureCurrentReturnPath();
     if (returnTarget) {
@@ -2679,7 +2695,7 @@ export async function initiateOAuth(
       `mcp-serverUrl-${options.serverName}`,
       options.serverUrl
     );
-    localStorage.setItem("mcp-oauth-pending", options.serverName);
+    localStorage.setItem(OAUTH_PENDING_STORAGE_KEY, options.serverName);
 
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig({
@@ -2940,7 +2956,7 @@ export async function completeHostedOAuthCallback(
 ): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
   const serverName =
     context.serverName ||
-    localStorage.getItem("mcp-oauth-pending") ||
+    localStorage.getItem(OAUTH_PENDING_STORAGE_KEY) ||
     undefined;
   const callbackTrace = createOAuthTrace({
     source: "hosted_callback",
@@ -3408,7 +3424,7 @@ export async function handleOAuthCallback(
   } = {}
 ): Promise<OAuthResult & { serverName?: string }> {
   // Get pending server name from localStorage (needed before creating interceptor)
-  const serverName = localStorage.getItem("mcp-oauth-pending");
+  const serverName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
 
   // Read registryServerId from stored OAuth config if present
   const oauthConfig = readStoredOAuthConfig(serverName);
@@ -3460,7 +3476,7 @@ export async function handleOAuthCallback(
       });
       if (!security.ok) {
         clearOAuthFlowSession(serverName);
-        localStorage.removeItem("mcp-oauth-pending");
+        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         return { success: false, error: security.error, serverName };
       }
       let state = cloneFlowState(storedSession.state);
@@ -3595,7 +3611,7 @@ export async function handleOAuthCallback(
       clearOAuthFlowSession(serverName);
       localStorage.removeItem(`mcp-verifier-${serverName}`);
       localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
-      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       return {
         success: true,
         serverConfig: createServerConfig(
@@ -3610,155 +3626,53 @@ export async function handleOAuthCallback(
       };
     }
 
-    const callbackTrace = createOAuthTrace({
+    // No stored flow session.
+    //
+    // There used to be a second, complete token exchange here: rediscover
+    // metadata, then redeem the code directly through `exchangeAuthorization`.
+    // It made the same user action take two different code paths — prod and
+    // staging shipped byte-identical code and behaved differently — and the
+    // legacy path was era-blind. It skipped the era state machine and with it
+    // the callback-state checks the machine performs, the resource binding, and
+    // the issuer policy. A flow that reaches here has already lost the state
+    // that makes those checks meaningful.
+    //
+    // So: ask for a fresh authorization. A deploy-straddling session will land
+    // here, and a clear "authorize again" is strictly safer than silently
+    // redeeming a code without the protections the current era requires.
+    track("oauth_callback_no_session_recovery", { serverName });
+
+    const recoveryError =
+      "The stored authorization session for this server is gone, so this " +
+      "callback cannot be completed safely. Please connect again to " +
+      "reauthorize.";
+    const recoveryTrace = buildOAuthTraceFromFlowState({
       source: "callback",
-      serverName: serverName ?? undefined,
-    });
-    const emitTrace = (trace: OAuthTrace) =>
-      publishOAuthTraceUpdate(
-        serverName,
-        mergeOAuthTraces(previousTrace, trace),
-        options.onTraceUpdate
-      );
-    startOAuthTraceStep(callbackTrace, "received_authorization_code", {
-      message: "Received OAuth callback and loading stored state.",
-      details: {
-        serverUrl,
+      serverName,
+      serverUrl,
+      state: {
+        ...cloneEmptyFlowState(),
+        currentStep: "received_authorization_code",
+        error: recoveryError,
       },
     });
-    emitTrace(callbackTrace);
-    const clientInformation = await provider.clientInformation();
-    if (!clientInformation?.client_id) {
-      throw new Error("OAuth client ID not found");
-    }
-    const discoveryState = await loadCallbackDiscoveryState(
-      provider,
-      serverUrl,
-      fetchFn,
-      oauthConfig.customHeaders
+    const mergedRecoveryTrace = mergeOAuthTraces(previousTrace, recoveryTrace);
+    publishOAuthTraceUpdate(
+      serverName,
+      mergedRecoveryTrace,
+      options.onTraceUpdate
     );
-    // 2R-iss / review F6: the flow session that held the issued `state` is gone
-    // on this fallback, but every machine issues a state, so an omitted OR
-    // mismatched callback state is unverifiable and MUST NOT redeem. Recover the
-    // state from its durable key (persisted like the verifier, which this path
-    // already depends on surviving). If it can't be recovered, fail closed —
-    // there is no value to match, so redemption would skip CSRF entirely.
-    const recoveredExpectedState = provider.issuedCallbackState();
-    if (!recoveredExpectedState) {
-      localStorage.removeItem("mcp-oauth-pending");
-      return {
-        success: false,
-        error:
-          "OAuth `state` could not be verified — the issued authorization state was not found, so the callback state cannot be matched (possible CSRF). Please retry the connection.",
-        serverName,
-      };
-    }
-    // Validate CSRF `state` (recovered) and RFC 9207 `iss` before redeeming. A
-    // missing or mismatched callbackState now fails the state check.
-    const fallbackIssuerMetadata =
-      discoveryState.authorizationServerMetadata as
-        | {
-            issuer?: string;
-            authorization_response_iss_parameter_supported?: boolean;
-          }
-        | undefined;
-    const fallbackSecurity = evaluateCallbackSecurity({
-      callbackState: options.callbackState,
-      callbackIss: options.callbackIss,
-      expectedState: recoveredExpectedState,
-      recordedIssuer: fallbackIssuerMetadata?.issuer,
-      issParameterSupported:
-        fallbackIssuerMetadata?.authorization_response_iss_parameter_supported,
-      protocolVersion: oauthConfig.protocolVersion,
-    });
-    if (!fallbackSecurity.ok) {
-      localStorage.removeItem("mcp-oauth-pending");
-      return { success: false, error: fallbackSecurity.error, serverName };
-    }
-    // This recovery path carries no OAuthFlowState, so the non-blocking RFC
-    // 9207 finding rides on the trace step instead of an info log. Same rule as
-    // the stored-session branch: warn visibly, do not drop it.
-    completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
-      message: fallbackSecurity.warning
-        ? "Callback state restored. RFC 9207 — authorization response `iss` mismatch (not enforced on this protocol version)."
-        : "Callback state restored.",
-      details: {
-        clientId: clientInformation.client_id,
-        ...(fallbackSecurity.warning
-          ? {
-              issMismatchWarning: fallbackSecurity.warning,
-              recordedIssuer:
-                fallbackIssuerMetadata?.issuer ?? "(none recorded)",
-              returnedIss: options.callbackIss ?? "(absent)",
-              protocolVersion: oauthConfig.protocolVersion ?? "(unknown)",
-            }
-          : {}),
-      },
-    });
-    emitTrace(callbackTrace);
-    // Resource URL comes from the server's discovery document — treat it as
-    // untrusted input; resolveOAuthResourceUrl rejects invalid/cross-origin
-    // values. Resolving ONCE here keeps the token-exchange wire value, the
-    // stored resourceUrl, and the original authorization request identical.
-    const oauthResourceUrl = resolveOAuthResourceUrl({
-      serverUrl,
-      configuredResourceUrl: oauthConfig.resourceUrl,
-      resourceMetadata: discoveryState.resourceMetadata as
-        | { resource?: unknown }
-        | undefined,
-    });
-    const resource = oauthResourceUrl;
-    startOAuthTraceStep(callbackTrace, "token_request", {
-      message: "Exchanging authorization code for OAuth tokens.",
-    });
-    emitTrace(callbackTrace);
-    const tokens = await exchangeAuthorization(
-      discoveryState.authorizationServerUrl,
-      {
-        metadata: discoveryState.authorizationServerMetadata,
-        authorizationCode,
-        clientInformation,
-        codeVerifier: provider.codeVerifier(),
-        redirectUri: provider.redirectUrl,
-        ...(resource ? { resource } : {}),
-        fetchFn,
-      }
-    );
-    await provider.saveTokens(tokens);
-    completeOAuthTraceStep(callbackTrace, "token_request", {
-      message: "Authorization code exchange succeeded.",
-    });
-    completeOAuthTraceStep(callbackTrace, "received_access_token", {
-      message: "OAuth tokens were stored securely.",
-    });
-    completeOAuthTraceStep(callbackTrace, "complete", {
-      message: "OAuth callback completed successfully.",
-    });
 
-    // Clean up pending state
-    localStorage.removeItem("mcp-oauth-pending");
-    localStorage.removeItem(`mcp-verifier-${serverName}`);
-    localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
-    writeStoredOAuthConfig(serverName, {
-      resourceUrl: oauthResourceUrl,
-    });
-    const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
-    publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
+    // Clear the marker so the dead end is not retried on every reload. The
+    // per-server keys stay: a fresh connect overwrites them, and dropping the
+    // stored server URL here would make the retry harder, not safer.
+    localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
 
-    const serverConfig = createServerConfig(
-      serverUrl,
-      tokens,
-      oauthConfig.protocolVersion
-    );
     return {
-      success: true,
-      serverConfig,
-      serverName, // Return server name so caller doesn't need to look it up
-      oauthTrace: mergedTrace,
-      oauthResourceUrl,
-      ...(fallbackSecurity.warning
-        ? { warning: fallbackSecurity.warning }
-        : {}),
+      success: false,
+      error: recoveryError,
+      serverName,
+      oauthTrace: mergedRecoveryTrace,
     };
   } catch (error) {
     const callbackTrace = buildOAuthTraceFromFlowState({
@@ -3931,6 +3845,16 @@ export async function waitForTokens(
 /**
  * Clears all OAuth data for a server
  */
+/**
+ * Remove every trace of one server's OAuth state.
+ *
+ * This function owns the FULL per-server key list. A key an OAuth flow writes
+ * but this does not remove survives cleanup, and surviving state is how a
+ * callback ends up with a server name and no flow session behind it — the shape
+ * that used to fall through to a second, era-blind token exchange.
+ * `oauth-callback-recovery.test.ts` enumerates the list so a new key has to be
+ * added here too.
+ */
 export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-tokens-${serverName}`);
   localStorage.removeItem(`mcp-client-${serverName}`);
@@ -3943,6 +3867,25 @@ export function clearOAuthData(serverName: string): void {
   clearOAuthFlowSession(serverName);
   clearOAuthTrace(serverName);
   clearOAuthTraceSession(serverName);
+  clearOAuthPendingMarkerFor(serverName);
+}
+
+/**
+ * Drop the global pending marker — but ONLY when it names this server.
+ *
+ * There is one marker for the whole app, so a second server (another tab, a
+ * queued reconnect) can legitimately own it while this one is being cleaned.
+ * Removing it unconditionally would strand that server's callback: it would
+ * arrive with no marker, find no server name, and dead-end.
+ */
+function clearOAuthPendingMarkerFor(serverName: string): void {
+  try {
+    if (localStorage.getItem(OAUTH_PENDING_STORAGE_KEY) === serverName) {
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
+    }
+  } catch {
+    // Storage access can throw in locked-down contexts; cleanup is best-effort.
+  }
 }
 
 /**
