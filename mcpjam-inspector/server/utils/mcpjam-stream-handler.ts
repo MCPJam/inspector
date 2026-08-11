@@ -25,6 +25,12 @@ import type {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import {
+  describeAsSlug,
+  describeError,
+  type NormalizedError,
+} from "@mcpjam/sdk";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
@@ -401,6 +407,62 @@ export interface MCPJamEngineErrorEvent {
   promptIndex: number;
   /** Step index when fired inside `processOneStep`; omitted for site (3). */
   stepIndex?: number;
+  /**
+   * Classified form of this failure, including its `origin` — whose fault the
+   * turn dying was.
+   *
+   * The hosted 502 that started this work fires at site (1), which has NO
+   * Error object at all: just a non-OK `Response` from our own `/stream`
+   * endpoint. `describeError` has nothing to classify there, so site (1)
+   * classifies from the HTTP status and body shape instead (see
+   * {@link describeBackendStreamFailure}). Sites (2) and (3) hold a real
+   * error and go through the normal describer.
+   */
+  normalized?: NormalizedError;
+}
+
+/**
+ * Classify a non-OK response from MCPJam's own `/stream` backend.
+ *
+ * There is no error object at this site — the failure IS an HTTP response —
+ * so nothing in the describer can reach it. Without this, a hosted 502 on a
+ * chat turn produced a raw string and no attribution, which is exactly the
+ * failure a user cannot tell apart from their own server dying.
+ *
+ * Status drives the verdict:
+ *
+ * - 401/403 and 429 are the provider walls. They keep the catalog's default
+ *   `user_config` origin because the common case is a BYO key that expired or
+ *   ran out of credit. A managed-key failure IS ours, but the key's owner is
+ *   not plumbed to this layer yet; defaulting to the non-paging reading is the
+ *   safe direction to be wrong in, and the fix is to pass `credentialOwner`
+ *   once that context exists.
+ * - Any other 5xx is OUR backend answering badly, and the origin is set
+ *   explicitly rather than taken from the slug. `internal/unknown` is
+ *   `ambiguous` by design — it is where unrecognized failures from arbitrary
+ *   user servers land — but this call site knows something the slug cannot:
+ *   the hop was to MCPJam's own Convex deployment. That is precisely the
+ *   "callers that know the failure happened on an internal boundary escalate
+ *   it themselves" case the catalog documents.
+ */
+export function describeBackendStreamFailure(
+  status: number | undefined,
+  rawText: string,
+): NormalizedError {
+  const detail = new Error(
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+  );
+
+  if (status === 401 || status === 403) {
+    return describeAsSlug("provider/auth_error", detail);
+  }
+  if (status === 429) {
+    return describeAsSlug("provider/quota", detail);
+  }
+  if (status !== undefined && status >= 500) {
+    return { ...describeAsSlug("internal/unknown", detail), origin: "mcpjam" };
+  }
+  return describeAsSlug("internal/unknown", detail);
 }
 
 export interface MCPJamHandlerOptions {
@@ -2268,6 +2330,14 @@ async function processOneStep(
     // 429 reason on its SSE error event instead of the generic
     // "Backend stream failed during iteration" fallback.
     const parsed = parseEngineErrorBody(res.status, errorText);
+    // Site (1): no Error object exists here, so classify from the response
+    // itself. A 5xx from our own backend is the hosted-502 class — capture it,
+    // because nothing downstream of this point ever will.
+    const normalized = describeBackendStreamFailure(res.status, errorText);
+    maybeCaptureOriginError(new Error(parsed.message), normalized, {
+      source: "route:mcp.chat-v2.backend-stream",
+      extra: { httpStatus: res.status, code: parsed.code },
+    });
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,
       ...(parsed.code ? { code: parsed.code } : {}),
@@ -2276,6 +2346,7 @@ async function processOneStep(
       rawText: errorText,
       promptIndex: traceTurn.promptIndex,
       stepIndex,
+      normalized,
     });
     return { shouldContinue: false, didEmitFinish: false };
   }
@@ -2744,6 +2815,9 @@ async function processOneStep(
         rawText: errorText,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
+        // Site (2) holds a real error — no capture here, the chat route's
+        // stream `onError` owns that decision for this path.
+        normalized: describeError(error),
       });
       return { shouldContinue: false, didEmitFinish: false };
     }
@@ -3337,6 +3411,7 @@ export async function runChatEngineLoop(
           message: errorText,
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
+          normalized: describeError(error),
         });
       }
     } finally {

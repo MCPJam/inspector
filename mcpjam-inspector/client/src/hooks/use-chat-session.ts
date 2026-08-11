@@ -88,6 +88,10 @@ import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
+import {
+  reportChatFailure,
+  type ChatResponseMeta,
+} from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
@@ -2309,6 +2313,12 @@ export function useChatSession(
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
 
+  // Last thing `chatFetch` saw. This is the ONLY place the Response object
+  // still exists — the AI SDK turns a non-ok response into
+  // `new Error(await response.text())` and the status, content type, and
+  // request id are gone by the time `handleChatError` runs.
+  const lastChatResponseRef = useRef<ChatResponseMeta | null>(null);
+
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       // authFetch owns auth resolution (WorkOS bearer / guest bearer via
@@ -2364,6 +2374,15 @@ export function useChatSession(
         }
       }
 
+      // Stash on every outcome, including ok: a stream that fails partway
+      // through still wants the request id that opened it.
+      lastChatResponseRef.current = {
+        ok: response.ok,
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? undefined,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+      };
+
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
         if (useAuthedFetch) {
@@ -2381,6 +2400,12 @@ export function useChatSession(
   );
 
   const handleChatError = useCallback((chatError: Error) => {
+    // Every chat failure used to end here and go no further: this handler
+    // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
+    // that no-ops everything else. A hosted 502 produced zero client
+    // telemetry — the failure a user reported was one we had no record of.
+    reportChatFailure(chatError, lastChatResponseRef.current);
+
     // Try to recover a structured limitKind from a JSON-shaped error message
     // so the concurrency carve-out is honored on the SSE error path. Best
     // effort: untouched if the message isn't JSON.
