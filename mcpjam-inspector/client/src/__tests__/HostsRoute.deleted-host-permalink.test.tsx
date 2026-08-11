@@ -189,6 +189,50 @@ describe("HostsRoute — deleted-client permalink", () => {
     ).toBe("");
   });
 
+  it("bounces again when the same dead id is re-entered later", async () => {
+    // Both `/hosts` and `/hosts/:hostId` render this component, so React reuses
+    // the instance across the bounce — the once-per-id ref survives, and
+    // without a reset a second arrival at the same dead id would silently do
+    // nothing.
+    mockParams.hostId = DEAD_HOST_ID;
+    const { rerender } = render(<HostsRoute />);
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledTimes(1));
+
+    // Landed on the client list.
+    mockParams.hostId = undefined;
+    rerender(<HostsRoute />);
+
+    // Back to the same dead client (a second stale link, or an in-app link
+    // pointing at it).
+    mockParams.hostId = DEAD_HOST_ID;
+    rerender(<HostsRoute />);
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledTimes(2));
+    expect(mockToastError).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not persist an unconfirmed id while the list is still loading", async () => {
+    // The load window is the gap the guard could be walked around: until the
+    // list resolves the id is merely unverified, and the previewed-client store
+    // is on disk, so a dead id written here would outlive the URL that seeded
+    // it and be reopened on the next visit.
+    mockParams.hostId = DEAD_HOST_ID;
+    mockHostList.hosts = [];
+    mockHostList.isLoading = true;
+
+    const { rerender } = render(<HostsRoute />);
+
+    expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
+
+    // List resolves without the id: now it is confirmed dead.
+    mockHostList.hosts = [{ hostId: LIVE_HOST_ID }];
+    mockHostList.isLoading = false;
+    rerender(<HostsRoute />);
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalled());
+    expect(mockSetPreviewedHostId).not.toHaveBeenCalledWith(DEAD_HOST_ID);
+  });
+
   it("waits for the host list before calling an id dead", () => {
     // The regression this guards: bouncing during the load window would break
     // every deep link, since the list is always empty for a beat.

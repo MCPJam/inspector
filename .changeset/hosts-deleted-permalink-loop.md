@@ -10,4 +10,6 @@ The corrective `navigate('/hosts')` never landed. It is a React Router transitio
 
 `HostsRoute` now resolves the URL id against the client list before it syncs or persists anything, and treats an id the list doesn't contain as unopenable. Nothing writes the dead id back, so there is nothing for `HostsTab` to fight, and the route bounces once to the client list at `/hosts` with a toast explaining the client no longer exists. The bounce uses `replace`, so the dead URL leaves the history stack instead of sitting one Back press away.
 
-The check waits for the client list to finish loading before calling any id dead — the list is empty for a beat on every cold start, and bouncing during that window would break working deep links.
+The check waits for the client list to finish loading before calling any id dead — the list is empty for a beat on every cold start, and bouncing during that window would break working deep links. During that same window the id is merely unverified, so it opens the canvas immediately (no flash of the client list on a normal permalink) but is not yet written to the project's saved "previewed client" — that store is on disk, so closing the tab mid-load would otherwise leave a possibly-deleted client filed as the project's preview and reopen it on the next visit.
+
+Returning to the same dead link later in the session bounces again rather than going quiet, so the explanation isn't shown only to whoever hits it first.
