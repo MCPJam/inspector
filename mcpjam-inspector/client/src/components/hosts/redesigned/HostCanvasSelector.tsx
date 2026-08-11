@@ -149,7 +149,14 @@ export function HostCanvasSelector({
   // stays disabled until one exists; GlobalHostBar, which stays visible
   // until one exists) that a client is now showing here. Persist it the same
   // way an explicit switch does, so those callers pick it up too.
-  const fallbackHostId = !isLoading && !activeHostId ? active?.hostId ?? null : null;
+  //
+  // Keyed on `requestedIndex < 0` (a fallback actually happened), not
+  // `!activeHostId` — a non-null but stale id (host deleted elsewhere)
+  // resolves to -1 the same way a null id does, and falls back to the same
+  // first host. Keying on the raw input would leave the stale id sitting in
+  // storage while the pill displays a different host.
+  const fallbackHostId =
+    !isLoading && requestedIndex < 0 ? active?.hostId ?? null : null;
   useEffect(() => {
     if (fallbackHostId) setPreviewedHostId(fallbackHostId);
   }, [fallbackHostId, setPreviewedHostId]);

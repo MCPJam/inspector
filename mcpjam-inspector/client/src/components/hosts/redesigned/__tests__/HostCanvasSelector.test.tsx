@@ -208,6 +208,15 @@ describe("HostCanvasSelector", () => {
     expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
   });
 
+  it("persists the fallback host when the requested id is stale (host deleted elsewhere)", () => {
+    // Same fallback path as a null id: the pill falls back to displaying the
+    // first host, but the caller's own state still points at the dead id
+    // until this persists the host actually on screen.
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="deleted-host" />);
+
+    expect(mockSetPreviewedHostId).toHaveBeenCalledWith("host-a");
+  });
+
   it("does not persist a fallback while the host list is still loading", () => {
     mockUseHostList.mockReturnValue({ hosts: [], isLoading: true });
     render(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
