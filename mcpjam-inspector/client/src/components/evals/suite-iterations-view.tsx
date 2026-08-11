@@ -1650,7 +1650,16 @@ export function SuiteIterationsView({
               ) : null}
 
               {/* ── GitHub Checks (backend-gated) ────────────────────── */}
-              <ErrorBoundary name="suite_github_checks" fallback={null}>
+              {/* Keyed by org id: the boundary holds its error state forever
+                  once tripped (fallback={null} exposes no reset), and the org
+                  id here comes from client state — a stale value that later
+                  corrects itself must remount the boundary and re-ask, or the
+                  section stays hidden for the rest of the session. */}
+              <ErrorBoundary
+                key={organizationId ?? "no-organization"}
+                name="suite_github_checks"
+                fallback={null}
+              >
                 <SuiteGithubChecksSettingsSection
                   suiteId={suite._id}
                   projectId={projectId}

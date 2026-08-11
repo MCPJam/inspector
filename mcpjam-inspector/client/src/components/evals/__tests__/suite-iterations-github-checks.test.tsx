@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
@@ -122,6 +122,14 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
     vi.clearAllMocks();
     mocks.useMutation.mockReturnValue(vi.fn());
     mocks.useQuery.mockImplementation(() => undefined);
+    // The throwing cases run the REAL boundary, whose componentDidCatch (and
+    // React itself) logs the full error + component stack. That noise on a
+    // passing run buries real failures, so it stays out of the output.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("keeps the settings sheet up when the availability read throws", () => {
