@@ -228,6 +228,7 @@ export const ANALYTICS_EVENTS = {
   plan_limit_upgrade_returned: { source: "client" },
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
+  plan_limit_upgrade_requested: { source: "client" },
   // --- OpenAI plugin import (Connect "Add plugin", INS-2) ---
   // Props are built by `client/src/lib/plugins/plugin-analytics.ts`, which
   // exists to keep bundle paths, server URLs, env/header names, and plugin

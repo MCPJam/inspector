@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   useOrganizationBilling,
   type BillingInterval,
@@ -81,8 +81,12 @@ export function useUpgradeCheckout({
   const annualSupported = supportedIntervals.includes("annual");
   const monthlySupported = supportedIntervals.includes("monthly");
 
-  // Both prices are shown at once, so the interval is chosen by which card the
-  // user presses rather than by a toggle they have to find first.
+  // Annual leads: it's the cheaper per-seat figure and matches the pricing
+  // page. Both prices render at once, so nothing is hidden behind the choice.
+  const [interval, setInterval] = useState<BillingInterval>(
+    annualSupported ? "annual" : "monthly",
+  );
+
   const annualPriceLabel = formatSeatMonthlyPrice(
     teamEntry?.prices.annual ?? null,
     planCatalog?.currency,
@@ -94,7 +98,7 @@ export function useUpgradeCheckout({
     "monthly",
   );
 
-  const start = useCallback(async (interval: BillingInterval) => {
+  const start = useCallback(async () => {
     if (!organizationId) return;
     track("plan_limit_upgrade_clicked", {
       location: "plan_limit_dialog",
@@ -132,9 +136,11 @@ export function useUpgradeCheckout({
       );
       return { redirected: false as const };
     }
-  }, [limitKind, organizationId, origin, startPlanChange]);
+  }, [interval, limitKind, organizationId, origin, startPlanChange]);
 
   return {
+    interval,
+    setInterval,
     annualPriceLabel,
     monthlyPriceLabel,
     annualDiscountPct: getAnnualDiscountPercent(planCatalog),
@@ -146,6 +152,7 @@ export function useUpgradeCheckout({
      * is a separate question, tracked in the PR. */
     teamEvalIterations: teamEntry?.limits.maxEvalIterationsPerMonth ?? null,
     currentPlan: billingStatus?.plan ?? "free",
+    organizationName: billingStatus?.organizationName ?? "your organization",
     canManageBilling: billingStatus?.canManageBilling ?? false,
     isStarting: isStartingPlanChange,
     start,

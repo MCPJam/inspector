@@ -6,12 +6,22 @@ import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 
 // Hoisted so the vi.mock factories below (which vitest lifts to the top of the
 // file) can reach them.
-const { toastSuccess, trackMock, startMock, upgradeState, billingState } =
+const {
+  toastSuccess,
+  trackMock,
+  startMock,
+  upgradeState,
+  billingState,
+  recipientsState,
+} =
   vi.hoisted(() => ({
     toastSuccess: vi.fn(),
     trackMock: vi.fn(),
     startMock: vi.fn(),
     upgradeState: { currentPlan: "free" as string, canManageBilling: true },
+    recipientsState: {
+      current: [] as Array<{ email: string; name?: string | null }>,
+    },
     billingState: { plan: "free" as string, isLoading: false },
   }));
 
@@ -27,6 +37,8 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
   return {
     ...actual,
     useUpgradeCheckout: () => ({
+      interval: "annual" as const,
+      setInterval: vi.fn(),
       annualPriceLabel: "$30/seat/mo",
       monthlyPriceLabel: "$38/seat/mo",
       annualDiscountPct: 21,
@@ -35,6 +47,7 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
       teamName: "Team",
       teamEvalIterations: 5000,
       currentPlan: upgradeState.currentPlan,
+      organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
       isStarting: false,
       start: startMock,
@@ -50,6 +63,10 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
     planCatalog: { plans: { team: { displayName: "Team" } } },
     isLoadingBilling: billingState.isLoading,
   }),
+}));
+
+vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
+  useUpgradeRequestRecipients: () => recipientsState.current,
 }));
 
 const RESETS_AT = Date.UTC(2026, 7, 11, 4, 0);
@@ -76,6 +93,7 @@ beforeEach(() => {
   startMock.mockReset();
   upgradeState.currentPlan = "free";
   upgradeState.canManageBilling = true;
+  recipientsState.current = [];
   billingState.plan = "free";
   billingState.isLoading = false;
   window.history.replaceState(null, "", "/evals");
@@ -109,28 +127,33 @@ describe("PlanLimitDialog", () => {
     openEvalLimit();
     render(<PlanLimitDialog />);
 
-    expect(screen.getByTestId("upgrade-annual")).toHaveTextContent(
-      "$30/seat/mo"
-    );
-    expect(screen.getByTestId("upgrade-annual")).toHaveTextContent("Save 21%");
-    expect(screen.getByTestId("upgrade-monthly")).toHaveTextContent(
+    const annual = screen.getByTestId("upgrade-interval-annual");
+    expect(annual).toHaveTextContent("$30/seat/mo");
+    expect(annual).toHaveTextContent("Save 21%");
+    expect(screen.getByTestId("upgrade-interval-monthly")).toHaveTextContent(
       "$38/seat/mo"
     );
-    expect(
-      screen.getByText(/confirm on Stripe before paying/i)
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("upgrade-plan-cta")).toHaveTextContent(
+      /Upgrade to Team/
+    );
   });
 
-  it("starts checkout on the interval the user pressed", async () => {
+  it("selects an interval, then confirms with the upgrade button", async () => {
     const user = userEvent.setup();
     openEvalLimit();
     render(<PlanLimitDialog />);
 
-    await user.click(screen.getByTestId("upgrade-monthly"));
-    expect(startMock).toHaveBeenCalledWith("monthly");
+    // Annual leads, and selecting is separate from confirming: pressing a card
+    // must not start checkout on its own.
+    expect(screen.getByTestId("upgrade-interval-annual")).toHaveAttribute(
+      "aria-checked",
+      "true"
+    );
+    await user.click(screen.getByTestId("upgrade-interval-monthly"));
+    expect(startMock).not.toHaveBeenCalled();
 
-    await user.click(screen.getByTestId("upgrade-annual"));
-    expect(startMock).toHaveBeenLastCalledWith("annual");
+    await user.click(screen.getByTestId("upgrade-plan-cta"));
+    expect(startMock).toHaveBeenCalledTimes(1);
   });
 
   it("has no wait-for-reset button; the close control is the only dismissal", () => {
@@ -145,15 +168,38 @@ describe("PlanLimitDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("explains who can upgrade instead of showing a CTA the server would reject", () => {
+  it("offers an owner email instead of a CTA the server would reject", () => {
     upgradeState.canManageBilling = false;
+    recipientsState.current = [
+      { email: "dana@acme.test", name: "Dana Ruiz" },
+    ];
     openEvalLimit();
     render(<PlanLimitDialog />);
 
     expect(
       screen.getByTestId("plan-limit-dialog-description")
-    ).toHaveTextContent(/Only an organization owner or admin can upgrade/);
-    expect(screen.queryByTestId("upgrade-annual")).not.toBeInTheDocument();
+    ).toHaveTextContent(/Only an organization owner can upgrade/);
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
+
+    const mail = screen.getByTestId("request-upgrade-mail");
+    const href = decodeURIComponent(mail.getAttribute("href") ?? "");
+    expect(href).toContain("mailto:dana@acme.test");
+    expect(href).toContain("Acme Robotics");
+    expect(href).toContain("Organizations, then Billing");
+    // Says what it does. It opens a draft; it does not send anything.
+    expect(mail).toHaveTextContent(/Email your owner/);
+    expect(screen.getByText(/Opens a draft to Dana Ruiz/)).toBeInTheDocument();
+  });
+
+  it("hides the owner email when no owner address resolves", () => {
+    upgradeState.canManageBilling = false;
+    recipientsState.current = [];
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    expect(
+      screen.queryByTestId("request-upgrade-mail")
+    ).not.toBeInTheDocument();
   });
 
   it("points an org already on Team at Enterprise instead of Team", () => {
@@ -165,7 +211,7 @@ describe("PlanLimitDialog", () => {
     expect(description).toHaveTextContent(/Your plan includes 5,000 a month/);
     expect(description).toHaveTextContent(/Enterprise adds negotiated usage/);
     expect(description).not.toHaveTextContent(/Our Team plan/);
-    expect(screen.queryByTestId("upgrade-annual")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(
       screen.getByTestId("plan-limit-enterprise-cta")
     ).toHaveTextContent(/Request upgrade/);
