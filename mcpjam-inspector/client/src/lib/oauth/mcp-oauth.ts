@@ -456,6 +456,21 @@ function normalizeResponseHeaders(headers: Headers): Record<string, string> {
   return normalized;
 }
 
+/**
+ * Parse a response body that the OAuth flow CONSUMES as live data (tokens,
+ * client registrations). Deliberately NOT redacted: `traceOAuthValue` rewrites
+ * `access_token` to `abcd...[redacted]...yz`, and in hosted mode
+ * (`SANITIZE_OAUTH_TRACES = HOSTED_MODE`) that redacted string is still a
+ * non-empty string, so it sails past every truthiness check and gets sent
+ * upstream as `Authorization: Bearer abcd...[redacted]...yz` — which the
+ * resource server rejects as an invalid token.
+ *
+ * Redaction belongs to the trace layer, which applies it independently:
+ * `readResponseBodyForTrace` for trace-only reads, and
+ * `projectOAuthTraceSnapshot({ sanitize })` for anything derived from
+ * `httpHistory`/`lastResponse`. Persisted flow state additionally drops
+ * history wholesale via `stripOAuthTraceDataFromFlowState`.
+ */
 async function parseOAuthResponseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) {
@@ -463,7 +478,7 @@ async function parseOAuthResponseBody(response: Response): Promise<unknown> {
   }
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  return traceOAuthValue(parseOAuthResponseText(text, contentType));
+  return parseOAuthResponseText(text, contentType);
 }
 
 function serializeOAuthRequestBody(
@@ -778,10 +793,13 @@ async function executeRequestViaProxy(
   };
 
   return {
+    // Live data the flow consumes — not redacted. See parseOAuthResponseBody.
+    // The trace copy of this exchange is built separately by
+    // createTraceResponseFromResult, which does redact.
     status: proxied.status,
     statusText: proxied.statusText,
     headers: proxied.headers ?? {},
-    body: traceOAuthValue(proxied.body),
+    body: proxied.body,
     ok: proxied.status >= 200 && proxied.status < 300,
   };
 }
