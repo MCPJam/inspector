@@ -173,6 +173,36 @@ describe("HostsRoute — a URL segment that is not a Convex host id", () => {
     );
   });
 
+  it("hands one trimmed id to every consumer for a padded deep link", () => {
+    // `%20`-padded id: real enough to resolve once trimmed, which is what makes
+    // a split between consumers dangerous. `useHost` trims before querying, so
+    // an untrimmed value here would sync and persist a form that `HostsTab`
+    // cannot find in the host list — it would then reset the selection and
+    // clear the project's previewed host.
+    mockParams.hostId = `%20${CONVEX_HOST_ID}%20`;
+
+    render(<HostsRoute />);
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockSetHostsTabSelectedHostId).toHaveBeenCalledWith(CONVEX_HOST_ID);
+    expect(mockSetPreviewedHostId).toHaveBeenCalledWith(CONVEX_HOST_ID);
+    expect(screen.getByTestId("hosts-tab")).toHaveAttribute(
+      "data-selected-host-id",
+      CONVEX_HOST_ID,
+    );
+  });
+
+  it("cleans up a segment with nothing left after trimming", () => {
+    mockParams.hostId = "%20";
+
+    render(<HostsRoute />);
+
+    expect(mockNavigate).toHaveBeenCalledWith(routePaths.hosts, {
+      replace: true,
+    });
+    expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
+  });
+
   it("leaves the bare `/hosts` list alone", () => {
     mockParams.hostId = undefined;
     mockPreviewed.value = CONVEX_HOST_ID;

@@ -757,11 +757,19 @@ export function HostsRoute() {
       : null);
   const urlHostId = useMemo(() => {
     if (!routeHostId) return null;
+    let decoded = routeHostId;
     try {
-      return decodeURIComponent(routeHostId);
+      decoded = decodeURIComponent(routeHostId);
     } catch {
-      return routeHostId;
+      // Malformed escape: fall through with the raw segment.
     }
+    // Trimmed HERE so one canonical id reaches every consumer. `useHost` trims
+    // before querying, so a padded `/hosts/%20<id>%20` would otherwise resolve
+    // the host while the synced and PERSISTED value kept its whitespace — and
+    // `HostsTab` reconciles both against the host list, so it would bounce the
+    // user to the list and clear the project's previewed host.
+    const trimmed = decoded.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }, [routeHostId]);
   // Only a Convex document id may be opened, synced, or persisted. Typed and
   // shared links put clients-catalog slugs here too (`/hosts/chatgpt`, whose
@@ -773,10 +781,12 @@ export function HostsRoute() {
     urlHostId && shouldQueryHostId(urlHostId) ? urlHostId : null;
 
   useEffect(() => {
-    if (urlHostId && !openableHostId) {
+    // Keyed off the raw segment, so `/hosts/%20` (nothing left after trimming)
+    // is cleaned up too rather than sitting on a URL that opens nothing.
+    if (routeHostId && !openableHostId) {
       navigate(routePaths.hosts, { replace: true });
     }
-  }, [urlHostId, openableHostId, navigate]);
+  }, [routeHostId, openableHostId, navigate]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
