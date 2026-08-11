@@ -149,6 +149,37 @@ export function webError(
   );
 }
 
+/**
+ * Send a mapped `WebRouteError` as a `webError`, WITH its normalized block.
+ *
+ * Exists because forgetting the last argument is silent and costly: several
+ * hosted connect/auth catches called `mapRuntimeError(error)` and then passed
+ * `routeError.details` but not `routeError.normalized`, so the failure was
+ * classified for capture and still produced no `origin`/`slug` on
+ * `http.request.failed` and no attribution in the client's error card. That is
+ * the measurement half of this work quietly missing on exactly the paths the
+ * reported 502s travel.
+ *
+ * Prefer this over calling `webError` with a mapped error by hand.
+ */
+export function webErrorFromRoute(
+  c: any,
+  routeError: WebRouteError,
+  extras?: Record<string, unknown>
+) {
+  return webError(
+    c,
+    routeError.status,
+    routeError.code,
+    routeError.message,
+    routeError.details,
+    {
+      ...(extras ?? {}),
+      ...(routeError.normalized ? { normalized: routeError.normalized } : {}),
+    }
+  );
+}
+
 export function parseErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

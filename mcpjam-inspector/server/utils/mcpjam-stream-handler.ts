@@ -2334,6 +2334,11 @@ async function processOneStep(
     // itself. A 5xx from our own backend is the hosted-502 class — capture it,
     // because nothing downstream of this point ever will.
     const normalized = describeBackendStreamFailure(res.status, errorText);
+    // `isJsonDenial` proves only that the body was JSON — NOT that it was the
+    // documented `{ok:false, code:"..."}` refusal. A malformed or unexpected
+    // 200 from our own backend is a real fault, so the exemption below
+    // requires a parsed, recognized denial CODE, not merely a content type.
+    const isRecognizedDenial = isJsonDenial && Boolean(parsed.code);
     maybeCaptureOriginError(new Error(parsed.message), normalized, {
       source: "route:mcp.chat-v2.backend-stream",
       // The boundary is declared for a genuine TRANSPORT failure only, and
@@ -2348,8 +2353,15 @@ async function processOneStep(
       // escalates an unrecognized status from our own backend, which
       // `describeBackendStreamFailure` leaves `ambiguous` because it
       // classifies the response alone and cannot know whose backend answered.
-      ...(isJsonDenial ? {} : { boundary: "mcpjam_internal" as const }),
-      extra: { httpStatus: res.status, code: parsed.code, isJsonDenial },
+      ...(isRecognizedDenial
+        ? {}
+        : { boundary: "mcpjam_internal" as const }),
+      extra: {
+        httpStatus: res.status,
+        code: parsed.code,
+        isJsonDenial,
+        isRecognizedDenial,
+      },
     });
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,

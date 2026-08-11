@@ -83,11 +83,22 @@ export class ClientInputError extends Error {
 export async function readRequestJson<T = any>(c: {
   req: { json: () => Promise<unknown> };
 }): Promise<T> {
+  let parsed: unknown;
   try {
-    return (await c.req.json()) as T;
+    parsed = await c.req.json();
   } catch (error) {
     throw new ClientInputError("Invalid JSON body", { cause: error });
   }
+  // A body of `null`, `42`, or `"str"` PARSES fine and then throws a
+  // `TypeError` at the caller's `const {x} = body` — an unmarked error, which
+  // an internal hop would happily promote to a page. Every one of these
+  // handlers destructures, so rejecting a non-object body here closes that
+  // hole once for all ~48 call sites instead of adding a guard to each.
+  // Arrays are objects and pass; a handler that wants one still validates it.
+  if (parsed === null || typeof parsed !== "object") {
+    throw new ClientInputError("Request body must be a JSON object");
+  }
+  return parsed as T;
 }
 
 function isClientInputFault(error: unknown): boolean {

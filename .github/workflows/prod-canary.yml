@@ -104,7 +104,13 @@ jobs:
             # gateway error page can be arbitrarily large.
             code=$(curl -sS --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors \
               -D /tmp/headers.txt -o /tmp/body.txt -w '%{http_code}' "$url" || echo "000")
-            ray=$(grep -i '^cf-ray:' /tmp/headers.txt | tr -d '\r' | cut -d' ' -f2- || true)
+            # `tail -n 1`: `-D` APPENDS the headers of every retry to the same
+            # file, so a sustained 5xx leaves several cf-ray lines here. Writing
+            # a multi-line value with `echo name=value` into $GITHUB_OUTPUT is
+            # invalid and fails the step — which would silence the canary
+            # precisely during the outage it exists to report. Take the last
+            # attempt's ray, which is the one the reported status belongs to.
+            ray=$(grep -i '^cf-ray:' /tmp/headers.txt | tr -d '\r' | cut -d' ' -f2- | tail -n 1 || true)
             if [ "${code:0:1}" != "2" ]; then
               failures="${failures}${path} "
               if [ "${code:0:1}" = "5" ] && [ -n "$ray" ]; then

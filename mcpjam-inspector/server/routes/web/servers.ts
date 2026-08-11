@@ -4,7 +4,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
   mapRuntimeError,
-  webError,
+  webErrorFromRoute,
   projectServerSchema,
   withEphemeralConnection,
   handleRoute,
@@ -131,12 +131,9 @@ servers.post("/doctor", async (c) => {
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      routeError,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }

@@ -263,6 +263,24 @@ describe("readRequestJson", () => {
     });
   });
 
+  it.each([[null], [42], ["a string"], [true]])(
+    "rejects a non-object body (%p) that would TypeError at destructure",
+    async (body) => {
+      // These PARSE fine and then blow up on the caller's `const {x} = body`,
+      // as an unmarked TypeError an internal hop would happily promote to a
+      // page. Rejecting here closes that for every call site at once.
+      const c = { req: { json: () => Promise.resolve(body) } };
+
+      await expect(readRequestJson(c)).rejects.toBeInstanceOf(ClientInputError);
+    },
+  );
+
+  it("lets an array through — a handler that wants one still validates it", async () => {
+    const c = { req: { json: () => Promise.resolve([1, 2]) } };
+
+    await expect(readRequestJson(c)).resolves.toEqual([1, 2]);
+  });
+
   it("passes a well-formed body straight through", async () => {
     const c = { req: { json: () => Promise.resolve({ serverId: "srv_1" }) } };
 
