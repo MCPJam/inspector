@@ -242,7 +242,11 @@ import {
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
-import { useHostList, useHostMutations } from "@/hooks/useClients";
+import {
+  shouldQueryHostId,
+  useHostList,
+  useHostMutations,
+} from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import {
   HOST_TEMPLATES,
@@ -759,19 +763,33 @@ export function HostsRoute() {
       return routeHostId;
     }
   }, [routeHostId]);
+  // Only a Convex document id may be opened, synced, or persisted. Typed and
+  // shared links put clients-catalog slugs here too (`/hosts/chatgpt`, whose
+  // supported deep link is `/hosts?template=chatgpt`), and such a value can
+  // never resolve to a host. `useHost` skips it; what this adds is keeping it
+  // out of the project's PERSISTED previewed host, where it would outlive the
+  // URL and reopen a dead id on every later visit to `/hosts`.
+  const openableHostId =
+    urlHostId && shouldQueryHostId(urlHostId) ? urlHostId : null;
+
+  useEffect(() => {
+    if (urlHostId && !openableHostId) {
+      navigate(routePaths.hosts, { replace: true });
+    }
+  }, [urlHostId, openableHostId, navigate]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
-    if (hostsTabSelectedHostId !== urlHostId) {
-      setHostsTabSelectedHostId(urlHostId);
+    if (hostsTabSelectedHostId !== openableHostId) {
+      setHostsTabSelectedHostId(openableHostId);
     }
-    if (urlHostId && previewedHostId !== urlHostId) {
-      setPreviewedHostId(urlHostId);
+    if (openableHostId && previewedHostId !== openableHostId) {
+      setPreviewedHostId(openableHostId);
     }
   }, [
-    urlHostId,
+    openableHostId,
     hostsTabSelectedHostId,
     previewedHostId,
     setHostsTabSelectedHostId,
@@ -799,7 +817,7 @@ export function HostsRoute() {
     <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      selectedHostId={urlHostId ?? previewedHostId}
+      selectedHostId={openableHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
