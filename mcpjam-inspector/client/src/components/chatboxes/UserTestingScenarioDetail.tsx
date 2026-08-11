@@ -16,6 +16,24 @@ import {
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
+import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
+import { RunInsightsChip } from "@/components/shared/usage-insights/run-insights";
+import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
+import {
+  ChatboxOutcomeCalibration,
+  hasOutcomeFeedbackCalibration,
+} from "@/components/chatboxes/ChatboxOutcomeCalibration";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import {
+  parseSelectionParam,
+  serializeSelectionParam,
+} from "@/hooks/chatbox-usage-filters";
+import type { InsightsView } from "@/hooks/useInsightsFlowController";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ChatboxPreviewPane } from "@/components/chatboxes/ChatboxPreviewPane";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import { EditableTitle } from "@/components/evals/EditableTitle";
@@ -315,8 +333,20 @@ export function UserTestingScenarioDetail({
   // above remount this route during a cold boot, so state captured on first
   // mount wouldn't survive to the last one.
   const tab = parseUserTestingDetailTab(location.search);
-  const sessionDeepLinkThreadId = new URLSearchParams(location.search).get(
-    "session",
+  const searchParams = new URLSearchParams(location.search);
+  const sessionParam = searchParams.get("session");
+  const sessionDeepLinkThreadId = sessionParam;
+  // Insights selection + which diagram it was made on, so a copied link
+  // reopens exactly what the sender was looking at. The view is NORMALIZED
+  // here rather than forwarded raw: an unrecognized value renders as flow
+  // anyway, and passing it on would re-persist a typo into every subsequent
+  // navigation instead of dropping it on the first one.
+  const selParam = searchParams.get("sel");
+  const view: InsightsView =
+    searchParams.get("view") === "clusters" ? "clusters" : "flow";
+  const urlSelection = useMemo(
+    () => parseSelectionParam(selParam),
+    [selParam],
   );
 
   // Present only when the environment can't resolve right now (archived, a
@@ -373,11 +403,19 @@ export function UserTestingScenarioDetail({
 
   const goToTab = (next: UserTestingDetailTab) => {
     // Replace, not push: flipping a sub-tab shouldn't put a stop on the back
-    // button between the scenario and the list. Drops `?session=` — that
-    // selection belongs to the Sessions tab.
-    navigate(buildUserTestingScenarioPath(chatbox.chatboxId, { tab: next }), {
-      replace: true,
-    });
+    // button between the scenario and the list. `session` and `sel` are
+    // PRESERVED: both name something the user picked, and dropping them on a
+    // tab flip loses the selection they came back to the other tab to see —
+    // and makes the URL they copied stop describing what is on screen.
+    navigate(
+      buildUserTestingScenarioPath(chatbox.chatboxId, {
+        tab: next,
+        session: sessionParam ?? undefined,
+        sel: selParam ?? undefined,
+        view,
+      }),
+      { replace: true },
+    );
   };
 
   const handleDelete = async () => {
@@ -560,31 +598,144 @@ export function UserTestingScenarioDetail({
           <div className="absolute inset-0">
             <ChatboxUsagePanel
               chatbox={chatbox}
-              section="sessions"
               initialThreadId={sessionDeepLinkThreadId}
             />
           </div>
         ) : null}
         {tab === "insights" ? (
           <div className="absolute inset-0">
-            <ChatboxUsagePanel
-              chatbox={chatbox}
-              section="insights"
+            <InsightsWorkbench
+              scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
+              cohortKey={chatbox.chatboxId}
+              // Scenarios carry real-user traffic; the retired simulation
+              // flow's rows are still in the database and stay hidden.
+              augmentFilter={withHideSynthetic}
+              urlSelection={urlSelection}
+              onSelectionChange={(themes) => {
+                navigate(
+                  buildUserTestingScenarioPath(chatbox.chatboxId, {
+                    tab: "insights",
+                    session: sessionParam ?? undefined,
+                    sel: themes ? serializeSelectionParam(themes) : undefined,
+                    view,
+                  }),
+                  { replace: true },
+                );
+              }}
+              initialView={view}
+              onViewChange={(nextView) => {
+                navigate(
+                  buildUserTestingScenarioPath(chatbox.chatboxId, {
+                    tab: "insights",
+                    session: sessionParam ?? undefined,
+                    sel: selParam ?? undefined,
+                    view: nextView,
+                  }),
+                  { replace: true },
+                );
+              }}
               onOpenSession={(threadId) => {
                 // Stash the target in the URL, then flip the tab — the same
-                // reason the tab itself lives there.
+                // reason the tab itself lives there. `sel` and `view` ride
+                // along: this is a trip to look at one session, and coming
+                // back to Insights should find the selection that sent the
+                // user there rather than a reset Flow view.
                 navigate(
                   buildUserTestingScenarioPath(chatbox.chatboxId, {
                     session: threadId,
+                    sel: selParam ?? undefined,
+                    view,
                   }),
                   { replace: true },
                 );
               }}
               onOpenSessionsTab={() => {
-                navigate(buildUserTestingScenarioPath(chatbox.chatboxId), {
-                  replace: true,
-                });
+                navigate(
+                  buildUserTestingScenarioPath(chatbox.chatboxId, {
+                    session: sessionParam ?? undefined,
+                    sel: selParam ?? undefined,
+                    view,
+                  }),
+                  { replace: true },
+                );
               }}
+              strugglesSlot={(breakdown) => (
+                <>
+                  {/* Ships dark and guest-tolerant: `useQuery` against an
+                      undeployed query throws, and a guest hitting the
+                      member-only request mutation would too. The boundary
+                      makes both render as nothing rather than as a broken tab
+                      — the same pattern `ChatboxSessionsMetricStrip` uses.
+                      Keyed per scenario: the route reuses this tab across
+                      scenario changes, so an unkeyed boundary would carry one
+                      scenario's failure into the next one's rail. */}
+                  <ErrorBoundary key={chatbox.chatboxId} fallback={null}>
+                    <RunInsightsChip
+                      surface={{
+                        kind: "chatbox",
+                        chatboxId: chatbox.chatboxId,
+                      }}
+                      onOpenSession={(threadId) => {
+                        navigate(
+                          buildUserTestingScenarioPath(chatbox.chatboxId, {
+                            session: threadId,
+                            sel: selParam ?? undefined,
+                            view,
+                          }),
+                          { replace: true },
+                        );
+                      }}
+                    />
+                  </ErrorBoundary>
+                  {/* Feedback-by-inferred-outcome, unchanged from the panel
+                      this workbench replaced: a chip beside the findings one,
+                      the table behind it. Hidden until something is rated —
+                      a calibration with no ratings is an empty table, not an
+                      empty state worth a chip. */}
+                  {hasOutcomeFeedbackCalibration(breakdown) ? (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium tabular-nums transition-colors hover:bg-muted/50"
+                          data-testid="chatbox-insights-feedback-chip"
+                        >
+                          Feedback
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[28rem] max-w-[90vw] p-0"
+                      >
+                        <div className="flex max-h-[60vh] min-h-0 flex-col overflow-y-auto">
+                          <ChatboxOutcomeCalibration breakdown={breakdown} />
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  ) : null}
+                </>
+              )}
+              // Parity with the swarm one-shot: a scenario analyzed before the
+              // topic map existed backfills silently on first Clusters view.
+              // The server mutation dedupes in-flight runs.
+              autoBackfillTopicMap
+              emptyState={
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No tester sessions yet — share the link to start collecting
+                    them.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToTab("edit")}
+                  >
+                    Open Edit to share
+                  </Button>
+                </div>
+              }
+              className="px-8 py-4"
+              testIdPrefix="chatbox-insights"
             />
           </div>
         ) : null}

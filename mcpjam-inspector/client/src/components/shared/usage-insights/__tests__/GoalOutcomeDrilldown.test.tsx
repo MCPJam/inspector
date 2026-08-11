@@ -2,9 +2,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ChatboxGoalOutcomeDrilldown,
+  GoalOutcomeDrilldown,
   resolveNextBefore,
-} from "../ChatboxGoalOutcomeDrilldown";
+} from "../GoalOutcomeDrilldown";
 import {
   EMPTY_USAGE_FILTER,
   toggleChip,
@@ -43,7 +43,7 @@ function renderDrilldown(
   onOpenSession = vi.fn()
 ) {
   return render(
-    <ChatboxGoalOutcomeDrilldown
+    <GoalOutcomeDrilldown
       scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
       selection={selection}
       filter={EMPTY_USAGE_FILTER}
@@ -53,7 +53,7 @@ function renderDrilldown(
   );
 }
 
-describe("ChatboxGoalOutcomeDrilldown", () => {
+describe("GoalOutcomeDrilldown", () => {
   it("renders nothing when nothing is selected", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: undefined,
@@ -237,7 +237,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     rerender(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={{
           themes: [
@@ -283,7 +283,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
     rerender(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
@@ -329,7 +329,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     const { rerender } = render(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
@@ -352,7 +352,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     rerender(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={CELL_A}
         filter={toggleChip(EMPTY_USAGE_FILTER, {
@@ -387,7 +387,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     const { rerender } = render(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
@@ -403,7 +403,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: true,
     });
     rerender(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
@@ -442,7 +442,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     rerender(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
@@ -480,7 +480,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     rerender(
-      <ChatboxGoalOutcomeDrilldown
+      <GoalOutcomeDrilldown
         scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}

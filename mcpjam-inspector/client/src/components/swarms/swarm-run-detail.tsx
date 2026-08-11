@@ -34,10 +34,10 @@ import { SWARM_QUERIES, type SwarmOverview } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
-import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
+import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
-  SwarmRunInsightsChip,
-} from "@/components/swarms/swarm-run-insights";
+  RunInsightsChip,
+} from "@/components/shared/usage-insights/run-insights";
 import {
   groupRunsIntoSwarmWaves,
   resolveSwarmWave,
@@ -292,9 +292,17 @@ export function SwarmRunDetail({
         {tab === "insights" ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-4">
             <div className="min-h-0 flex-1 overflow-hidden">
-              <SwarmInsightsPanel
-                projectId={projectId}
-                journeyRunIds={runIds}
+              <InsightsWorkbench
+                scope={
+                  projectId
+                    ? {
+                        kind: "swarm",
+                        projectId,
+                        ...(runIds.length ? { journeyRunIds: [...runIds] } : {}),
+                      }
+                    : null
+                }
+                cohortKey={`${projectId ?? ""}\0${runIds.join("\0")}`}
                 onOpenSession={handleOpenSession}
                 onOpenSessionsTab={() => handleTabChange("sessions")}
                 urlSelection={urlSelection}
@@ -307,9 +315,12 @@ export function SwarmRunDetail({
                 }
                 strugglesSlot={
                   projectId && wave.runs[0]?.swarmRunGroupId ? (
-                    <SwarmRunInsightsChip
-                      projectId={projectId}
-                      swarmRunGroupId={wave.runs[0].swarmRunGroupId}
+                    <RunInsightsChip
+                      surface={{
+                        kind: "swarm",
+                        projectId,
+                        swarmRunGroupId: wave.runs[0].swarmRunGroupId,
+                      }}
                       onOpenSession={handleOpenSession}
                     />
                   ) : null
@@ -322,7 +333,25 @@ export function SwarmRunDetail({
                     />
                   ) : null
                 }
-                fillViewport
+                // A wave analyzed before the topic map existed backfills
+                // silently on first Clusters view, as it did before the
+                // workbench. The server mutation dedupes in-flight runs.
+                autoBackfillTopicMap
+                emptyState={
+                  // The workbench routes BOTH "nothing to scope to" and "no
+                  // sessions" here, and on this surface those are different
+                  // sentences: Swarms is sign-in-only, unlike User Testing, so
+                  // a signed-out viewer has no project — but a signed-in one
+                  // whose wave produced nothing analyzable must not be told to
+                  // sign in. The copy belongs to this surface, not the shared
+                  // workbench, which is why it arrives as a prop.
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    {projectId
+                      ? "No sessions in this swarm run yet."
+                      : "Sign in to view swarm insights."}
+                  </div>
+                }
+                testIdPrefix="swarm-insights"
               />
             </div>
           </div>

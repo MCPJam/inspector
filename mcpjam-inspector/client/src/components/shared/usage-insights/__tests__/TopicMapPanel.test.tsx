@@ -2,11 +2,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ChatboxTopicMapPanel,
+  TopicMapPanel,
   NO_OUTCOME_COLOR,
   colorForNode,
   topicMapNodeHoverLabel,
-} from "../ChatboxTopicMapPanel";
+} from "../TopicMapPanel";
 import {
   EMPTY_USAGE_FILTER,
   UNLABELED_OUTCOME,
@@ -390,7 +390,7 @@ describe("topicMapNodeHoverLabel", () => {
   });
 });
 
-describe("ChatboxTopicMapPanel", () => {
+describe("TopicMapPanel", () => {
   it("subscribes to ResizeObserver only after the graph pane mounts (post-loading)", () => {
     const observed: Element[] = [];
     const originalResizeObserver = globalThis.ResizeObserver;
@@ -417,13 +417,13 @@ describe("ChatboxTopicMapPanel", () => {
         onRebuild: vi.fn(),
       };
 
-      const { rerender } = render(<ChatboxTopicMapPanel {...panelProps} />);
+      const { rerender } = render(<TopicMapPanel {...panelProps} />);
       expect(observed).toHaveLength(0);
 
       mockUseChatboxTopicMap.mockReturnValue(
         createDefaultChatboxTopicMapHookValue()
       );
-      rerender(<ChatboxTopicMapPanel {...panelProps} />);
+      rerender(<TopicMapPanel {...panelProps} />);
       expect(observed.length).toBeGreaterThan(0);
     } finally {
       globalThis.ResizeObserver = originalResizeObserver;
@@ -432,8 +432,8 @@ describe("ChatboxTopicMapPanel", () => {
 
   it("renders cluster list with summaries in the sidebar", () => {
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -453,8 +453,8 @@ describe("ChatboxTopicMapPanel", () => {
 
   it("renders Fit view and rebuild controls overlayed on the canvas", () => {
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -492,8 +492,8 @@ describe("ChatboxTopicMapPanel", () => {
     });
 
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -509,8 +509,8 @@ describe("ChatboxTopicMapPanel", () => {
     const onToggleChip = vi.fn();
 
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={onToggleChip}
         onClearChip={vi.fn()}
@@ -533,8 +533,8 @@ describe("ChatboxTopicMapPanel", () => {
 
   it("renders cluster keywords as static chips without a popover", () => {
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -551,8 +551,8 @@ describe("ChatboxTopicMapPanel", () => {
 
   it("highlights active cluster selection in the list", () => {
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={{
           preset: "all",
           chips: [
@@ -580,8 +580,8 @@ describe("ChatboxTopicMapPanel", () => {
     const onOpenSession = vi.fn();
 
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -607,8 +607,8 @@ describe("ChatboxTopicMapPanel", () => {
     const user = userEvent.setup();
 
     render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -689,11 +689,11 @@ describe("colorForNode", () => {
   });
 });
 
-describe("ChatboxTopicMapPanel color-by mode", () => {
+describe("TopicMapPanel color-by mode", () => {
   function renderPanel() {
     return render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -788,8 +788,8 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
       createDefaultChatboxTopicMapHookValue()
     );
     rerender(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -826,11 +826,11 @@ function goalOutcomeFilter(
   };
 }
 
-describe("ChatboxTopicMapPanel outcome narrowing", () => {
+describe("TopicMapPanel outcome narrowing", () => {
   function renderWithFilter(filter: UsageFilterState) {
     return render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={filter}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -898,11 +898,11 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
   });
 });
 
-describe("ChatboxTopicMapPanel cluster halos", () => {
+describe("TopicMapPanel cluster halos", () => {
   function renderPanel() {
     return render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
+      <TopicMapPanel
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
         filter={EMPTY_USAGE_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
@@ -960,7 +960,7 @@ describe("ChatboxTopicMapPanel cluster halos", () => {
   });
 });
 
-describe("ChatboxTopicMapPanel wave filter", () => {
+describe("TopicMapPanel wave filter", () => {
   it("hides nodes whose journeyRunId is outside the wave", () => {
     const base = createDefaultChatboxTopicMapHookValue();
     mockUseChatboxTopicMap.mockReturnValue({
@@ -976,7 +976,7 @@ describe("ChatboxTopicMapPanel wave filter", () => {
     });
 
     render(
-      <ChatboxTopicMapPanel
+      <TopicMapPanel
         scope={{ kind: "swarm", projectId: "proj-1" }}
         journeyRunIds={["run-a"]}
         filter={EMPTY_FILTER}
@@ -995,7 +995,7 @@ describe("ChatboxTopicMapPanel wave filter", () => {
   });
 });
 
-describe("ChatboxTopicMapPanel swarm empty / loading", () => {
+describe("TopicMapPanel swarm empty / loading", () => {
   it("uses map copy and keeps headerActions while a swarm rebuild is running", () => {
     mockUseChatboxTopicMap.mockReturnValue({
       ...createDefaultChatboxTopicMapHookValue(),
@@ -1015,7 +1015,7 @@ describe("ChatboxTopicMapPanel swarm empty / loading", () => {
     });
 
     render(
-      <ChatboxTopicMapPanel
+      <TopicMapPanel
         scope={{ kind: "swarm", projectId: "proj-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
@@ -1051,7 +1051,7 @@ describe("ChatboxTopicMapPanel swarm empty / loading", () => {
     });
 
     render(
-      <ChatboxTopicMapPanel
+      <TopicMapPanel
         scope={{ kind: "swarm", projectId: "proj-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}

@@ -29,10 +29,10 @@ import {
   stageValueLabel,
   type SankeyLayoutLink,
   type SankeyLayoutNode,
-} from "@/components/chatboxes/insights-sankey";
+} from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
 
-interface ChatboxInsightsSankeyProps {
+interface SessionFlowSankeyProps {
   breakdown: UsageBreakdown | null | undefined;
   /** Currently open selection, so its endpoints can read as selected. */
   selection: InsightsSelection | null;
@@ -167,7 +167,7 @@ function RebuildButton({
  * vocabulary to render, which is why the behavior column can say "Guessed an id
  * after truncation" rather than picking from a list written in advance.
  */
-export function ChatboxInsightsSankey({
+export function SessionFlowSankey({
   breakdown,
   selection,
   onSelectNode,
@@ -179,7 +179,7 @@ export function ChatboxInsightsSankey({
   stageTitles,
   headerActions,
   fillHeight = false,
-}: ChatboxInsightsSankeyProps) {
+}: SessionFlowSankeyProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
   const { ref: chartPaneRef, size: chartPaneSize } = usePaneSize(fillHeight);
