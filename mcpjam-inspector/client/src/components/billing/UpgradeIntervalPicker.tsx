@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 interface UpgradeIntervalPickerProps {
   interval: BillingInterval;
   onIntervalChange: (interval: BillingInterval) => void;
-  /** Per-seat monthly figures, already formatted. Null while the catalog loads. */
+  /** Bare per-seat monthly amounts, e.g. "$30". The unit is rendered here so
+   * the large number never wraps mid-phrase. Null while the catalog loads. */
   annualPriceLabel: string | null;
   monthlyPriceLabel: string | null;
   annualDiscountPct: number;
@@ -107,9 +108,14 @@ export function UpgradeIntervalPicker({
                 ) : null}
               </span>
               {option.priceLabel ? (
-                <span className="text-xl font-semibold leading-tight tracking-tight">
-                  {option.priceLabel}
-                </span>
+                <>
+                  <span className="text-xl font-semibold leading-tight tracking-tight">
+                    {option.priceLabel}
+                  </span>
+                  <span className="text-xs leading-snug text-muted-foreground">
+                    per seat/month
+                  </span>
+                </>
               ) : null}
               <span className="text-xs leading-snug text-muted-foreground">
                 {option.cadence}

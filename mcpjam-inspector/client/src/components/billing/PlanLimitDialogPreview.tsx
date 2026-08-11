@@ -38,8 +38,8 @@ const SHARED = {
   organizationName: "Acme Robotics",
   origin: "evals" as const,
   limitKind: "evalIterations",
-  annualPriceLabel: "$30/seat/mo",
-  monthlyPriceLabel: "$38/seat/mo",
+  annualPriceLabel: "$30",
+  monthlyPriceLabel: "$38",
   annualDiscountPct: 21,
   annualSupported: true,
   monthlySupported: true,
@@ -70,7 +70,7 @@ const VARIANTS: PreviewVariant[] = [
       ...SHARED,
       title: "You're out of eval iterations today",
       description:
-        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 a month, so evals can run smoothly on every PR instead of limiting your daily quality checks. Only an organization owner can upgrade.",
+        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 a month, so evals can run smoothly on every PR instead of limiting your daily quality checks. Only an owner can upgrade this organization.",
       showUpgrade: false,
       showEnterprise: false,
       requestRecipients: [{ email: "dana@acmerobotics.com", name: "Dana Ruiz" }],
@@ -91,14 +91,29 @@ const VARIANTS: PreviewVariant[] = [
     },
   },
   {
-    id: "no-owner",
-    label: "Cannot upgrade, no owner found",
-    note: "Owner lookup returned nothing. The email button hides rather than opening an empty draft.",
+    id: "owner-loading",
+    label: "Cannot upgrade, owner lookup pending",
+    note: "The members query is still in flight. A disabled button holds the space so nothing pops in late.",
     props: {
       ...SHARED,
       title: "You're out of eval iterations today",
       description:
-        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Only an organization owner can upgrade.",
+        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Only an owner can upgrade this organization.",
+      showUpgrade: false,
+      showEnterprise: false,
+      requestRecipients: [],
+      isLoadingRecipients: true,
+    },
+  },
+  {
+    id: "no-owner",
+    label: "Cannot upgrade, no owner found",
+    note: "Lookup finished and found no reachable owner. The button hides rather than opening an empty draft.",
+    props: {
+      ...SHARED,
+      title: "You're out of eval iterations today",
+      description:
+        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Only an owner can upgrade this organization.",
       showUpgrade: false,
       showEnterprise: false,
       requestRecipients: [],

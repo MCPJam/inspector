@@ -21,6 +21,7 @@ const {
     upgradeState: { currentPlan: "free" as string, canManageBilling: true },
     recipientsState: {
       current: [] as Array<{ email: string; name?: string | null }>,
+      isLoading: false,
     },
     billingState: { plan: "free" as string, isLoading: false },
   }));
@@ -39,8 +40,8 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
     useUpgradeCheckout: () => ({
       interval: "annual" as const,
       setInterval: vi.fn(),
-      annualPriceLabel: "$30/seat/mo",
-      monthlyPriceLabel: "$38/seat/mo",
+      annualPriceLabel: "$30",
+      monthlyPriceLabel: "$38",
       annualDiscountPct: 21,
       annualSupported: true,
       monthlySupported: true,
@@ -66,7 +67,10 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
-  useUpgradeRequestRecipients: () => recipientsState.current,
+  useUpgradeRequestRecipients: () => ({
+    recipients: recipientsState.current,
+    isLoading: recipientsState.isLoading,
+  }),
 }));
 
 const RESETS_AT = Date.UTC(2026, 7, 11, 4, 0);
@@ -94,6 +98,7 @@ beforeEach(() => {
   upgradeState.currentPlan = "free";
   upgradeState.canManageBilling = true;
   recipientsState.current = [];
+  recipientsState.isLoading = false;
   billingState.plan = "free";
   billingState.isLoading = false;
   window.history.replaceState(null, "", "/evals");
@@ -128,10 +133,11 @@ describe("PlanLimitDialog", () => {
     render(<PlanLimitDialog />);
 
     const annual = screen.getByTestId("upgrade-interval-annual");
-    expect(annual).toHaveTextContent("$30/seat/mo");
+    expect(annual).toHaveTextContent("$30");
+    expect(annual).toHaveTextContent("per seat/month");
     expect(annual).toHaveTextContent("Save 21%");
     expect(screen.getByTestId("upgrade-interval-monthly")).toHaveTextContent(
-      "$38/seat/mo"
+      "$38"
     );
     expect(screen.getByTestId("upgrade-plan-cta")).toHaveTextContent(
       /Upgrade to Team/
@@ -178,7 +184,7 @@ describe("PlanLimitDialog", () => {
 
     expect(
       screen.getByTestId("plan-limit-dialog-description")
-    ).toHaveTextContent(/Only an organization owner can upgrade/);
+    ).toHaveTextContent(/Only an owner can upgrade this organization/);
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
 
     const mail = screen.getByTestId("request-upgrade-mail");
@@ -191,9 +197,25 @@ describe("PlanLimitDialog", () => {
     expect(screen.getByText(/Opens a draft to Dana Ruiz/)).toBeInTheDocument();
   });
 
-  it("hides the owner email when no owner address resolves", () => {
+  it("holds a disabled button while the owner lookup is in flight", () => {
+    upgradeState.canManageBilling = false;
+    recipientsState.isLoading = true;
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    // Empty recipients plus loading must not read as "no owner": that would
+    // render nothing now and pop a button in a beat later.
+    const button = screen.getByRole("button", { name: /email your owner/i });
+    expect(button).toBeDisabled();
+    expect(
+      screen.queryByTestId("request-upgrade-mail")
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the owner email when the lookup finishes with no owner", () => {
     upgradeState.canManageBilling = false;
     recipientsState.current = [];
+  recipientsState.isLoading = false;
     openEvalLimit();
     render(<PlanLimitDialog />);
 
