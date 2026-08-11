@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { Hono } from "hono";
 import { InsufficientScopeError } from "@modelcontextprotocol/client";
 
-import { ErrorCode, WebRouteError, mapRuntimeError } from "../errors.js";
+import {
+  ErrorCode,
+  WebRouteError,
+  mapRuntimeError,
+  webErrorFromRoute,
+} from "../errors.js";
 import { isOriginCaptureHandled } from "../../../utils/error-origin-capture.js";
 
 describe("mapRuntimeError", () => {
@@ -158,5 +164,36 @@ describe("mapRuntimeError", () => {
         (s) => original.propertyIsEnumerable(s),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("webError origin header", () => {
+  function respondWith(error: unknown) {
+    const app = new Hono();
+    app.get("/boom", (c) => webErrorFromRoute(c, mapRuntimeError(error)));
+    return app.request("/boom");
+  }
+
+  it("emits the origin as a header, not only in the body", async () => {
+    // The chat client's reporter runs AFTER the AI SDK has consumed the
+    // Response into `new Error(await response.text())`. Only the status
+    // survives to it, and from a bare 5xx it would guess `mcpjam` and page us
+    // for a user's own MCP server.
+    const res = await respondWith(
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), {
+        code: "ECONNREFUSED",
+      }),
+    );
+
+    expect(res.headers.get("x-mcpjam-error-origin")).toBe("user_config");
+    expect((await res.json()).origin).toBe("user_config");
+  });
+
+  it("agrees with the body on every envelope that carries one", async () => {
+    const res = await respondWith(new Error("kaboom"));
+
+    expect(res.headers.get("x-mcpjam-error-origin")).toBe(
+      (await res.json()).origin,
+    );
   });
 });

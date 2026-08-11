@@ -9,7 +9,7 @@ import type {
   SystemLogContext,
 } from "./log-events.js";
 import { scrubLogPayload } from "./log-scrubber.js";
-import { isOriginCaptureHandled } from "./error-origin-capture.js";
+import { isOriginCaptureHandled } from "./error-capture-stamp.js";
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -85,6 +85,34 @@ function ingestToAxiom(
   axiom.ingest(dataset(), [
     { ...context, level, message, environment: environment() },
   ]);
+}
+
+/**
+ * Send an error-origin capture to Sentry.
+ *
+ * The one seam in this module's "single Sentry capture path" rule, and it is
+ * deliberately narrow: `error-origin-capture.ts` decides WHETHER an error is
+ * MCPJam's fault, and that policy is worth keeping in its own module — but the
+ * MECHANISM stays here, so there is still exactly one place where the server
+ * talks to Sentry, one place where the SDK could be swapped, and no second
+ * implementation of the tags/extra shape to keep in sync.
+ *
+ * Not `logger.error`, because these two differ on purpose: this one has
+ * already made a capture decision and must NOT consult the stamp (it is the
+ * thing that sets it), carries structured tags rather than a free-form
+ * message, and does not write an Axiom row — its caller does that separately,
+ * with the verdict attached.
+ *
+ * Route handlers must never call this. They go through `reportRouteFailure`.
+ */
+export function captureOriginErrorToSentry(
+  error: Error,
+  options: {
+    tags: Record<string, string>;
+    extra: Record<string, unknown>;
+  },
+): void {
+  Sentry.captureException(error, options);
 }
 
 /**

@@ -227,6 +227,19 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("still pages for an UNMARKED failure from the same catch block", () => {
+    // The mark is scoped to the one await that leaves MCPJam. A bug in the
+    // preparation work that follows it reaches the same catch and has no other
+    // capture point, so it must still promote.
+    reportRouteFailure(
+      "[mcp/chat-v2] failed to process chat request",
+      new Error("Cannot read properties of undefined"),
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
+    );
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
   it("finds the user-server mark through a cause chain", () => {
     const marked = markUserServerHop(new Error("tool listing failed"));
     const wrapper = new Error("chat request failed", { cause: marked });

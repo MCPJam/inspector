@@ -1210,6 +1210,36 @@ function safelyEmitLiveTextDelta(
 }
 
 /**
+ * Backend denial codes that name the USER as the responsible party.
+ *
+ * Only relevant at HTTP 200: the spend precheck answers `{ok:false,
+ * code:"user_rate_limit"}` with a 200 status, so without this the whole
+ * category would either page on every routine spend-limit rejection or, with a
+ * looser "any code counts" rule, silently exempt the backend's own
+ * `mcpjam_rate_limit` / `mcpjam_api_error` / `mcpjam_config_error` codes —
+ * which are the opposite of user-owned.
+ *
+ * An unrecognized code at 200 from our own backend is therefore treated as a
+ * fault, not a refusal. That direction is chosen deliberately: a missing entry
+ * here costs one investigated alert, while a permissive rule costs the
+ * blindness this work exists to remove. Add codes as the backend adds them.
+ */
+const USER_OWNED_DENIAL_CODES = new Set<string>([
+  // convex `stream/routes.ts` + `lib/llmCallShell.ts` spend precheck
+  "user_rate_limit",
+  "wallet_locked",
+  "org_rate_limit",
+  // convex billing guard
+  "billing_limit_reached",
+  "billing_feature_not_included",
+]);
+
+/** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
+export function isUserOwnedDenialCode(code: string | undefined): boolean {
+  return USER_OWNED_DENIAL_CODES.has(code ?? "");
+}
+
+/**
  * PR 5b-followup-2: parse a Convex `/stream` non-OK response body as
  * the standard guardrail JSON shape `{ code?, error, details? }`.
  * Falls back to a generic `<status> <text>` message when the body
@@ -2335,10 +2365,15 @@ async function processOneStep(
     // because nothing downstream of this point ever will.
     const normalized = describeBackendStreamFailure(res.status, errorText);
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
-    // documented `{ok:false, code:"..."}` refusal. A malformed or unexpected
-    // 200 from our own backend is a real fault, so the exemption below
-    // requires a parsed, recognized denial CODE, not merely a content type.
-    const isRecognizedDenial = isJsonDenial && Boolean(parsed.code);
+    // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
+    // is not enough either. The backend's error-code union includes
+    // `mcpjam_rate_limit`, `mcpjam_api_error`, and `mcpjam_config_error`,
+    // which name US as the responsible party; exempting them because they
+    // happen to carry a code would silence exactly the failures worth paging
+    // on. Only the codes below are user-owned refusals from a backend that is
+    // working correctly, so only they skip the boundary.
+    const isRecognizedDenial =
+      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
     maybeCaptureOriginError(new Error(parsed.message), normalized, {
       source: "route:mcp.chat-v2.backend-stream",
       // The boundary is declared for a genuine TRANSPORT failure only, and

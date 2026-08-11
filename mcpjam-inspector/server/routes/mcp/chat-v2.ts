@@ -63,7 +63,6 @@ import {
   reportRouteFailure,
   reportRouteFailureForResponse,
   readRequestJson,
-  markUserServerHop,
 } from "../../utils/route-error-report.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
@@ -1248,14 +1247,10 @@ chatV2.post("/", async (c) => {
       if (msg.includes("Invalid tool name(s) for Anthropic")) {
         return c.json({ error: msg }, 400);
       }
-      // The outer catch declares `mcpjam_internal`, which is right for the
-      // work IT wraps but wrong for this one: the first thing `prepareChatV2`
-      // awaits is `getToolsForAiSdk` against the user's own MCP servers, so
-      // its dominant failure is somebody else's server being down or slow.
-      // Without this mark the boundary would promote every one of those to a
-      // page. Marked rather than reported-and-returned here so the route keeps
-      // exactly one 500 envelope.
-      throw markUserServerHop(error);
+      // Any user-server attribution is marked inside `prepareChatV2`, on the
+      // single await that leaves MCPJam. Marking the whole call here would
+      // silence a genuine bug in the preparation work that follows it.
+      throw error;
     }
 
     const {

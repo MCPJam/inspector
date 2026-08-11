@@ -17,6 +17,7 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
+import { markUserServerHop } from "./route-error-report.js";
 import {
   MCPClientManager,
   type Harness,
@@ -1000,10 +1001,24 @@ export async function prepareChatV2(
       : undefined;
 
   // 1. Get MCP + skill tools
-  const mcpTools = await mcpClientManager.getToolsForAiSdk(
-    knownSelectedServers,
-    toolOptions
-  );
+  let mcpTools;
+  try {
+    mcpTools = await mcpClientManager.getToolsForAiSdk(
+      knownSelectedServers,
+      toolOptions
+    );
+  } catch (error) {
+    // The ONE hop in this function that leaves MCPJam: listing tools reaches
+    // into the user's own MCP servers, so a dead or slow server lands here.
+    // The chat route's outer catch declares `mcpjam_internal` — correct for
+    // everything else it wraps — and without this mark that declaration would
+    // promote every one of those to a page.
+    //
+    // Scoped to this await on purpose. Marking the whole of `prepareChatV2`
+    // would silence a genuine bug in the preparation work that follows, which
+    // is MCPJam's and has no other capture point.
+    throw markUserServerHop(error);
+  }
 
   // SEP-1865: tools whose `_meta.ui.visibility` is exactly `["app"]` are
   // hidden from the model — they remain callable from the iframe via the

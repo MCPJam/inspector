@@ -148,7 +148,15 @@ export function webError(
       ...(details ? { details } : {}),
       ...(normalized ? { normalized, origin: originOf(normalized) } : {}),
     },
-    status
+    status,
+    // Also a HEADER, because the body does not always survive to the reader
+    // that needs it. The chat client's reporter runs after the AI SDK has
+    // consumed the Response into `new Error(await response.text())`, leaving
+    // only the status — from which it would guess `mcpjam` for any 5xx and
+    // page us for a user's own MCP server. `/api/web/chat-v2` is the primary
+    // hosted chat path, so putting this on `webError` rather than on one
+    // route covers every `/api/web/*` envelope at once.
+    normalized ? { "x-mcpjam-error-origin": originOf(normalized) } : undefined
   );
 }
 
