@@ -61,6 +61,28 @@ export function markOriginCaptureHandled(value: unknown): void {
   }
 }
 
+/**
+ * Return a value the stamp can actually attach to.
+ *
+ * `throw "failure"` and `Promise.reject(null)` are legal, and a primitive
+ * cannot carry a symbol property. Without this, the capture decision for such
+ * a throw would be invisible to every later reader: a declined user-fault
+ * primitive would still be captured by `logger.error` (the noise this exists
+ * to remove), and an escalated MCPJam-fault one would be captured twice.
+ *
+ * Deliberately NOT solved with a set of "recently handled values": primitives
+ * are compared by value, so two unrelated failures that both threw
+ * `"failure"` would dedupe against each other and the second would vanish.
+ *
+ * The wrapper preserves `String(value)` as its message, so classification and
+ * the Axiom row read identically to the raw throw. Objects are returned
+ * unchanged — identity matters for the `.cause` walk.
+ */
+export function ensureStampable(value: unknown): unknown {
+  if (isStampable(value)) return value;
+  return new Error(String(value));
+}
+
 /** How far to walk a `.cause` chain before giving up. */
 const MAX_CAUSE_DEPTH = 8;
 

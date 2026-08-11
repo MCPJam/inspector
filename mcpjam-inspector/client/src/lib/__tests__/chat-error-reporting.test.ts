@@ -72,8 +72,17 @@ describe("reportChatFailure", () => {
   });
 
   it("still reports when no response was ever seen", () => {
+    // The fetch itself rejected — DNS failure, connection refused, offline —
+    // so there is no status to attribute. `chatFetch` clears its ref before
+    // awaiting precisely so this arrives as `null` rather than as the PREVIOUS
+    // turn's status and request id, which would group a fresh network failure
+    // under a stale 502 and link it to somebody else's server request.
     expect(reportChatFailure(new Error("boom"), null)).toBe(true);
-    expect(reportCaught.mock.calls[0]![1].source).toBe("chat_stream_error");
+    const [error, options] = reportCaught.mock.calls[0]!;
+    expect(options.source).toBe("chat_stream_error");
+    expect((error as Error).message).toBe("chat_stream_error");
+    expect(options.extra).not.toHaveProperty("httpStatus");
+    expect(options.extra).not.toHaveProperty("requestId");
   });
 
   it("does not report an abort — that is the user pressing Stop", () => {

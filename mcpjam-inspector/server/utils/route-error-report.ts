@@ -1,6 +1,7 @@
 import { describeError, originOf, type NormalizedError } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import {
+  ensureStampable,
   maybeCaptureOriginError,
   type OriginCaptureBoundary,
 } from "./error-origin-capture.js";
@@ -69,14 +70,20 @@ export function reportRouteFailure(
   error: unknown,
   options: RouteFailureOptions,
 ): NormalizedError {
-  const normalized = options.normalized ?? describeError(error);
-  const { origin, captured } = maybeCaptureOriginError(error, normalized, {
+  // A primitive throw (`throw "failure"`, `Promise.reject(null)`) cannot carry
+  // the capture stamp, so the decision made just below would be invisible to
+  // the `logger.error` call after it — a declined user-fault primitive would
+  // page anyway, and an escalated one would be captured twice. Wrap once, up
+  // front, and use the SAME value for both, so the stamp survives.
+  const reported = ensureStampable(error);
+  const normalized = options.normalized ?? describeError(reported);
+  const { origin, captured } = maybeCaptureOriginError(reported, normalized, {
     source: `route:${options.source}`,
     boundary: BOUNDARY_FOR_HOP[options.hop],
     extra: options.context,
   });
 
-  logger.error(message, error, {
+  logger.error(message, reported, {
     ...options.context,
     source: options.source,
     hop: options.hop,

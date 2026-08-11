@@ -118,6 +118,50 @@ describe("reportRouteFailure", () => {
     );
   });
 
+  it("does not page for a declined PRIMITIVE throw", () => {
+    // `throw "failure"` is legal and a primitive cannot carry the capture
+    // stamp, so the decision made by the report would be invisible to the
+    // `logger.error` right after it — and a user-fault failure would page
+    // anyway, through the exact side door this design closes.
+    reportRouteFailure("Error listing tasks", "server exploded", {
+      source: "mcp.tasks.list",
+      hop: "user_server_hop",
+    });
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("captures a primitive throw on an internal hop exactly once", () => {
+    reportRouteFailure("Unhandled error", "kaboom", {
+      source: "app.onError",
+      hop: "mcpjam_internal",
+    });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a primitive throw's text in the Axiom row", () => {
+    // Wrapping must not cost the diagnostic. `String(value)` is preserved as
+    // the wrapper's message, so the row reads identically to the raw throw.
+    reportRouteFailure("Error listing tasks", "server exploded", {
+      source: "mcp.tasks.list",
+      hop: "user_server_hop",
+    });
+
+    expect(mockIngest).toHaveBeenCalledWith(expect.anything(), [
+      expect.objectContaining({ error: "server exploded" }),
+    ]);
+  });
+
+  it("survives a null rejection", () => {
+    expect(() =>
+      reportRouteFailure("Error listing tasks", null, {
+        source: "mcp.tasks.list",
+        hop: "user_server_hop",
+      }),
+    ).not.toThrow();
+  });
+
   it("captures a paged failure exactly once, even though it also logs", () => {
     // `logger.error` still captures by default; it must skip an error the
     // report already ruled on, or every MCPJam-fault error would be

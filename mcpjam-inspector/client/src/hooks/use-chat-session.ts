@@ -2321,6 +2321,14 @@ export function useChatSession(
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
+      // Clear BEFORE awaiting, not just on the way out. If this turn's fetch
+      // rejects outright — DNS failure, connection refused, offline — no
+      // Response is ever produced and the ref would still hold the PREVIOUS
+      // turn's values, so `handleChatError` would report a fresh network
+      // failure under the last turn's status and, worse, under a request id
+      // belonging to a different request.
+      lastChatResponseRef.current = null;
+
       // authFetch owns auth resolution (WorkOS bearer / guest bearer via
       // the chatbox-installed apiContext) wherever the web engine is in
       // play — hosted builds, and chatbox runtime sessions on any platform.
