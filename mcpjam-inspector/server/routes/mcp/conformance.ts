@@ -7,7 +7,6 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import "../../types/hono";
-import { logger } from "../../utils/logger";
 import {
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
@@ -20,6 +19,7 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const conformance = new Hono();
 
@@ -101,7 +101,12 @@ conformance.post("/protocol", async (c) => {
   } catch (error) {
     const unsupported = handleUnsupportedTransport(c, error);
     if (unsupported) return unsupported;
-    logger.error("[Conformance Protocol]", error);
+    reportRouteFailure("[Conformance Protocol]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.protocol",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -146,7 +151,12 @@ conformance.post("/apps", async (c) => {
     const { result } = await runAppsConformance(serverConfig);
     return c.json({ success: true, result });
   } catch (error) {
-    logger.error("[Conformance Apps]", error);
+    reportRouteFailure("[Conformance Apps]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.apps",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -200,7 +210,12 @@ conformance.post("/tasks", async (c) => {
     });
     return c.json({ success: true, result });
   } catch (error) {
-    logger.error("[Conformance Tasks]", error);
+    reportRouteFailure("[Conformance Tasks]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.tasks",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -264,7 +279,12 @@ conformance.post("/oauth/start", async (c) => {
   } catch (error) {
     const unsupported = handleUnsupportedTransport(c, error);
     if (unsupported) return unsupported;
-    logger.error("[Conformance OAuth Start]", error);
+    reportRouteFailure("[Conformance OAuth Start]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.oauth.start",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -309,7 +329,12 @@ conformance.post("/oauth/authorize", async (c) => {
     }
     return c.json({ success: true });
   } catch (error) {
-    logger.error("[Conformance OAuth Authorize]", error);
+    reportRouteFailure("[Conformance OAuth Authorize]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.oauth.authorize",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -349,7 +374,12 @@ conformance.post("/oauth/complete", async (c) => {
     if (error instanceof OAuthConformanceSessionFailedError) {
       return c.json({ success: false, error: error.message }, 500);
     }
-    logger.error("[Conformance OAuth Complete]", error);
+    reportRouteFailure("[Conformance OAuth Complete]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.oauth.complete",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,

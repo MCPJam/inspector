@@ -8,7 +8,7 @@ import type {
   MrtrInputCollector,
   MrtrOperationState,
 } from "@mcpjam/sdk";
-import { logger } from "../../utils/logger";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 /**
  * `mrtr.ts` — the LOCAL Inspector bridge for the modern multi-round-trip
@@ -330,7 +330,11 @@ export function registerLocalMrtrCollector(
   } catch (err) {
     // Pass the original error as the 2nd (error) arg so Sentry captures a stack
     // and Axiom serializes the real message; serverId is the context (3rd) arg.
-    logger.error("[mrtr] Failed to register MRTR collector", err, { serverId });
+    reportRouteFailure("[mrtr] Failed to register MRTR collector", err, {
+      source: "mcp.mrtr.register-collector",
+      hop: "user_server_hop",
+      context: { serverId },
+    });
   }
 }
 

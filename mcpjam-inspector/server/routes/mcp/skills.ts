@@ -20,6 +20,7 @@ import type {
   SkillFile,
   SkillFileContent,
 } from "../../../shared/skill-types";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const skills = new Hono();
 
@@ -161,7 +162,11 @@ skills.post("/list", async (c) => {
 
     return c.json({ skills: skillsList });
   } catch (error) {
-    logger.error("Error listing skills", error);
+    reportRouteFailure("Error listing skills", error, {
+      // MCPJam-owned skill storage.
+      source: "mcp.skills.list",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -218,7 +223,11 @@ skills.post("/get", async (c) => {
 
     return c.json({ success: false, error: `Skill '${name}' not found` }, 404);
   } catch (error) {
-    logger.error("Error getting skill", error);
+    reportRouteFailure("Error getting skill", error, {
+      // MCPJam-owned skill storage.
+      source: "mcp.skills.get",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -312,7 +321,11 @@ skills.post("/upload", async (c) => {
 
     return c.json({ success: true, skill });
   } catch (error) {
-    logger.error("Error uploading skill", error);
+    reportRouteFailure("Error uploading skill", error, {
+      // MCPJam-owned skill storage.
+      source: "mcp.skills.upload",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -457,7 +470,11 @@ skills.post("/upload-folder", async (c) => {
 
     return c.json({ success: true, skill });
   } catch (error) {
-    logger.error("Error uploading skill folder", error);
+    reportRouteFailure("Error uploading skill folder", error, {
+      // MCPJam-owned skill storage.
+      source: "mcp.skills.upload-folder",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -514,7 +531,11 @@ skills.post("/delete", async (c) => {
 
     return c.json({ success: false, error: `Skill '${name}' not found` }, 404);
   } catch (error) {
-    logger.error("Error deleting skill", error);
+    reportRouteFailure("Error deleting skill", error, {
+      // MCPJam-owned skill storage.
+      source: "mcp.skills.delete",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -547,7 +568,11 @@ skills.post("/files", async (c) => {
     const files = await listFilesRecursive(skillDir);
     return c.json({ files });
   } catch (error) {
-    logger.error("Error listing skill files", error);
+    reportRouteFailure("Error listing skill files", error, {
+      // MCPJam-owned skill storage.
+      source: "mcp.skills.files",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -637,7 +662,11 @@ skills.post("/read-file", async (c) => {
       throw err;
     }
   } catch (error) {
-    logger.error("Error reading skill file", error);
+    reportRouteFailure("Error reading skill file", error, {
+      // MCPJam-owned skill storage.
+      source: "mcp.skills.read-file",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,

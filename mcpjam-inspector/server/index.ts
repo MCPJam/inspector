@@ -8,11 +8,12 @@ import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
+import { reportRouteFailure } from "./utils/route-error-report.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, originOf } from "@mcpjam/sdk";
 import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
@@ -301,12 +302,18 @@ startLocalBrowserRenderingSetupInBackground();
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
-  // The logger owns Sentry capture for the server (logger.error ->
-  // captureException). Path + method are what make the issue actionable;
-  // without them every unhandled route error groups into one blob.
-  appLogger.error("Unhandled error", err, {
-    path: c.req.path,
-    method: c.req.method,
+  // Last-resort handler: an exception escaped every route and every router's
+  // own `onError`. Declared `mcpjam_internal` — if our routers could not name
+  // the failure, the unrecognized remainder is ours. The declaration still
+  // does not overrule positive evidence, so an ECONNREFUSED that reached here
+  // from a user-server hop is classified and stays quiet.
+  //
+  // Path + method are what make the issue actionable; without them every
+  // unhandled route error groups into one blob.
+  const normalized = reportRouteFailure("Unhandled error", err, {
+    source: "app.onError",
+    hop: "mcpjam_internal",
+    context: { path: c.req.path, method: c.req.method },
   });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
@@ -319,6 +326,8 @@ const app = new Hono().onError((err, c) => {
     code:
       err instanceof HTTPException ? "http_exception" : "unhandled_exception",
     message: err instanceof Error ? err.message : String(err),
+    origin: originOf(normalized),
+    slug: normalized.slug,
   });
 
   // Return appropriate response

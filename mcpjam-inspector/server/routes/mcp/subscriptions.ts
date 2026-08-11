@@ -17,7 +17,7 @@ import type {
   SubscriptionStreamView,
 } from "@/shared/subscription-bridge.js";
 import { SUBSCRIPTION_BRIDGE_EVENT_LIMIT } from "@/shared/subscription-bridge.js";
-import { logger } from "../../utils/logger";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 /**
  * `subscriptions.ts` — the LOCAL Inspector bridge for MCP 2026-07-28
@@ -396,7 +396,11 @@ subscriptions.post("/state", async (c) => {
     }
     return c.json({ success: true, state: toServerStateView(entry) });
   } catch (error) {
-    logger.error("[subscriptions] Failed to read state", error);
+    reportRouteFailure("[subscriptions] Failed to read state", error, {
+      // Our own subscription bookkeeping.
+      source: "mcp.subscriptions.state",
+      hop: "mcpjam_internal",
+    });
     return c.json({ success: false, error: "Failed to read state" }, 400);
   }
 });
@@ -431,8 +435,11 @@ subscriptions.post("/desired", async (c) => {
     );
     return c.json({ success: true, state: toServerStateView(entry) });
   } catch (error) {
-    logger.error("[subscriptions] Failed to set desired interests", error, {
-      serverId,
+    reportRouteFailure("[subscriptions] Failed to set desired interests", error, {
+      // Issues subscribe/unsubscribe calls against the user's server.
+      source: "mcp.subscriptions.interests",
+      hop: "user_server_hop",
+      context: { serverId },
     });
     return c.json(
       {
@@ -461,8 +468,10 @@ subscriptions.post("/cancel", async (c) => {
     await entry.coordinator.cancel();
     return c.json({ success: true, state: toServerStateView(entry) });
   } catch (error) {
-    logger.error("[subscriptions] Failed to cancel subscription", error, {
-      serverId,
+    reportRouteFailure("[subscriptions] Failed to cancel subscription", error, {
+      source: "mcp.subscriptions.cancel",
+      hop: "user_server_hop",
+      context: { serverId },
     });
     return c.json(
       {

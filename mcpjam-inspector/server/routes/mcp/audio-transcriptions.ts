@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { logger } from "../../utils/logger.js";
 import {
   guestRateLimitMiddleware,
   resetGuestRateLimitForTests,
@@ -10,6 +9,7 @@ import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { getProductionGuestAuthSession } from "../../utils/guest-auth.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const DEFAULT_STT_MODEL = "openai/whisper-1";
 const STT_TIMEOUT_MS = 55_000;
@@ -410,9 +410,16 @@ audioTranscriptions.post("/transcriptions", async (c) => {
         504
       );
     }
-    logger.error(
+    reportRouteFailure(
       "[audio-transcriptions] Voice transcription request failed",
-      error
+      error,
+      {
+        // MCPJam's own transcription proxy. A BYO provider key hitting an
+        // auth or quota wall still classifies `user_config` and stays
+        // quiet — the boundary promotes only unrecognized failures.
+        source: "mcp.audio-transcriptions.transcribe",
+        hop: "mcpjam_internal",
+      }
     );
     const message =
       error instanceof Error

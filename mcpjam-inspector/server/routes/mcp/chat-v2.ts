@@ -59,7 +59,10 @@ import {
   describeAsSlug,
   readXaaEnterprisePolicy,
 } from "@mcpjam/sdk";
-import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
+import {
+  reportRouteFailure,
+  reportRouteFailureForResponse,
+} from "../../utils/route-error-report.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
@@ -512,10 +515,10 @@ function streamDirectChatWithLiveTrace(options: {
       // a quota wall, a model refusing a schema. That is precisely the traffic
       // that has been paging us for other people's outages, so the catalog's
       // verdict stands on its own and only MCPJam-fault slugs escalate.
-      maybeCaptureOriginError(error, describeError(error), {
+      reportRouteFailure("[mcp/chat-v2] stream error", error, {
         source: "mcp.chat-v2.stream",
+        hop: "user_server_hop",
       });
-      logger.error("[mcp/chat-v2] stream error", error);
       return formatStreamError(error, provider);
     },
     execute: async ({ writer }) => {
@@ -1810,12 +1813,11 @@ chatV2.post("/", async (c) => {
     // so an unrecognized throw here is ours by default and the boundary
     // declaration says so. Without it, `internal/unknown` classifies
     // `ambiguous` and this route would go quiet in Sentry.
-    const normalized = describeError(error);
-    const { origin } = maybeCaptureOriginError(error, normalized, {
-      source: "mcp.chat-v2.request",
-      boundary: "mcpjam_internal",
-    });
-    logger.error("[mcp/chat-v2] failed to process chat request", error);
+    const { origin } = reportRouteFailureForResponse(
+      "[mcp/chat-v2] failed to process chat request",
+      error,
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
+    );
     return c.json({ error: "Unexpected error", origin }, 500);
   }
 });

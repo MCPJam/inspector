@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { ElicitResult } from "@modelcontextprotocol/client";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const elicitation = new Hono();
 
@@ -153,9 +154,21 @@ export function initElicitationCallback(manager: MCPClientManager): void {
         try {
           manager.getPendingElicitations().set(requestId, { resolve, reject });
         } catch (err) {
-          logger.error("[elicitation] Failed to store pending elicitation", {
-            error: err,
-          });
+          // Was calling an undefined `logger` (never imported in this module),
+          // so this catch turned a store failure into a ReferenceError thrown
+          // out of a promise executor. Storing a pending elicitation is our
+          // own bookkeeping, hence the internal boundary. The error was also
+          // being passed as the CONTEXT argument, so it never reached Sentry
+          // as an exception even where `logger` did exist.
+          reportRouteFailure(
+            "[elicitation] Failed to store pending elicitation",
+            err,
+            {
+              source: "mcp.elicitation.store-pending",
+              hop: "mcpjam_internal",
+              context: { requestId },
+            },
+          );
         }
         broadcastElicitation({
           type: "elicitation_request",

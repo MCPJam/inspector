@@ -7,6 +7,7 @@ import {
   getFetchErrorCause,
 } from "../../utils/tokenizer-helpers";
 import { logger } from "../../utils/logger";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const tokenizer = new Hono();
 
@@ -154,7 +155,12 @@ tokenizer.post("/count-tools", async (c) => {
       tokenCounts,
     });
   } catch (error) {
-    logger.error("[tokenizer] Error counting MCP tools tokens", error);
+    reportRouteFailure("[tokenizer] Error counting MCP tools tokens", error, {
+      // The per-server body already swallows connection failures; anything
+      // that escapes to here is the route's own orchestration.
+      source: "mcp.tokenizer.tools",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         ok: false,
@@ -287,7 +293,10 @@ tokenizer.post("/count-text", async (c) => {
       });
     }
   } catch (error) {
-    logger.error("[tokenizer] Error counting text tokens", error);
+    reportRouteFailure("[tokenizer] Error counting text tokens", error, {
+      source: "mcp.tokenizer.text",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         ok: false,

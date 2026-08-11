@@ -20,13 +20,13 @@
  */
 import { Hono } from "hono";
 import { HOSTED_MODE } from "../../config.js";
-import { logger } from "../../utils/logger.js";
 import {
   PluginBundleCacheError,
   getPluginBundleCache,
 } from "../../services/plugins/local-stdio.js";
 import { createZipPluginFileSource } from "../../services/plugins/bundle-file-sources.js";
 import { MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES } from "../../../shared/plugin-bundle-limits.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const plugins = new Hono();
 
@@ -102,8 +102,11 @@ plugins.post("/materialize", async (c) => {
         409
       );
     }
-    logger.error("Failed to materialize plugin bundle", error, {
-      pluginVersionId,
+    reportRouteFailure("Failed to materialize plugin bundle", error, {
+      // Our bundler and our cache.
+      source: "mcp.plugins.materialize",
+      hop: "mcpjam_internal",
+      context: { pluginVersionId },
     });
     return c.json(
       { success: false, error: "Failed to materialize plugin bundle" },
@@ -127,7 +130,10 @@ plugins.post("/gc", async (c) => {
     });
     return c.json({ success: true, removedCount: removed.length });
   } catch (error) {
-    logger.error("Failed to collect plugin bundle cache garbage", error);
+    reportRouteFailure("Failed to collect plugin bundle cache garbage", error, {
+      source: "mcp.plugins.gc",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       { success: false, error: "Failed to clean the plugin bundle cache" },
       500

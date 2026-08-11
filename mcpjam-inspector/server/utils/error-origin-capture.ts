@@ -108,7 +108,11 @@ export type OriginCaptureSource =
   | "mcp.chat-v2.request"
   | "mcp.chat-v2.stream"
   | "mcp.list-tools"
-  | "app.onError";
+  | "app.onError"
+  // Individual route catch-sites, via `reportRouteFailure`. Free-form by
+  // design: there are ~70 of them, and an exhaustive union would be churn
+  // without safety — the value is a Sentry tag, not a branch condition.
+  | `route:${string}`;
 
 /**
  * Caller-declared boundary, for the sites where the slug alone is not the
