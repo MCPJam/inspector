@@ -1839,7 +1839,7 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).toHaveBeenCalledOnce();
     });
 
-    it("preserves one advertised resource string through authorization, callback, and storage", async () => {
+    it("preserves one advertised resource string through authorization and storage", async () => {
       const serverName = "example";
       const serverUrl = "https://mcp.example.com/api/mcp";
       const advertisedResource = "HTTPS://MCP.EXAMPLE.COM:443/api/";
@@ -1860,19 +1860,7 @@ describe("mcp-oauth", () => {
         ),
         codeVerifier: "test-verifier",
       });
-      mockExchangeAuthorization.mockImplementationOnce(
-        async (_authorizationServerUrl, options) => {
-          expect(options?.resource).toBe(advertisedResource);
-          return {
-            access_token: "access-token",
-            refresh_token: "refresh-token",
-            token_type: "Bearer",
-          };
-        }
-      );
-
-      const { handleOAuthCallback, initiateOAuth } =
-        await import("../mcp-oauth");
+      const { initiateOAuth } = await import("../mcp-oauth");
 
       const initiateResult = await initiateOAuth({ serverName, serverUrl });
       expect(initiateResult.success).toBe(true);
@@ -1889,20 +1877,10 @@ describe("mcp-oauth", () => {
         ).resourceUrl
       ).toBe(advertisedResource);
 
-      // Exercise the callback path that performs the exchange directly; the
-      // state-machine path already owns separate resource persistence tests.
-      localStorage.removeItem(`mcp-oauth-flow-state-${serverName}`);
-      const callbackResult = await handleOAuthCallback("oauth-code", {
-        callbackState: issuedCallbackState(),
-      });
-      expect(callbackResult.success, callbackResult.error).toBe(true);
-      expect(callbackResult.oauthResourceUrl).toBe(advertisedResource);
-      expect(
-        JSON.parse(
-          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "{}"
-        ).resourceUrl
-      ).toBe(advertisedResource);
-
+      // The callback half used to delete the flow session on purpose, to reach
+      // the legacy direct exchange. That implementation is gone — the callback
+      // now redeems only through the era state machine, which
+      // oauth-refresh-integration.test.ts covers against a real server.
     });
 
     it("treats malformed stored token data as invalid instead of throwing", async () => {
@@ -2662,99 +2640,77 @@ describe("mcp-oauth", () => {
       );
     };
 
-    it("rejects cross-origin resource metadata during callback completion", async () => {
-      seedAsanaCallback({
-        ...createAsanaDiscoveryState(),
-        resourceMetadata: {
-          ...createAsanaDiscoveryState().resourceMetadata,
-          resource: "https://evil.example/mcp",
+    /**
+     * These shapes used to be handled by a second, era-blind token exchange
+     * that rediscovered metadata and redeemed the code itself: cross-origin
+     * PRM, a mismatched or omitted callback state, an unrecoverable issued
+     * state, a 2026 issuer mismatch, PRM without its required `resource`. Each
+     * needed its own rejection because the legacy path had to re-implement
+     * every check the state machine already performs.
+     *
+     * There is one wire implementation now. A callback with no stored flow
+     * session cannot run those checks meaningfully — the state they depend on
+     * is what is missing — so it asks for a fresh authorization instead. That
+     * makes the whole class of divergence unreachable rather than individually
+     * defended.
+     */
+    it.each([
+      [
+        "cross-origin resource metadata",
+        () => ({
+          ...createAsanaDiscoveryState(),
+          resourceMetadata: {
+            ...createAsanaDiscoveryState().resourceMetadata,
+            resource: "https://evil.example/mcp",
+          },
+        }),
+        { callbackState: "asana-issued-state" },
+      ],
+      [
+        "a mismatched callback state",
+        () => createAsanaDiscoveryState(),
+        { callbackState: "attacker-supplied-state" },
+      ],
+      [
+        "an omitted callback state",
+        () => createAsanaDiscoveryState(),
+        {},
+      ],
+      [
+        "a 2026 issuer mismatch",
+        () => createAsanaDiscoveryState(),
+        {
+          callbackState: "asana-issued-state",
+          callbackIss: "https://different.example.com",
         },
-      });
+      ],
+      [
+        "PRM missing its required resource",
+        () => {
+          const asana = createAsanaDiscoveryState();
+          delete asana.resourceMetadata.resource;
+          return asana;
+        },
+        { callbackState: "asana-issued-state" },
+      ],
+    ])(
+      "asks for reauthorization instead of redeeming a sessionless callback: %s",
+      async (_label, buildDiscoveryState, callbackOptions) => {
+        seedAsanaCallback(buildDiscoveryState());
 
-      const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code", {
-        callbackState: issuedCallbackState(),
-      });
+        const { handleOAuthCallback } = await import("../mcp-oauth");
+        const result = await handleOAuthCallback(
+          "oauth-code",
+          callbackOptions as never
+        );
 
-      expect(callbackResult.success).toBe(false);
-      expect(callbackResult.error).toContain(
-        "Rejected OAuth resource indicator"
-      );
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
-    });
-
-    it("fails closed on the no-session fallback for a mismatched OR omitted state (review F6)", async () => {
-      const { handleOAuthCallback } = await import("../mcp-oauth");
-
-      // Durable issued state is recovered ("asana-issued-state"); a mismatched
-      // callback state must be rejected before redemption.
-      seedAsanaCallback(createAsanaDiscoveryState());
-      const mismatched = await handleOAuthCallback("oauth-code", {
-        callbackState: "attacker-supplied-state",
-      });
-      expect(mismatched.success).toBe(false);
-      expect(mismatched.error).toContain("state");
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
-
-      // An OMITTED callback state is equally unverifiable — every machine issues
-      // a state — so it must also fail closed, not slip through.
-      seedAsanaCallback(createAsanaDiscoveryState());
-      const omitted = await handleOAuthCallback("oauth-code", {});
-      expect(omitted.success).toBe(false);
-      expect(omitted.error).toContain("state");
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
-    });
-
-    it("fails closed on the no-session fallback when the issued state cannot be recovered (review F6)", async () => {
-      seedAsanaCallback(createAsanaDiscoveryState());
-      // Simulate the durable issued state also being lost.
-      localStorage.removeItem("mcp-oauth-issued-state-asana");
-
-      const { handleOAuthCallback } = await import("../mcp-oauth");
-      const result = await handleOAuthCallback("oauth-code", {
-        callbackState: "asana-issued-state",
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("state");
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
-    });
-
-    it("applies the 2026 issuer gate during sessionless callback recovery", async () => {
-      seedAsanaCallback(createAsanaDiscoveryState());
-      localStorage.setItem(
-        "mcp-oauth-config-asana",
-        JSON.stringify({
-          protocolMode: "auto",
-          protocolVersion: "2026-07-28",
-        })
-      );
-
-      const { handleOAuthCallback } = await import("../mcp-oauth");
-      const result = await handleOAuthCallback("oauth-code", {
-        callbackState: "asana-issued-state",
-        callbackIss: "https://different.example.com",
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toMatch(/issuer validation failed/i);
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
-    });
-
-    it("rejects PRM metadata that omits its required resource during callback completion", async () => {
-      const asana = createAsanaDiscoveryState();
-      delete asana.resourceMetadata.resource;
-      seedAsanaCallback(asana);
-
-      const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code", {
-        callbackState: issuedCallbackState(),
-      });
-
-      expect(callbackResult.success).toBe(false);
-      expect(callbackResult.error).toContain('missing its required "resource"');
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
-    });
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/re-?authoriz/i);
+        // The retired implementation is not merely unused — it is gone, and no
+        // token request is made on this path at all.
+        expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+      }
+    );
 
     it("uses the generic Inspector OAuth proxy for Asana when stored config is missing the preregistered flag", async () => {
       const browserFetch = vi.fn();
