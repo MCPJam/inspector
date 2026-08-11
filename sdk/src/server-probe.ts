@@ -1,5 +1,9 @@
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/client";
 import { buildResourceMetadataUrl } from "./oauth/state-machines/shared/urls.js";
+import {
+  hasBearerChallenge,
+  parseBearerAuthenticateParameters,
+} from "./oauth/state-machines/shared/challenges.js";
 import { resolveRegistrationStrategies } from "./oauth/authorization-plan.js";
 import {
   type RetryPolicy,
@@ -54,6 +58,13 @@ export interface ProbeOAuthDetails {
   authorizationServerMetadata?: Record<string, unknown>;
   registrationStrategies: Array<"preregistered" | "dcr" | "cimd">;
   discoveryError?: string;
+  /**
+   * The status the challenge arrived on, when MCP does not allow it there.
+   * Absent for a compliant 401 — set means the probe accepted a challenge the
+   * spec says should not have been delivered this way, so callers reporting
+   * conformance can say so rather than presenting the server as clean.
+   */
+  nonCompliantChallengeStatus?: number;
 }
 
 export interface ProbeInitializeInfo {
@@ -291,6 +302,33 @@ function createTimeoutError(
   return error;
 }
 
+/**
+ * MCP requires 401 + `WWW-Authenticate` to signal that OAuth is needed, but a
+ * server fronted by a CDN or WAF — and one treating anonymous access as a scope
+ * failure (RFC 6750 §3.1 pairs 403 with `insufficient_scope`) — answers 403
+ * instead. A 403 that still carries a Bearer challenge names everything
+ * discovery needs, so the probe reads it as "OAuth required" rather than
+ * reporting the server as broken. A bare 403 carries nothing to discover from
+ * and stays an error.
+ */
+function isOAuthChallenge(response: ParsedHttpResponse): boolean {
+  return (
+    response.status === 401 ||
+    (response.status === 403 &&
+      hasBearerChallenge(response.headers["www-authenticate"]))
+  );
+}
+
+/** Record a challenge status MCP does not allow, so acceptance is never silent. */
+function withChallengeStatus(
+  oauth: ProbeOAuthDetails,
+  status: number
+): ProbeOAuthDetails {
+  return status === 401
+    ? oauth
+    : { ...oauth, nonCompliantChallengeStatus: status };
+}
+
 function isRetryableProbeStatus(status: number): boolean {
   return (
     status === 408 ||
@@ -459,9 +497,14 @@ async function discoverOAuthDetails(
   const metadataHeaders = removeAuthorizationHeader(
     normalizeHeaders(config.headers)
   );
-  const resourceMetadataUrlFromHeader = wwwAuthenticateHeader?.match(
-    /resource_metadata="([^"]+)"/
-  )?.[1];
+  // Read the pointer off the Bearer challenge rather than the raw header. A
+  // bare `resource_metadata="…"` match takes the value wherever it sits —
+  // including inside another scheme's challenge, or inside a quoted realm that
+  // only looks like one — which points discovery at a PRM URL the server never
+  // advertised for Bearer.
+  const resourceMetadataUrlFromHeader =
+    parseBearerAuthenticateParameters(wwwAuthenticateHeader)
+      .resource_metadata || undefined;
   const resourceMetadataUrl =
     resourceMetadataUrlFromHeader ?? buildResourceMetadataUrl(config.url);
 
@@ -666,7 +709,7 @@ async function probeMcpServerOnce(
     );
     const wwwAuthenticate = initializeResponse.headers["www-authenticate"];
 
-    if (initializeResponse.status === 401) {
+    if (isOAuthChallenge(initializeResponse)) {
       return {
         result: {
           url: config.url,
@@ -675,11 +718,14 @@ async function probeMcpServerOnce(
           transport: {
             attempts,
           },
-          oauth: await discoverOAuthDetails(
-            config,
-            attempts,
-            false,
-            wwwAuthenticate
+          oauth: withChallengeStatus(
+            await discoverOAuthDetails(
+              config,
+              attempts,
+              false,
+              wwwAuthenticate
+            ),
+            initializeResponse.status
           ),
         },
         retryable: false,
@@ -752,7 +798,7 @@ async function probeMcpServerOnce(
       );
       const wwwAuthenticateSse = sseResponse.headers["www-authenticate"];
 
-      if (sseResponse.status === 401) {
+      if (isOAuthChallenge(sseResponse)) {
         return {
           result: {
             url: config.url,
@@ -761,11 +807,14 @@ async function probeMcpServerOnce(
             transport: {
               attempts,
             },
-            oauth: await discoverOAuthDetails(
-              config,
-              attempts,
-              false,
-              wwwAuthenticateSse
+            oauth: withChallengeStatus(
+              await discoverOAuthDetails(
+                config,
+                attempts,
+                false,
+                wwwAuthenticateSse
+              ),
+              sseResponse.status
             ),
           },
           retryable: false,

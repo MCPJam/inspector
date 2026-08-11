@@ -314,4 +314,137 @@ describe("probeMcpServer", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(result.transport.attempts).toHaveLength(1);
   });
+
+  // MCP requires 401 here. A CDN/WAF, and a server treating anonymous access as
+  // a scope failure, answer 403 — and the challenge on it names everything
+  // discovery needs, so the probe reads it as OAuth rather than a broken server.
+  describe("403 carrying a Bearer challenge", () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const buildFetch = (
+      initialize: Response,
+      onUnexpected: (url: string) => Response = () =>
+        jsonResponse({ error: "unexpected" }, 404)
+    ): typeof fetch =>
+      jest.fn(async (input) => {
+        const url = String(input);
+
+        if (url === serverUrl) return initialize.clone();
+
+        if (url === resourceMetadataUrl) {
+          return jsonResponse({
+            resource: serverUrl,
+            authorization_servers: [authServerUrl],
+          });
+        }
+
+        if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+          return jsonResponse({
+            issuer: authServerUrl,
+            authorization_endpoint: `${authServerUrl}/authorize`,
+            token_endpoint: `${authServerUrl}/token`,
+            response_types_supported: ["code"],
+          });
+        }
+
+        return onUnexpected(url);
+      }) as typeof fetch;
+
+    it("reports oauth_required and flags the non-compliant status", async () => {
+      const result = await probeMcpServer({
+        url: serverUrl,
+        fetchFn: buildFetch(
+          new Response(null, {
+            status: 403,
+            headers: {
+              "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+            },
+          })
+        ),
+      });
+
+      expect(result.status).toBe("oauth_required");
+      expect(result.oauth.required).toBe(true);
+      expect(result.oauth.resourceMetadataUrl).toBe(resourceMetadataUrl);
+      expect(result.oauth.nonCompliantChallengeStatus).toBe(403);
+    });
+
+    it("leaves the status unflagged on a compliant 401", async () => {
+      const result = await probeMcpServer({
+        url: serverUrl,
+        fetchFn: buildFetch(
+          new Response(null, {
+            status: 401,
+            headers: {
+              "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+            },
+          })
+        ),
+      });
+
+      expect(result.status).toBe("oauth_required");
+      expect(result.oauth.nonCompliantChallengeStatus).toBeUndefined();
+    });
+
+    it("accepts a Bearer challenge that follows another scheme", async () => {
+      const result = await probeMcpServer({
+        url: serverUrl,
+        fetchFn: buildFetch(
+          new Response(null, {
+            status: 403,
+            headers: {
+              "WWW-Authenticate": `Basic realm="x", Bearer resource_metadata="${resourceMetadataUrl}"`,
+            },
+          })
+        ),
+      });
+
+      expect(result.status).toBe("oauth_required");
+      expect(result.oauth.resourceMetadataUrl).toBe(resourceMetadataUrl);
+    });
+
+    it("does not read a resource_metadata belonging to another scheme", async () => {
+      const result = await probeMcpServer({
+        url: serverUrl,
+        fetchFn: buildFetch(
+          new Response(null, {
+            status: 401,
+            headers: {
+              "WWW-Authenticate": `Basic resource_metadata="https://attacker.example.com/prm", Bearer realm="mcp"`,
+            },
+          })
+        ),
+      });
+
+      // Falls back to the URL derived from the server, not the Basic pointer.
+      expect(result.oauth.resourceMetadataUrl).toBe(resourceMetadataUrl);
+    });
+
+    it("does not treat a bare 403 as an auth challenge", async () => {
+      const result = await probeMcpServer({
+        url: serverUrl,
+        fetchFn: buildFetch(jsonResponse({ error: "blocked by WAF" }, 403)),
+      });
+
+      expect(result.status).not.toBe("oauth_required");
+      expect(result.oauth.required).toBe(false);
+    });
+
+    it("does not treat a 403 offering only a non-Bearer scheme as a challenge", async () => {
+      const result = await probeMcpServer({
+        url: serverUrl,
+        fetchFn: buildFetch(
+          new Response(null, {
+            status: 403,
+            headers: { "WWW-Authenticate": 'Basic realm="admin"' },
+          })
+        ),
+      });
+
+      expect(result.status).not.toBe("oauth_required");
+    });
+  });
 });
