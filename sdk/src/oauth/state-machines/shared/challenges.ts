@@ -107,16 +107,24 @@ function parseBearerChallenges(header?: string): Array<Record<string, string>> {
   segments.push(buffer);
 
   // Group segments into challenges. A segment of the form `<scheme> <rest>`
-  // (a bare auth-scheme token followed by whitespace) opens a new challenge;
-  // an auth-param segment (`key=value`, no leading `<token> `) continues it.
+  // (a bare auth-scheme token followed by whitespace) opens a new challenge, as
+  // does a segment that is nothing but a scheme token — `Bearer` with no
+  // auth-params is a valid challenge (RFC 7235 §4.1) and is what servers behind
+  // a WAF commonly send. An auth-param segment (`key=value`, no leading
+  // `<token> `) continues the current challenge.
   const challenges: Array<{ scheme: string; params: string[] }> = [];
-  const CHALLENGE_START = /^([A-Za-z][A-Za-z0-9!#$%&'*+.^_`|~-]*)\s+(.+)$/s;
+  const SCHEME_TOKEN = "[A-Za-z][A-Za-z0-9!#$%&'*+.^_`|~-]*";
+  const CHALLENGE_START = new RegExp(`^(${SCHEME_TOKEN})\\s+(.+)$`, "s");
+  const BARE_SCHEME = new RegExp(`^(${SCHEME_TOKEN})$`);
   for (const raw of segments) {
     const seg = raw.trim();
     if (!seg) continue;
     const start = CHALLENGE_START.exec(seg);
+    const bare = start ? null : BARE_SCHEME.exec(seg);
     if (start) {
       challenges.push({ scheme: start[1].toLowerCase(), params: [start[2]] });
+    } else if (bare) {
+      challenges.push({ scheme: bare[1].toLowerCase(), params: [] });
     } else if (challenges.length > 0) {
       challenges[challenges.length - 1].params.push(seg);
     }
@@ -125,6 +133,85 @@ function parseBearerChallenges(header?: string): Array<Record<string, string>> {
   return challenges
     .filter((c) => c.scheme === "bearer")
     .map((c) => parseBearerAuthenticateParameters(`Bearer ${c.params.join(", ")}`));
+}
+
+/** True when the header advertises a Bearer challenge, with or without auth-params. */
+export function hasBearerChallenge(header?: string): boolean {
+  return parseBearerChallenges(header).length > 0;
+}
+
+/**
+ * Thrown when the server under test answers the unauthenticated `initialize`
+ * probe with a status the flow cannot continue from. Distinct from a transport
+ * failure: the request reached the server and it replied, so callers must not
+ * relabel it as "failed to request".
+ */
+export class UnexpectedProbeStatusError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "UnexpectedProbeStatusError";
+    this.status = status;
+  }
+}
+
+/**
+ * What the unauthenticated `initialize` probe's status means for the flow:
+ * - `challenged`: treat as an auth challenge and continue discovery.
+ *   `specCompliant` is false when the challenge arrived on a status MCP does not
+ *   allow here, which the debugger proceeds through but must report.
+ * - `anonymous_allowed`: the server served the request without a token.
+ * - `unexpected`: the flow cannot continue; `message` says why.
+ */
+export type UnauthenticatedProbeOutcome =
+  | { kind: "challenged"; specCompliant: boolean }
+  | { kind: "anonymous_allowed" }
+  | { kind: "unexpected"; message: string };
+
+/**
+ * Classify the unauthenticated probe. MCP requires 401 + `WWW-Authenticate`
+ * here, but servers fronted by a CDN/WAF, and those treating anonymous access as
+ * a scope failure (RFC 6750 §3.1 pairs 403 with `insufficient_scope`), answer
+ * 403 instead. A 403 that still carries a Bearer challenge supplies everything
+ * discovery needs, so the debugger continues and flags the violation rather than
+ * dead-ending; a bare 403 carries nothing to continue from and almost always
+ * means the request never reached the MCP server at all.
+ */
+export function classifyUnauthenticatedProbe(input: {
+  status: number;
+  statusText?: string;
+  wwwAuthenticateHeader?: string;
+  serverMessage?: string;
+}): UnauthenticatedProbeOutcome {
+  if (input.status === 401) {
+    return { kind: "challenged", specCompliant: true };
+  }
+  if (input.status === 200) {
+    return { kind: "anonymous_allowed" };
+  }
+  if (input.status === 403 && hasBearerChallenge(input.wwwAuthenticateHeader)) {
+    return { kind: "challenged", specCompliant: false };
+  }
+
+  const reason = input.serverMessage || input.statusText;
+  const observed = `HTTP ${input.status}${reason ? ` ${reason}` : ""}`;
+  if (input.status === 403) {
+    return {
+      kind: "unexpected",
+      message:
+        `MCP server returned ${observed} with no WWW-Authenticate challenge. ` +
+        "MCP requires 401 with a WWW-Authenticate header to begin OAuth, so " +
+        "there is nothing to discover from. A bare 403 usually means a proxy, " +
+        "WAF, or IP allowlist rejected the request before the MCP server saw it.",
+    };
+  }
+  return {
+    kind: "unexpected",
+    message:
+      `MCP server returned ${observed} where MCP requires 401 Unauthorized ` +
+      "(or 200, if the server allows anonymous access).",
+  };
 }
 
 export function parseInsufficientScopeChallenge(
