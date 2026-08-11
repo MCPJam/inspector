@@ -89,12 +89,15 @@ vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
   TopicMapPanel: ({
     journeyRunIds,
     headerActions,
+    filter,
   }: {
     journeyRunIds?: readonly string[];
     headerActions?: React.ReactNode;
+    filter?: UsageFilterState;
   }) => (
     <div
       data-testid="topic-map-panel"
+      data-filter-chips={(filter?.chips ?? []).map(chipKey).join(",")}
       data-journey-run-ids={(journeyRunIds ?? []).join(",")}
     >
       {headerActions}
@@ -298,6 +301,22 @@ describe("InsightsWorkbench", () => {
       ),
     });
     expect(screen.getByTestId("slot-sessions")).toHaveTextContent("4");
+  });
+
+  it("does not carry a flow selection into the Clusters map", async () => {
+    // The chip row hides flow-owned chips and the drill-down that explains
+    // them is a flow-view affordance, so leaving them in the map's filter
+    // would dim it from a selection with nothing on screen to name or clear —
+    // including on a shared `?view=clusters&sel=…` link.
+    const user = userEvent.setup();
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
+
+    expect(screen.getByTestId("topic-map-panel")).toHaveAttribute(
+      "data-filter-chips",
+      "",
+    );
   });
 
   it("toggles between Session flow and Clusters", async () => {

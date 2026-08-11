@@ -665,8 +665,11 @@ export function UserTestingScenarioDetail({
                       undeployed query throws, and a guest hitting the
                       member-only request mutation would too. The boundary
                       makes both render as nothing rather than as a broken tab
-                      — the same pattern `ChatboxSessionsMetricStrip` uses. */}
-                  <ErrorBoundary fallback={null}>
+                      — the same pattern `ChatboxSessionsMetricStrip` uses.
+                      Keyed per scenario: the route reuses this tab across
+                      scenario changes, so an unkeyed boundary would carry one
+                      scenario's failure into the next one's rail. */}
+                  <ErrorBoundary key={chatbox.chatboxId} fallback={null}>
                     <RunInsightsChip
                       surface={{
                         kind: "chatbox",

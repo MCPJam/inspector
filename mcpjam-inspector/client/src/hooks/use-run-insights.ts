@@ -154,6 +154,14 @@ function classifyRunInsightError(err: unknown): {
   return { unavailable, permanent, message: raw };
 }
 
+/** Identity of the cohort being read — the key per-cohort state resets on. */
+function cohortKeyOf(scope: RunInsightsScope | null): string {
+  if (!scope) return "";
+  return scope.kind === "swarm"
+    ? `swarm:${scope.projectId}:${scope.swarmRunGroupId}`
+    : `chatbox:${scope.chatboxId}:${scope.groupId}`;
+}
+
 export function useRunInsights(
   scope: RunInsightsScope | null,
   options?: { autoRequest?: boolean; terminal?: boolean },
@@ -202,6 +210,7 @@ export function useRunInsights(
       // refused may not be the identity pressing now (they may have signed in
       // since). An auto-request carries no such assertion, so it stays latched.
       if (!auto) authRefusedRef.current = false;
+      const firedFor = cohortKeyOf(scope);
       setError(null);
       setRequested(true);
       // The window request takes no group id: the backend anchors it to the
@@ -216,10 +225,16 @@ export function useRunInsights(
             } as any)
           : requestWindow({ chatboxId: scope.chatboxId, force } as any);
       promise.catch((err: unknown) => {
-        setRequested(false);
         const classified = classifyRunInsightError(err);
+        // The latches are facts about the DEPLOYMENT and the VIEWER, so they
+        // hold no matter which cohort was on screen when the answer arrived.
         if (classified.permanent) featureMissingRef.current = true;
         if (classified.authRefused) authRefusedRef.current = true;
+        // Everything else is cohort state. A rejection that lands after the
+        // user has navigated on belongs to the cohort that asked for it —
+        // applying it here would show one scenario's error over another's.
+        if (runKeyRef.current !== firedFor) return;
+        setRequested(false);
         if (classified.unavailable) {
           setUnavailable(true);
         } else {
@@ -251,11 +266,7 @@ export function useRunInsights(
   // cohort-specific failures, but stays latched when the backend feature
   // itself is missing — otherwise navigating between cohorts re-fires a doomed
   // request each time.
-  const runKey = !scope
-    ? ""
-    : scope.kind === "swarm"
-      ? `swarm:${scope.projectId}:${scope.swarmRunGroupId}`
-      : `chatbox:${scope.chatboxId}:${scope.groupId}`;
+  const runKey = cohortKeyOf(scope);
   useEffect(() => {
     if (runKeyRef.current === runKey) return;
     runKeyRef.current = runKey;

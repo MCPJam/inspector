@@ -66,6 +66,36 @@ describe("useRunInsights permission refusals", () => {
     expect(state.requestMock).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores a cohort's rejection once the user has navigated on", async () => {
+    // Cohort state belongs to the cohort that asked for it: a late answer for
+    // the scenario the user just left must not paint an error — or hide the
+    // surface — over the one now on screen.
+    let rejectA: ((err: unknown) => void) | undefined;
+    state.requestMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectA = reject;
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ scope }: { scope: RunInsightsScope }) =>
+        useRunInsights(scope, { terminal: true }),
+      { initialProps: { scope: SCOPE_A } },
+    );
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+
+    state.requestMock.mockResolvedValue(undefined);
+    rerender({ scope: SCOPE_B });
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      rejectA?.(new Error("Server Error: uncaught exception"));
+      await Promise.resolve();
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.unavailable).toBe(false);
+  });
+
   it("lets an explicit press try again — the viewer may have signed in", async () => {
     state.requestMock.mockRejectedValue(
       new Error("Insufficient workspace permissions"),

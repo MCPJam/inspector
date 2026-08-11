@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   chipKey,
   isSameSelection,
+  removeChipsByKeys,
   type InsightsSelection,
   type ThemeRef,
   type UsageFilterChip,
@@ -318,6 +319,16 @@ export function InsightsWorkbench({
     </div>
   );
 
+  // The map is filtered by EXACTLY the chips rendered above it. Flow-owned
+  // chips are the Sankey selection's own output: the chip row hides them (the
+  // selected path already expresses them) and the drill-down that explains
+  // them is a flow-view affordance. Left in, they would dim the map from a
+  // selection with nothing on screen to name it and no way to clear it — and
+  // `?view=clusters&sel=…` would reproduce that on refresh or when shared.
+  // Dropped here rather than cleared on view change, so switching back to the
+  // flow still finds the selection where the user left it.
+  const mapFilter = removeChipsByKeys(flow.filter, flow.flowOwnedKeys);
+
   const clustersBlock = (
     <div className="flex h-full min-h-0 flex-col">
       {chipRow}
@@ -325,7 +336,7 @@ export function InsightsWorkbench({
         <TopicMapPanel
           scope={scope}
           {...(journeyRunIds ? { journeyRunIds } : {})}
-          filter={flow.filter}
+          filter={mapFilter}
           onToggleChip={flow.handleToggleChip}
           onClearChip={flow.handleClearChip}
           onRebuild={handleRebuild}
