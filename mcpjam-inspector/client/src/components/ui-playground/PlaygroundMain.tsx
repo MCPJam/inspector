@@ -21,7 +21,7 @@ import {
   useRef,
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Braces, Loader2, Trash2 } from "lucide-react";
+import { Braces, Loader2, RotateCcw } from "lucide-react";
 import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
@@ -4630,11 +4630,12 @@ export function PlaygroundMain({
                   <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      size="sm"
+                      className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
                       onClick={() => setShowClearConfirm(true)}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Clear chat
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent
@@ -4642,8 +4643,9 @@ export function PlaygroundMain({
                     sideOffset={6}
                     collisionPadding={12}
                   >
-                    <p className="font-medium">Clear chat</p>
+                    <p className="font-medium">Restart session</p>
                     <p className="text-xs font-light text-muted-foreground">
+                      Clears this conversation and starts fresh ·{" "}
                       {navigator.platform.includes("Mac")
                         ? "⌘⇧K"
                         : "Ctrl+Shift+K"}

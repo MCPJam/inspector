@@ -177,9 +177,11 @@ export function TraceViewModeTabs({
 
   // Evals (default layout) lead with Steps (when present) then Chat — Steps is
   // the step-aligned replay default for authored-step cases. Chat / playground /
-  // compare surfaces (fullWidth) never show Steps and keep Trace-first ordering.
+  // compare surfaces (fullWidth) never show Steps and lead with Chat (the
+  // default-selected view), then Trace, then Raw (PUR-14) — all three are views
+  // onto the same backend object, so Chat leads and Trace sits second.
   const tabs = fullWidth
-    ? [toolsTab, timelineTab, chatTab, browserTab, rawTab]
+    ? [toolsTab, chatTab, timelineTab, browserTab, rawTab]
     : [stepsTab, chatTab, toolsTab, timelineTab, browserTab, rawTab];
 
   return (
