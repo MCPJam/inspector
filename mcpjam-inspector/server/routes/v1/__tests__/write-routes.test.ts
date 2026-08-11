@@ -796,7 +796,7 @@ describe("v1 write routes", () => {
           {
             suiteName: "smoke",
             serverIds: ["s1"],
-            tests: [inlineTest("claude-sonnet-4-6")],
+            tests: [inlineTest("claude-3-7-sonnet-latest")],
             modelApiKeys: { anthropic: "sk-ant-test" },
           }
         );
