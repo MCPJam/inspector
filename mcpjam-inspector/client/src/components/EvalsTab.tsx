@@ -62,6 +62,7 @@ import {
   type CreateSuitePayload,
 } from "./evals/create-suite-dialog";
 import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
+import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import { track } from "@/lib/analytics";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -263,9 +264,24 @@ function EvalsTabContent({
     if (!evalRunsDisabledReason) {
       return true;
     }
+    // The user just clicked Run — highest-intent moment there is. Give them a
+    // decision surface instead of a dismissible error. Falls back to the
+    // toast when we can't resolve the org (nothing to upgrade).
+    if (organizationId && evalIterationQuota) {
+      usePlanLimitDialogStore.getState().open({
+        kind: "evalIterations",
+        organizationId,
+        used: evalIterationQuota.used,
+        allowed: evalIterationQuota.allowed,
+        resetsAt: evalIterationQuota.resetsAt,
+        windowKind: evalIterationQuota.windowKind,
+        origin: "evals",
+      });
+      return false;
+    }
     toast.error(evalRunsDisabledReason);
     return false;
-  }, [evalRunsDisabledReason]);
+  }, [evalIterationQuota, evalRunsDisabledReason, organizationId]);
 
   const handleRerunWithQuota = useCallback(
     (...args: Parameters<typeof handlers.handleRerun>) => {

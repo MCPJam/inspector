@@ -99,10 +99,12 @@ describe("CreditTopupDialog", () => {
       screen.getByRole("radio", { name: /500\s*credits/ })
     ).toHaveAttribute("aria-checked", "true");
     expect(
-      screen.getByText(/Add credits to your organization/)
+      screen.getByText(/Credits cover model usage in chat, playground, and agents/)
     ).toBeInTheDocument();
+    // Names the boundary explicitly so nobody buys credits expecting a higher
+    // eval-iteration cap.
     expect(
-      screen.getByText(/team can keep using MCPJam models/)
+      screen.getByText(/doesn't change your plan limits/)
     ).toBeInTheDocument();
     // The processing-fee disclaimer was removed so users can't back-compute
     // the take rate.

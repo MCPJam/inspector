@@ -17,6 +17,33 @@ const sortedOrganizationsState: Array<{
   isCreator?: boolean;
 }> = [];
 
+const upgradeState = {
+  currentPlan: "free" as string,
+  canManageBilling: true,
+  start: vi.fn(),
+};
+
+// The upgrade path has its own coverage in PlanLimitDialog.test.tsx. Stubbing
+// it here keeps this file focused on the credits routing and copy, and avoids
+// pulling the Convex plan-catalog queries into a mock that only exports
+// useConvexAuth.
+vi.mock("@/hooks/use-upgrade-checkout", () => ({
+  useUpgradeCheckout: () => ({
+    interval: "annual",
+    setInterval: vi.fn(),
+    priceLabel: "$30/seat/mo",
+    annualDiscountPct: 21,
+    annualSupported: true,
+    monthlySupported: true,
+    teamName: "Team",
+    teamEvalIterations: 15000,
+    currentPlan: upgradeState.currentPlan,
+    canManageBilling: upgradeState.canManageBilling,
+    isStarting: false,
+    start: upgradeState.start,
+  }),
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     isLoading: authState.isLoading,
@@ -50,6 +77,9 @@ const originalHash = window.location.hash;
 
 beforeEach(() => {
   signIn.mockReset();
+  upgradeState.start.mockReset();
+  upgradeState.currentPlan = "free";
+  upgradeState.canManageBilling = true;
   authState.isLoading = false;
   authState.user = null;
   sortedOrganizationsState.length = 0;
@@ -131,10 +161,10 @@ describe("MCPJamLimitDialog", () => {
       })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^top up$/i })
+      screen.getByRole("button", { name: /^buy credits$/i })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /bring your own key/i })
+      screen.getByRole("button", { name: /use your own API key/i })
     ).toBeInTheDocument();
   });
 
@@ -145,14 +175,14 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask your org admin to top up credits/
+      /Ask an organization owner or admin to buy credits or upgrade/
     );
-    // Members get no CTAs at all — neither top up nor BYOK.
+    // Members get no CTAs at all: no upgrade, no buy credits, no BYOK.
     expect(
-      screen.queryByRole("button", { name: /^top up$/i })
+      screen.queryByRole("button", { name: /^buy credits$/i })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /bring your own key/i })
+      screen.queryByRole("button", { name: /use your own API key/i })
     ).not.toBeInTheDocument();
   });
 
@@ -166,7 +196,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     await user.click(
-      screen.getByRole("button", { name: /bring your own key/i })
+      screen.getByRole("button", { name: /use your own API key/i })
     );
 
     // Closes the dialog and asks the picker to open its "Your providers" tab —
@@ -186,7 +216,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /^top up$/i }));
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
     expect(window.location.pathname).toBe("/organizations/org-active/billing");
@@ -208,7 +238,7 @@ describe("MCPJamLimitDialog", () => {
     });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /^top up$/i }));
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     expect(window.location.pathname).toBe("/organizations/org-a/billing");
     expect(window.location.search).toBe("?topup=open");
@@ -221,7 +251,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /^top up$/i }));
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     expect(window.location.pathname).toBe(
       "/organizations/org-fallback/billing"
@@ -235,7 +265,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /^top up$/i }));
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     // Modal stays open and no nav happens — once orgs load, the user can
     // click again and be routed correctly.
