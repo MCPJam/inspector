@@ -460,7 +460,123 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
+  const opaque = summarizeOpaquePayload(errorString);
+  if (opaque) return opaque;
+
   return { message: errorString };
+}
+
+/**
+ * Longest error text rendered inline. Past this the chat turns into a wall of
+ * red and the actual conversation is pushed off screen.
+ */
+const INLINE_MESSAGE_MAX = 400;
+
+/** Hard cap on what we keep for the collapsible. */
+const RAW_PAYLOAD_MAX = 4000;
+
+/**
+ * Anything a document can legally lead with before its first real tag: a byte
+ * order mark, whitespace, HTML comments, an XML declaration. Gateways and
+ * proxies prepend these freely.
+ */
+const HTML_PREAMBLE = /^(?:﻿|\s|<!--[\s\S]*?-->|<\?xml[\s\S]*?\?>)+/i;
+
+/** Markup that can only be a document, once any preamble is stripped. */
+const MARKUP_OPENER = /^<(?:!doctype\s+html|html|head|body|title)\b/i;
+
+/**
+ * The one marker conclusive wherever it appears. `<html>` is NOT: error text
+ * quotes it ("expected <html> but the tool returned a number"), and treating
+ * that as a document would summarize a perfectly readable message away.
+ */
+const DOCTYPE_MARKER = /<!doctype\s+html/i;
+
+/**
+ * Detection has to survive bodies that are not well-formed documents. A
+ * truncated or streamed response never reaches `</html>`; a proxy may prepend
+ * a comment or an XML declaration; a fragment may begin at `<head>` with no
+ * doctype at all. Matching only "starts with `<html`" or "ends with
+ * `</html>`" let all of those through to be rendered as raw markup — the
+ * exact failure this function exists to prevent.
+ *
+ * The start-anchored check runs against the preamble-stripped body so that
+ * ordinary prose which merely mentions a tag ("expected `<html>` here") is not
+ * mistaken for a document.
+ */
+function looksLikeErrorPage(trimmed: string): boolean {
+  if (DOCTYPE_MARKER.test(trimmed)) return true;
+  if (/<\/html>\s*$/i.test(trimmed)) return true;
+  return MARKUP_OPENER.test(trimmed.replace(HTML_PREAMBLE, ""));
+}
+
+/**
+ * Pull the status out of an error page's `<title>` or `<h1>` — the two places
+ * gateways put it verbatim ("502 Bad Gateway"). Deliberately not a scan of the
+ * whole document: a bare `\b\d{3}\b` match anywhere would happily return a
+ * pixel value out of an inline stylesheet.
+ *
+ * Both headings are tried in order rather than preferring whichever exists.
+ * A generic `<title>Error</title>` over an `<h1>503 Service Unavailable</h1>`
+ * is a real page shape, and taking the title just because it is present threw
+ * away the only status on the page.
+ */
+function extractErrorPageStatus(html: string): number | undefined {
+  const headings = [
+    html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1],
+    html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1],
+  ];
+  for (const heading of headings) {
+    const status = heading?.match(/\b([45]\d{2})\b/)?.[1];
+    if (!status) continue;
+    const parsed = Number(status);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+/**
+ * Last-resort formatting for a body that is not an error message at all.
+ *
+ * When an upstream hop fails — a gateway 502, a proxy timeout — the response
+ * body is an HTML page, and the AI SDK surfaces it by throwing
+ * `new Error(await response.text())`. That put an entire HTML document into
+ * `message`, which rendered verbatim and unbounded.
+ *
+ * Returns `null` for ordinary error text so every existing message is
+ * untouched; only genuinely opaque or oversized payloads are summarized, with
+ * the original preserved in `details` for the existing collapsible.
+ */
+function summarizeOpaquePayload(raw: string): FormattedError | null {
+  const trimmed = raw.trim();
+  const isHtml = looksLikeErrorPage(trimmed);
+
+  if (!isHtml && trimmed.length <= INLINE_MESSAGE_MAX) return null;
+
+  const details =
+    trimmed.length > RAW_PAYLOAD_MAX
+      ? `${trimmed.slice(0, RAW_PAYLOAD_MAX)}…`
+      : trimmed;
+
+  if (isHtml) {
+    const statusCode = extractErrorPageStatus(trimmed);
+    // "An upstream service", not "the server": the page comes from whatever
+    // hop failed — a gateway, a proxy, our own infrastructure — and naming
+    // "the server" in an MCP debugger reads as the user's MCP server, which
+    // is the one party we have no evidence against.
+    return {
+      message: statusCode
+        ? `The request failed with HTTP ${statusCode}. An upstream service returned an error page instead of a response.`
+        : "The request failed. An upstream service returned an error page instead of a response.",
+      details,
+      ...(statusCode !== undefined ? { statusCode } : {}),
+    };
+  }
+
+  return {
+    message: `${trimmed.slice(0, INLINE_MESSAGE_MAX).trimEnd()}…`,
+    details,
+  };
 }
 
 export const VALID_MESSAGE_ROLES: UIMessage["role"][] = [

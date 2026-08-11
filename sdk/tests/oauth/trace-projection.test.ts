@@ -90,4 +90,67 @@ describe("OAuth trace projection", () => {
     });
     expect(codeStep?.details).toMatchObject({ code: "auth-code-abc123" });
   });
+
+  // Regression: error strings interpolate upstream response fields (e.g.
+  // `Token request failed: ${body.error} - ${body.error_description}`). Once
+  // the request executor stopped redacting live response bodies, an AS that
+  // echoes a credential back in error_description would reach rendered trace
+  // output verbatim unless the projection redacts error strings too.
+  it("redacts credentials echoed into error messages when sanitizing", () => {
+    const leaked =
+      "Token request failed: invalid_client - client_secret=cs_supersecretvalue1234567890 was rejected";
+
+    const snapshot = projectOAuthTraceSnapshot({
+      state: {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "token_request",
+        error: leaked,
+        httpHistory: [
+          {
+            step: "token_request",
+            timestamp: 1_000,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: {},
+              body: { grant_type: "authorization_code" },
+            },
+            error: {
+              message:
+                "upstream said Bearer ntn_supersecretaccesstokenvalue1234567890",
+            },
+          },
+        ],
+        infoLogs: [],
+      },
+      sanitize: true,
+    });
+
+    const serialized = JSON.stringify(snapshot);
+    expect(serialized).not.toContain("cs_supersecretvalue1234567890");
+    expect(serialized).not.toContain("ntn_supersecretaccesstokenvalue1234567890");
+    expect(snapshot.error).toContain("client_secret=[redacted]");
+    // The message must stay a readable string, not be reshaped into an object.
+    expect(typeof snapshot.error).toBe("string");
+    expect(snapshot.error).toContain("Token request failed: invalid_client");
+
+    const tokenStep = snapshot.steps.find((step) => step.step === "token_request");
+    expect(tokenStep?.error).toContain("Bearer [redacted]");
+  });
+
+  it("leaves error messages intact when sanitize is false", () => {
+    const raw = "Token request failed: client_secret=cs_localdevsecret123456";
+    const snapshot = projectOAuthTraceSnapshot({
+      state: {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "token_request",
+        error: raw,
+        httpHistory: [],
+        infoLogs: [],
+      },
+      sanitize: false,
+    });
+
+    expect(snapshot.error).toBe(raw);
+  });
 });
