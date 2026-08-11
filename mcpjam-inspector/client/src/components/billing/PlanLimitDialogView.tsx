@@ -24,6 +24,7 @@ export interface PlanLimitDialogViewProps {
   showEnterprise: boolean;
   /** Owner-request path: free orgs whose user can't manage billing. */
   requestRecipients: UpgradeRequestRecipient[];
+  isLoadingRecipients?: boolean;
   organizationName: string;
   origin: UpgradeOrigin;
   limitKind: string;
@@ -59,6 +60,7 @@ export function PlanLimitDialogView({
   showUpgrade,
   showEnterprise,
   requestRecipients,
+  isLoadingRecipients = false,
   organizationName,
   origin,
   limitKind,
@@ -89,7 +91,13 @@ export function PlanLimitDialogView({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription data-testid="plan-limit-dialog-description">
+          {/* text-pretty keeps the last line from stranding a single word
+              ("upgrade." on its own), which no amount of copy tuning fixes
+              across every viewport width. */}
+          <DialogDescription
+            className="text-pretty"
+            data-testid="plan-limit-dialog-description"
+          >
             {description}
           </DialogDescription>
         </DialogHeader>
@@ -121,6 +129,7 @@ export function PlanLimitDialogView({
         {showRequest ? (
           <RequestUpgradeButton
             recipients={requestRecipients}
+            isLoadingRecipients={isLoadingRecipients}
             organizationName={organizationName}
             teamName={teamName}
             origin={origin}

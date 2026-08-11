@@ -30,9 +30,13 @@ function formatMoney(cents: number, currency: string): string {
 }
 
 /**
- * `prices.annual` is the full-year amount, so the per-seat monthly figure is
- * a twelfth of it. Mirrors `formatPlanPriceLabel` on the billing page so the
- * same plan never shows two different numbers.
+ * `prices.annual` is the full-year amount, so the per-seat monthly figure is a
+ * twelfth of it. Same number as `formatPlanPriceLabel` on the billing page.
+ *
+ * Returns the bare amount. The unit is rendered separately and smaller by
+ * `UpgradeIntervalPicker`: inside the large price span, "$30 per seat/month"
+ * wraps mid-phrase in a card this narrow, which reads worse than the "/seat/mo"
+ * it replaced.
  */
 export function formatSeatMonthlyPrice(
   amountInCents: number | null,
@@ -41,12 +45,9 @@ export function formatSeatMonthlyPrice(
 ): string | null {
   if (amountInCents == null || !currency) return null;
   if (interval === "monthly") {
-    return `${formatMoney(amountInCents, currency)}/seat/mo`;
+    return formatMoney(amountInCents, currency);
   }
-  return `${formatMoney(
-    Math.round(amountInCents / 12 / 100) * 100,
-    currency,
-  )}/seat/mo`;
+  return formatMoney(Math.round(amountInCents / 12 / 100) * 100, currency);
 }
 
 interface UseUpgradeCheckoutParams {

@@ -143,7 +143,8 @@ export function PlanLimitDialog() {
     origin: "evals",
     limitKind: limit?.kind ?? "evalIterations",
   });
-  const requestRecipients = useUpgradeRequestRecipients(organizationId);
+  const { recipients: requestRecipients, isLoading: isLoadingRecipients } =
+    useUpgradeRequestRecipients(organizationId);
 
   useEffect(() => {
     if (!isOpen || !limit) return;
@@ -227,12 +228,13 @@ export function PlanLimitDialog() {
       title={`You're out of eval iterations ${windowLabel}`}
       description={`${`${planSentence}${resetSentence} ${upgradeSentence}`.trim()}${
         isFreePlan && !upgrade.canManageBilling
-          ? " Only an organization owner can upgrade."
+          ? " Only an owner can upgrade this organization."
           : ""
       }`}
       showUpgrade={showUpgrade}
       showEnterprise={showEnterprise}
       requestRecipients={requestRecipients}
+      isLoadingRecipients={isLoadingRecipients}
       organizationName={upgrade.organizationName}
       origin="evals"
       limitKind={limit.kind}

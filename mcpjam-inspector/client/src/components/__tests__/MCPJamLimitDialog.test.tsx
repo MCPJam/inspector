@@ -31,8 +31,8 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
   useUpgradeCheckout: () => ({
     interval: "annual",
     setInterval: vi.fn(),
-    annualPriceLabel: "$30/seat/mo",
-    monthlyPriceLabel: "$38/seat/mo",
+    annualPriceLabel: "$30",
+    monthlyPriceLabel: "$38",
     annualDiscountPct: 21,
     annualSupported: true,
     monthlySupported: true,
@@ -47,9 +47,10 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
 }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
-  useUpgradeRequestRecipients: () => [
-    { email: "dana@acme.test", name: "Dana Ruiz" },
-  ],
+  useUpgradeRequestRecipients: () => ({
+    recipients: [{ email: "dana@acme.test", name: "Dana Ruiz" }],
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({

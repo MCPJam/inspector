@@ -50,6 +50,9 @@ export function buildUpgradeRequestMail(params: {
 
 interface RequestUpgradeButtonProps {
   recipients: UpgradeRequestRecipient[];
+  /** Owner lookup still in flight. Holds a disabled button in place rather
+   * than letting one appear a beat after the dialog opens. */
+  isLoadingRecipients?: boolean;
   organizationName: string;
   teamName: string;
   origin: UpgradeOrigin;
@@ -72,11 +75,20 @@ interface RequestUpgradeButtonProps {
  */
 export function RequestUpgradeButton({
   recipients,
+  isLoadingRecipients = false,
   organizationName,
   teamName,
   origin,
   limitKind,
 }: RequestUpgradeButtonProps) {
+  if (isLoadingRecipients) {
+    return (
+      <Button type="button" className="w-full" disabled>
+        Email your owner
+      </Button>
+    );
+  }
+
   const href = buildUpgradeRequestMail({
     recipients,
     organizationName,
