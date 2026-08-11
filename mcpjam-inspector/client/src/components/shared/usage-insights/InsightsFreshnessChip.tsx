@@ -56,7 +56,11 @@ export function InsightsFreshnessChip({
   if (!latestRun) return null;
 
   const running = latestRun.status === "queued" || latestRun.status === "running";
-  const builtAt = latestRun.finishedAt;
+  // A FAILED run has a `finishedAt` like any other terminal run, and reading
+  // that as "Built 5 minutes ago" would report a fresh analysis where none was
+  // produced. Failure is checked before freshness for that reason.
+  const failed = latestRun.status === "failed";
+  const builtAt = failed ? null : latestRun.finishedAt;
   const dataStale = signals?.dataStale === true;
   // A lease-expired IN-FLIGHT job is a stuck job, not old data.
   const jobStuck = running && latestRun.isStale;
@@ -65,12 +69,14 @@ export function InsightsFreshnessChip({
     ? "Analysis stuck"
     : running
       ? "Analyzing…"
-      : builtAt
-        ? // `addSuffix` rather than a literal "ago": a backend clock slightly
-          // ahead of the viewer's would otherwise render a future timestamp as
-          // "Built 5 minutes ago".
-          `Built ${formatDistanceToNow(builtAt, { addSuffix: true })}`
-        : "Not analyzed";
+      : failed
+        ? "Analysis failed"
+        : builtAt
+          ? // `addSuffix` rather than a literal "ago": a backend clock slightly
+            // ahead of the viewer's would otherwise render a future timestamp
+            // as "Built 5 minutes ago".
+            `Built ${formatDistanceToNow(builtAt, { addSuffix: true })}`
+          : "Not analyzed";
 
   return (
     <Popover>
@@ -96,7 +102,9 @@ export function InsightsFreshnessChip({
           <div className="font-medium">
             {builtAt
               ? `Last analyzed ${formatDistanceToNow(builtAt, { addSuffix: true })}`
-              : "This scenario has not been analyzed yet"}
+              : failed
+                ? "The last analysis failed"
+                : "This scenario has not been analyzed yet"}
           </div>
           {builtAt ? (
             <div className="text-muted-foreground">
@@ -118,10 +126,13 @@ export function InsightsFreshnessChip({
             <div className="text-destructive">{latestRun.errorMessage}</div>
           ) : null}
         </div>
+        {/* A run in flight — started here, elsewhere, or before this mount —
+            makes Rebuild a redundant second request. A STUCK one is the
+            exception: that is exactly what retry is for. */}
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-medium transition-colors hover:bg-muted disabled:opacity-50"
-          disabled={rebuildBusy}
+          disabled={rebuildBusy || (running && !jobStuck)}
           onClick={() => void onRebuild()}
           data-testid={testId ? `${testId}-rebuild` : undefined}
         >
@@ -130,7 +141,7 @@ export function InsightsFreshnessChip({
           ) : (
             <RefreshCw className="size-3" />
           )}
-          {jobStuck ? "Retry analysis" : "Rebuild"}
+          {jobStuck ? "Retry analysis" : failed ? "Retry" : "Rebuild"}
         </button>
       </PopoverContent>
     </Popover>

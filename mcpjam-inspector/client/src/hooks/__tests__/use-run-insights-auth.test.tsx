@@ -96,6 +96,63 @@ describe("useRunInsights permission refusals", () => {
     expect(result.current.unavailable).toBe(false);
   });
 
+  it("ignores a superseded attempt on the same cohort", async () => {
+    // Two requests in flight for one cohort: the older one's rejection must
+    // not report failure — or clear the busy flag — for the newer one.
+    let rejectFirst: ((err: unknown) => void) | undefined;
+    state.requestMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    const { result } = renderHook(() =>
+      useRunInsights(SCOPE_A, { terminal: true }),
+    );
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+
+    state.requestMock.mockImplementationOnce(() => new Promise(() => {}));
+    act(() => result.current.request(true));
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      rejectFirst?.(new Error("wave_too_large"));
+      await Promise.resolve();
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.busy).toBe(true);
+  });
+
+  it("does not re-latch from an attempt the user's retry superseded", async () => {
+    // The retry asserts a possibly-new identity. A refusal answering the
+    // attempt before it must not restore the latch behind that assertion.
+    let rejectAuto: ((err: unknown) => void) | undefined;
+    state.requestMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectAuto = reject;
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ scope }: { scope: RunInsightsScope }) =>
+        useRunInsights(scope, { terminal: true }),
+      { initialProps: { scope: SCOPE_A } },
+    );
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+
+    state.requestMock.mockResolvedValue(undefined);
+    act(() => result.current.request());
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      rejectAuto?.(new Error("Not a member of this workspace"));
+      await Promise.resolve();
+    });
+
+    // Not latched: the next cohort still auto-requests.
+    rerender({ scope: SCOPE_B });
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(3));
+  });
+
   it("lets an explicit press try again — the viewer may have signed in", async () => {
     state.requestMock.mockRejectedValue(
       new Error("Insufficient workspace permissions"),

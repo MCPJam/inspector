@@ -175,7 +175,18 @@ export function useRunInsights(
   /** Sticky across cohorts: who is asking does not change by navigating. */
   const authRefusedRef = useRef(false);
   const hasAutoAttemptedRef = useRef(false);
+  /** Previous cohort, for the reset effect — NOT the current one. */
   const runKeyRef = useRef<string | null>(null);
+  /**
+   * The cohort on screen, updated DURING RENDER. `runKeyRef` is written by an
+   * effect, so between a cohort change and that effect there is a window where
+   * it still names the cohort the user just left — long enough for a rejection
+   * to land and be mistaken for current.
+   */
+  const activeRunKeyRef = useRef<string>(cohortKeyOf(scope));
+  activeRunKeyRef.current = cohortKeyOf(scope);
+  /** Monotonic per request, so an older attempt cannot answer for a newer one. */
+  const attemptRef = useRef(0);
 
   const isSwarm = scope?.kind === "swarm";
   const queryName = isSwarm
@@ -211,6 +222,7 @@ export function useRunInsights(
       // since). An auto-request carries no such assertion, so it stays latched.
       if (!auto) authRefusedRef.current = false;
       const firedFor = cohortKeyOf(scope);
+      const attempt = ++attemptRef.current;
       setError(null);
       setRequested(true);
       // The window request takes no group id: the backend anchors it to the
@@ -226,14 +238,23 @@ export function useRunInsights(
           : requestWindow({ chatboxId: scope.chatboxId, force } as any);
       promise.catch((err: unknown) => {
         const classified = classifyRunInsightError(err);
-        // The latches are facts about the DEPLOYMENT and the VIEWER, so they
-        // hold no matter which cohort was on screen when the answer arrived.
+        // Superseded: a newer attempt is in flight, or the user has moved to
+        // another cohort. Either way this answer is about something that is no
+        // longer on screen.
+        const stale =
+          attemptRef.current !== attempt ||
+          activeRunKeyRef.current !== firedFor;
+
+        // "This deployment does not have the function" is true whenever it is
+        // learned, from whichever cohort learned it — the one fact here that
+        // outlives its request.
         if (classified.permanent) featureMissingRef.current = true;
-        if (classified.authRefused) authRefusedRef.current = true;
-        // Everything else is cohort state. A rejection that lands after the
-        // user has navigated on belongs to the cohort that asked for it —
-        // applying it here would show one scenario's error over another's.
-        if (runKeyRef.current !== firedFor) return;
+        // The permission latch does NOT: an explicit retry clears it precisely
+        // because the viewer may have signed in, and letting the superseded
+        // attempt re-latch would undo that from behind.
+        if (classified.authRefused && !stale) authRefusedRef.current = true;
+        if (stale) return;
+
         setRequested(false);
         if (classified.unavailable) {
           setUnavailable(true);
