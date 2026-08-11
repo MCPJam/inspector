@@ -218,6 +218,40 @@ describe("param-less challenge grouping", () => {
       resourceMetadata: undefined,
     });
   });
+
+  // `auth-scheme` is a bare token, so a scheme may open with a digit or
+  // punctuation. A leading-letter rule sent these segments to the auth-param
+  // branch, crediting the following scheme's parameters to Bearer.
+  it.each(["1Other", "9", "!weird", "-dash"])(
+    "opens a challenge on the %s scheme instead of crediting Bearer",
+    (scheme) => {
+      expect(
+        parseInsufficientScopeChallenge(
+          `Bearer realm="x", ${scheme} error="insufficient_scope"`
+        )
+      ).toMatchObject({
+        isInsufficientScope: false,
+        challengedScopes: undefined,
+      });
+    }
+  );
+
+  it("reads a digit-initial scheme's own Bearer sibling correctly", () => {
+    expect(
+      parseInsufficientScopeChallenge(
+        '1Other realm="x", Bearer error="insufficient_scope", scope="mcp:read"'
+      )
+    ).toMatchObject({
+      isInsufficientScope: true,
+      challengedScopes: ["mcp:read"],
+    });
+  });
+
+  it("sees a Bearer challenge after a digit-initial scheme", () => {
+    expect(hasBearerChallenge('1Other realm="x", Bearer realm="mcp"')).toBe(
+      true
+    );
+  });
 });
 
 describe.each(PROTOCOL_VERSIONS)(

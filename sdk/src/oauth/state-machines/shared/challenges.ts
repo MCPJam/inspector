@@ -113,7 +113,12 @@ function parseBearerChallenges(header?: string): Array<Record<string, string>> {
   // a WAF commonly send. An auth-param segment (`key=value`, no leading
   // `<token> `) continues the current challenge.
   const challenges: Array<{ scheme: string; params: string[] }> = [];
-  const SCHEME_TOKEN = "[A-Za-z][A-Za-z0-9!#$%&'*+.^_`|~-]*";
+  // `auth-scheme` is a bare `token` (RFC 7235 §2.1), i.e. `1*tchar` (RFC 7230
+  // §3.2.6) — every position accepts the same set, so a scheme may open with a
+  // digit or punctuation. Requiring a leading letter made a segment like
+  // `1Other error="…"` fall through to the auth-param branch, which credited a
+  // following scheme's parameters to the challenge before it.
+  const SCHEME_TOKEN = "[A-Za-z0-9!#$%&'*+.^_`|~-]+";
   const CHALLENGE_START = new RegExp(`^(${SCHEME_TOKEN})\\s+(.+)$`, "s");
   const BARE_SCHEME = new RegExp(`^(${SCHEME_TOKEN})$`);
   for (const raw of segments) {
