@@ -91,24 +91,9 @@ const VARIANTS: PreviewVariant[] = [
     },
   },
   {
-    id: "owner-loading",
-    label: "Cannot upgrade, owner lookup pending",
-    note: "The members query is still in flight. A disabled button holds the space so nothing pops in late.",
-    props: {
-      ...SHARED,
-      title: "You're out of eval iterations today",
-      description:
-        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Only an owner can upgrade this organization.",
-      showUpgrade: false,
-      showEnterprise: false,
-      requestRecipients: [],
-      isLoadingRecipients: true,
-    },
-  },
-  {
     id: "no-owner",
     label: "Cannot upgrade, no owner found",
-    note: "Lookup finished and found no reachable owner. The button hides rather than opening an empty draft.",
+    note: "No reachable owner, or the lookup hasn't returned yet. Either way there's no address to write to, so the button hides rather than opening an empty draft.",
     props: {
       ...SHARED,
       title: "You're out of eval iterations today",

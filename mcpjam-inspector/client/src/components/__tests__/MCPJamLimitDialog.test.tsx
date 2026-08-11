@@ -47,10 +47,9 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
 }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
-  useUpgradeRequestRecipients: () => ({
-    recipients: [{ email: "dana@acme.test", name: "Dana Ruiz" }],
-    isLoading: false,
-  }),
+  useUpgradeRequestRecipients: () => [
+    { email: "dana@acme.test", name: "Dana Ruiz" },
+  ],
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
