@@ -3,7 +3,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
@@ -20,8 +19,7 @@ import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
-import { UpgradeIntervalPicker } from "@/components/billing/UpgradeIntervalPicker";
-import { RequestUpgradeButton } from "@/components/billing/RequestUpgradeButton";
+import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
@@ -137,71 +135,32 @@ export function MCPJamLimitDialog() {
         </Dialog>
       )}
       {showTopupDialog && (
-        <Dialog
-          open
-          onOpenChange={(next) => {
-            if (!next) close();
-          }}
-        >
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Your org is out of credits</DialogTitle>
-              <DialogDescription data-testid="limit-dialog-description">
-                {isKnownNonManager
-                  ? "Ask an organization owner or admin to buy credits or upgrade the plan."
-                  : creditsUpgrade.currentPlan === "free"
-                    ? `Free credits reset daily. Our ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
-                    : "Buy credits to keep your team going, or use your own API key."}
-              </DialogDescription>
-            </DialogHeader>
-            {/* Non-managers get no CTAs, just the "ask an owner" copy. Managers
-                lead with the plan upgrade: buying credits keeps the org on Free
-                at a variable cost, so it stays available but secondary. */}
-            {isKnownNonManager ? (
-              <RequestUpgradeButton
-                recipients={requestRecipients}
-                organizationName={creditsUpgrade.organizationName}
-                teamName={creditsUpgrade.teamName}
-                origin="credits"
-                limitKind="credits"
-              />
-            ) : (
-              <>
-                {showCreditsUpgrade ? (
-                  <UpgradeIntervalPicker
-                    interval={creditsUpgrade.interval}
-                    onIntervalChange={creditsUpgrade.setInterval}
-                    annualPriceLabel={creditsUpgrade.annualPriceLabel}
-                    monthlyPriceLabel={creditsUpgrade.monthlyPriceLabel}
-                    annualDiscountPct={creditsUpgrade.annualDiscountPct}
-                    annualSupported={creditsUpgrade.annualSupported}
-                    monthlySupported={creditsUpgrade.monthlySupported}
-                    teamName={creditsUpgrade.teamName}
-                    isStarting={creditsUpgrade.isStarting}
-                    onUpgrade={() => void creditsUpgrade.start()}
-                  />
-                ) : null}
-                <DialogFooter className="sm:justify-between">
-                  <Button
-                    type="button"
-                    variant="link"
-                    className="px-0 text-muted-foreground"
-                    onClick={handleBYOK}
-                  >
-                    Use your own API key
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleTopUp}
-                  >
-                    Buy credits
-                  </Button>
-                </DialogFooter>
-              </>
-            )}
-          </DialogContent>
-        </Dialog>
+        <CreditsLimitDialogView
+          description={
+            isKnownNonManager
+              ? "Ask an organization owner or admin to buy credits or upgrade the plan."
+              : creditsUpgrade.currentPlan === "free"
+                ? `Free credits reset daily. Our ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
+                : "Buy credits to keep your team going, or use your own API key."
+          }
+          isKnownNonManager={isKnownNonManager}
+          showUpgrade={showCreditsUpgrade}
+          requestRecipients={requestRecipients}
+          organizationName={creditsUpgrade.organizationName}
+          interval={creditsUpgrade.interval}
+          onIntervalChange={creditsUpgrade.setInterval}
+          annualPriceLabel={creditsUpgrade.annualPriceLabel}
+          monthlyPriceLabel={creditsUpgrade.monthlyPriceLabel}
+          annualDiscountPct={creditsUpgrade.annualDiscountPct}
+          annualSupported={creditsUpgrade.annualSupported}
+          monthlySupported={creditsUpgrade.monthlySupported}
+          teamName={creditsUpgrade.teamName}
+          isStarting={creditsUpgrade.isStarting}
+          onUpgrade={() => void creditsUpgrade.start()}
+          onBuyCredits={handleTopUp}
+          onUseOwnKey={handleBYOK}
+          onDismiss={close}
+        />
       )}
     </>
   );
