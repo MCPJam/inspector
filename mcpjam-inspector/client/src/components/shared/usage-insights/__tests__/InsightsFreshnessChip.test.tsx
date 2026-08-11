@@ -10,16 +10,23 @@
  *     old data, so it must never be read as staleness.
  */
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InsightsFreshnessChip } from "../InsightsFreshnessChip";
 import type { ClusterRunState } from "@/hooks/useUsageInsights";
 
+const { state } = vi.hoisted(() => ({
+  state: { signals: undefined as { dataStale?: boolean } | undefined },
+}));
+
 vi.mock("convex/react", () => ({
-  // The watermark query is chatbox-only and irrelevant to these states.
-  useQuery: () => undefined,
+  useQuery: () => state.signals,
   useMutation: () => async () => undefined,
 }));
+
+beforeEach(() => {
+  state.signals = undefined;
+});
 
 const SCOPE = { kind: "chatbox" as const, chatboxId: "cb-1" };
 
@@ -51,6 +58,30 @@ function renderChip(latestRun: ClusterRunState) {
 describe("InsightsFreshnessChip", () => {
   it("reports a completed run by when it finished", () => {
     renderChip(run({}));
+    expect(screen.getByTestId("chip")).toHaveTextContent(/^Built /);
+  });
+
+  it("renders nothing when the cohort has never been analyzed", () => {
+    // No run at all is not "not analyzed yet" with a chip around it — there
+    // is no freshness to report, so the statline keeps its space.
+    render(
+      <InsightsFreshnessChip
+        scope={SCOPE}
+        latestRun={null}
+        onRebuild={vi.fn()}
+        rebuildBusy={false}
+        testId="chip"
+      />,
+    );
+    expect(screen.queryByTestId("chip")).toBeNull();
+  });
+
+  it("marks a completed run whose watermarks have moved on", () => {
+    // `dataStale` is the honest staleness signal: a session or a rating
+    // landed after the newest snapshot. It is NOT `latestRun.isStale`.
+    state.signals = { dataStale: true };
+    renderChip(run({}));
+    expect(screen.getByTestId("chip-stale-dot")).toBeInTheDocument();
     expect(screen.getByTestId("chip")).toHaveTextContent(/^Built /);
   });
 
