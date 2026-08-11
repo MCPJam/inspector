@@ -1,23 +1,33 @@
-export function parseBearerAuthenticateParameters(
-  header?: string,
-): Record<string, string> {
-  if (!header) {
-    return {};
-  }
-
-  const match = header.trim().match(/^Bearer\s+(.+)$/i);
-  if (!match) {
-    return {};
-  }
-
+/** Parse one challenge's auth-param list (`key=value, key="value"`). */
+function parseAuthParams(paramsString: string): Record<string, string> {
   const params: Record<string, string> = {};
   const pattern = /([a-zA-Z_][a-zA-Z0-9_-]*)=(?:"([^"]*)"|([^,\s]+))/g;
 
-  for (let next = pattern.exec(match[1]); next; next = pattern.exec(match[1])) {
+  for (
+    let next = pattern.exec(paramsString);
+    next;
+    next = pattern.exec(paramsString)
+  ) {
     params[next[1].toLowerCase()] = next[2] ?? next[3] ?? "";
   }
 
   return params;
+}
+
+/**
+ * Auth-params of the first `Bearer` challenge in a `WWW-Authenticate` header.
+ *
+ * Reads the challenge list instead of anchoring on `Bearer` at the start of the
+ * header. A server may advertise another scheme first — `Basic realm="x",
+ * Bearer resource_metadata="…"` — and anchoring returned nothing at all for
+ * those, so a challenge the 403 gate had accepted arrived at discovery stripped
+ * of its `resource_metadata` and `scope`, silently falling back to a PRM URL
+ * derived from the server URL.
+ */
+export function parseBearerAuthenticateParameters(
+  header?: string,
+): Record<string, string> {
+  return parseBearerChallenges(header)[0] ?? {};
 }
 
 export function parseScopeString(scopeValue?: string): string[] | undefined {
@@ -88,13 +98,21 @@ function parseBearerChallenges(header?: string): Array<Record<string, string>> {
     return [];
   }
 
-  // Split on commas that are not inside a double-quoted string.
+  // Split on commas that are not inside a double-quoted string. A quoted-pair
+  // (RFC 7230 §3.2.6) has to be consumed whole: treating the `"` of a `\"` as a
+  // delimiter ends the string early, so the rest of one scheme's realm parses as
+  // further challenges — enough for `Basic realm="a\", Bearer error=\"…\""` to
+  // advertise a Bearer challenge the server never sent, and this tokenizer gates
+  // whether a 403 is accepted.
   const segments: string[] = [];
   let buffer = "";
   let inQuotes = false;
   for (let i = 0; i < header.length; i++) {
     const ch = header[i];
-    if (ch === '"') {
+    if (inQuotes && ch === "\\" && i + 1 < header.length) {
+      buffer += ch + header[i + 1];
+      i++;
+    } else if (ch === '"') {
       inQuotes = !inQuotes;
       buffer += ch;
     } else if (ch === "," && !inQuotes) {
@@ -137,7 +155,7 @@ function parseBearerChallenges(header?: string): Array<Record<string, string>> {
 
   return challenges
     .filter((c) => c.scheme === "bearer")
-    .map((c) => parseBearerAuthenticateParameters(`Bearer ${c.params.join(", ")}`));
+    .map((c) => parseAuthParams(c.params.join(", ")));
 }
 
 /** True when the header advertises a Bearer challenge, with or without auth-params. */
@@ -202,6 +220,18 @@ export function classifyUnauthenticatedProbe(input: {
   const reason = input.serverMessage || input.statusText;
   const observed = `HTTP ${input.status}${reason ? ` ${reason}` : ""}`;
   if (input.status === 403) {
+    // Naming the absent header is only accurate when none arrived. A 403 that
+    // does carry a challenge, for a scheme OAuth cannot use, would otherwise
+    // send the user hunting for a header that is sitting in the response.
+    if (input.wwwAuthenticateHeader?.trim()) {
+      return {
+        kind: "unexpected",
+        message:
+          `MCP server returned ${observed}, and its WWW-Authenticate header ` +
+          "offers no Bearer challenge. MCP OAuth has nothing to discover from " +
+          "without one, so the flow cannot continue against this server.",
+      };
+    }
     return {
       kind: "unexpected",
       message:

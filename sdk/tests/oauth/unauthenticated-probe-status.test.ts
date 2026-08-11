@@ -7,6 +7,7 @@ import {
 import {
   classifyUnauthenticatedProbe,
   hasBearerChallenge,
+  parseBearerAuthenticateParameters,
   parseInsufficientScopeChallenge,
 } from "../../src/oauth/state-machines/shared/challenges.js";
 
@@ -144,6 +145,46 @@ describe("classifyUnauthenticatedProbe", () => {
     ).toBe("unexpected");
   });
 
+  it("blames the missing Bearer challenge, not a header that did arrive", () => {
+    const outcome = classifyUnauthenticatedProbe({
+      status: 403,
+      statusText: "Forbidden",
+      wwwAuthenticateHeader: 'Basic realm="admin"',
+    });
+
+    if (outcome.kind !== "unexpected") throw new Error("expected unexpected");
+    expect(outcome.message).toContain("no Bearer challenge");
+    expect(outcome.message).not.toContain("no WWW-Authenticate challenge");
+  });
+
+  // A quoted-pair must not end the quoted string early, or one scheme's realm
+  // parses as further challenges and fabricates a Bearer the server never sent.
+  it("refuses a 403 whose Bearer challenge is forged inside a quoted realm", () => {
+    const forged = 'Basic realm="a\\", Bearer error=\\"insufficient_scope\\""';
+
+    expect(hasBearerChallenge(forged)).toBe(false);
+    expect(
+      classifyUnauthenticatedProbe({
+        status: 403,
+        statusText: "Forbidden",
+        wwwAuthenticateHeader: forged,
+      }).kind
+    ).toBe("unexpected");
+  });
+
+  it("still accepts a real Bearer challenge alongside an escaped quote", () => {
+    const header = 'Basic realm="say \\"hi\\"", Bearer scope="mcp:read"';
+
+    expect(hasBearerChallenge(header)).toBe(true);
+    expect(
+      classifyUnauthenticatedProbe({
+        status: 403,
+        statusText: "Forbidden",
+        wwwAuthenticateHeader: header,
+      })
+    ).toEqual({ kind: "challenged", specCompliant: false });
+  });
+
   it("reports other statuses against what MCP requires", () => {
     const outcome = classifyUnauthenticatedProbe({
       status: 500,
@@ -184,6 +225,56 @@ describe("hasBearerChallenge", () => {
 
   it("sees a Bearer challenge that follows a param-less scheme", () => {
     expect(hasBearerChallenge('Basic, Bearer realm="mcp"')).toBe(true);
+  });
+});
+
+describe("parseBearerAuthenticateParameters", () => {
+  const PRM =
+    "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+
+  // The acceptance gate reads the whole challenge list, so the parameter reader
+  // has to as well. Anchoring on a leading `Bearer` returned nothing for a
+  // header that led with another scheme, and discovery then derived a PRM URL
+  // instead of using the advertised one.
+  it("reads a Bearer challenge that follows another scheme", () => {
+    expect(
+      parseBearerAuthenticateParameters(
+        `Basic realm="x", Bearer resource_metadata="${PRM}", scope="mcp:read"`
+      )
+    ).toEqual({ resource_metadata: PRM, scope: "mcp:read" });
+  });
+
+  it("agrees with the acceptance gate on every header it admits", () => {
+    for (const header of [
+      `Bearer resource_metadata="${PRM}"`,
+      `Basic realm="x", Bearer resource_metadata="${PRM}"`,
+      `Negotiate, Bearer scope="mcp:read"`,
+    ]) {
+      expect(hasBearerChallenge(header)).toBe(true);
+      expect(parseBearerAuthenticateParameters(header)).not.toEqual({});
+    }
+  });
+
+  it("keeps a leading Bearer challenge's own params", () => {
+    expect(
+      parseBearerAuthenticateParameters(
+        'Bearer realm="mcp", scope="a b", error="insufficient_scope"'
+      )
+    ).toEqual({ realm: "mcp", scope: "a b", error: "insufficient_scope" });
+  });
+
+  it("does not borrow params from a second Bearer challenge", () => {
+    expect(
+      parseBearerAuthenticateParameters(
+        'Bearer realm="first", Bearer error="insufficient_scope"'
+      )
+    ).toEqual({ realm: "first" });
+  });
+
+  it.each([undefined, "", 'Basic realm="x"'])("yields {} for %s", (header) => {
+    expect(
+      parseBearerAuthenticateParameters(header as string | undefined)
+    ).toEqual({});
   });
 });
 
@@ -279,6 +370,24 @@ describe.each(PROTOCOL_VERSIONS)(
         Received: "403 Forbidden",
         Expected: "401 Unauthorized",
       });
+    });
+
+    it("carries the challenged scopes when Bearer follows another scheme", async () => {
+      const state = await driveProbe(protocolVersion, {
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          "www-authenticate":
+            'Basic realm="x", Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp", scope="mcp:read"',
+        },
+      }).run();
+
+      expect(state.error).toBeUndefined();
+      expect(state.currentStep).toBe(challengedStep(protocolVersion));
+      // 2025-03-26 has no PRM support and does not track challenged scopes.
+      if (protocolVersion !== "2025-03-26") {
+        expect(state.challengedScopes).toEqual(["mcp:read"]);
+      }
     });
 
     it("fails a bare 403 without relabelling it as a request failure", async () => {
