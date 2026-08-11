@@ -2539,7 +2539,7 @@ describe("useServerState OAuth callback failures", () => {
       ...appState.servers["demo-server"],
       oauthFlowProfile: {
         serverUrl: "https://example.com/mcp",
-        resourceUrl: "https://fresh.example.com",
+        resourceUrl: "https://example.com/mcp",
         clientId: "fresh-client-id",
         clientSecret: "",
         scopes: "fresh profile",
@@ -2565,7 +2565,7 @@ describe("useServerState OAuth callback failures", () => {
         serverName: "demo-server",
         serverUrl: "https://example.com/mcp",
         scopes: ["fresh", "profile"],
-        resourceUrl: "https://fresh.example.com",
+        resourceUrl: "https://example.com/mcp",
         customHeaders: { "X-Fresh": "profile" },
         clientId: "fresh-client-id",
         clientSecret: undefined,
@@ -2576,6 +2576,47 @@ describe("useServerState OAuth callback failures", () => {
         protocolVersion: "2025-11-25",
         registrationMode: "preregistered",
         registrationStrategy: "preregistered",
+      })
+    );
+  });
+
+  // Invariant: a connect-like intent cannot opt into a foreign resource
+  // audience. The shared request builder refuses it BEFORE the redirect, so the
+  // user sees a configuration error instead of leaving the page and coming back
+  // to an opaque token rejection.
+  it("refuses a cross-origin configured resource before redirecting", async () => {
+    readStoredOAuthConfigMock.mockReturnValueOnce({});
+
+    const appState = createAppState();
+    const profiledServer = {
+      ...appState.servers["demo-server"],
+      oauthFlowProfile: {
+        serverUrl: "https://example.com/mcp",
+        resourceUrl: "https://attacker.example.com/mcp",
+        clientId: "fresh-client-id",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+    };
+    appState.servers["demo-server"] = profiledServer as any;
+    appState.projects.default.servers["demo-server"] = profiledServer as any;
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "demo-server",
+        error: expect.stringContaining("attacker.example.com"),
       })
     );
   });

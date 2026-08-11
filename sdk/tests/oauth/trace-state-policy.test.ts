@@ -99,6 +99,100 @@ describe("OAuth `state` is redacted everywhere a trace can carry it", () => {
   });
 });
 
+describe("shapes a name-only or exact-match policy used to miss", () => {
+  const SECRET = "ntn_supersecretvalue1234567890";
+
+  // `new URL(...).toString()` re-emits userinfo, so the parse-success branch of
+  // `sanitizeOAuthUrl` shipped `https://user:pass@host` into every sanitized
+  // history entry. Only the unparseable branch was covered.
+  it("strips userinfo from a parseable URL", () => {
+    const sanitized = sanitizeOAuthUrl(
+      `https://svc-user:${SECRET}@auth.example.com/token?grant_type=x`,
+    );
+    expect(sanitized).not.toContain(SECRET);
+    expect(sanitized).not.toContain("svc-user");
+    expect(sanitized).toContain("auth.example.com/token");
+    expect(sanitized).toContain("grant_type=x");
+  });
+
+  // Headers and query params applied a `token|secret|auth` heuristic; structured
+  // fields applied only the exact-name set. The same name was therefore
+  // redacted in a URL and emitted raw in a JSON body.
+  it.each(["session_token", "vendor_secret", "x_api_key", "auth"])(
+    "redacts %s wherever it appears",
+    (name) => {
+      expect(
+        JSON.stringify(sanitizeOAuthTraceValue({ [name]: SECRET })),
+      ).not.toContain(SECRET);
+      expect(
+        sanitizeOAuthUrl(`https://a.example.com/x?${name}=${SECRET}`),
+      ).not.toContain(SECRET);
+    },
+  );
+
+  // The descriptive-suffix exemption is about the NAME. A name ending in
+  // `_url`/`_uri`/`_endpoint` still carries a value, and that value is
+  // routinely another URL with a query string of its own — so exempting the
+  // name must not exempt what it points at.
+  it("sanitizes the value behind a descriptive name", () => {
+    const nested = encodeURIComponent(
+      `https://evil.test/cb?access_token=${SECRET}`,
+    );
+    for (const name of [
+      "session_token_url",
+      "password_uri",
+      "client_secret_endpoint",
+    ]) {
+      const sanitized = sanitizeOAuthUrl(
+        `https://a.example.com/x?${name}=${nested}`,
+      );
+      expect(sanitized, name).not.toContain(SECRET);
+      // The name and its host are the diagnostic and survive.
+      expect(sanitized, name).toContain(name);
+      expect(decodeURIComponent(sanitized), name).toContain("evil.test");
+    }
+  });
+
+  it("sanitizes an inline credential under a non-URL descriptive name", () => {
+    const sanitized = sanitizeOAuthUrl(
+      `https://a.example.com/x?next_url=${encodeURIComponent(
+        `/cb&access_token=${SECRET}`,
+      )}`,
+    );
+    expect(sanitized).not.toContain(SECRET);
+  });
+
+  it("leaves a URL with nothing to redact byte-identical", () => {
+    // The nested pass must not re-encode an untouched query string, or every
+    // golden that contains a URL churns.
+    const url = "https://a.example.com/x?token_endpoint=https%3A%2F%2Fb.test%2Ft&scope=openid+profile";
+    expect(sanitizeOAuthUrl(url)).toBe(url);
+  });
+
+  // …but the heuristic must not empty out the discovery view. These name a
+  // capability; none of them is a value anyone can spend.
+  it("keeps protocol metadata that merely describes a credential", () => {
+    const metadata = {
+      token_type: "Bearer",
+      token_endpoint: "https://auth.example.com/token",
+      token_endpoint_auth_methods_supported: ["none"],
+      id_token_signing_alg_values_supported: ["RS256"],
+      revocation_endpoint_auth_methods_supported: ["none"],
+      expires_in: 3600,
+    };
+
+    expect(sanitizeOAuthTraceValue(metadata)).toEqual(metadata);
+  });
+
+  // `URLSearchParams` accepts a colon in a key, so prose parsed as one
+  // "structured field" whose name is in no sensitive set.
+  it("does not let a colon-bearing key smuggle prose past redaction", () => {
+    expect(
+      JSON.stringify(sanitizeOAuthTraceValue(`rejected:access_token=${SECRET}`)),
+    ).not.toContain(SECRET);
+  });
+});
+
 describe("state diagnostics without the nonce", () => {
   it("reports presence and match", () => {
     expect(

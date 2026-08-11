@@ -44,7 +44,6 @@ import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
 import { TracingTab } from "./components/TracingTab";
-import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
@@ -222,6 +221,7 @@ import {
 import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
+  OAUTH_PENDING_STORAGE_KEY,
 } from "./lib/oauth/mcp-oauth";
 import {
   buildElectronMcpCallbackUrl,
@@ -337,7 +337,7 @@ function clearHostedCallbackRetryState() {
   clearHostedOAuthPendingState();
   clearHostedOAuthResumeMarker();
   clearGuestSession();
-  localStorage.removeItem("mcp-oauth-pending");
+  localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
   localStorage.removeItem("mcp-oauth-return-hash");
 
   for (const storage of [window.localStorage, window.sessionStorage]) {
@@ -361,18 +361,29 @@ function clearHostedCallbackRetryState() {
  *
  * Uses the SDK's single trace redactor rather than a local pattern list — this
  * used to be a fourth private copy, and a private copy is how the sensitive-
- * field set drifts. The stack is redacted line by line because the shared
- * redactor caps its output length (it is built for one error message), and a
- * truncated stack is not worth having.
+ * field set drifts.
+ *
+ * The stack is redacted in ONE pass with a raised cap, not line by line. A
+ * multi-line payload can put a JSON credential's key and its value on separate
+ * lines, and splitting first hands the redactor two fragments that match
+ * neither — so the value survives into copied and reported output. The cap
+ * exists for a single error message; a stack legitimately needs more room.
  */
+const MAX_REDACTED_STACK = 8_000;
+
+function redactStackLikeText(value: string | null | undefined): string {
+  if (!value) return "";
+  return sanitizeTraceErrorMessage(value, {
+    maxLength: MAX_REDACTED_STACK,
+    maxScanned: MAX_REDACTED_STACK * 2,
+  });
+}
+
 function redactOAuthDebuggerError(error: Error | null) {
-  const stack = error?.stack;
   return {
     name: sanitizeTraceErrorMessage(error?.name ?? "Error"),
     message: sanitizeTraceErrorMessage(error?.message ?? "Unknown error"),
-    stack: stack
-      ? stack.split("\n").map(sanitizeTraceErrorMessage).join("\n")
-      : "",
+    stack: redactStackLikeText(error?.stack),
   };
 }
 
@@ -535,8 +546,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <PromptsRoute />;
     case "tasks":
       return <TasksRoute />;
-    case "auth":
-      return <AuthRoute />;
     case "skills":
       return <SkillsRoute />;
     case "learning":
@@ -1785,17 +1794,6 @@ export function TasksRoute() {
   );
 }
 
-export function AuthRoute() {
-  const { selectedMCPConfig, appState } = useAppRouteContext();
-  return (
-    <AuthTab
-      serverConfig={selectedMCPConfig}
-      serverEntry={appState.servers[appState.selectedServer]}
-      serverName={appState.selectedServer}
-    />
-  );
-}
-
 export function OAuthFlowRoute() {
   const {
     appState,
@@ -1851,10 +1849,7 @@ export function OAuthFlowRoute() {
           name: sanitizedError.name,
           message: sanitizedError.message,
           stack: sanitizedError.stack,
-          componentStack: (errorInfo.componentStack ?? "")
-            .split("\n")
-            .map(sanitizeTraceErrorMessage)
-            .join("\n"),
+          componentStack: redactStackLikeText(errorInfo.componentStack),
         });
       }}
     >
@@ -2310,7 +2305,7 @@ export default function App() {
       }
 
       clearHostedOAuthPendingState();
-      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
@@ -2897,8 +2892,7 @@ export default function App() {
       activeTab === "prompts" ||
       activeTab === "tasks" ||
       activeTab === "conformance" ||
-      activeTab === "compatibility" ||
-      activeTab === "auth";
+      activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(projectServers).find(

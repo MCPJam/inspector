@@ -30,7 +30,7 @@ const CLIENT_SRC = resolve(fileURLToPath(import.meta.url), "../../..");
  * apply it somewhere new, which is exactly the review moment worth forcing.
  */
 const REDACTION_IDENTIFIER_PATTERN =
-  /\b(sanitizeOAuth[A-Za-z]*|redactSensitiveValue[A-Za-z]*|traceOAuth[A-Za-z]*)\b/;
+  /\b(sanitizeOAuth[A-Za-z]*|redactSensitiveValue[A-Za-z]*|redactSensitiveTraceValue|traceOAuth[A-Za-z]*|sanitizeTraceErrorMessage|sanitizeStepError)\b/;
 
 const ALLOWED_FILES = new Set([
   // The gate + re-export. The policy itself lives in the SDK.
@@ -38,6 +38,12 @@ const ALLOWED_FILES = new Set([
   // Builds the trace entries; calls the gated helpers, defines none.
   "lib/oauth/mcp-oauth.ts",
   "lib/oauth/oauth-trace.ts",
+  // Applies the shared redactor to the OAuth debugger's error boundary. Listed
+  // rather than pattern-exempt: a new file reaching for the policy should show
+  // up here as a diff line someone has to justify.
+  "App.tsx",
+  // Re-exports `sanitizeStepError` for the debugger's Sentry reporting.
+  "lib/oauth/debug-state-machine-adapter.ts",
 ]);
 
 function sourceFiles(dir: string): string[] {

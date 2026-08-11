@@ -7,8 +7,17 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
+import {
+  getStoredTokens,
+  initiateOAuth,
+  OAUTH_PENDING_STORAGE_KEY,
+} from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
+import {
+  buildOAuthRequest,
+  type BuiltOAuthRequest,
+} from "@/lib/oauth/oauth-request";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
@@ -62,6 +71,20 @@ export interface HostedOAuthServerDescriptor {
   oauthProtocolMode?: string | null;
   oauthProtocolVersion?: string | null;
   wireProtocolVersion?: string | null;
+  /**
+   * Per-server OAuth facts the shared request builder needs.
+   *
+   * These used to have no home on this descriptor, so the hosted authorization
+   * simply omitted them and produced different wire behavior than a local
+   * connect against the same server. They are optional because a hosted
+   * bootstrap payload that does not carry them yet must keep working — but the
+   * hosted path now THREADS whatever it is given instead of dropping it.
+   */
+  oauthResourceUrl?: string | null;
+  hasClientSecret?: boolean | null;
+  oauthCustomHeaders?: Record<string, string> | null;
+  oauthAllowPathScopedIssuer?: boolean | null;
+  registrationMode?: string | null;
   /** When true, server was opted in after session start (copy / UX hints). */
   optional?: boolean;
 }
@@ -546,26 +569,67 @@ export function useHostedOAuthGate({
       const protocolSelection =
         resolveHostedOAuthProtocolSelection(server);
 
-      const result = await initiateOAuth({
-        serverName: server.serverName,
-        serverUrl: server.serverUrl,
-        clientId: server.clientId ?? undefined,
-        scopes: server.oauthScopes ?? undefined,
-        protocolMode: protocolSelection.mode,
-        protocolVersion: protocolSelection.protocolVersion,
-        protocolResolutionSource: protocolSelection.source,
-        onTraceUpdate: (oauthTrace: OAuthTrace) => {
-          ingestOAuthTraceLogs({
-            serverId: server.serverId,
+      // Same builder as connect and reconnect. This call site used to omit
+      // allowPathScopedIssuer, hasClientSecret, customHeaders, resourceUrl, and
+      // registrationMode entirely, so a hosted connect produced different wire
+      // behavior than a local one against the same server.
+      //
+      // The builder refuses a configured resource indicator that is not this
+      // server's, before the redirect. Report that like any other
+      // could-not-start failure rather than letting it escape the callback.
+      let request: BuiltOAuthRequest;
+      try {
+        request = buildOAuthRequest(
+          {
             serverName: server.serverName,
-            trace: oauthTrace,
-          });
-        },
-      });
+            serverUrl: server.serverUrl,
+            clientId: server.clientId ?? undefined,
+            scopes: server.oauthScopes ?? undefined,
+            resourceUrl: server.oauthResourceUrl ?? undefined,
+            hasClientSecret: server.hasClientSecret === true,
+            customHeaders: server.oauthCustomHeaders ?? undefined,
+            allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
+            registrationMode: normalizeRegistrationMode(
+              server.registrationMode ?? undefined,
+            ),
+            protocolMode: protocolSelection.mode,
+            protocolVersion: protocolSelection.protocolVersion,
+            protocolResolutionSource: protocolSelection.source,
+            onTraceUpdate: (oauthTrace: OAuthTrace) => {
+              ingestOAuthTraceLogs({
+                serverId: server.serverId,
+                serverName: server.serverName,
+                trace: oauthTrace,
+              });
+            },
+          },
+          { intent: "hosted-connect" },
+        );
+      } catch (error) {
+        clearHostedOAuthPendingState();
+        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
+        localStorage.removeItem("mcp-oauth-return-hash");
+        localStorage.removeItem(pendingKey);
+        setOAuthStateByServerId((previous) => ({
+          ...previous,
+          [server.serverId]: {
+            status: "error",
+            errorMessage: sanitizeHostedOAuthErrorMessage(
+              error instanceof Error ? error.message : undefined,
+              "Authorization could not be started. Try again."
+            ),
+            serverUrl:
+              previous[server.serverId]?.serverUrl ?? server.serverUrl ?? null,
+          },
+        }));
+        return;
+      }
+
+      const result = await initiateOAuth(request);
 
       if (!result.success) {
         clearHostedOAuthPendingState();
-        localStorage.removeItem("mcp-oauth-pending");
+        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem(pendingKey);
         setOAuthStateByServerId((previous) => ({
@@ -593,7 +657,7 @@ export function useHostedOAuthGate({
 
       if (accessToken) {
         clearHostedOAuthPendingState();
-        localStorage.removeItem("mcp-oauth-pending");
+        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem(pendingKey);
       }

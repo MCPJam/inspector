@@ -236,6 +236,10 @@ async function runFullFlow(
   connectOverrides: Record<string, unknown> = {},
 ): Promise<FlowResult> {
   const server = await startFakeOAuthMcpServer(fixtureOptions);
+  // Registered the moment it exists: `runFullFlow` can throw below (no
+  // authorization URL, no redirect), and a leaked listener turns one clear
+  // assertion failure into port exhaustion that buries the original cause.
+  openServers.push(server);
   const { initiateOAuth, handleOAuthCallback } = await import("../mcp-oauth");
 
   const initiate = await initiateOAuth({
@@ -294,15 +298,9 @@ afterEach(async () => {
   openServers = [];
 });
 
-async function track(promise: Promise<FlowResult>): Promise<FlowResult> {
-  const result = await promise;
-  openServers.push(result.server);
-  return result;
-}
-
 describe("real executor → real state machine (hosted)", () => {
   it("produces an Authorization header the MCP resource actually accepts", async () => {
-    const { server, callback } = await track(runFullFlow("integration-happy"));
+    const { server, callback } = await runFullFlow("integration-happy");
 
     expect(callback.success, callback.error).toBe(true);
 
@@ -333,11 +331,9 @@ describe("real executor → real state machine (hosted)", () => {
   // which an exact-match name set does not catch.
   it("keeps a credential echoed in error_description out of the published trace", async () => {
     const echoed = FAKE_OAUTH_ACCESS_TOKEN;
-    const { callback } = await track(
-      runFullFlow("integration-token-failure", {
-        tokenFailure: { echoInErrorDescription: `access_token=${echoed}` },
-      }),
-    );
+    const { callback } = await runFullFlow("integration-token-failure", {
+      tokenFailure: { echoInErrorDescription: `access_token=${echoed}` },
+    });
 
     expect(callback.success).toBe(false);
     const serialized = JSON.stringify(callback.oauthTrace ?? {});
@@ -350,7 +346,7 @@ describe("MCP OAuth wire invariants (2025-11-25 via the real machine)", () => {
   let requests: FakeMcpRequestRecord[];
 
   beforeEach(async () => {
-    flow = await track(runFullFlow("integration-invariants"));
+    flow = await runFullFlow("integration-invariants");
     requests = flow.server.requests;
     expect(flow.callback.success, flow.callback.error).toBe(true);
   });
@@ -521,13 +517,11 @@ describe("MCP OAuth wire invariants — failure paths", () => {
   // Advertising `plain` in addition to S256 is interoperability, not a
   // failure — the client picks S256 and proceeds.
   it("proceeds when the server advertises plain alongside S256", async () => {
-    const { authorizationUrl } = await track(
-      runFullFlow("integration-pkce-both", {
-        authorizationServerMetadata: {
-          code_challenge_methods_supported: ["plain", "S256"],
-        },
-      }),
-    );
+    const { authorizationUrl } = await runFullFlow("integration-pkce-both", {
+      authorizationServerMetadata: {
+        code_challenge_methods_supported: ["plain", "S256"],
+      },
+    });
 
     expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe(
       "S256",
@@ -556,6 +550,25 @@ describe("MCP OAuth wire invariants — failure paths", () => {
     expect(find(server.requests, "/token")).toHaveLength(0);
   });
 
+  // The counterpart to the no-session recovery guard: a callback that DOES
+  // have a stored session goes through the SDK machine, which is the only
+  // remaining wire implementation. Proven by the token request reaching the
+  // fixture, not by inspecting our own branch.
+  it("redeems through the SDK machine when a stored session exists", async () => {
+    const { server, callback } = await runFullFlow(
+      "integration-session-present",
+    );
+
+    expect(callback.success, callback.error).toBe(true);
+    const tokenRequests = find(server.requests, "/token");
+    expect(tokenRequests).toHaveLength(1);
+    // The era machine's exchange: PKCE verifier and the bound resource. The
+    // retired legacy path sent neither of these the same way.
+    const body = tokenRequests[0]?.body as Record<string, string>;
+    expect(body.code_verifier).toBeTruthy();
+    expect(body.resource).toBe(server.serverUrl);
+  });
+
   // Invariant 8: a connect-time `resourceUrl` that does not identify the
   // configured MCP server must be rejected before the browser is redirected.
   it("rejects a foreign configured resourceUrl before redirect", async () => {
@@ -563,30 +576,26 @@ describe("MCP OAuth wire invariants — failure paths", () => {
     openServers.push(server);
     const { initiateOAuth } = await import("../mcp-oauth");
 
-    const result = await initiateOAuth({
-      serverName: "integration-foreign-resource",
-      serverUrl: server.serverUrl,
-      resourceUrl: "https://attacker.example.com/mcp",
-    } as never);
+    const { buildOAuthRequest, OAuthRequestRejectedError } = await import(
+      "../oauth-request"
+    );
 
-    const authorizeRequests = find(server.requests, "/authorize");
-    const stored = JSON.parse(
-      localStorage.getItem("mcp-oauth-flow-state-integration-foreign-resource") ??
-        "null",
-    ) as { state?: { authorizationUrl?: string } } | null;
-    const authorizationUrl = stored?.state?.authorizationUrl;
+    // Rejected outright, not quietly defaulted: asserting only "did not bind
+    // the foreign resource" would also pass if the flow silently fell back,
+    // which is a different (and unstated) behavior.
+    expect(() =>
+      buildOAuthRequest(
+        {
+          serverName: "integration-foreign-resource",
+          serverUrl: server.serverUrl,
+          resourceUrl: "https://attacker.example.com/mcp",
+        },
+        { intent: "connect" },
+      ),
+    ).toThrow(OAuthRequestRejectedError);
 
-    // Either the flow refused outright, or it fell back to the configured MCP
-    // server's own resource. What it must never do is bind the foreign one.
-    if (authorizationUrl) {
-      expect(
-        new URL(authorizationUrl).searchParams.get("resource") ?? "",
-      ).not.toContain("attacker.example.com");
-    } else {
-      expect(result.success).toBe(false);
-    }
-    for (const entry of authorizeRequests) {
-      expect(entry.query.resource ?? "").not.toContain("attacker.example.com");
-    }
+    // And nothing reached the wire.
+    expect(find(server.requests, "/authorize")).toHaveLength(0);
+    expect(find(server.requests, "/token")).toHaveLength(0);
   });
 });

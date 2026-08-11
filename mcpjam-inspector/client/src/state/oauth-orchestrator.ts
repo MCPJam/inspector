@@ -3,12 +3,16 @@ import {
   initiateOAuth,
   readStoredOAuthConfig,
   resolveStoredIssuer,
-  MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { resolveOAuthProtocolSelection } from "@/shared/types.js";
 import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
+import {
+  buildOAuthRequest,
+  selectStoredResourceUrl,
+  type BuiltOAuthRequest,
+} from "@/lib/oauth/oauth-request";
 import {
   resolveStepUpAction,
   type StepUpAction,
@@ -173,7 +177,8 @@ function buildReconnectOAuthOptions(
    * points its metadata elsewhere (Asana) is honored on re-authorization.
    */
   resourceMetadataUrl?: string,
-): MCPOAuthOptions {
+  onTraceUpdate?: (trace: OAuthTrace) => void,
+): BuiltOAuthRequest {
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
   const profile = server.oauthFlowProfile;
@@ -202,51 +207,68 @@ function buildReconnectOAuthOptions(
     oauthConfig.registrationMode ??
     "auto";
   const profileScopes = parseOAuthScopes(profile?.scopes);
-  const effectiveScopes =
-    stepUpScopes && stepUpScopes.length > 0
-      ? stepUpScopes
-      : profileScopes ?? oauthConfig.scopes;
 
-  return {
-    serverName: server.name,
-    serverUrl,
-    scopes: effectiveScopes,
-    // Preserve `undefined` as the default so a non-step-up reconnect never
-    // pins an override and discovery keeps deriving the URL as it does today.
-    resourceMetadataUrl: nonEmptyString(resourceMetadataUrl),
-    resourceUrl: nonEmptyString(profile?.resourceUrl) ?? oauthConfig.resourceUrl,
-    customHeaders:
-      profileHeadersToRecord(profile?.customHeaders) ??
-      normalizeHeaders((server.config as any)?.requestInit?.headers) ??
-      withoutAuthorizationHeader(oauthConfig.customHeaders),
-    registryServerId: oauthConfig.registryServerId,
-    useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
-    clientId:
-      nonEmptyString(server.oauthTokens?.client_id) ??
-      nonEmptyString(profile?.clientId) ??
-      storedClientInfo.client_id,
-    clientSecret: undefined,
-    hasClientSecret: Boolean(server.hasClientSecret),
-    protocolMode: protocolSelection.mode,
-    protocolVersion: protocolSelection.protocolVersion,
-    protocolResolutionSource: protocolSelection.source,
-    // Per-server opt-in for a path-scoped authorization server. Every reconnect
-    // and step-up re-authorization funnels through this builder, so omitting it
-    // here makes the strict RFC 8414 §3.3 check reject the server no matter
-    // what the toggle says.
-    allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
-    registrationMode,
-    registrationStrategy:
-      registrationMode !== "auto"
-        ? registrationMode
-        : profile?.registrationStrategy ?? oauthConfig.registrationStrategy,
-  };
+  return buildOAuthRequest(
+    {
+      serverName: server.name,
+      serverUrl,
+      scopes: profileScopes ?? oauthConfig.scopes,
+      // A stored resource indicator belongs to the endpoint it was captured
+      // for. After a server URL edit the old value is stale: on a new origin it
+      // would block the reconnect, and on the same origin it would quietly mint
+      // a token for the wrong endpoint.
+      resourceUrl: selectStoredResourceUrl(serverUrl, [
+        {
+          resourceUrl: profile?.resourceUrl,
+          capturedForServerUrl: profile?.serverUrl,
+        },
+        {
+          resourceUrl: oauthConfig.resourceUrl,
+          capturedForServerUrl:
+            localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined,
+        },
+      ]),
+      customHeaders:
+        profileHeadersToRecord(profile?.customHeaders) ??
+        normalizeHeaders((server.config as any)?.requestInit?.headers) ??
+        withoutAuthorizationHeader(oauthConfig.customHeaders),
+      registryServerId: oauthConfig.registryServerId,
+      useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
+      clientId:
+        nonEmptyString(server.oauthTokens?.client_id) ??
+        nonEmptyString(profile?.clientId) ??
+        storedClientInfo.client_id,
+      clientSecret: undefined,
+      hasClientSecret: Boolean(server.hasClientSecret),
+      protocolMode: protocolSelection.mode,
+      protocolVersion: protocolSelection.protocolVersion,
+      protocolResolutionSource: protocolSelection.source,
+      // Per-server opt-in for a path-scoped authorization server. Every
+      // reconnect and step-up re-authorization funnels through here, so
+      // omitting it makes the strict RFC 8414 §3.3 check reject the server no
+      // matter what the toggle says.
+      allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
+      registrationMode,
+      registrationStrategy:
+        profile?.registrationStrategy ?? oauthConfig.registrationStrategy,
+      onTraceUpdate,
+    },
+    {
+      // A step-up is a re-authorization with a widened scope set; without
+      // stepUpScopes it is an ordinary reconnect.
+      intent: stepUpScopes && stepUpScopes.length > 0 ? "step-up" : "reconnect",
+      stepUpScopes,
+      // Preserve `undefined` as the default so a non-step-up reconnect never
+      // pins an override and discovery keeps deriving the URL as it does today.
+      resourceMetadataUrl: nonEmptyString(resourceMetadataUrl),
+    },
+  );
 }
 
 export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
   options?: {
-    beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
+    beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     allowInteractiveOAuthFlow?: boolean;
     /**
@@ -319,15 +341,29 @@ export async function ensureAuthorizedForReconnect(
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
   if (url) {
-    const opts = buildReconnectOAuthOptions(
-      server,
-      url,
-      options?.stepUpScopes,
-      options?.resourceMetadataUrl,
-    );
+    // The builder refuses a configured resource indicator that is not this
+    // server's BEFORE the redirect. Surface that as an ordinary OAuth error —
+    // a misconfigured server is a configuration problem, not a crash.
+    let opts: BuiltOAuthRequest;
+    try {
+      opts = buildReconnectOAuthOptions(
+        server,
+        url,
+        options?.stepUpScopes,
+        options?.resourceMetadataUrl,
+        options?.onTraceUpdate,
+      );
+    } catch (error) {
+      return {
+        kind: "error",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to build the OAuth request",
+      };
+    }
     clearOAuthData(server.name);
     options?.beforeRedirect?.(opts);
-    opts.onTraceUpdate = options?.onTraceUpdate;
     const init = await initiateOAuth(opts);
     if (init.success && init.serverConfig) {
       return {
@@ -776,7 +812,7 @@ export async function applyToolCallStepUp(
     authMode?: StepUpAuthMode;
     maxRetries?: number;
     onTraceUpdate?: (trace: OAuthTrace) => void;
-    beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
+    beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
     /**
      * Exact MCP operation whose retry budget this challenge consumes.
      * Defaults to a server-wide tools/call bucket only for compatibility with
