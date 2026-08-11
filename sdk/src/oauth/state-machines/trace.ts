@@ -2,6 +2,12 @@ import {
   getStepIndex,
   getStepInfo,
 } from "./shared/step-metadata.js";
+import {
+  sanitizeOAuthHeaders,
+  sanitizeOAuthTraceValue,
+  sanitizeOAuthUrl,
+  sanitizeTraceErrorMessage,
+} from "./trace-redaction.js";
 import type {
   HttpHistoryEntry,
   OAuthFlowState,
@@ -49,263 +55,6 @@ type OAuthTraceEntryDraft = {
   recoveryMessage?: string;
 };
 
-type OAuthRequestFields = Record<string, string>;
-
-const SENSITIVE_FIELD_NAMES = new Set([
-  "access_token",
-  "refresh_token",
-  "id_token",
-  "client_secret",
-  "code",
-  "code_verifier",
-  "authorization_code",
-  "authorization",
-  "cookie",
-  "set_cookie",
-  "api_key",
-]);
-
-const SENSITIVE_HEADER_PATTERNS = [
-  /^authorization$/i,
-  /^proxy-authorization$/i,
-  /^cookie$/i,
-  /^set-cookie$/i,
-  /^x-api-key$/i,
-  /^api-key$/i,
-  /^apikey$/i,
-  /^x-auth-token$/i,
-  /^x-csrf-token$/i,
-  /^x-session-token$/i,
-  /^x-access-token$/i,
-  /^x-refresh-token$/i,
-  /^x-client-secret$/i,
-  /^x-credential$/i,
-];
-
-function normalizeSensitiveKey(key: string): string {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .toLowerCase();
-}
-
-function isSensitiveTraceFieldName(key: string): boolean {
-  return SENSITIVE_FIELD_NAMES.has(normalizeSensitiveKey(key));
-}
-
-function isSensitiveHeaderName(key: string): boolean {
-  const normalized = normalizeSensitiveKey(key);
-  return (
-    SENSITIVE_FIELD_NAMES.has(normalized) ||
-    SENSITIVE_HEADER_PATTERNS.some((pattern) => pattern.test(key)) ||
-    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
-      normalized,
-    ) ||
-    /(^|_)api_?key(_|$)/.test(normalized)
-  );
-}
-
-function isSensitiveQueryParamName(key: string): boolean {
-  const normalized = normalizeSensitiveKey(key);
-  return (
-    SENSITIVE_FIELD_NAMES.has(normalized) ||
-    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
-      normalized,
-    ) ||
-    /(^|_)api_?key(_|$)/.test(normalized)
-  );
-}
-
-function redactSensitiveValue(value: unknown): string {
-  if (typeof value !== "string") {
-    return "[redacted]";
-  }
-
-  if (value.length <= 8) {
-    return "[redacted]";
-  }
-
-  return `${value.slice(0, 4)}...[redacted]...${value.slice(-2)}`;
-}
-
-function parseOAuthRequestFields(
-  body: unknown,
-): OAuthRequestFields | undefined {
-  if (!body) return undefined;
-
-  if (typeof body === "string") {
-    const trimmed = body.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-
-    if (
-      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-      (trimmed.startsWith("[") && trimmed.endsWith("]"))
-    ) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          !Array.isArray(parsed)
-        ) {
-          const entries = Object.entries(parsed).flatMap(([key, value]) => {
-            if (typeof value === "string") {
-              return [[key, value] as const];
-            }
-            if (typeof value === "number" || typeof value === "boolean") {
-              return [[key, String(value)] as const];
-            }
-            return [];
-          });
-          return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-        }
-      } catch {
-        // Fall through to URLSearchParams parsing.
-      }
-    }
-
-    const params = new URLSearchParams(trimmed);
-    const entries = Object.fromEntries(params.entries());
-    return Object.keys(entries).length > 0 ? entries : undefined;
-  }
-
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return undefined;
-  }
-
-  const entries = Object.entries(body).flatMap(([key, value]) => {
-    if (typeof value === "string") {
-      return [[key, value] as const];
-    }
-    if (typeof value === "number" || typeof value === "boolean") {
-      return [[key, String(value)] as const];
-    }
-    return [];
-  });
-
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-function sanitizeOAuthUrl(rawUrl: string): string {
-  try {
-    const url = new URL(rawUrl);
-    for (const key of [...url.searchParams.keys()]) {
-      if (isSensitiveQueryParamName(key)) {
-        url.searchParams.set(key, "[redacted]");
-      }
-    }
-    if (url.hash) {
-      url.hash = "#[redacted]";
-    }
-    return url.toString();
-  } catch {
-    return rawUrl.replace(
-      /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
-      "Bearer [redacted]",
-    );
-  }
-}
-
-/**
- * Redact credential-shaped substrings from a free-form error message.
- *
- * Error strings interpolate upstream response fields — e.g.
- * `Token request failed: ${body.error} - ${body.error_description}` — so an
- * authorization server that echoes a credential back in `error_description`
- * would otherwise land it verbatim in rendered trace output.
- *
- * Unlike `sanitizeOAuthTraceString`, this never re-shapes the value into an
- * object: an error message must stay a human-readable string. The key list is
- * kept identical to that function's so redaction behaves predictably across
- * both paths.
- */
-function sanitizeTraceErrorMessage(message: string): string {
-  return message
-    .replace(
-      /\b(access_token|refresh_token|id_token|client_secret|code_verifier)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
-      (_match, key: string, separator: string) =>
-        `${key}${separator}[redacted]`,
-    )
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]");
-}
-
-function sanitizeOAuthTraceString(value: string): unknown {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return value;
-  }
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    return sanitizeOAuthUrl(trimmed);
-  }
-
-  const looksStructured =
-    trimmed.includes("=") ||
-    trimmed.includes("&") ||
-    ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-      (trimmed.startsWith("[") && trimmed.endsWith("]")));
-  if (looksStructured) {
-    const parsed = parseOAuthRequestFields(trimmed);
-    if (parsed) {
-      return sanitizeOAuthTraceValue(parsed);
-    }
-  }
-
-  return trimmed
-    .replace(
-      /\b(access_token|refresh_token|id_token|client_secret|code_verifier)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
-      (_match, key: string, separator: string) =>
-        `${key}${separator}[redacted]`,
-    )
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]");
-}
-
-function sanitizeOAuthTraceValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeOAuthTraceValue(item));
-  }
-
-  if (typeof value === "string") {
-    return sanitizeOAuthTraceString(value);
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => {
-      if (isSensitiveTraceFieldName(key)) {
-        return [key, redactSensitiveValue(entryValue)];
-      }
-      return [key, sanitizeOAuthTraceValue(entryValue)];
-    }),
-  );
-}
-
-function sanitizeOAuthHeaderValue(value: string): string {
-  const sanitized = sanitizeOAuthTraceString(value);
-  if (typeof sanitized === "string") {
-    return sanitized;
-  }
-  return redactSensitiveValue(value);
-}
-
-function sanitizeOAuthHeaders(
-  headers: Record<string, string>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => {
-      if (isSensitiveHeaderName(key)) {
-        return [key, redactSensitiveValue(value)];
-      }
-      return [key, sanitizeOAuthHeaderValue(value)];
-    }),
-  );
-}
-
 function cloneHttpHistoryEntry(entry: HttpHistoryEntry): HttpHistoryEntry {
   return JSON.parse(JSON.stringify(entry)) as HttpHistoryEntry;
 }
@@ -315,6 +64,10 @@ function sanitizeHttpHistoryEntry(entry: HttpHistoryEntry): HttpHistoryEntry {
     ...entry,
     request: {
       ...entry.request,
+      // The URL carries credentials too: an authorization request puts `state`
+      // in the query, and error/callback URLs can carry `code`. Redacting only
+      // headers and body left those in every sanitized history entry.
+      url: sanitizeOAuthUrl(entry.request.url),
       headers: sanitizeOAuthHeaders(entry.request.headers),
       body: sanitizeOAuthTraceValue(entry.request.body),
     },
@@ -552,6 +305,18 @@ export function projectOAuthTraceSnapshot(input: {
   sanitize?: boolean;
 }): OAuthTraceSnapshot {
   const { state, context, sanitize: sanitizeTraces = true } = input;
+
+  // The single projection of `state.error`. Every consumer below reads this
+  // variable rather than `state.error`, so there is exactly one place where the
+  // raw value crosses into display output and exactly one place to keep in sync
+  // with the redaction policy. (A previous fix patched one of two fallback
+  // branches and the other kept emitting the raw string.)
+  const projectedStateError = state.error
+    ? sanitizeTraces
+      ? sanitizeTraceErrorMessage(state.error)
+      : state.error
+    : undefined;
+
   const trace: OAuthTraceSnapshot = {
     version: 1,
     currentStep: state.currentStep,
@@ -559,13 +324,7 @@ export function projectOAuthTraceSnapshot(input: {
     httpHistory: (state.httpHistory ?? []).map((entry) =>
       sanitizeTraces ? sanitizeHttpHistoryEntry(entry) : cloneHttpHistoryEntry(entry),
     ),
-    ...(state.error
-      ? {
-          error: sanitizeTraces
-            ? sanitizeTraceErrorMessage(state.error)
-            : state.error,
-        }
-      : {}),
+    ...(projectedStateError ? { error: projectedStateError } : {}),
   };
 
   const currentStepIndex = getStepIndex(state.currentStep);
@@ -711,9 +470,7 @@ export function projectOAuthTraceSnapshot(input: {
     inferStepEntry(entries, context, state.currentStep, true, undefined, sanitizeTraces);
     const currentEntry = entries.get(state.currentStep);
     if (currentEntry) {
-      currentEntry.error = sanitizeTraces
-        ? sanitizeTraceErrorMessage(state.error)
-        : state.error;
+      currentEntry.error = projectedStateError;
     }
   }
 
@@ -729,7 +486,8 @@ export function projectOAuthTraceSnapshot(input: {
         entry.step === state.currentStep &&
         Boolean(state.error) &&
         !usesRecoveredDynamicClientRegistrationFallback(state);
-      const error = entry.error ?? (usesStateError ? state.error : undefined);
+      const error =
+        entry.error ?? (usesStateError ? projectedStateError : undefined);
       const status =
         entry.recovered
           ? "success"

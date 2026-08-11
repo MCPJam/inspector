@@ -13,7 +13,7 @@
  * Never throws. Always returns a `NormalizedError`.
  */
 
-import { redactSensitiveValue } from "../redaction.js";
+import { redactForTelemetry } from "../telemetry-redaction.js";
 import {
   MCP_ERROR_CODES,
   PRE_RENUMBER_DRAFT_ERROR_CODES,
@@ -70,7 +70,7 @@ export function isNormalizedError(value: unknown): value is NormalizedError {
 }
 
 function redactString(value: string): string {
-  const out = redactSensitiveValue(value);
+  const out = redactForTelemetry(value);
   return typeof out === "string" ? out : String(value);
 }
 
