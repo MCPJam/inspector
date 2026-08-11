@@ -51,6 +51,8 @@ export interface RunServerDoctorInput<TTarget = unknown> {
   timeout: number;
   rpcLogger?: RpcLogger;
   retryPolicy?: RetryPolicy;
+  /** Transport for the probe's requests. See `buildDoctorProbeConfig`. */
+  fetchFn?: typeof fetch;
 }
 
 type WithConnectedManager = <T>(
@@ -101,6 +103,7 @@ export async function runServerDoctor<TTarget = unknown>(
         buildDoctorProbeConfig(input.config, {
           timeout: input.timeout,
           retryPolicy: input.retryPolicy,
+          fetchFn: input.fetchFn,
         })
       );
       result.checks.probe = summarizeProbeCheck(

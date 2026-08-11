@@ -23,6 +23,7 @@ import {
   exportSingleServerForInspection,
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
+import { createGuardedFetch } from "../../utils/hosted-egress-guard.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { logger } from "../../utils/logger.js";
@@ -210,5 +211,12 @@ export async function runHostedDoctor(
     },
     timeout: timeoutMs,
     rpcLogger,
+    // The probe follows two destinations the target names for itself — the RFC
+    // 9728 pointer in its challenge and the authorization server that document
+    // advertises. The SDK guard classifies IP literals, but only a resolver can
+    // catch a hostname that answers with a private address, and only per-hop
+    // checking can catch a redirect. Both live here. Outside hosted mode this
+    // is the identity function, so localhost and LAN probing is unaffected.
+    fetchFn: createGuardedFetch(),
   });
 }

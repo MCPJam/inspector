@@ -220,6 +220,13 @@ export function buildDoctorProbeConfig(
   options: {
     timeout: number;
     retryPolicy?: RetryPolicy;
+    /**
+     * Transport for every probe request. Deployments that must not let a target
+     * steer the probe at their own network pass a guarded fetch here — the probe
+     * cannot resolve DNS itself without pulling `node:dns` into runtimes that
+     * have no such module.
+     */
+    fetchFn?: typeof fetch;
   }
 ): ProbeMcpServerConfig {
   const accessToken = resolveProbeAccessToken(config);
@@ -232,6 +239,7 @@ export function buildDoctorProbeConfig(
     ...(clientCapabilities ? { clientCapabilities } : {}),
     timeoutMs: options.timeout,
     retryPolicy: options.retryPolicy,
+    ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
   };
 }
 
