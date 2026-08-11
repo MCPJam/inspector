@@ -124,6 +124,25 @@ describe("composeAvailableModels — never empty", () => {
     expect(models.length).toBeGreaterThan(0);
   });
 
+  // The floor is applied BEFORE the lock passes, so fallback rows must come back
+  // locked like any other hosted row. Moving it after them would hand an
+  // out-of-credits org a list of free models it cannot actually run.
+  it("locks the fallback rows when the org is out of credits", () => {
+    const models = composeAvailableModels({
+      ...bareParams,
+      orgConfig: undefined,
+      outOfCredits: true,
+    });
+
+    expect(models.length).toBeGreaterThan(0);
+    expect(
+      models.every(
+        (model) =>
+          model.disabled && model.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+      )
+    ).toBe(true);
+  });
+
   // The invariant the Playground actually depends on: `getDefaultModel` ends in
   // `availableModels[0]`, so an empty list is what left `selectedModel`
   // undefined and crashed the route.
