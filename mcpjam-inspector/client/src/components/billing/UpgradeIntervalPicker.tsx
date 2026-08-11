@@ -1,8 +1,11 @@
 import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 import { cn } from "@/lib/utils";
 
 interface UpgradeIntervalPickerProps {
+  interval: BillingInterval;
+  onIntervalChange: (interval: BillingInterval) => void;
   /** Per-seat monthly figures, already formatted. Null while the catalog loads. */
   annualPriceLabel: string | null;
   monthlyPriceLabel: string | null;
@@ -11,7 +14,7 @@ interface UpgradeIntervalPickerProps {
   monthlySupported: boolean;
   teamName: string;
   isStarting: boolean;
-  onUpgrade: (interval: BillingInterval) => void;
+  onUpgrade: () => void;
   className?: string;
 }
 
@@ -23,14 +26,13 @@ interface IntervalOption {
 }
 
 /**
- * Both billing intervals as side-by-side buttons, so choosing one and starting
- * checkout is a single press. A toggle would hide one of the two prices behind
- * a click the user has to think to make, which is the wrong trade at a wall.
- *
- * Pressing a card leads to Stripe, where the user still confirms before paying,
- * so there is no destructive outcome from a single click here.
+ * Both billing intervals side by side, so neither price is hidden behind a
+ * toggle, then an explicit confirm. Same select-then-confirm shape as the
+ * credit preset dialog.
  */
 export function UpgradeIntervalPicker({
+  interval,
+  onIntervalChange,
   annualPriceLabel,
   monthlyPriceLabel,
   annualDiscountPct,
@@ -67,52 +69,64 @@ export function UpgradeIntervalPicker({
   if (options.length === 0) return null;
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-3", className)}>
       <div
         className={cn(
           "grid gap-2",
           options.length > 1 ? "sm:grid-cols-2" : "grid-cols-1",
         )}
+        role="radiogroup"
+        aria-label="Billing interval"
       >
-        {options.map((option) => (
-          <button
-            key={option.interval}
-            type="button"
-            disabled={isStarting}
-            onClick={() => onUpgrade(option.interval)}
-            data-testid={`upgrade-${option.interval}`}
-            aria-label={`Upgrade to ${teamName}, ${option.label.toLowerCase()} billing`}
-            className={cn(
-              "flex flex-col gap-1 rounded-lg border border-border p-3 text-left transition-colors",
-              "hover:border-foreground/40 hover:bg-muted/40",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-              "disabled:pointer-events-none disabled:opacity-60",
-            )}
-          >
-            <span className="flex items-center gap-2">
-              <span className="text-sm font-medium">{option.label}</span>
-              {option.interval === "annual" && annualDiscountPct > 0 ? (
-                <Badge className="rounded-md bg-primary px-1.5 py-0 text-[10px] font-semibold text-primary-foreground">
-                  Save {annualDiscountPct}%
-                </Badge>
-              ) : null}
-            </span>
-            {option.priceLabel ? (
-              <span className="text-xl font-semibold leading-tight tracking-tight">
-                {option.priceLabel}
+        {options.map((option) => {
+          const isSelected = option.interval === interval;
+          return (
+            <button
+              key={option.interval}
+              type="button"
+              role="radio"
+              aria-checked={isSelected}
+              disabled={isStarting}
+              onClick={() => onIntervalChange(option.interval)}
+              data-testid={`upgrade-interval-${option.interval}`}
+              className={cn(
+                "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors",
+                isSelected
+                  ? "border-primary bg-primary/10"
+                  : "border-border hover:border-foreground/40",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "disabled:pointer-events-none disabled:opacity-60",
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-sm font-medium">{option.label}</span>
+                {option.interval === "annual" && annualDiscountPct > 0 ? (
+                  <Badge className="rounded-md bg-primary px-1.5 py-0 text-[10px] font-semibold text-primary-foreground">
+                    Save {annualDiscountPct}%
+                  </Badge>
+                ) : null}
               </span>
-            ) : null}
-            <span className="text-xs leading-snug text-muted-foreground">
-              {option.cadence}
-            </span>
-          </button>
-        ))}
+              {option.priceLabel ? (
+                <span className="text-xl font-semibold leading-tight tracking-tight">
+                  {option.priceLabel}
+                </span>
+              ) : null}
+              <span className="text-xs leading-snug text-muted-foreground">
+                {option.cadence}
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <p className="text-xs text-muted-foreground">
-        {isStarting
-          ? "Redirecting to checkout…"
-          : "You'll confirm on Stripe before paying."}
-      </p>
+      <Button
+        type="button"
+        className="w-full"
+        onClick={onUpgrade}
+        disabled={isStarting}
+        data-testid="upgrade-plan-cta"
+      >
+        {isStarting ? "Redirecting…" : `Upgrade to ${teamName}`}
+      </Button>
     </div>
   );
 }

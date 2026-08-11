@@ -29,6 +29,8 @@ const upgradeState = {
 // useConvexAuth.
 vi.mock("@/hooks/use-upgrade-checkout", () => ({
   useUpgradeCheckout: () => ({
+    interval: "annual",
+    setInterval: vi.fn(),
     annualPriceLabel: "$30/seat/mo",
     monthlyPriceLabel: "$38/seat/mo",
     annualDiscountPct: 21,
@@ -37,10 +39,17 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
     teamName: "Team",
     teamEvalIterations: 15000,
     currentPlan: upgradeState.currentPlan,
+    organizationName: "Acme Robotics",
     canManageBilling: upgradeState.canManageBilling,
     isStarting: false,
     start: upgradeState.start,
   }),
+}));
+
+vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
+  useUpgradeRequestRecipients: () => [
+    { email: "dana@acme.test", name: "Dana Ruiz" },
+  ],
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -176,13 +185,18 @@ describe("MCPJamLimitDialog", () => {
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
       /Ask an organization owner or admin to buy credits or upgrade/
     );
-    // Members get no CTAs at all: no upgrade, no buy credits, no BYOK.
+    // Members can't buy or upgrade, so those CTAs stay gone. They now get one
+    // action: email an owner who can.
     expect(
       screen.queryByRole("button", { name: /^buy credits$/i })
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /use your own API key/i })
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("request-upgrade-mail")).toHaveAttribute(
+      "href",
+      expect.stringContaining("mailto:dana@acme.test")
+    );
   });
 
   it("opens the model picker's Your providers tab on BYOK click (no org redirect)", async () => {

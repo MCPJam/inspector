@@ -1,13 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import {
   UPGRADE_RETURN_ORG_PARAM,
@@ -19,7 +10,8 @@ import {
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
-import { UpgradeIntervalPicker } from "@/components/billing/UpgradeIntervalPicker";
+import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
+import { PlanLimitDialogView } from "@/components/billing/PlanLimitDialogView";
 
 /** Same destination as the pricing page's Enterprise CTA. */
 const ENTERPRISE_CONTACT_URL = "https://www.mcpjam.com/contact";
@@ -145,11 +137,13 @@ export function PlanLimitDialog() {
   const limit = usePlanLimitDialogStore((s) => s.limit);
   const close = usePlanLimitDialogStore((s) => s.close);
 
+  const organizationId = limit?.organizationId ?? null;
   const upgrade = useUpgradeCheckout({
-    organizationId: limit?.organizationId ?? null,
+    organizationId,
     origin: "evals",
     limitKind: limit?.kind ?? "evalIterations",
   });
+  const requestRecipients = useUpgradeRequestRecipients(organizationId);
 
   useEffect(() => {
     if (!isOpen || !limit) return;
@@ -166,7 +160,7 @@ export function PlanLimitDialog() {
   // New tab, not a same-tab navigation or a mailto. The user is mid-task with a
   // blocked eval run; sending them away from the app (or into a mail client
   // that may not be configured) loses their place for no reason.
-  const handleRequestUpgrade = useCallback(() => {
+  const handleRequestEnterprise = useCallback(() => {
     track("plan_limit_enterprise_cta_clicked", {
       location: "plan_limit_dialog",
       limit_kind: limit?.kind ?? "evalIterations",
@@ -229,48 +223,31 @@ export function PlanLimitDialog() {
       : "";
 
   return (
-    <Dialog
-      open
-      onOpenChange={(next) => {
-        if (!next) handleDismiss();
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            You're out of eval iterations {windowLabel}
-          </DialogTitle>
-          <DialogDescription data-testid="plan-limit-dialog-description">
-            {`${planSentence}${resetSentence} ${upgradeSentence}`.trim()}
-            {isFreePlan && !upgrade.canManageBilling
-              ? " Only an organization owner or admin can upgrade."
-              : ""}
-          </DialogDescription>
-        </DialogHeader>
-        {showUpgrade ? (
-          <UpgradeIntervalPicker
-            annualPriceLabel={upgrade.annualPriceLabel}
-            monthlyPriceLabel={upgrade.monthlyPriceLabel}
-            annualDiscountPct={upgrade.annualDiscountPct}
-            annualSupported={upgrade.annualSupported}
-            monthlySupported={upgrade.monthlySupported}
-            teamName={upgrade.teamName}
-            isStarting={upgrade.isStarting}
-            onUpgrade={(interval) => void upgrade.start(interval)}
-          />
-        ) : null}
-        {showEnterprise ? (
-          <DialogFooter>
-            <Button
-              type="button"
-              onClick={handleRequestUpgrade}
-              data-testid="plan-limit-enterprise-cta"
-            >
-              Request upgrade
-            </Button>
-          </DialogFooter>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+    <PlanLimitDialogView
+      title={`You're out of eval iterations ${windowLabel}`}
+      description={`${`${planSentence}${resetSentence} ${upgradeSentence}`.trim()}${
+        isFreePlan && !upgrade.canManageBilling
+          ? " Only an organization owner can upgrade."
+          : ""
+      }`}
+      showUpgrade={showUpgrade}
+      showEnterprise={showEnterprise}
+      requestRecipients={requestRecipients}
+      organizationName={upgrade.organizationName}
+      origin="evals"
+      limitKind={limit.kind}
+      interval={upgrade.interval}
+      onIntervalChange={upgrade.setInterval}
+      annualPriceLabel={upgrade.annualPriceLabel}
+      monthlyPriceLabel={upgrade.monthlyPriceLabel}
+      annualDiscountPct={upgrade.annualDiscountPct}
+      annualSupported={upgrade.annualSupported}
+      monthlySupported={upgrade.monthlySupported}
+      teamName={upgrade.teamName}
+      isStarting={upgrade.isStarting}
+      onUpgrade={() => void upgrade.start()}
+      onRequestEnterprise={handleRequestEnterprise}
+      onDismiss={handleDismiss}
+    />
   );
 }
