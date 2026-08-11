@@ -3,9 +3,11 @@ import type { ModelDefinition } from "@/shared/types";
 import {
   applyGuestModelLocks,
   applyOutOfCreditsLocks,
+  composeAvailableModels,
   GUEST_LOCKED_MODEL_REASON,
   OUT_OF_CREDITS_MODEL_REASON,
 } from "../available-models";
+import { getDefaultModel } from "../model-helpers";
 
 // Catalog-sourced hosted models carrying the DTO `guestAllowed` flag.
 const HOSTED_GUEST_GATED: ModelDefinition = {
@@ -71,5 +73,65 @@ describe("applyOutOfCreditsLocks", () => {
   it("no-ops when not out of credits", () => {
     const models = [HOSTED_GUEST_OK, BYOK];
     expect(applyOutOfCreditsLocks(models, false)).toEqual(models);
+  });
+});
+
+describe("composeAvailableModels — never empty", () => {
+  // The state that produced INSPECTOR-CLIENT-222: a caller handing composition
+  // an empty hosted catalog (an `[]` survives the `?? snapshot()` default) with
+  // no BYOK key, no Ollama and no custom provider to make up the difference.
+  const bareParams = {
+    isAuthenticated: true,
+    isOllamaRunning: false,
+    ollamaModels: [],
+    hasToken: () => false,
+    getOpenRouterSelectedModels: () => [],
+    getAzureBaseUrl: () => "",
+    customProviders: [],
+    hostedCatalog: [],
+  };
+
+  it("falls back to the hosted snapshot when the local branch composes empty", () => {
+    const models = composeAvailableModels({
+      ...bareParams,
+      orgConfig: undefined,
+    });
+
+    expect(models.length).toBeGreaterThan(0);
+    expect(models.every((model) => model.hosted)).toBe(true);
+  });
+
+  it("falls back to the hosted snapshot when the org branch composes empty", () => {
+    const models = composeAvailableModels({
+      ...bareParams,
+      // A configured provider with no stored secret contributes no models, so
+      // the org branch is taken and still yields nothing on its own.
+      orgConfig: {
+        providers: [{ providerKey: "openai", enabled: true, hasSecret: false }],
+      },
+    });
+
+    expect(models.length).toBeGreaterThan(0);
+  });
+
+  it("holds the floor for a signed-out guest too", () => {
+    const models = composeAvailableModels({
+      ...bareParams,
+      orgConfig: undefined,
+      isAuthenticated: false,
+    });
+
+    expect(models.length).toBeGreaterThan(0);
+  });
+
+  // The invariant the Playground actually depends on: `getDefaultModel` ends in
+  // `availableModels[0]`, so an empty list is what left `selectedModel`
+  // undefined and crashed the route.
+  it("always yields a default model for the chat to select", () => {
+    expect(
+      getDefaultModel(
+        composeAvailableModels({ ...bareParams, orgConfig: undefined })
+      )
+    ).toBeDefined();
   });
 });

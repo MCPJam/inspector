@@ -1,5 +1,6 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import {
+  hostedModelDefinitionsFromSnapshot,
   isMCPJamGuestAllowedModel,
   type ModelDefinition,
 } from "@/shared/types";
@@ -93,6 +94,23 @@ export function appendDetectedLocalOllamaModels(
 }
 
 /**
+ * Every picker surface treats the model list as non-empty: `getDefaultModel`
+ * ends in `availableModels[0]`, so an empty list hands the chat an `undefined`
+ * `selectedModel`, which the surfaces then read unguarded — `isOrgManagedModel`
+ * in useChatSession, `currentModel.disabled` in ModelSelector. That is
+ * INSPECTOR-CLIENT-222: a blank Playground behind a route error screen.
+ *
+ * `useHostedModelCatalog` already promises a non-empty hosted source; this is
+ * the floor for every other way the composition can still come out empty
+ * (a caller passing an empty `hostedCatalog`, a future filter). Applied BEFORE
+ * the guest/credit locks so floor models carry the same locks as any other
+ * hosted row.
+ */
+function withHostedFloor(models: ModelDefinition[]): ModelDefinition[] {
+  return models.length > 0 ? models : hostedModelDefinitionsFromSnapshot();
+}
+
+/**
  * The one model-list pipeline shared by every picker surface (Playground
  * chat, eval suite/judge editors, client builder Agent tab): org-managed
  * provider config when present, otherwise local BYOK keys (filtered to
@@ -139,7 +157,10 @@ export function composeAvailableModels(params: {
       ollamaModels
     );
     return applyOutOfCreditsLocks(
-      applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated),
+      applyGuestModelLocks(
+        withHostedFloor(orgModelsWithLocalOllama),
+        isAuthenticated
+      ),
       outOfCredits
     );
   }
@@ -153,7 +174,10 @@ export function composeAvailableModels(params: {
     customProviders,
     hostedCatalog,
   });
-  const guestLockedModels = applyGuestModelLocks(localModels, isAuthenticated);
+  const guestLockedModels = applyGuestModelLocks(
+    withHostedFloor(localModels),
+    isAuthenticated
+  );
   const visibleModels = HOSTED_MODE
     ? guestLockedModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
     : guestLockedModels;
