@@ -86,8 +86,8 @@ export function CreditTopupDialog({
         <DialogHeader>
           <DialogTitle>Buy credits to keep chatting</DialogTitle>
           <DialogDescription>
-            Add credits to your organization so the team can keep using MCPJam
-            models when your shared credits run low.
+            Credits cover model usage in chat, playground, and agents. Buying
+            credits doesn't change your plan limits.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -127,6 +127,11 @@ export function CreditTopupDialog({
                     </span>
                     <span className="text-xs text-muted-foreground">
                       credits
+                    </span>
+                    {/* Price per tile: without it the three options can't be
+                        compared without selecting each one. */}
+                    <span className="mt-1 text-xs text-foreground">
+                      {preset.displayPrice}
                     </span>
                   </button>
                 );

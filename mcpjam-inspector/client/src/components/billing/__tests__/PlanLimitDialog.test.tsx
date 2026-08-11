@@ -1,0 +1,285 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { PlanLimitDialog } from "../PlanLimitDialog";
+import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
+
+// Hoisted so the vi.mock factories below (which vitest lifts to the top of the
+// file) can reach them.
+const { toastSuccess, trackMock, startMock, upgradeState, billingState } =
+  vi.hoisted(() => ({
+    toastSuccess: vi.fn(),
+    trackMock: vi.fn(),
+    startMock: vi.fn(),
+    upgradeState: { currentPlan: "free" as string, canManageBilling: true },
+    billingState: { plan: "free" as string, isLoading: false },
+  }));
+
+vi.mock("@/lib/toast", () => ({
+  toast: { success: toastSuccess, error: vi.fn() },
+}));
+
+vi.mock("@/lib/analytics", () => ({ track: trackMock }));
+
+vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-upgrade-checkout")>();
+  return {
+    ...actual,
+    useUpgradeCheckout: () => ({
+      interval: "annual" as const,
+      setInterval: vi.fn(),
+      priceLabel: "$30/seat/mo",
+      annualDiscountPct: 21,
+      annualSupported: true,
+      monthlySupported: true,
+      teamName: "Team",
+      teamEvalIterations: 5000,
+      currentPlan: upgradeState.currentPlan,
+      canManageBilling: upgradeState.canManageBilling,
+      isStarting: false,
+      start: startMock,
+    }),
+  };
+});
+
+vi.mock("@/hooks/useOrganizationBilling", () => ({
+  useOrganizationBilling: () => ({
+    billingStatus: billingState.isLoading
+      ? undefined
+      : { plan: billingState.plan, billingInterval: "annual" },
+    planCatalog: { plans: { team: { displayName: "Team" } } },
+    isLoadingBilling: billingState.isLoading,
+  }),
+}));
+
+const RESETS_AT = Date.UTC(2026, 7, 11, 4, 0);
+
+function openEvalLimit(overrides: Record<string, unknown> = {}) {
+  usePlanLimitDialogStore.setState({
+    isOpen: true,
+    limit: {
+      kind: "evalIterations",
+      organizationId: "org-1",
+      used: 75,
+      allowed: 75,
+      resetsAt: RESETS_AT,
+      windowKind: "day",
+      origin: "evals",
+      ...overrides,
+    } as never,
+  });
+}
+
+beforeEach(() => {
+  toastSuccess.mockReset();
+  trackMock.mockReset();
+  startMock.mockReset();
+  upgradeState.currentPlan = "free";
+  upgradeState.canManageBilling = true;
+  billingState.plan = "free";
+  billingState.isLoading = false;
+  window.history.replaceState(null, "", "/evals");
+  usePlanLimitDialogStore.setState({ isOpen: false, limit: null });
+});
+
+describe("PlanLimitDialog", () => {
+  it("renders nothing while closed", () => {
+    const { container } = render(<PlanLimitDialog />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("names the allowance, the reset time, and the catalog Team figure", () => {
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /out of eval iterations today/i })
+    ).toBeInTheDocument();
+    const description = screen.getByTestId("plan-limit-dialog-description");
+    expect(description).toHaveTextContent(/Free includes 75 a day/);
+    expect(description).toHaveTextContent(/yours reset at/i);
+    // The Team figure comes from the plan catalog, so it tracks what billing
+    // enforces rather than a hardcoded marketing string.
+    expect(description).toHaveTextContent(
+      /Our Team plan includes 5,000 a month/
+    );
+  });
+
+  it("offers both billing intervals with the upgrade CTA", () => {
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    expect(
+      screen.getByRole("button", { name: /annual/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /monthly/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText("$30/seat/mo")).toBeInTheDocument();
+    expect(screen.getByTestId("upgrade-plan-cta")).toHaveTextContent(
+      /Upgrade to Team/
+    );
+  });
+
+  it("has no wait-for-reset button; the close control is the only dismissal", () => {
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    expect(
+      screen.queryByRole("button", { name: /wait for reset/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /close/i })
+    ).toBeInTheDocument();
+  });
+
+  it("starts checkout from the CTA", async () => {
+    const user = userEvent.setup();
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    await user.click(screen.getByTestId("upgrade-plan-cta"));
+    expect(startMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains who can upgrade instead of showing a CTA the server would reject", () => {
+    upgradeState.canManageBilling = false;
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    expect(
+      screen.getByTestId("plan-limit-dialog-description")
+    ).toHaveTextContent(/Only an organization owner or admin can upgrade/);
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
+  });
+
+  it("points an org already on Team at Enterprise instead of Team", () => {
+    upgradeState.currentPlan = "team";
+    openEvalLimit({ allowed: 5000, windowKind: "month" });
+    render(<PlanLimitDialog />);
+
+    const description = screen.getByTestId("plan-limit-dialog-description");
+    expect(description).toHaveTextContent(/Your plan includes 5,000 a month/);
+    expect(description).toHaveTextContent(/Enterprise adds negotiated usage/);
+    expect(description).not.toHaveTextContent(/Our Team plan/);
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("plan-limit-enterprise-cta")
+    ).toHaveTextContent(/Request upgrade/);
+  });
+
+  it("reports the Enterprise CTA click", async () => {
+    const user = userEvent.setup();
+    upgradeState.currentPlan = "team";
+    openEvalLimit({ allowed: 5000, windowKind: "month" });
+    render(<PlanLimitDialog />);
+
+    await user.click(screen.getByTestId("plan-limit-enterprise-cta"));
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_enterprise_cta_clicked",
+      expect.objectContaining({ plan: "team" })
+    );
+    expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("offers nothing to pitch when the org is already on Enterprise", () => {
+    upgradeState.currentPlan = "enterprise";
+    openEvalLimit({ allowed: 50000, windowKind: "month" });
+    render(<PlanLimitDialog />);
+
+    const description = screen.getByTestId("plan-limit-dialog-description");
+    expect(description).toHaveTextContent(/Your plan includes 50,000 a month/);
+    expect(description).not.toHaveTextContent(/Enterprise adds/);
+    expect(
+      screen.queryByTestId("plan-limit-enterprise-cta")
+    ).not.toBeInTheDocument();
+  });
+
+  it("closes and reports a dismissal", async () => {
+    const user = userEvent.setup();
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_dialog_dismissed",
+      expect.objectContaining({ limit_kind: "evalIterations" })
+    );
+  });
+
+  describe("checkout return", () => {
+    it("confirms in place and strips the return params once the plan is paid", async () => {
+      billingState.plan = "team";
+      window.history.replaceState(
+        null,
+        "",
+        "/evals?suite=abc&upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+      );
+      render(<PlanLimitDialog />);
+
+      await waitFor(() => {
+        expect(toastSuccess).toHaveBeenCalledWith(
+          expect.stringMatching(/You're on our Team plan/)
+        );
+      });
+      // The surface the user was blocked on is preserved; only the upgrade
+      // bookkeeping is removed.
+      expect(window.location.search).toBe("?suite=abc");
+      expect(trackMock).toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.objectContaining({ upgraded: true, plan: "team" })
+      );
+    });
+
+    it("stays silent when the user bailed at checkout", async () => {
+      billingState.plan = "free";
+      window.history.replaceState(
+        null,
+        "",
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+      );
+      render(<PlanLimitDialog />);
+
+      await waitFor(() => {
+        expect(trackMock).toHaveBeenCalledWith(
+          "plan_limit_upgrade_returned",
+          expect.objectContaining({ upgraded: false })
+        );
+      });
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(window.location.search).toBe("");
+    });
+
+    it("uses credit wording when the user came from the credits wall", async () => {
+      billingState.plan = "team";
+      window.history.replaceState(
+        null,
+        "",
+        "/chat?upgrade=return&upgrade_org=org-1&upgrade_from=credits"
+      );
+      render(<PlanLimitDialog />);
+
+      await waitFor(() => {
+        expect(toastSuccess).toHaveBeenCalledWith(
+          expect.stringMatching(/Your credits are available now/)
+        );
+      });
+    });
+
+    it("waits for billing status before deciding", () => {
+      billingState.isLoading = true;
+      window.history.replaceState(
+        null,
+        "",
+        "/evals?upgrade=return&upgrade_org=org-1"
+      );
+      render(<PlanLimitDialog />);
+
+      expect(toastSuccess).not.toHaveBeenCalled();
+      // Params survive so a later render can still resolve the outcome.
+      expect(window.location.search).toContain("upgrade=return");
+    });
+  });
+});

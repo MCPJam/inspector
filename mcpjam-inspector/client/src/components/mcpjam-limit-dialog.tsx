@@ -18,6 +18,8 @@ import { readStoredActiveOrganizationId } from "@/lib/active-organization-storag
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
+import { UpgradeIntervalPicker } from "@/components/billing/UpgradeIntervalPicker";
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
@@ -43,10 +45,10 @@ export function MCPJamLimitDialog() {
     if (user && intent === "guest" && isOpen) close();
   }, [close, intent, isLoading, isOpen, setAuthStatus, user]);
 
-  if (isLoading) return null;
-
   // Resolve which org's billing page to redirect to. Prefer the org that
   // actually hit the limit; fall back to local active org / recent org.
+  // Declared above the `isLoading` guard so the upgrade hook below keeps a
+  // stable call order.
   const resolveBillingOrgId = (): string | null => {
     if (!user) return null;
     if (limitOrganizationId) return limitOrganizationId;
@@ -54,6 +56,14 @@ export function MCPJamLimitDialog() {
     if (stored) return stored;
     return sortedOrganizations[0]?._id ?? null;
   };
+
+  const creditsUpgrade = useUpgradeCheckout({
+    organizationId: resolveBillingOrgId(),
+    origin: "credits",
+    limitKind: "credits",
+  });
+
+  if (isLoading) return null;
 
   // Only owners/admins/creators can buy credits (mirrors the backend gate).
   // Members instead see an "ask org admin" hint so they don't dead-end on a
@@ -94,6 +104,10 @@ export function MCPJamLimitDialog() {
   const showGuestDialog = !user && intent === "guest" && isOpen;
   // Top-up variant — only renders for signed-in users.
   const showTopupDialog = !!user && intent === "topup" && isOpen;
+  // Pitching Team to an org already on Team would be nonsense; those orgs get
+  // the buy-credits path only.
+  const showCreditsUpgrade =
+    creditsUpgrade.currentPlan === "free" && creditsUpgrade.canManageBilling;
 
   return (
     <>
@@ -131,21 +145,48 @@ export function MCPJamLimitDialog() {
               <DialogTitle>Your org is out of credits</DialogTitle>
               <DialogDescription data-testid="limit-dialog-description">
                 {isKnownNonManager
-                  ? "Ask your org admin to top up credits."
-                  : "Top up or bring your own key to allow your org to keep using MCPJam."}
+                  ? "Ask an organization owner or admin to buy credits or upgrade the plan."
+                  : creditsUpgrade.currentPlan === "free"
+                    ? `Free credits reset daily. Our ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
+                    : "Buy credits to keep your team going, or use your own API key."}
               </DialogDescription>
             </DialogHeader>
-            {/* Non-managers get no CTAs — just the "ask your org admin" copy.
-                Managers keep BYOK plus the Top up button. */}
+            {/* Non-managers get no CTAs, just the "ask an owner" copy. Managers
+                lead with the plan upgrade: buying credits keeps the org on Free
+                at a variable cost, so it stays available but secondary. */}
             {!isKnownNonManager ? (
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={handleBYOK}>
-                  Bring your own key
-                </Button>
-                <Button type="button" onClick={handleTopUp}>
-                  Top up
-                </Button>
-              </DialogFooter>
+              <>
+                {showCreditsUpgrade ? (
+                  <UpgradeIntervalPicker
+                    interval={creditsUpgrade.interval}
+                    onIntervalChange={creditsUpgrade.setInterval}
+                    priceLabel={creditsUpgrade.priceLabel}
+                    annualDiscountPct={creditsUpgrade.annualDiscountPct}
+                    annualSupported={creditsUpgrade.annualSupported}
+                    monthlySupported={creditsUpgrade.monthlySupported}
+                    teamName={creditsUpgrade.teamName}
+                    isStarting={creditsUpgrade.isStarting}
+                    onUpgrade={() => void creditsUpgrade.start()}
+                  />
+                ) : null}
+                <DialogFooter className="sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="px-0 text-muted-foreground"
+                    onClick={handleBYOK}
+                  >
+                    Use your own API key
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleTopUp}
+                  >
+                    Buy credits
+                  </Button>
+                </DialogFooter>
+              </>
             ) : null}
           </DialogContent>
         </Dialog>
