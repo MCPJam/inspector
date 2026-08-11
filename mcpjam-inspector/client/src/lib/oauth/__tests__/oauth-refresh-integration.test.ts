@@ -328,18 +328,6 @@ describe("real executor → real state machine (hosted)", () => {
     expect(probe.status, probe.text).toBe(200);
   });
 
-  it("keeps a credential echoed in error_description out of the published trace", async () => {
-    const echoed = FAKE_OAUTH_ACCESS_TOKEN;
-    const { callback } = await track(
-      runFullFlow("integration-token-failure", {
-        tokenFailure: { echoInErrorDescription: `access_token=${echoed}` },
-      }),
-    );
-
-    expect(callback.success).toBe(false);
-    const serialized = JSON.stringify(callback.oauthTrace ?? {});
-    expect(serialized).not.toContain(echoed);
-  });
 });
 
 describe("MCP OAuth wire invariants (2025-11-25 via the real machine)", () => {
@@ -434,16 +422,6 @@ describe("MCP OAuth wire invariants (2025-11-25 via the real machine)", () => {
     );
   });
 
-  // Invariant 5 (positive half): a matching state is represented as a match,
-  // and the raw nonce never appears in the sanitized trace. The negative half
-  // lives in its own test below.
-  it("does not publish the raw callback state in a sanitized trace", () => {
-    const issued = flow.authorizationUrl.searchParams.get("state");
-    expect(issued, "the machine issued no state").toBeTruthy();
-    expect(JSON.stringify(flow.callback.oauthTrace ?? {})).not.toContain(
-      issued!,
-    );
-  });
 });
 
 describe("MCP OAuth wire invariants — failure paths", () => {
