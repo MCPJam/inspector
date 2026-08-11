@@ -118,8 +118,9 @@ export function describePkceMetadataNonConformance(
     return (
       "Authorization server advertises PKCE without S256 " +
       `(advertised: ${supportedMethods.join(", ")}). ` +
-      `MCPJam will not downgrade to a weaker code challenge method, so the ` +
-      `${protocolVersion} flow stops here.`
+      "MCPJam will not downgrade to a weaker code challenge method, so the " +
+      `${protocolVersion} flow stops here. Use the OAuth debugger to observe ` +
+      "this server's behavior without connecting."
     );
   }
 
