@@ -1,10 +1,10 @@
-export function redactSensitiveValue(value: unknown): unknown {
-  return redactSensitiveValueAtPath(value, []);
+export function redactForTelemetry(value: unknown): unknown {
+  return redactForTelemetryAtPath(value, []);
 }
 
-function redactSensitiveValueAtPath(value: unknown, path: string[]): unknown {
+function redactForTelemetryAtPath(value: unknown, path: string[]): unknown {
   if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitiveValueAtPath(entry, path));
+    return value.map((entry) => redactForTelemetryAtPath(entry, path));
   }
 
   if (!value || typeof value !== "object") {
@@ -16,7 +16,7 @@ function redactSensitiveValueAtPath(value: unknown, path: string[]): unknown {
       key,
       shouldRedactKey(key, entryValue, path)
         ? "[REDACTED]"
-        : redactSensitiveValueAtPath(entryValue, [...path, key]),
+        : redactForTelemetryAtPath(entryValue, [...path, key]),
     ])
   );
 }

@@ -72,7 +72,7 @@ describe("browser entrypoint", () => {
     expect(browser.MCP_UI_EXTENSION_ID).toBe("io.modelcontextprotocol/ui");
     expect(browser.MCP_UI_RESOURCE_MIME_TYPE).toBe("text/html;profile=mcp-app");
     expect(typeof browser.applyRuntimeClientCapabilities).toBe("function");
-    expect(typeof browser.redactSensitiveValue).toBe("function");
+    expect(typeof browser.redactForTelemetry).toBe("function");
     expect(browser.getDefaultClientCapabilities()).toEqual({
       extensions: {
         "io.modelcontextprotocol/ui": {

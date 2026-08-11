@@ -302,6 +302,7 @@ import {
   getAppSurfaceByNavSegment,
   isAppSurfaceId,
 } from "@/shared/app-surfaces";
+import { sanitizeTraceErrorMessage } from "./lib/oauth/trace-redaction";
 import { waitForUiToolNames } from "./lib/webmcp/ui-tools-readiness";
 import { listSurfaceGroupToolNames } from "./lib/webmcp/groups";
 import {
@@ -355,38 +356,28 @@ function clearHostedCallbackRetryState() {
   }
 }
 
-const OAUTH_DEBUGGER_SECRET_PATTERNS = [
-  /\b(access_token|refresh_token|id_token|client_secret|clientSecret|code_verifier|code|state)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/gi,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
-  /\bBasic\s+[A-Za-z0-9+/=._~-]+\b/gi,
-];
-
-function sanitizeOAuthDebuggerText(value: string | null | undefined): string {
-  if (!value) {
-    return "";
-  }
-
-  return OAUTH_DEBUGGER_SECRET_PATTERNS.reduce(
-    (sanitized, pattern) =>
-      sanitized.replace(pattern, (...args) => {
-        const key = typeof args[1] === "string" ? args[1] : undefined;
-        const separator = typeof args[2] === "string" ? args[2] : undefined;
-        return key && separator ? `${key}${separator}[redacted]` : "[redacted]";
-      }),
-    value
-  );
-}
-
-function sanitizeOAuthDebuggerError(error: Error | null) {
+/**
+ * Redact the OAuth debugger's error-boundary output.
+ *
+ * Uses the SDK's single trace redactor rather than a local pattern list — this
+ * used to be a fourth private copy, and a private copy is how the sensitive-
+ * field set drifts. The stack is redacted line by line because the shared
+ * redactor caps its output length (it is built for one error message), and a
+ * truncated stack is not worth having.
+ */
+function redactOAuthDebuggerError(error: Error | null) {
+  const stack = error?.stack;
   return {
-    name: sanitizeOAuthDebuggerText(error?.name ?? "Error"),
-    message: sanitizeOAuthDebuggerText(error?.message ?? "Unknown error"),
-    stack: sanitizeOAuthDebuggerText(error?.stack),
+    name: sanitizeTraceErrorMessage(error?.name ?? "Error"),
+    message: sanitizeTraceErrorMessage(error?.message ?? "Unknown error"),
+    stack: stack
+      ? stack.split("\n").map(sanitizeTraceErrorMessage).join("\n")
+      : "",
   };
 }
 
 function formatOAuthDebuggerErrorDetails(error: Error | null): string {
-  const sanitized = sanitizeOAuthDebuggerError(error);
+  const sanitized = redactOAuthDebuggerError(error);
   return [
     "OAuth Debugger error",
     `Name: ${sanitized.name}`,
@@ -1838,7 +1829,7 @@ export function OAuthFlowRoute() {
                   OAuth Debugger crashed
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {sanitizeOAuthDebuggerError(error).message}
+                  {redactOAuthDebuggerError(error).message}
                 </p>
               </div>
               <div className="flex justify-center gap-2">
@@ -1854,13 +1845,16 @@ export function OAuthFlowRoute() {
         );
       }}
       onError={(error, errorInfo) => {
-        const sanitizedError = sanitizeOAuthDebuggerError(error);
+        const sanitizedError = redactOAuthDebuggerError(error);
         track("oauth_debugger_error_boundary", {
           location: "oauth_flow",
           name: sanitizedError.name,
           message: sanitizedError.message,
           stack: sanitizedError.stack,
-          componentStack: sanitizeOAuthDebuggerText(errorInfo.componentStack),
+          componentStack: (errorInfo.componentStack ?? "")
+            .split("\n")
+            .map(sanitizeTraceErrorMessage)
+            .join("\n"),
         });
       }}
     >

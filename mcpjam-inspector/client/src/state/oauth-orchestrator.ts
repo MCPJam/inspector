@@ -69,7 +69,16 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-function sanitizeOAuthSetupHeaders(
+/**
+ * Drop `Authorization` (and empty values) from user-configured headers before
+ * they are carried into an OAuth setup.
+ *
+ * Not a trace redactor despite the shape — this filters LIVE request headers,
+ * and the name says so. The trace-redaction naming prefix is reserved for
+ * display redaction, which lives in `lib/oauth/trace-redaction.ts` and is
+ * fenced by `lib/__tests__/oauth-redaction-ratchet.test.ts`.
+ */
+function withoutAuthorizationHeader(
   headers?: Record<string, string>,
 ): Record<string, string> | undefined {
   if (!headers) return undefined;
@@ -111,7 +120,7 @@ function normalizeHeaders(headers: unknown): Record<string, string> | undefined 
   if (!headers) return undefined;
 
   if (typeof Headers !== "undefined" && headers instanceof Headers) {
-    return sanitizeOAuthSetupHeaders(Object.fromEntries(headers.entries()));
+    return withoutAuthorizationHeader(Object.fromEntries(headers.entries()));
   }
 
   if (Array.isArray(headers)) {
@@ -121,14 +130,14 @@ function normalizeHeaders(headers: unknown): Record<string, string> | undefined 
         typeof entry[0] === "string" &&
         typeof entry[1] === "string",
     );
-    return sanitizeOAuthSetupHeaders(Object.fromEntries(entries));
+    return withoutAuthorizationHeader(Object.fromEntries(entries));
   }
 
   if (typeof headers === "object") {
     const entries = Object.entries(headers).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     );
-    return sanitizeOAuthSetupHeaders(Object.fromEntries(entries));
+    return withoutAuthorizationHeader(Object.fromEntries(entries));
   }
 
   return undefined;
@@ -141,7 +150,7 @@ function profileHeadersToRecord(
     ?.map(({ key, value }) => [key.trim(), value] as const)
     .filter(([key, value]) => key && value);
   return entries && entries.length > 0
-    ? sanitizeOAuthSetupHeaders(Object.fromEntries(entries))
+    ? withoutAuthorizationHeader(Object.fromEntries(entries))
     : undefined;
 }
 
@@ -209,7 +218,7 @@ function buildReconnectOAuthOptions(
     customHeaders:
       profileHeadersToRecord(profile?.customHeaders) ??
       normalizeHeaders((server.config as any)?.requestInit?.headers) ??
-      sanitizeOAuthSetupHeaders(oauthConfig.customHeaders),
+      withoutAuthorizationHeader(oauthConfig.customHeaders),
     registryServerId: oauthConfig.registryServerId,
     useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
     clientId:

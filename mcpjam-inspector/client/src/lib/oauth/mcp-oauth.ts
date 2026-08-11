@@ -78,7 +78,14 @@ import {
   startOAuthTraceStep,
   type OAuthTrace,
 } from "./oauth-trace";
-import { traceOAuthErrorMessage } from "./trace-redaction";
+import type { OAuthRequestFields } from "./trace-redaction";
+import {
+  parseOAuthRequestFields,
+  traceOAuthErrorMessage,
+  traceOAuthHeaders,
+  traceOAuthUrl,
+  traceOAuthValue,
+} from "./trace-redaction";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -187,180 +194,6 @@ function clearStoredDiscoveryState(serverName: string): void {
   localStorage.removeItem(getDiscoveryStorageKey(serverName));
 }
 
-type OAuthRequestFields = Record<string, string>;
-
-const SENSITIVE_FIELD_NAMES = new Set([
-  "access_token",
-  "refresh_token",
-  "id_token",
-  "client_secret",
-  "code",
-  "code_verifier",
-  "authorization_code",
-  "authorization",
-  "state",
-  "cookie",
-  "set_cookie",
-  "api_key",
-]);
-
-const SENSITIVE_HEADER_PATTERNS = [
-  /^authorization$/i,
-  /^proxy-authorization$/i,
-  /^cookie$/i,
-  /^set-cookie$/i,
-  /^x-api-key$/i,
-  /^api-key$/i,
-  /^apikey$/i,
-  /^x-auth-token$/i,
-  /^x-csrf-token$/i,
-  /^x-session-token$/i,
-  /^x-access-token$/i,
-  /^x-refresh-token$/i,
-  /^x-client-secret$/i,
-  /^x-credential$/i,
-];
-
-function normalizeSensitiveKey(key: string): string {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .toLowerCase();
-}
-
-function isSensitiveTraceFieldName(key: string): boolean {
-  return SENSITIVE_FIELD_NAMES.has(normalizeSensitiveKey(key));
-}
-
-function isSensitiveHeaderName(key: string): boolean {
-  const normalized = normalizeSensitiveKey(key);
-  return (
-    SENSITIVE_FIELD_NAMES.has(normalized) ||
-    SENSITIVE_HEADER_PATTERNS.some((pattern) => pattern.test(key)) ||
-    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
-      normalized
-    ) ||
-    /(^|_)api_?key(_|$)/.test(normalized)
-  );
-}
-
-function isSensitiveQueryParamName(key: string): boolean {
-  const normalized = normalizeSensitiveKey(key);
-  return (
-    SENSITIVE_FIELD_NAMES.has(normalized) ||
-    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
-      normalized
-    ) ||
-    /(^|_)api_?key(_|$)/.test(normalized)
-  );
-}
-
-function redactSensitiveValue(value: unknown): string {
-  if (typeof value !== "string") {
-    return "[redacted]";
-  }
-
-  if (value.length <= 8) {
-    return "[redacted]";
-  }
-
-  return `${value.slice(0, 4)}...[redacted]...${value.slice(-2)}`;
-}
-
-function sanitizeOAuthTraceString(value: string): unknown {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return value;
-  }
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    return sanitizeOAuthUrl(trimmed);
-  }
-
-  const looksStructured =
-    trimmed.includes("=") ||
-    trimmed.includes("&") ||
-    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-    (trimmed.startsWith("[") && trimmed.endsWith("]"));
-  if (looksStructured) {
-    const parsed = parseOAuthRequestFields(trimmed);
-    if (parsed) {
-      return sanitizeOAuthTraceValue(parsed);
-    }
-  }
-
-  return trimmed
-    .replace(
-      /\b(access_token|refresh_token|id_token|client_secret|code_verifier)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
-      (_match, key: string, separator: string) => `${key}${separator}[redacted]`
-    )
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]");
-}
-
-function sanitizeOAuthUrl(rawUrl: string): string {
-  try {
-    const url = new URL(rawUrl);
-    for (const key of [...url.searchParams.keys()]) {
-      if (isSensitiveQueryParamName(key)) {
-        url.searchParams.set(key, "[redacted]");
-      }
-    }
-    if (url.hash) {
-      url.hash = "#[redacted]";
-    }
-    return url.toString();
-  } catch {
-    return rawUrl.replace(
-      /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
-      "Bearer [redacted]"
-    );
-  }
-}
-
-function sanitizeOAuthTraceValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeOAuthTraceValue(item));
-  }
-
-  if (typeof value === "string") {
-    return sanitizeOAuthTraceString(value);
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => {
-      if (isSensitiveTraceFieldName(key)) {
-        return [key, redactSensitiveValue(entryValue)];
-      }
-      return [key, sanitizeOAuthTraceValue(entryValue)];
-    })
-  );
-}
-
-function sanitizeOAuthHeaderValue(value: string): string {
-  const sanitized = sanitizeOAuthTraceString(value);
-  if (typeof sanitized === "string") {
-    return sanitized;
-  }
-  return redactSensitiveValue(value);
-}
-
-function sanitizeOAuthHeaders(
-  headers: Record<string, string>
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => {
-      if (isSensitiveHeaderName(key)) {
-        return [key, redactSensitiveValue(value)];
-      }
-      return [key, sanitizeOAuthHeaderValue(value)];
-    })
-  );
-}
-
 function createHttpHistoryEntry(input: {
   step: HttpHistoryEntry["step"];
   method: string;
@@ -373,21 +206,11 @@ function createHttpHistoryEntry(input: {
     timestamp: Date.now(),
     request: {
       method: input.method,
-      url: SANITIZE_OAUTH_TRACES ? sanitizeOAuthUrl(input.url) : input.url,
+      url: traceOAuthUrl(input.url),
       headers: traceOAuthHeaders(input.headers ?? {}),
       body: traceOAuthValue(input.body),
     },
   };
-}
-
-function traceOAuthHeaders(
-  headers: Record<string, string>
-): Record<string, string> {
-  return SANITIZE_OAUTH_TRACES ? sanitizeOAuthHeaders(headers) : { ...headers };
-}
-
-function traceOAuthValue(value: unknown): unknown {
-  return SANITIZE_OAUTH_TRACES ? sanitizeOAuthTraceValue(value) : value;
 }
 
 function parseOAuthResponseText(text: string, contentType: string): unknown {
@@ -1296,65 +1119,6 @@ export function buildStoredOAuthConfig(
   return config;
 }
 
-function parseOAuthRequestFields(
-  body: unknown
-): OAuthRequestFields | undefined {
-  if (!body) return undefined;
-
-  if (typeof body === "string") {
-    const trimmed = body.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-
-    if (
-      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-      (trimmed.startsWith("[") && trimmed.endsWith("]"))
-    ) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          !Array.isArray(parsed)
-        ) {
-          const entries = Object.entries(parsed).flatMap(([key, value]) => {
-            if (typeof value === "string") {
-              return [[key, value] as const];
-            }
-            if (typeof value === "number" || typeof value === "boolean") {
-              return [[key, String(value)] as const];
-            }
-            return [];
-          });
-          return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-        }
-      } catch {
-        // Fall through to URLSearchParams parsing.
-      }
-    }
-
-    const params = new URLSearchParams(trimmed);
-    const entries = Object.fromEntries(params.entries());
-    return Object.keys(entries).length > 0 ? entries : undefined;
-  }
-
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return undefined;
-  }
-
-  const entries = Object.entries(body).flatMap(([key, value]) => {
-    if (typeof value === "string") {
-      return [[key, value] as const];
-    }
-    if (typeof value === "number" || typeof value === "boolean") {
-      return [[key, String(value)] as const];
-    }
-    return [];
-  });
-
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
 
 function getOAuthGrantType(body: unknown): string | undefined {
   return parseOAuthRequestFields(body)?.grant_type;
@@ -2670,10 +2434,9 @@ function buildConvexBindingForServer(input: {
 
 /**
  * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
- * The three OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`,
- * `refreshOAuthTokens`) all need an identical instance shape; this factory
- * keeps that wiring in one place so adding a constructor argument doesn't
- * require touching three call sites.
+ * Both OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`) need an
+ * identical instance shape; this factory keeps that wiring in one place so
+ * adding a constructor argument doesn't require touching both call sites.
  */
 function createMCPOAuthProvider(input: {
   serverName: string;

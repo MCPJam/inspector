@@ -1,9 +1,9 @@
-import { redactSensitiveValue } from "../src/redaction";
+import { redactForTelemetry } from "../src/telemetry-redaction";
 
-describe("redactSensitiveValue", () => {
+describe("redactForTelemetry", () => {
   it("redacts standalone OAuth authorization codes and code verifiers", () => {
     expect(
-      redactSensitiveValue({
+      redactForTelemetry({
         code: "splxlOBeZQQYbYS6WxSbIA",
         codeVerifier: "verifier-secret",
       })
@@ -15,7 +15,7 @@ describe("redactSensitiveValue", () => {
 
   it("preserves ordinary structured error codes", () => {
     expect(
-      redactSensitiveValue({
+      redactForTelemetry({
         error: { code: "INTERNAL_ERROR" },
         snapshotError: { code: "TIMEOUT" },
       })
@@ -27,7 +27,7 @@ describe("redactSensitiveValue", () => {
 
   it("redacts nested doctor auth headers and token-like values", () => {
     expect(
-      redactSensitiveValue({
+      redactForTelemetry({
         probe: {
           transport: {
             attempts: [
@@ -71,7 +71,7 @@ describe("redactSensitiveValue", () => {
 
   it("preserves boolean token summary fields while redacting actual token strings", () => {
     expect(
-      redactSensitiveValue({
+      redactForTelemetry({
         target: {
           hasAccessToken: false,
           hasRefreshToken: true,
