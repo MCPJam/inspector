@@ -312,11 +312,35 @@ function useRailData(surface: RunInsightsSurface): {
   };
 }
 
+/**
+ * Which cohort's narration this surface reads. Null on User Testing until the
+ * first snapshot exists — the group id names frozen data, and one may never be
+ * guessed.
+ */
+function useNarrationScope(
+  surface: RunInsightsSurface,
+  latestGroupId: string | null | undefined,
+): RunInsightsScope | null {
+  return useMemo<RunInsightsScope | null>(() => {
+    if (surface.kind === "swarm") {
+      return {
+        kind: "swarm",
+        projectId: surface.projectId,
+        swarmRunGroupId: surface.swarmRunGroupId,
+      };
+    }
+    return latestGroupId
+      ? { kind: "chatbox", chatboxId: surface.chatboxId, groupId: latestGroupId }
+      : null;
+  }, [surface, latestGroupId]);
+}
+
 export function RunInsights({
   surface,
   onOpenSession,
   canRequest = true,
   canDismiss = true,
+  autoRequest = true,
 }: {
   surface: RunInsightsSurface;
   onOpenSession: (sessionId: string) => void;
@@ -328,6 +352,12 @@ export function RunInsights({
   canRequest?: boolean;
   /** May this viewer dismiss a finding? Same split: a judgment, not a view. */
   canDismiss?: boolean;
+  /**
+   * Off when an ancestor already drives the auto-request. `RunInsightsChip`
+   * does, because this component lives inside a popover: Radix unmounts the
+   * content on close, so a latch held here would forget on every open.
+   */
+  autoRequest?: boolean;
 }) {
   const { signals, findings, cohort } = useRailData(surface);
   const terminal = signals?.terminal === true;
@@ -335,24 +365,12 @@ export function RunInsights({
   // clean cohort never spends a model call — "no anomalies" IS the answer.
   const hasSignals = (signals?.candidates.length ?? 0) > 0;
 
-  const scope = useMemo<RunInsightsScope | null>(() => {
-    if (surface.kind === "swarm") {
-      return {
-        kind: "swarm",
-        projectId: surface.projectId,
-        swarmRunGroupId: surface.swarmRunGroupId,
-      };
-    }
-    const groupId = signals?.latestGroupId;
-    return groupId
-      ? { kind: "chatbox", chatboxId: surface.chatboxId, groupId }
-      : null;
-  }, [surface, signals?.latestGroupId]);
+  const scope = useNarrationScope(surface, signals?.latestGroupId);
 
   const { insights, discovery, busy, unavailable, error, request } =
     useRunInsights(scope, {
       terminal,
-      autoRequest: hasSignals && canRequest,
+      autoRequest: autoRequest && hasSignals && canRequest,
     });
 
   const [showAll, setShowAll] = useState(false);
@@ -523,6 +541,19 @@ export function RunInsightsChip({
   // before it lands — and it must not guess one.
   const { signals, findings, cohort } = useRailData(surface);
 
+  // THE LIFECYCLE LIVES HERE, not in the popover. `RunInsights` renders inside
+  // `PopoverContent`, which Radix unmounts on close — taking the hook's
+  // once-per-cohort and permission latches with it, so every reopen would
+  // re-fire an auto-request a guest was already refused. The chip is mounted
+  // for as long as the statline is, so driving it from here makes those
+  // latches mean what they say. The inner instance subscribes to the same
+  // query with the same args, which the Convex client dedupes.
+  const scope = useNarrationScope(surface, signals?.latestGroupId);
+  useRunInsights(scope, {
+    terminal: signals?.terminal === true,
+    autoRequest: (signals?.candidates.length ?? 0) > 0 && canRequest,
+  });
+
   const activeCount = useMemo(() => {
     if (!signals || !findings) return 0;
     const findingByFingerprint = new Map(
@@ -575,6 +606,7 @@ export function RunInsightsChip({
           onOpenSession={onOpenSession}
           canRequest={canRequest}
           canDismiss={canDismiss}
+          autoRequest={false}
         />
       </PopoverContent>
     </Popover>

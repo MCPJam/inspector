@@ -12,6 +12,7 @@ import type {
 } from "@/lib/swarm-api";
 import {
   RunInsights,
+  RunInsightsChip,
   signalFingerprint,
   signalSentence,
 } from "../run-insights";
@@ -320,6 +321,33 @@ describe("generation lifecycle", () => {
     state.dto = null;
     renderInsights();
     await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("auto-requests once per chip, not once per popover open", async () => {
+    // Radix unmounts `PopoverContent` on close. With the lifecycle inside it,
+    // every reopen would re-fire the request a guest had already been refused,
+    // because the hook's latches die with the content.
+    state.dto = null;
+    render(
+      <RunInsightsChip
+        surface={{
+          kind: "swarm",
+          projectId: "proj-1",
+          swarmRunGroupId: "run-1",
+        }}
+        onOpenSession={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId("run-insights-chip"));
+    await screen.findByTestId("run-insights");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("run-insights")).toBeNull());
+    fireEvent.click(screen.getByTestId("run-insights-chip"));
+    await screen.findByTestId("run-insights");
+
+    expect(state.requestMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not request while the run is still going", async () => {

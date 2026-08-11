@@ -142,6 +142,8 @@ export interface ChatboxWindowInsights {
    * where a swarm wave reports judge coverage. */
   feedbackCount: number;
   truncated: boolean;
+  /** The feedback scan hit its cap — `feedbackCount` is a floor, not a total. */
+  feedbackTruncated?: boolean;
   lowConfidence: boolean;
   candidates: ChatboxWindowInsightCandidate[];
   unnarratedCandidates: Array<{
