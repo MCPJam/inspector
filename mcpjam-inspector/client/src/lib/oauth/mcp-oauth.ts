@@ -78,6 +78,7 @@ import {
   startOAuthTraceStep,
   type OAuthTrace,
 } from "./oauth-trace";
+import { traceOAuthErrorMessage } from "./trace-redaction";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -1621,8 +1622,13 @@ function createOAuthFetchInterceptor(
         upstreamFinalUrl
       );
     } catch (error) {
+      // `entry` is trace-only display data, so the message is redacted here for
+      // the same reason `traceOAuthValue` redacts the body. The thrown error
+      // below is deliberately the ORIGINAL — callers act on it as live data.
       entry.error = {
-        message: error instanceof Error ? error.message : String(error),
+        message: traceOAuthErrorMessage(
+          error instanceof Error ? error.message : String(error)
+        ),
       };
       entry.duration = Date.now() - entry.timestamp;
       console.error("OAuth proxy failed:", error);
@@ -1632,7 +1638,16 @@ function createOAuthFetchInterceptor(
 }
 
 /**
- * Serialize request body for proxying
+ * Serialize a request body that the OAuth proxy SENDS upstream. Deliberately
+ * NOT redacted, for the same reason `parseOAuthResponseBody` is not: this value
+ * is live wire data, and a redactor here would put
+ * `code_verifier: "abcd...[redacted]...yz"` on the token request — still a
+ * non-empty string, so nothing downstream notices until the authorization
+ * server rejects the exchange.
+ *
+ * The trace copy of this body is redacted separately, by `traceOAuthValue` in
+ * `createHttpHistoryEntry`. Redaction belongs to the trace layer; a redactor
+ * applied to a consumed value is the #3865 bug.
  */
 async function serializeBody(body: BodyInit): Promise<any> {
   if (typeof body === "string") {
