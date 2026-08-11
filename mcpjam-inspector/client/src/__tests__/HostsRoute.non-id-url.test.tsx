@@ -1,0 +1,189 @@
+import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { routePaths } from "../lib/app-navigation";
+
+/**
+ * `/hosts/:hostId` carries a Convex document id, but nothing stops a typed or
+ * shared link from putting a clients-catalog slug there (`/hosts/chatgpt`,
+ * whose supported deep link is `/hosts?template=chatgpt`). The route used to
+ * sync that segment straight into shared state AND into the project's
+ * persisted "previewed host" — so the bad id kept reaching `hosts:getHost`,
+ * where it failed the `v.id("hosts")` argument validator and reached the
+ * browser as an opaque `[CONVEX Q(hosts:getHost)] Server Error`.
+ *
+ * The backend now reads a malformed id as not-found, so this is about the other
+ * half: a value that cannot resolve to a host must not be persisted as the
+ * project's previewed host, where it outlives the URL that carried it.
+ */
+const CONVEX_HOST_ID = "m17b6q9xw2tv4kz8p3r5s0dc";
+
+const {
+  mockRouteContext,
+  mockNavigate,
+  mockParams,
+  mockPreviewed,
+  mockSetPreviewedHostId,
+  mockSetHostsTabSelectedHostId,
+} = vi.hoisted(() => ({
+  mockRouteContext: {
+    convexProjectId: "project-1" as string | null,
+    hostsTabSelectedHostId: null as string | null,
+    isAuthenticated: true,
+    setHostsTabSelectedHostId: vi.fn(),
+  },
+  mockNavigate: vi.fn(),
+  mockParams: { hostId: undefined as string | undefined },
+  mockPreviewed: { value: null as string | null },
+  mockSetPreviewedHostId: vi.fn(),
+  mockSetHostsTabSelectedHostId: vi.fn(),
+}));
+
+vi.mock("react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router")>();
+  return {
+    ...actual,
+    useOutletContext: () => mockRouteContext,
+    useParams: () => mockParams,
+    Navigate: ({ to }: { to: string }) => (
+      <div data-testid="navigate" data-to={to} />
+    ),
+  };
+});
+
+// Renders the selected id so the test can assert what the canvas is handed.
+vi.mock("../components/HostsTab", () => ({
+  HostsTab: ({ selectedHostId }: { selectedHostId: string | null }) => (
+    <div data-testid="hosts-tab" data-selected-host-id={selectedHostId ?? ""} />
+  ),
+}));
+
+vi.mock("../hooks/use-previewed-client-id", () => ({
+  usePreviewedHostId: () => [mockPreviewed.value, mockSetPreviewedHostId],
+}));
+
+vi.mock("../lib/app-navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/app-navigation")>();
+  return { ...actual, useAppNavigate: () => mockNavigate };
+});
+
+// The template deep-link hook inside the route reads Convex + preferences.
+vi.mock("convex/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("convex/react")>();
+  return { ...actual, useQuery: () => undefined, useMutation: () => vi.fn() };
+});
+
+vi.mock("../stores/preferences/preferences-provider", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../stores/preferences/preferences-provider")
+  >();
+  return { ...actual, usePreferencesStore: () => "dark" };
+});
+
+// App.tsx's import graph pulls in the CodeMirror JSON editor; stub it (and the
+// CodeMirror packages it imports) so the route module loads under jsdom. Mirror
+// of SkillsRoute.flag-hydration.test.tsx.
+vi.mock("../components/ui/json-editor/codemirror-json-editor", () => ({
+  CodemirrorJsonEditor: () => null,
+}));
+vi.mock("@codemirror/lang-json", () => ({ json: () => ({}) }));
+vi.mock("@codemirror/view", () => ({
+  EditorView: class {},
+  lineNumbers: () => ({}),
+  highlightActiveLine: () => ({}),
+  highlightSpecialChars: () => ({}),
+  keymap: () => ({}),
+}));
+vi.mock("@codemirror/state", () => ({ EditorState: { create: vi.fn() } }));
+vi.mock("@codemirror/commands", () => ({
+  defaultKeymap: [],
+  history: () => ({}),
+  historyKeymap: [],
+}));
+vi.mock("@codemirror/language", () => ({
+  bracketMatching: () => ({}),
+  foldGutter: () => ({}),
+  indentOnInput: () => ({}),
+  syntaxHighlighting: () => ({}),
+  defaultHighlightStyle: {},
+}));
+vi.mock("@codemirror/lint", () => ({
+  linter: () => ({}),
+  lintGutter: () => ({}),
+}));
+
+import { HostsRoute } from "../App";
+
+beforeEach(() => {
+  mockRouteContext.convexProjectId = "project-1";
+  mockRouteContext.hostsTabSelectedHostId = null;
+  mockRouteContext.isAuthenticated = true;
+  mockRouteContext.setHostsTabSelectedHostId = mockSetHostsTabSelectedHostId;
+  mockPreviewed.value = null;
+  mockParams.hostId = undefined;
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("HostsRoute — a URL segment that is not a Convex host id", () => {
+  it("sends a catalog slug to the clients list instead of opening it", () => {
+    mockParams.hostId = "chatgpt";
+
+    render(<HostsRoute />);
+
+    expect(mockNavigate).toHaveBeenCalledWith(routePaths.hosts, {
+      replace: true,
+    });
+  });
+
+  it("never persists the slug as the project's previewed host", () => {
+    mockParams.hostId = "chatgpt";
+
+    render(<HostsRoute />);
+
+    // The persisted value is per-project and read on later visits, so writing
+    // it here would keep firing the doomed query long after this URL is gone.
+    expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
+    expect(mockSetHostsTabSelectedHostId).not.toHaveBeenCalledWith("chatgpt");
+  });
+
+  it("does not hand the slug to the host canvas", () => {
+    mockParams.hostId = "chatgpt";
+
+    render(<HostsRoute />);
+
+    expect(screen.getByTestId("hosts-tab")).toHaveAttribute(
+      "data-selected-host-id",
+      "",
+    );
+  });
+
+  it("still opens a real Convex host id, and persists it", () => {
+    mockParams.hostId = CONVEX_HOST_ID;
+
+    render(<HostsRoute />);
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockSetPreviewedHostId).toHaveBeenCalledWith(CONVEX_HOST_ID);
+    expect(mockSetHostsTabSelectedHostId).toHaveBeenCalledWith(CONVEX_HOST_ID);
+    expect(screen.getByTestId("hosts-tab")).toHaveAttribute(
+      "data-selected-host-id",
+      CONVEX_HOST_ID,
+    );
+  });
+
+  it("leaves the bare `/hosts` list alone", () => {
+    mockParams.hostId = undefined;
+    mockPreviewed.value = CONVEX_HOST_ID;
+
+    render(<HostsRoute />);
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    // No URL segment: the previewed host still drives the canvas.
+    expect(screen.getByTestId("hosts-tab")).toHaveAttribute(
+      "data-selected-host-id",
+      CONVEX_HOST_ID,
+    );
+  });
+});
