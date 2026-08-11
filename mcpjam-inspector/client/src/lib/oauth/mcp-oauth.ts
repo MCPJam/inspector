@@ -80,6 +80,7 @@ import {
 import type { OAuthRequestFields } from "./trace-redaction";
 import type { BuiltOAuthRequest } from "./oauth-request";
 import {
+  describeOAuthStateMatch,
   parseOAuthRequestFields,
   traceOAuthErrorMessage,
   traceOAuthHeaders,
@@ -3322,10 +3323,25 @@ export function evaluateCallbackSecurity(input: {
 }): { ok: true; warning?: string } | { ok: false; error: string } {
   // CSRF: if this flow issued a `state`, the callback MUST return it exactly.
   if (input.expectedState && input.callbackState !== input.expectedState) {
+    // `state` is redacted in traces, so the nonce itself is not available to
+    // whoever debugs this. Report the two facts that distinguish the failure
+    // modes — did the server return one at all, and did it match — because
+    // "no state returned" (server dropped it) and "state returned but
+    // different" (stale flow, or genuine CSRF) have different fixes and are
+    // otherwise indistinguishable from `[redacted]` on both sides.
+    const diagnostics = describeOAuthStateMatch({
+      issuedState: input.expectedState,
+      callbackState: input.callbackState,
+    });
+    const cause = diagnostics.statePresent
+      ? "the callback returned a different `state` than this flow issued — the authorization may belong to an older flow, or the response is forged"
+      : "the callback returned no `state` at all, though this flow issued one";
     return {
       ok: false,
       error:
-        "OAuth `state` mismatch — the callback did not return the value this flow issued (possible CSRF). Authorization was not completed.",
+        `OAuth \`state\` mismatch — ${cause} (possible CSRF). ` +
+        `Authorization was not completed. [state_present=${diagnostics.statePresent}, ` +
+        `state_matched=${diagnostics.stateMatched ?? false}]`,
     };
   }
   // Era predicate, not a version literal: a hardcoded `=== "2026-07-28"`

@@ -77,7 +77,9 @@ export function describePkceMetadataNonConformance(
     return (
       "Authorization server metadata must advertise S256 in " +
       `code_challenge_methods_supported for ${protocolVersion} conformance. ` +
-      `Advertised: ${supportedMethods.join(", ")}.`
+      `Advertised: ${supportedMethods.join(", ")}. ` +
+      "Connecting anyway would silently downgrade PKCE; use the OAuth " +
+      "debugger to observe this server's behavior without connecting."
     );
   }
 

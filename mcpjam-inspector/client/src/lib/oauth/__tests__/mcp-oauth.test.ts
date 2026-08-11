@@ -3281,6 +3281,35 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
     expect(result.ok).toBe(false);
   });
 
+  // `state` is redacted in traces, so the failure message is the only place a
+  // reader can learn WHICH mismatch happened. "Server returned nothing" and
+  // "server returned something else" have different fixes; without these the
+  // reader sees `[redacted]` on both sides and cannot tell them apart.
+  it("distinguishes a mismatched state from an absent one, without the nonce", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+
+    const mismatched = evaluateCallbackSecurity({
+      ...base,
+      callbackState: "attacker-state",
+    });
+    expect(mismatched.ok).toBe(false);
+    if (!mismatched.ok) {
+      expect(mismatched.error).toContain("state_present=true");
+      expect(mismatched.error).toContain("state_matched=false");
+      // Neither the issued nonce nor the returned one may appear.
+      expect(mismatched.error).not.toContain("s-123");
+      expect(mismatched.error).not.toContain("attacker-state");
+    }
+
+    const absent = evaluateCallbackSecurity({ ...base, callbackState: null });
+    expect(absent.ok).toBe(false);
+    if (!absent.ok) {
+      expect(absent.error).toContain("state_present=false");
+      expect(absent.error).toContain("state_matched=false");
+      expect(absent.error).not.toContain("s-123");
+    }
+  });
+
   it("rejects a present-but-mismatched iss (RFC 9207)", async () => {
     const { evaluateCallbackSecurity } = await import("../mcp-oauth");
     const result = evaluateCallbackSecurity({
