@@ -127,6 +127,7 @@ function renderSwarmWorkbench(props: {
   journeyRunIds?: string[];
   urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
   onSelectionChange?: (themes: unknown) => void;
+  strugglesSlot?: (breakdown: never) => React.ReactNode;
 } = { projectId: "proj-1" }) {
   const { projectId, journeyRunIds, ...rest } = props;
   return render(
@@ -248,6 +249,55 @@ describe("InsightsWorkbench", () => {
   it("renders a sign-in gate with no project", () => {
     renderSwarmWorkbench({ projectId: null });
     expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+  });
+
+  it("shows the empty state for a cohort with no sessions and no filter", () => {
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 0 },
+      rebuild: vi.fn(),
+    });
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("goal-header")).toBeNull();
+  });
+
+  it("keeps the workbench when a filter — not the cohort — empties the view", async () => {
+    // Two criteria that never co-occur intersect to nothing. Swapping the
+    // body for the empty state would take the chip row with it, leaving no
+    // way to undo the filter that emptied the view.
+    let totalSessions = 3;
+    mockUseUsageInsights.mockImplementation(() => ({
+      threads: undefined,
+      breakdown: { totalSessions },
+      rebuild: vi.fn(),
+    }));
+    const user = userEvent.setup();
+    renderSwarmWorkbench({ projectId: "proj-1" });
+
+    totalSessions = 0;
+    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+
+    expect(screen.queryByText(/sign in/i)).toBeNull();
+    expect(screen.getByTestId("swarm-insights-statline")).toBeInTheDocument();
+    expect(screen.getByTestId("goal-header")).toBeInTheDocument();
+  });
+
+  it("hands a struggles-slot function the breakdown it already subscribes to", () => {
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 4 },
+      rebuild: vi.fn(),
+    });
+    // User Testing's Feedback popover renders FROM the breakdown; a plain
+    // node would make the page subscribe a second time to decide.
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      strugglesSlot: (breakdown: { totalSessions?: number } | null) => (
+        <span data-testid="slot-sessions">{breakdown?.totalSessions}</span>
+      ),
+    });
+    expect(screen.getByTestId("slot-sessions")).toHaveTextContent("4");
   });
 
   it("toggles between Session flow and Clusters", async () => {

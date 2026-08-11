@@ -20,6 +20,15 @@ import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWo
 import { RunInsightsChip } from "@/components/shared/usage-insights/run-insights";
 import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
 import {
+  ChatboxOutcomeCalibration,
+  hasOutcomeFeedbackCalibration,
+} from "@/components/chatboxes/ChatboxOutcomeCalibration";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import {
   parseSelectionParam,
   serializeSelectionParam,
 } from "@/hooks/chatbox-usage-filters";
@@ -650,31 +659,59 @@ export function UserTestingScenarioDetail({
                   replace: true,
                 });
               }}
-              strugglesSlot={
-                // Ships dark and guest-tolerant: `useQuery` against an
-                // undeployed query throws, and a guest hitting the
-                // member-only request mutation would too. The boundary makes
-                // both render as nothing rather than as a broken tab — the
-                // same pattern `ChatboxSessionsMetricStrip` uses.
-                <ErrorBoundary fallback={null}>
-                  <RunInsightsChip
-                    surface={{
-                      kind: "chatbox",
-                      chatboxId: chatbox.chatboxId,
-                    }}
-                    onOpenSession={(threadId) => {
-                      navigate(
-                        buildUserTestingScenarioPath(chatbox.chatboxId, {
-                          session: threadId,
-                        }),
-                        { replace: true },
-                      );
-                    }}
-                    canRequest={canRequestInsights}
-                    canDismiss={canRequestInsights}
-                  />
-                </ErrorBoundary>
-              }
+              strugglesSlot={(breakdown) => (
+                <>
+                  {/* Ships dark and guest-tolerant: `useQuery` against an
+                      undeployed query throws, and a guest hitting the
+                      member-only request mutation would too. The boundary
+                      makes both render as nothing rather than as a broken tab
+                      — the same pattern `ChatboxSessionsMetricStrip` uses. */}
+                  <ErrorBoundary fallback={null}>
+                    <RunInsightsChip
+                      surface={{
+                        kind: "chatbox",
+                        chatboxId: chatbox.chatboxId,
+                      }}
+                      onOpenSession={(threadId) => {
+                        navigate(
+                          buildUserTestingScenarioPath(chatbox.chatboxId, {
+                            session: threadId,
+                          }),
+                          { replace: true },
+                        );
+                      }}
+                      canRequest={canRequestInsights}
+                      canDismiss={canRequestInsights}
+                    />
+                  </ErrorBoundary>
+                  {/* Feedback-by-inferred-outcome, unchanged from the panel
+                      this workbench replaced: a chip beside the findings one,
+                      the table behind it. Hidden until something is rated —
+                      a calibration with no ratings is an empty table, not an
+                      empty state worth a chip. */}
+                  {hasOutcomeFeedbackCalibration(breakdown) ? (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium tabular-nums transition-colors hover:bg-muted/50"
+                          data-testid="chatbox-insights-feedback-chip"
+                        >
+                          Feedback
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[28rem] max-w-[90vw] p-0"
+                      >
+                        <div className="flex max-h-[60vh] min-h-0 flex-col overflow-y-auto">
+                          <ChatboxOutcomeCalibration breakdown={breakdown} />
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  ) : null}
+                </>
+              )}
               // Parity with the swarm one-shot: a scenario analyzed before the
               // topic map existed backfills silently on first Clusters view.
               // The server mutation dedupes in-flight runs.

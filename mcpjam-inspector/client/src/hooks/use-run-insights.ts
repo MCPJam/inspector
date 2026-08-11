@@ -74,6 +74,8 @@ export type UseRunInsightsResult = {
 function classifyRunInsightError(err: unknown): {
   unavailable: boolean;
   permanent: boolean;
+  /** The caller may not generate. Suppresses AUTO-requests, nothing else. */
+  authRefused?: boolean;
   message: string;
 } {
   const raw = err instanceof Error ? err.message : String(err);
@@ -119,8 +121,15 @@ function classifyRunInsightError(err: unknown): {
   // hitting it is a normal outcome on a guest-visible surface, not a broken
   // backend — and NOT `permanent`, which the caller latches to mean "this
   // deployment does not have the feature". Who is asking can change within a
-  // session; what is deployed cannot. The caller already suppresses
-  // auto-request for guests through `canRequest`, so nothing needs the latch.
+  // session; what is deployed cannot.
+  //
+  // It still has to stop the AUTO-request, and `canRequest` alone does not:
+  // `usePromoteCapability` answers `true` for an anonymous hosted visitor, so
+  // a guest browsing scenarios would fire one doomed mutation per cohort and
+  // be told to ask a member each time. `authRefused` is the narrower latch —
+  // it suppresses auto-requests only, and an explicit press clears it, so a
+  // user who signs in mid-session gets a working button rather than a dead
+  // surface.
   if (
     raw.includes("Insufficient workspace permissions") ||
     raw.includes("Not a member of this workspace")
@@ -128,6 +137,7 @@ function classifyRunInsightError(err: unknown): {
     return {
       unavailable: false,
       permanent: false,
+      authRefused: true,
       message: "Ask a workspace member to generate insights.",
     };
   }
@@ -154,6 +164,8 @@ export function useRunInsights(
   const [unavailable, setUnavailable] = useState(false);
   const [requested, setRequested] = useState(false);
   const featureMissingRef = useRef(false);
+  /** Sticky across cohorts: who is asking does not change by navigating. */
+  const authRefusedRef = useRef(false);
   const hasAutoAttemptedRef = useRef(false);
   const runKeyRef = useRef<string | null>(null);
 
@@ -182,9 +194,14 @@ export function useRunInsights(
     CHATBOX_INSIGHTS_MUTATIONS.cancelWindowInsights as any,
   );
 
-  const request = useCallback(
-    (force?: boolean) => {
+  /** Shared body. `auto` distinguishes the first-view attempt from a press. */
+  const fire = useCallback(
+    (force: boolean | undefined, auto: boolean) => {
       if (!scope || unavailable) return;
+      // A press is a fresh assertion by the user: the identity that was
+      // refused may not be the identity pressing now (they may have signed in
+      // since). An auto-request carries no such assertion, so it stays latched.
+      if (!auto) authRefusedRef.current = false;
       setError(null);
       setRequested(true);
       // The window request takes no group id: the backend anchors it to the
@@ -201,17 +218,19 @@ export function useRunInsights(
       promise.catch((err: unknown) => {
         setRequested(false);
         const classified = classifyRunInsightError(err);
+        if (classified.permanent) featureMissingRef.current = true;
+        if (classified.authRefused) authRefusedRef.current = true;
         if (classified.unavailable) {
-          if (classified.permanent) featureMissingRef.current = true;
           setUnavailable(true);
         } else {
-          if (classified.permanent) featureMissingRef.current = true;
           setError(classified.message);
         }
       });
     },
     [scope, unavailable, requestSwarm, requestWindow],
   );
+
+  const request = useCallback((force?: boolean) => fire(force, false), [fire]);
 
   const cancel = useCallback(async () => {
     if (!scope || unavailable) return;
@@ -258,13 +277,16 @@ export function useRunInsights(
   useEffect(() => {
     if (!autoRequest || !scope || unavailable) return;
     if (featureMissingRef.current) return;
+    // Already told this viewer they may not generate — asking again on every
+    // cohort they open just re-shows the refusal.
+    if (authRefusedRef.current) return;
     if (!terminal) return;
     if (dto === undefined) return; // still loading
     if (dto !== null) return; // already requested at some point
     if (hasAutoAttemptedRef.current) return;
     hasAutoAttemptedRef.current = true;
-    request();
-  }, [autoRequest, scope, unavailable, terminal, dto, request]);
+    fire(undefined, true);
+  }, [autoRequest, scope, unavailable, terminal, dto, fire]);
 
   const status = dto?.status ?? null;
   const busy = requested || status === "pending";

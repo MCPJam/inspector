@@ -12,7 +12,11 @@ import {
   useInsightsRebuild,
   type InsightsView,
 } from "@/hooks/useInsightsFlowController";
-import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
+import {
+  useUsageInsights,
+  type InsightsScope,
+  type UsageBreakdown,
+} from "@/hooks/useUsageInsights";
 import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
 import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOutcomeDrilldown";
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
@@ -44,8 +48,16 @@ interface InsightsWorkbenchProps {
   onOpenSessionsTab?: () => void;
   /** Leading statline content supplied by the owning page. */
   personasSlot?: ReactNode;
-  /** Pattern / findings chips supplied by the owning page. */
-  strugglesSlot?: ReactNode;
+  /**
+   * Pattern / findings chips supplied by the owning page. A function receives
+   * the breakdown this workbench is already subscribed to: User Testing's
+   * Feedback popover renders FROM the breakdown and must not appear when there
+   * is nothing rated to show, and the workbench owns that subscription — a
+   * plain node would force the page to duplicate the query to decide.
+   */
+  strugglesSlot?:
+    | ReactNode
+    | ((breakdown: UsageBreakdown | null | undefined) => ReactNode);
   /** Extra content shown below the rubric scorecard in its popover. */
   checksExtras?: ReactNode;
   /**
@@ -225,7 +237,17 @@ export function InsightsWorkbench({
   // shown during the first subscription would flash on every mount — and a
   // breakdown whose `totalSessions` is missing is a backend that does not
   // report it, not a cohort with no sessions.
-  const nothingToShow = scope === null || breakdown?.totalSessions === 0;
+  //
+  // FILTERED-TO-ZERO IS NOT EMPTY. Two criteria that never co-occur intersect
+  // to nothing, and swapping the whole workbench for "no sessions here" would
+  // take the chip row away with it — leaving the user no way to undo the
+  // filter that emptied the view. Only an UNFILTERED zero is the cohort being
+  // empty; the forced policy chip (hide-synthetic) is not a user filter and is
+  // not dismissible, so it is correctly absent from this test.
+  const userFiltered =
+    flow.dismissibleChips.length > 0 || flow.flowSelection !== null;
+  const nothingToShow =
+    scope === null || (!userFiltered && breakdown?.totalSessions === 0);
   if (emptyState && nothingToShow) {
     return (
       <div
@@ -332,7 +354,11 @@ export function InsightsWorkbench({
         onToggleChip={flow.handleToggleChip}
         onOpenSessionsTab={onOpenSessionsTab}
         leadingSlot={personasSlot}
-        strugglesSlot={strugglesSlot}
+        strugglesSlot={
+          typeof strugglesSlot === "function"
+            ? strugglesSlot(breakdown)
+            : strugglesSlot
+        }
         checksExtras={checksExtras}
         trailing={
           <>
@@ -340,8 +366,13 @@ export function InsightsWorkbench({
                 and that query ships with the backend PR — `useQuery` against an
                 undeployed function THROWS, which without this boundary would
                 take the whole Insights tab down rather than one chip. Same
-                reason the findings rail is wrapped at its mount. */}
-            <ErrorBoundary fallback={null}>
+                reason the findings rail is wrapped at its mount.
+                Keyed on the cohort so a boundary tripped against the
+                undeployed backend re-arms on the next scenario the user
+                opens, rather than staying latched for the life of the mount;
+                a tab left open on ONE cohort across the deploy still needs a
+                navigation to pick the chip up. */}
+            <ErrorBoundary key={cohortKey} fallback={null}>
               <InsightsFreshnessChip
                 scope={scope}
                 latestRun={breakdown?.latestRun}

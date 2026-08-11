@@ -160,11 +160,16 @@ export function ChatboxUsagePanel({
                   handle so the two border-b lines read as one. */}
               <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2" />
               <div className="min-h-0 flex-1 overflow-hidden">
+                {/* `filterState` reaches an already-filtered list, so it only
+                    feeds the empty-state copy. Handing it the force-applied
+                    policy chip would tell a scenario with no visitor traffic
+                    that "no sessions match the current filters" and offer to
+                    clear chart chips this panel does not have. */}
                 <ShareUsageThreadList
                   threads={sortedThreads}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={setSelectedThreadId}
-                  filterState={SESSIONS_FILTER}
+                  filterState={EMPTY_USAGE_FILTER}
                 />
               </div>
             </div>
