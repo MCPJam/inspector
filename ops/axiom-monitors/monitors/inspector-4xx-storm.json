@@ -1,0 +1,44 @@
+{
+  "key": "inspector-4xx-storm",
+  "name": "MCPJam Inspector 4xx storm (prod)",
+  "tier": "WARN",
+  "owner": "marcelo",
+  "dataset": "inspector-logs",
+  "notifier": "mcpjam-alerts-warn",
+  "monitor": {
+    "type": "Threshold",
+    "columnName": "Count",
+    "operator": "Above",
+    "threshold": 200,
+    "rangeMinutes": 60,
+    "intervalMinutes": 15,
+    "notifyByGroup": false,
+    "alertOnNoData": false,
+    "resolvable": true,
+    "notifyEveryRun": false
+  },
+  "aplQuery": [
+    "['inspector-logs']",
+    "| where _sysTime >= ago(60m)",
+    "| where event == 'http.request.completed'",
+    "| where toint(statusCode) >= 400 and toint(statusCode) < 500",
+    "| where tostring(environment) in ('prod','production')",
+    "| summarize Count = count()"
+  ],
+  "description": [
+    "WARN — owner: marcelo. More than 200 4xx responses in one hour (prod). Not a page.",
+    "",
+    "WHY THIS EXISTS: the 5xx rate monitor is deliberately 5xx-only, so without this the entire 4xx surface is unwatched. That matters because classifyRuntimeError checks isUnauthorized401 before every other branch, so MCP auth failures carrying a clean 401 land on 'http.request.completed' and never reach 'http.request.failed'. Measured on the incident route: 2,328 401s vs 4,932 500s on /api/web/tools/list.",
+    "",
+    "WHY THIS THRESHOLD: measured hourly 4xx over 30d is p50=12, p95=62, p99=89, max=156. 200/hr is ~2.2x p99 and above the observed maximum. Steady auth churn (8,373 401s across 520 orgs in 30d) cannot reach it; a genuine auth or rate-limit storm can.",
+    "",
+    "WHY WARN, NOT PAGE: a 4xx is a declared client outcome. Only an abnormal RATE of one is evidence of anything, and the classes worth paging on are already covered by the per-class spike monitor. Revisit this tier only if a real incident is found to have announced itself here first.",
+    "",
+    "TRIAGE:",
+    "1. Split by status and route: ['inspector-logs'] | where _time > ago(3h) | where event == 'http.request.completed' | where toint(statusCode) between (400 .. 499) | summarize n=count(), orgs=dcount(orgId) by statusCode, tostring(route) | sort by n desc",
+    "2. Wide (many orgs) 401 = credential/session expiry wave, likely ours or an upstream identity provider. Narrow (few orgs) = one tenant's automation; check for a client loop.",
+    "3. 429 concentrated on one route means we are rate-limiting ourselves; confirm against the self-inflicted-load guard before blaming a customer.",
+    "",
+    "ROLLBACK: node ops/axiom-monitors/apply.mjs --only inspector-4xx-storm after reverting the definition file."
+  ]
+}
