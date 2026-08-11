@@ -106,8 +106,8 @@ There is no published image — build one from source, then run it bound to loca
 ```bash
 git clone https://github.com/MCPJam/inspector.git
 cd inspector
-docker build -t mcpjam-inspector -f mcpjam-inspector/Dockerfile .
-docker run -p 127.0.0.1:6274:6274 mcpjam-inspector
+docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
 The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.

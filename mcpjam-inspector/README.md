@@ -68,8 +68,8 @@ Run MCPJam using Docker. There is no published image, so build one from source f
 ```bash
 git clone https://github.com/MCPJam/inspector.git
 cd inspector
-docker build -t mcpjam-inspector -f mcpjam-inspector/Dockerfile .
-docker run -p 127.0.0.1:6274:6274 mcpjam-inspector
+docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
 # Key features
