@@ -181,6 +181,7 @@ import {
 } from "./utils/caniuse-meta-tags";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
+import { buildHealthMeta } from "./utils/health-payload.js";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -552,6 +553,7 @@ app.get("/health", (c) => {
     timestamp: new Date().toISOString(),
     hasActiveClient: inspectorCommandBus.hasActiveClient(),
     frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
+    ...buildHealthMeta(),
   });
 });
 

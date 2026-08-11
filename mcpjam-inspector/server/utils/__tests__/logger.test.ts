@@ -114,7 +114,7 @@ describe("logger", () => {
           {
             level: "error",
             message: "fail",
-            environment: "unknown",
+            environment: "prod",
             requestId: "abc",
             error: "something broke",
           },
@@ -140,7 +140,7 @@ describe("logger", () => {
           {
             level: "warn",
             message: "watch out",
-            environment: "unknown",
+            environment: "prod",
             userId: "123",
           },
         ]);
@@ -211,6 +211,24 @@ describe("logger", () => {
         ]);
       });
 
+      it("tags free-form logs with the same canonical environment as typed events", async () => {
+        // These two used to disagree. `logger.event` resolved the environment
+        // through the allowlist; the free-form path read `ENVIRONMENT` raw. A
+        // deploy setting `ENVIRONMENT=production` therefore split Axiom in
+        // half — typed rows `"prod"`, free-form rows `"production"` — and a
+        // query filtered on either one silently missed the other.
+        vi.stubEnv("ENVIRONMENT", "production");
+        vi.resetModules();
+        const { logger: freshLogger } = await import("../logger.js");
+        mockIngest.mockClear();
+
+        freshLogger.info("started");
+
+        expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+          expect.objectContaining({ environment: "prod" }),
+        ]);
+      });
+
       it("ingests info logs to Axiom", () => {
         logger.info("started", { port: 3000 });
 
@@ -218,7 +236,7 @@ describe("logger", () => {
           {
             level: "info",
             message: "started",
-            environment: "unknown",
+            environment: "prod",
             port: 3000,
           },
         ]);
@@ -231,7 +249,7 @@ describe("logger", () => {
           {
             level: "debug",
             message: "trace",
-            environment: "unknown",
+            environment: "prod",
             args: ["arg1", "arg2"],
           },
         ]);

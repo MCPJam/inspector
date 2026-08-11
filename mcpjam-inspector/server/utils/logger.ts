@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { Axiom } from "@axiomhq/js";
+import { resolveEnvironment } from "./log-events.js";
 import type {
   LogEventName,
   RequestEventMap,
@@ -50,7 +51,21 @@ function getAxiom(): Axiom | null {
 
 const dataset = () => process.env.AXIOM_DATASET ?? "";
 
-const environment = () => process.env.ENVIRONMENT ?? "unknown";
+/**
+ * Same resolver the typed-event path uses.
+ *
+ * These two disagreed. `logger.event` went through `resolveEnvironment()`,
+ * which maps anything outside the allowlist onto a canonical value, while the
+ * free-form logs below read `ENVIRONMENT` raw — so a deploy setting
+ * `ENVIRONMENT=production` split Axiom in half: typed rows tagged `"prod"`,
+ * free-form rows tagged `"production"`, and any query that filtered on one
+ * silently missed the other. Sharing the resolver kills that class of bug
+ * permanently, rather than fixing the one value that happened to diverge.
+ *
+ * NOTE for dashboards: historical production rows are still `"production"`.
+ * Saved queries that span the seam need `in ("prod","production")`.
+ */
+const environment = () => resolveEnvironment();
 
 /**
  * Sentry capture for typed events is **opt-in**: pass `{ sentry: true }` at the
