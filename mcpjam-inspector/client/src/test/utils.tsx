@@ -168,7 +168,7 @@ export function generateTestId(prefix: string): string {
  * @example
  * expect(toastError).toHaveBeenCalledWith(
  *   errorToastMessage("Something went wrong."),
- *   { duration: Infinity },
+ *   { duration: 8000 },
  * );
  */
 export function errorToastMessage(text: string) {
