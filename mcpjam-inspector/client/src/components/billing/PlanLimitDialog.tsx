@@ -16,6 +16,12 @@ import { PlanLimitDialogView } from "@/components/billing/PlanLimitDialogView";
 /** Same destination as the pricing page's Enterprise CTA. */
 const ENTERPRISE_CONTACT_URL = "https://www.mcpjam.com/contact";
 
+// Stripe redirects before its webhook-backed billing state is guaranteed to
+// have reached the client. Keep the return marker alive briefly so the reactive
+// billing query can observe a successful plan change before we classify a
+// still-Free result as an abandoned checkout.
+const UPGRADE_RETURN_SETTLEMENT_GRACE_MS = 30_000;
+
 function formatCount(value: number): string {
   return new Intl.NumberFormat().format(value);
 }
@@ -90,17 +96,37 @@ function useUpgradeReturnFlow(): void {
   const [upgradeReturn] = useState<UpgradeReturn | null>(() =>
     readUpgradeReturn(),
   );
+  const [settlementGraceElapsed, setSettlementGraceElapsed] = useState(false);
   const handledRef = useRef(false);
   const { billingStatus, planCatalog, isLoadingBilling } =
     useOrganizationBilling(upgradeReturn?.organizationId ?? null);
 
   useEffect(() => {
+    if (
+      !upgradeReturn ||
+      handledRef.current ||
+      isLoadingBilling ||
+      billingStatus?.plan !== "free"
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSettlementGraceElapsed(true);
+    }, UPGRADE_RETURN_SETTLEMENT_GRACE_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [billingStatus?.plan, isLoadingBilling, upgradeReturn]);
+
+  useEffect(() => {
     if (!upgradeReturn || handledRef.current) return;
     if (isLoadingBilling || !billingStatus) return;
+
+    const upgraded = billingStatus.plan !== "free";
+    if (!upgraded && !settlementGraceElapsed) return;
+
     handledRef.current = true;
     stripUpgradeReturnParams();
 
-    const upgraded = billingStatus.plan !== "free";
     if (upgraded) {
       const teamName = planCatalog?.plans.team.displayName ?? "Team";
       toast.success(
@@ -121,6 +147,7 @@ function useUpgradeReturnFlow(): void {
     billingStatus,
     isLoadingBilling,
     planCatalog,
+    settlementGraceElapsed,
     upgradeReturn,
   ]);
 }
