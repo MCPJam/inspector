@@ -31,6 +31,9 @@ import {
 
 const SERVER_URL = "https://mcp-server.example.com/mcp";
 const SERVER_ORIGIN = "https://mcp-server.example.com";
+
+/** Step ceiling for one driven flow. Comfortably above the longest era. */
+const MAX_STEPS = 40;
 const RESOURCE_METADATA_URL = `${SERVER_ORIGIN}/.well-known/oauth-protected-resource/mcp`;
 const AUTH_SERVER_URL = "https://auth-server.example.com";
 const REDIRECT_URL = "http://localhost:3000/oauth/callback/debug";
@@ -303,7 +306,7 @@ async function run(options: RunOptions): Promise<RunResult> {
   });
 
   let deliveredCode = false;
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < MAX_STEPS; index += 1) {
     if (state.currentStep === "complete" || state.error) break;
 
     // Cross the human step exactly once.
@@ -330,6 +333,17 @@ async function run(options: RunOptions): Promise<RunResult> {
       };
       break;
     }
+  }
+
+  // Exhausting the budget is a harness failure, not a result. Every negative
+  // case below asserts `completed === false` plus the absence of a token, and a
+  // machine stuck on an intermediate step satisfies both — so a regression that
+  // never reaches the expected rejection would read as the rejection working.
+  // Only "complete" or a recorded error is a terminal state.
+  if (state.currentStep !== "complete" && !state.error) {
+    throw new Error(
+      `step budget (${MAX_STEPS}) exhausted at "${state.currentStep}" without reaching a terminal state`,
+    );
   }
 
   return {
@@ -450,7 +464,11 @@ function assertWireInvariants(result: RunResult, version: OAuthProtocolVersion) 
   const authorizeResource = authorize!.searchParams.get("resource");
   expect(authorizeResource).toBeTruthy();
   expect(tokenBody.resource).toBe(authorizeResource);
-  expect(new URL(authorizeResource!).origin).toBe(SERVER_ORIGIN);
+  // The whole canonical value, not just its origin: a same-origin switch to
+  // another audience (`/other`) is exactly the mis-binding this invariant
+  // exists to catch, and an origin check waves it through — leaving an
+  // accepted snapshot as the only signal.
+  expect(authorizeResource).toBe(SERVER_URL);
 
   // A CSRF state is always issued.
   expect(authorize!.searchParams.get("state")).toBeTruthy();
@@ -598,6 +616,76 @@ describe.each(ALL_VERSIONS)("branch catalog (%s)", (version) => {
     },
   );
 
+  // The conforming case above is where all three modes agree, so on its own it
+  // cannot tell an implementation that honors `resourceIndicatorEnforcement`
+  // from one that ignores it entirely. The two below make each mode's boundary
+  // observable.
+  //
+  // 2025-03-26 has no PRM step to advertise a resource with, so the knob has
+  // nothing to act on. Skipped rather than returned from — a test that returns
+  // before asserting is reported as passing.
+  //
+  // Same-origin but not a path prefix of the server URL: `evaluateCandidate`
+  // calls this `status: "valid"` with `rfc9728Compliant: false`, so it is the
+  // one shape that separates `reject` from `reject-rfc9728`.
+  it.skipIf(version === "2025-03-26").each([
+    ["warn", true],
+    ["reject", true],
+    ["reject-rfc9728", false],
+  ] as const)(
+    "resourceIndicatorEnforcement=%s on a same-origin non-prefix resource",
+    async (enforcement, expectedToComplete) => {
+      const result = await run({
+        version,
+        registrationStrategy: "dcr",
+        machineConfig: { resourceIndicatorEnforcement: enforcement },
+        knobs: {
+          protectedResourceMetadata: { resource: `${SERVER_ORIGIN}/other` },
+        },
+      });
+
+      expect(result.completed, result.error).toBe(expectedToComplete);
+      if (expectedToComplete) {
+        // The advertised value is what gets bound, including when it is not
+        // the server URL. That is the point of the non-strict modes.
+        expect(authorizationUrl(result)!.searchParams.get("resource")).toBe(
+          `${SERVER_ORIGIN}/other`,
+        );
+      } else {
+        expect(tokenRequest(result)).toBeUndefined();
+      }
+    },
+  );
+
+  // A foreign origin is `status: "incompatible"`, which both reject modes
+  // refuse and `warn` deliberately lets through so real server behavior stays
+  // observable in the debugger.
+  it.skipIf(version === "2025-03-26").each([
+    ["warn", true],
+    ["reject", false],
+    ["reject-rfc9728", false],
+  ] as const)(
+    "resourceIndicatorEnforcement=%s on a foreign-origin resource",
+    async (enforcement, expectedToComplete) => {
+      const foreign = "https://elsewhere.example.com/mcp";
+      const result = await run({
+        version,
+        registrationStrategy: "dcr",
+        machineConfig: { resourceIndicatorEnforcement: enforcement },
+        knobs: { protectedResourceMetadata: { resource: foreign } },
+      });
+
+      expect(result.completed, result.error).toBe(expectedToComplete);
+      if (expectedToComplete) {
+        expect(authorizationUrl(result)!.searchParams.get("resource")).toBe(
+          foreign,
+        );
+      } else {
+        expect(tokenRequest(result)).toBeUndefined();
+      }
+    },
+  );
+
   it.each([true, false])(
     "allowPathScopedIssuer=%s against an exact-match issuer",
     async (allowPathScopedIssuer) => {
@@ -654,6 +742,53 @@ describe.each(ALL_VERSIONS)("branch catalog (%s)", (version) => {
       expect(strict.completed, strict.error).toBe(true);
     }
   });
+
+  // …and the case the toggle actually exists for. Without it the rejection
+  // above is the only outcome exercised, so deleting the opt-in's accept path
+  // entirely would still pass the harness.
+  //
+  // Discovery starts from a path-scoped AS URL while the metadata advertises
+  // the origin root as its issuer — the multi-tenant shape RFC 8414 §3.3's
+  // exact match rejects and `allowPathScopedIssuer` is the opt-in for.
+  it.skipIf(version === "2025-03-26")(
+    "allowPathScopedIssuer accepts an origin-root issuer under a path-scoped AS",
+    async () => {
+      const pathScoped = {
+        knobs: {
+          protectedResourceMetadata: {
+            authorization_servers: [`${AUTH_SERVER_URL}/tenant/abc`],
+          },
+        },
+      } as const;
+
+      const optedOut = await run({
+        version,
+        registrationStrategy: "dcr",
+        ...pathScoped,
+      });
+      const optedIn = await run({
+        version,
+        registrationStrategy: "dcr",
+        ...pathScoped,
+        machineConfig: { allowPathScopedIssuer: true },
+      });
+
+      if (version === "2026-07-28") {
+        // The toggle has to CHANGE the outcome, or it is dead configuration.
+        expect(optedOut.completed).toBe(false);
+        expect(optedOut.error).toMatch(/issuer/i);
+        expect(tokenRequest(optedOut)).toBeUndefined();
+
+        expect(optedIn.completed, optedIn.error).toBe(true);
+        assertWireInvariants(optedIn, version);
+      } else {
+        // Earlier eras ignore the knob; pinned so a shared-code change cannot
+        // quietly extend the strict check backwards.
+        expect(optedOut.completed, optedOut.error).toBe(true);
+        expect(optedIn.completed, optedIn.error).toBe(true);
+      }
+    },
+  );
 
   // --- Current-profile branches. Older eras genuinely differ here. ---
 
