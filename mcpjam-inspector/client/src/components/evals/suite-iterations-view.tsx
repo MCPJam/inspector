@@ -52,6 +52,7 @@ import { SuiteDashboard } from "./suite-dashboard";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
@@ -165,6 +166,52 @@ function SettingsSection({
       </div>
       <div className="space-y-3">{children}</div>
     </section>
+  );
+}
+
+/**
+ * The GitHub Checks section, availability read and chrome included.
+ *
+ * The read lives HERE rather than in `SuiteIterationsView` for one reason: it
+ * can throw, and it must be able to fail inside a boundary. Availability is
+ * backend-decided, and the backend REFUSES rather than answers for a caller who
+ * is not a signed-in member of the org (a guest actor, a stale org id in client
+ * state) — see `useGithubChecksSettings`. `useQuery` re-throws that during
+ * render, so a hook called in `SuiteIterationsView` itself takes the entire
+ * suite page down with it. It did: the two settings call sites have always
+ * wrapped this hook in an `ErrorBoundary`, the call site added here did not.
+ *
+ * A refused beta gate means "no section", never "no page", so the boundary at
+ * the render site below renders nothing. It still reports to Sentry — silence
+ * is the UI choice, not the telemetry one.
+ *
+ * Not a PostHog flag like its neighbours in the settings sheet: a client-side
+ * twin of a server-evaluated gate could disagree with it, offering a section
+ * whose every write the server then refuses. One authority, asked once.
+ */
+function SuiteGithubChecksSettingsSection({
+  suiteId,
+  projectId,
+  organizationId,
+}: {
+  suiteId: string;
+  projectId?: string | null;
+  organizationId?: string | null;
+}) {
+  const availability = useGithubChecksAvailability(organizationId);
+  if (availability?.state !== "enabled") return null;
+
+  return (
+    <SettingsSection
+      label="GitHub Checks"
+      hint="Run this suite on every pull request to a connected repository."
+    >
+      <SuiteGithubChecksSection
+        suiteId={suiteId}
+        projectId={projectId}
+        organizationId={organizationId}
+      />
+    </SettingsSection>
   );
 }
 
@@ -705,12 +752,6 @@ export function SuiteIterationsView({
 
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
-  // Not a PostHog flag like its neighbours: GitHub Checks availability is
-  // decided BY THE BACKEND (org membership + a server-evaluated release gate),
-  // and a client-side twin could disagree with it — offering a section whose
-  // every write the server then refuses. One authority, asked once.
-  const githubChecksEnabled =
-    useGithubChecksAvailability(organizationId)?.state === "enabled";
 
   const handleOpenSuiteExport = useCallback(() => {
     setExportState({
@@ -1609,18 +1650,13 @@ export function SuiteIterationsView({
               ) : null}
 
               {/* ── GitHub Checks (backend-gated) ────────────────────── */}
-              {githubChecksEnabled ? (
-                <SettingsSection
-                  label="GitHub Checks"
-                  hint="Run this suite on every pull request to a connected repository."
-                >
-                  <SuiteGithubChecksSection
-                    suiteId={suite._id}
-                    projectId={projectId}
-                    organizationId={organizationId}
-                  />
-                </SettingsSection>
-              ) : null}
+              <ErrorBoundary name="suite_github_checks" fallback={null}>
+                <SuiteGithubChecksSettingsSection
+                  suiteId={suite._id}
+                  projectId={projectId}
+                  organizationId={organizationId}
+                />
+              </ErrorBoundary>
 
               {/* ── LLM as Judge ─────────────────────────────────────── */}
               <SettingsSection
