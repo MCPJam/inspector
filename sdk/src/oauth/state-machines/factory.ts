@@ -78,7 +78,7 @@ const CONSUMED_CREDENTIAL_FIELDS = [
 
 /**
  * The sentinel shapes this codebase's redactors emit: the bare marker, and the
- * `redactSensitiveValue` truncation form `abcd...[redacted]...yz`.
+ * `redactSensitiveTraceValue` truncation form `abcd...[redacted]...yz`.
  *
  * Deliberately narrow. An opaque token is an arbitrary string, so a loose match
  * would fail real logins — the guard must only fire on values that are

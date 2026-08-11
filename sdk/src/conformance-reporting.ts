@@ -11,7 +11,7 @@ import {
   scoreFromTasksResult,
   type ConformanceScore,
 } from "./conformance-score.js";
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./telemetry-redaction.js";
 import type {
   MCPConformanceResult,
   MCPConformanceSuiteResult,
@@ -571,7 +571,7 @@ export function toConformanceReport(
 export function renderConformanceReportJson(
   report: ConformanceReport,
 ): ConformanceReport {
-  return redactSensitiveValue(report) as ConformanceReport;
+  return redactForTelemetry(report) as ConformanceReport;
 }
 
 function renderConformanceTestCase(
