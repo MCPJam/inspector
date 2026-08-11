@@ -107,6 +107,20 @@ export interface ChatboxWindowSignals {
    * `latestRun.isStale`, which means an in-flight job blew its lease.
    */
   dataStale: boolean;
+  /**
+   * May this viewer spend on narration / retire a finding?
+   *
+   * Answered by the server from the same predicate `requestWindowInsights`
+   * and `dismissFinding` enforce (workspace `member` on this chatbox's
+   * workspace). Read it rather than deriving one locally: a second authority
+   * eventually gives a second answer — notably for a chatbox with no
+   * `projectId`, which the mutations never consult.
+   *
+   * Optional on the wire so a client running ahead of the backend degrades to
+   * its caller's default instead of hiding the affordance outright.
+   */
+  canRequest?: boolean;
+  canDismiss?: boolean;
 }
 
 export interface ChatboxWindowInsightCandidate {

@@ -98,6 +98,16 @@ type RailSignals = {
   terminal: boolean;
   /** The frozen window this rail is showing (User Testing only). */
   latestGroupId?: string | null;
+  /**
+   * May this viewer act, per the SERVER — computed there from the same
+   * predicate the mutations enforce (User Testing only).
+   *
+   * The affordance and the gate must not be answered by two different
+   * authorities, so where the server offers the answer it wins over the
+   * caller's prop. Swarm has no such field yet and keeps the prop.
+   */
+  canRequest?: boolean;
+  canDismiss?: boolean;
 };
 
 /** Rows visible before "Show all" — enough to see the shape of the run. */
@@ -303,6 +313,8 @@ function useRailData(surface: RunInsightsSurface): {
           // that there is no group id to attach narration to.
           terminal: windowSignals.latestGroupId !== null,
           latestGroupId: windowSignals.latestGroupId,
+          canRequest: windowSignals.canRequest,
+          canDismiss: windowSignals.canDismiss,
         }
       : windowSignals,
     findings: windowFindings?.map((f) => ({
@@ -536,12 +548,22 @@ function RunInsightsBody({
  */
 function useRail(
   surface: RunInsightsSurface,
-  canRequest: boolean,
+  canRequestProp: boolean,
+  canDismissProp: boolean,
 ): {
   rail: ReturnType<typeof useRailData>;
   lifecycle: UseRunInsightsResult;
+  canRequest: boolean;
+  canDismiss: boolean;
 } {
   const rail = useRailData(surface);
+  // The SERVER's answer wins wherever it offers one: it is computed from the
+  // same predicate the mutations enforce, so the affordance cannot drift from
+  // the gate — nor disappear because some id the mutation never consults
+  // happens to be absent. The prop remains the answer for swarm, which has no
+  // such field, and the fallback while the query is in flight.
+  const canRequest = rail.signals?.canRequest ?? canRequestProp;
+  const canDismiss = rail.signals?.canDismiss ?? canDismissProp;
   const scope = useNarrationScope(surface, rail.signals?.latestGroupId);
   const lifecycle = useRunInsights(scope, {
     terminal: rail.signals?.terminal === true,
@@ -549,7 +571,7 @@ function useRail(
     // clean cohort never spends a model call — "no anomalies" IS the answer.
     autoRequest: (rail.signals?.candidates.length ?? 0) > 0 && canRequest,
   });
-  return { rail, lifecycle };
+  return { rail, lifecycle, canRequest, canDismiss };
 }
 
 /** The rail, standalone. */
@@ -570,14 +592,19 @@ export function RunInsights({
   /** May this viewer dismiss a finding? Same split: a judgment, not a view. */
   canDismiss?: boolean;
 }) {
-  const { rail, lifecycle } = useRail(surface, canRequest);
+  const {
+    rail,
+    lifecycle,
+    canRequest: mayRequest,
+    canDismiss: mayDismiss,
+  } = useRail(surface, canRequest, canDismiss);
   return (
     <RunInsightsBody
       rail={rail}
       lifecycle={lifecycle}
       onOpenSession={onOpenSession}
-      canRequest={canRequest}
-      canDismiss={canDismiss}
+      canRequest={mayRequest}
+      canDismiss={mayDismiss}
     />
   );
 }
@@ -602,7 +629,12 @@ export function RunInsightsChip({
   // start a second one: a request rejected before any row exists leaves its
   // error on the hook that fired it, and a body with its own copy would show
   // neither the message nor the retry.
-  const { rail, lifecycle } = useRail(surface, canRequest);
+  const {
+    rail,
+    lifecycle,
+    canRequest: mayRequest,
+    canDismiss: mayDismiss,
+  } = useRail(surface, canRequest, canDismiss);
   const { signals, findings, cohort } = rail;
 
   const activeCount = useMemo(() => {
@@ -656,8 +688,8 @@ export function RunInsightsChip({
           rail={rail}
           lifecycle={lifecycle}
           onOpenSession={onOpenSession}
-          canRequest={canRequest}
-          canDismiss={canDismiss}
+          canRequest={mayRequest}
+          canDismiss={mayDismiss}
         />
       </PopoverContent>
     </Popover>

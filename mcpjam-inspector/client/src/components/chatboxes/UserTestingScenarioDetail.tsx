@@ -34,7 +34,6 @@ import {
 } from "@/hooks/chatbox-usage-filters";
 import type { InsightsView } from "@/hooks/useInsightsFlowController";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ChatboxPreviewPane } from "@/components/chatboxes/ChatboxPreviewPane";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import { EditableTitle } from "@/components/evals/EditableTitle";
@@ -349,15 +348,6 @@ export function UserTestingScenarioDetail({
     () => parseSelectionParam(selParam),
     [selParam],
   );
-
-  // Requesting narration SPENDS, and dismissing a finding is a judgment that
-  // outlives the viewer — both are member-gated server-side, while viewing
-  // signals and findings is not. User Testing is deliberately guest-visible,
-  // so the affordances gate rather than the surface. Same tier and same
-  // identity paths as promotion, so the same resolver answers it.
-  const { canPromote: canRequestInsights } = usePromoteCapability({
-    projectId: chatbox.projectId ?? null,
-  });
 
   // Present only when the environment can't resolve right now (archived, a
   // pinned plugin disabled, its host gone). The scenario still opens: its
@@ -695,8 +685,6 @@ export function UserTestingScenarioDetail({
                           { replace: true },
                         );
                       }}
-                      canRequest={canRequestInsights}
-                      canDismiss={canRequestInsights}
                     />
                   </ErrorBoundary>
                   {/* Feedback-by-inferred-outcome, unchanged from the panel
