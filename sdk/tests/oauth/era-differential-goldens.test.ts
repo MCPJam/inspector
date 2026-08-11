@@ -50,6 +50,23 @@ const ALL_VERSIONS: OAuthProtocolVersion[] = [
 /** Eras governed by the current PRM + PKCE profile. */
 const CURRENT_ERAS: OAuthProtocolVersion[] = ["2025-11-25", "2026-07-28"];
 
+/**
+ * Eras whose spec requires the PRM to name an authorization server. Note this
+ * is NOT `CURRENT_ERAS`: the RFC 9728 requirement dates to 2025-06-18, while
+ * verifying advertised S256 starts at 2025-11-25.
+ *
+ * Deliberately a LITERAL, not an import of the production gate. Importing it
+ * would make this harness tautological — flipping the gate would silently move
+ * an era from the "fails closed" branch to the "substitutes" branch and every
+ * assertion would still pass. The literal IS the specification here, and drift
+ * from production is exactly the failure worth catching.
+ */
+const PRM_REQUIRED_ERAS: OAuthProtocolVersion[] = [
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+];
+
 type RegistrationStrategy = "dcr" | "preregistered" | "cimd";
 
 /** CIMD arrived with 2025-11-25; the factory rejects it for older eras. */
@@ -790,7 +807,61 @@ describe.each(ALL_VERSIONS)("branch catalog (%s)", (version) => {
     },
   );
 
-  // --- Current-profile branches. Older eras genuinely differ here. ---
+  // --- Required-metadata branches. Older eras genuinely differ here, but not
+  // on the same boundary: the PRM `authorization_servers` requirement dates to
+  // 2025-06-18, while verifying advertised S256 starts at 2025-11-25. Gating
+  // both on `isCurrentEra` would leave 2025-06-18's PRM enforcement untested,
+  // which is precisely the era-differential this file exists to pin. ---
+
+  if (PRM_REQUIRED_ERAS.includes(version)) {
+    it.each([
+      ["empty", { authorization_servers: [] }],
+      ["absent", { authorization_servers: null }],
+    ])(
+      "fails closed when PRM authorization_servers is %s",
+      async (_label, override) => {
+        const result = await run({
+          version,
+          registrationStrategy: "dcr",
+          knobs: { protectedResourceMetadata: override },
+        });
+
+        expect(result.completed).toBe(false);
+        expect(tokenRequest(result)).toBeUndefined();
+        // Specifically: it did NOT silently substitute the MCP server URL.
+        expect(result.state.authorizationServerMetadata).toBeFalsy();
+      },
+    );
+
+    it("observe mode substitutes the server URL and records the finding", async () => {
+      const result = await run({
+        version,
+        registrationStrategy: "dcr",
+        knobs: { protectedResourceMetadata: { authorization_servers: [] } },
+        machineConfig: { requiredMetadataEnforcement: "observe" },
+      });
+
+      expect(result.state.authorizationServerUrl).toBe(SERVER_URL);
+      expect(JSON.stringify(result.state.infoLogs ?? [])).toContain(
+        "authorization-server-substituted",
+      );
+    });
+  } else {
+    // The other half of the differential: 2025-03-26 predates the profile's
+    // adoption of RFC 9728, so the historical substitution is correct there and
+    // the flow must NOT stop. Without this the "fails closed" assertions above
+    // would pass just as well if the check were global.
+    it("substitutes the server URL rather than failing closed", async () => {
+      const result = await run({
+        version,
+        registrationStrategy: "dcr",
+        knobs: { protectedResourceMetadata: { authorization_servers: [] } },
+      });
+
+      expect(result.state.authorizationServerUrl).toBe(SERVER_URL);
+      expect(result.error ?? "").not.toContain("authorization_servers");
+    });
+  }
 
   if (isCurrentEra) {
     it("stops before authorization when the AS advertises no S256", async () => {
@@ -824,39 +895,6 @@ describe.each(ALL_VERSIONS)("branch catalog (%s)", (version) => {
       expect(result.completed).toBe(false);
       expect(authorizationUrl(result)).toBeUndefined();
       expect(tokenRequest(result)).toBeUndefined();
-    });
-
-    it.each([
-      ["empty", { authorization_servers: [] }],
-      ["absent", { authorization_servers: null }],
-    ])(
-      "fails closed when PRM authorization_servers is %s",
-      async (_label, override) => {
-        const result = await run({
-          version,
-          registrationStrategy: "dcr",
-          knobs: { protectedResourceMetadata: override },
-        });
-
-        expect(result.completed).toBe(false);
-        expect(tokenRequest(result)).toBeUndefined();
-        // Specifically: it did NOT silently substitute the MCP server URL.
-        expect(result.state.authorizationServerMetadata).toBeFalsy();
-      },
-    );
-
-    it("observe mode substitutes the server URL and records the finding", async () => {
-      const result = await run({
-        version,
-        registrationStrategy: "dcr",
-        knobs: { protectedResourceMetadata: { authorization_servers: [] } },
-        machineConfig: { requiredMetadataEnforcement: "observe" },
-      });
-
-      expect(result.state.authorizationServerUrl).toBe(SERVER_URL);
-      expect(JSON.stringify(result.state.infoLogs ?? [])).toContain(
-        "authorization-server-substituted",
-      );
     });
 
     it("accepts plain advertised alongside S256", async () => {
