@@ -3,6 +3,7 @@ import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { HostCanvasSelector } from "@/components/hosts/redesigned/HostCanvasSelector";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import { track } from "@/lib/analytics";
 
@@ -80,8 +81,13 @@ export function ConnectViewHeader({
       <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
         {/* Same column, same component, same position as the host canvas
             mounts it (see HostBuilderViewRedesigned) — so the client selector
-            never moves as the user switches between Connect's views. */}
-        {projectId ? (
+            never moves as the user switches between Connect's views.
+            Gated on `shouldQueryProjectId`, not bare truthiness: a
+            local/placeholder or UUID project id mid-transition is truthy but
+            `useHostList` skips it, which would otherwise leave this selector
+            on a permanent loading skeleton instead of the empty column it
+            renders while there's genuinely no project to read clients from. */}
+        {projectId && shouldQueryProjectId(projectId) ? (
           <div className="flex min-w-0 justify-center @2xl:justify-start">
             <HostCanvasSelector
               projectId={projectId}

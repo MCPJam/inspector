@@ -37,14 +37,18 @@ vi.mock("@/hooks/useClients", () => ({
   })),
 }));
 
-vi.mock("@/hooks/useProjects", () => ({
-  useProjectServers: vi.fn(() => ({
-    servers: [],
-    serversRecord: {},
-    isLoading: false,
-    hasServers: false,
-  })),
-}));
+vi.mock("@/hooks/useProjects", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useProjects")>();
+  return {
+    ...actual,
+    useProjectServers: vi.fn(() => ({
+      servers: [],
+      serversRecord: {},
+      isLoading: false,
+      hasServers: false,
+    })),
+  };
+});
 
 vi.mock("@/lib/host-compat/use-host-catalog", () => ({
   useHostCatalog: vi.fn(() => ({

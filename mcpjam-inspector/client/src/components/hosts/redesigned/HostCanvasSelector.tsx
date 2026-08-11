@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
@@ -143,6 +143,16 @@ export function HostCanvasSelector({
   const activeIndex =
     requestedIndex >= 0 ? requestedIndex : sortedHosts.length > 0 ? 0 : -1;
   const active = activeIndex >= 0 ? sortedHosts[activeIndex] : null;
+
+  // The fallback above is display-only — it doesn't tell callers that read
+  // the previewed host directly (ConnectViewHeader's "Client" tab, which
+  // stays disabled until one exists; GlobalHostBar, which stays visible
+  // until one exists) that a client is now showing here. Persist it the same
+  // way an explicit switch does, so those callers pick it up too.
+  const fallbackHostId = !isLoading && !activeHostId ? active?.hostId ?? null : null;
+  useEffect(() => {
+    if (fallbackHostId) setPreviewedHostId(fallbackHostId);
+  }, [fallbackHostId, setPreviewedHostId]);
 
   const switchTo = (hostId: string) => {
     if (hostId === active?.hostId) return;
