@@ -475,22 +475,64 @@ const INLINE_MESSAGE_MAX = 400;
 /** Hard cap on what we keep for the collapsible. */
 const RAW_PAYLOAD_MAX = 4000;
 
-const HTML_PAYLOAD_START = /^\s*(?:<!doctype\s+html|<html\b)/i;
+/**
+ * Anything a document can legally lead with before its first real tag: a byte
+ * order mark, whitespace, HTML comments, an XML declaration. Gateways and
+ * proxies prepend these freely.
+ */
+const HTML_PREAMBLE = /^(?:﻿|\s|<!--[\s\S]*?-->|<\?xml[\s\S]*?\?>)+/i;
+
+/** Markup that can only be a document, once any preamble is stripped. */
+const MARKUP_OPENER = /^<(?:!doctype\s+html|html|head|body|title)\b/i;
+
+/**
+ * The one marker conclusive wherever it appears. `<html>` is NOT: error text
+ * quotes it ("expected <html> but the tool returned a number"), and treating
+ * that as a document would summarize a perfectly readable message away.
+ */
+const DOCTYPE_MARKER = /<!doctype\s+html/i;
+
+/**
+ * Detection has to survive bodies that are not well-formed documents. A
+ * truncated or streamed response never reaches `</html>`; a proxy may prepend
+ * a comment or an XML declaration; a fragment may begin at `<head>` with no
+ * doctype at all. Matching only "starts with `<html`" or "ends with
+ * `</html>`" let all of those through to be rendered as raw markup — the
+ * exact failure this function exists to prevent.
+ *
+ * The start-anchored check runs against the preamble-stripped body so that
+ * ordinary prose which merely mentions a tag ("expected `<html>` here") is not
+ * mistaken for a document.
+ */
+function looksLikeErrorPage(trimmed: string): boolean {
+  if (DOCTYPE_MARKER.test(trimmed)) return true;
+  if (/<\/html>\s*$/i.test(trimmed)) return true;
+  return MARKUP_OPENER.test(trimmed.replace(HTML_PREAMBLE, ""));
+}
 
 /**
  * Pull the status out of an error page's `<title>` or `<h1>` — the two places
  * gateways put it verbatim ("502 Bad Gateway"). Deliberately not a scan of the
  * whole document: a bare `\b\d{3}\b` match anywhere would happily return a
  * pixel value out of an inline stylesheet.
+ *
+ * Both headings are tried in order rather than preferring whichever exists.
+ * A generic `<title>Error</title>` over an `<h1>503 Service Unavailable</h1>`
+ * is a real page shape, and taking the title just because it is present threw
+ * away the only status on the page.
  */
 function extractErrorPageStatus(html: string): number | undefined {
-  const heading =
-    html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1] ??
-    html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1];
-  const status = heading?.match(/\b([45]\d{2})\b/)?.[1];
-  if (!status) return undefined;
-  const parsed = Number(status);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  const headings = [
+    html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1],
+    html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1],
+  ];
+  for (const heading of headings) {
+    const status = heading?.match(/\b([45]\d{2})\b/)?.[1];
+    if (!status) continue;
+    const parsed = Number(status);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 /**
@@ -507,8 +549,7 @@ function extractErrorPageStatus(html: string): number | undefined {
  */
 function summarizeOpaquePayload(raw: string): FormattedError | null {
   const trimmed = raw.trim();
-  const isHtml =
-    HTML_PAYLOAD_START.test(trimmed) || /<\/html>\s*$/i.test(trimmed);
+  const isHtml = looksLikeErrorPage(trimmed);
 
   if (!isHtml && trimmed.length <= INLINE_MESSAGE_MAX) return null;
 
@@ -519,10 +560,14 @@ function summarizeOpaquePayload(raw: string): FormattedError | null {
 
   if (isHtml) {
     const statusCode = extractErrorPageStatus(trimmed);
+    // "An upstream service", not "the server": the page comes from whatever
+    // hop failed — a gateway, a proxy, our own infrastructure — and naming
+    // "the server" in an MCP debugger reads as the user's MCP server, which
+    // is the one party we have no evidence against.
     return {
       message: statusCode
-        ? `The request failed with HTTP ${statusCode}. The server returned an error page instead of a response.`
-        : "The request failed. The server returned an error page instead of a response.",
+        ? `The request failed with HTTP ${statusCode}. An upstream service returned an error page instead of a response.`
+        : "The request failed. An upstream service returned an error page instead of a response.",
       details,
       ...(statusCode !== undefined ? { statusCode } : {}),
     };
