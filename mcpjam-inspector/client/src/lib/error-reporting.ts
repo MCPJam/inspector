@@ -2,6 +2,12 @@ import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
 import { ConvexError } from "convex/values";
 import {
+  describeError,
+  isNormalizedError,
+  originOf,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
+import {
   isCredentialBearingPath,
   isErrorCaptureSurface,
 } from "./PosthogUtils";
@@ -16,6 +22,95 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+}
+
+/**
+ * A `NormalizedError` the server already attached, if the shape holds up.
+ *
+ * Shape-validated rather than trusted: this rides in on a response body, so a
+ * proxy or an older server can put anything there, and `originOf` would fall
+ * back to `ambiguous` on a malformed block anyway — silently, which is the
+ * failure mode worth avoiding.
+ */
+function attachedNormalized(error: unknown): NormalizedError | undefined {
+  // Every read below can run a getter, and this whole path exists to report a
+  // failure that already happened. A throwing `normalized` getter must fall
+  // back to `describeError` rather than suppress an otherwise classifiable
+  // MCPJam failure, so the reads are guarded rather than trusted.
+  try {
+    if (typeof error !== "object" || error === null) return undefined;
+    const candidate = (error as { normalized?: unknown }).normalized;
+    // The SDK's own guard, not a hand-rolled subset. It checks the COMPLETE
+    // shape, which matters here: a half-formed block carrying
+    // `origin: "mcpjam"` would otherwise pass the gate below and page on the
+    // strength of one proxy-controlled string. It is also the guard the render
+    // path already uses, so "trusted enough to report" and "trusted enough to
+    // display" cannot drift apart.
+    return isNormalizedError(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Report a caught client failure, but only when it might be ours.
+ *
+ * `reportCaught` is unconditional by design — a React error boundary must
+ * always report. These backfilled call sites are different: they sit on paths
+ * that reach a user's own MCP server, where "the tool call failed" usually
+ * means that server failed, and reporting all of them would rebuild on the
+ * client the same noise the server-side origin policy exists to remove.
+ *
+ * So: skip anything the catalog positively attributes to the user's server or
+ * the user's configuration, and skip self-hosted surfaces entirely (the Sentry
+ * leg of `reportCaught` is NOT gated, so it must be gated here). Everything
+ * else is reported with the classification attached, so triage can slice by
+ * slug without re-deriving it.
+ *
+ * Returns whether anything was sent, so callers and tests can assert the gate.
+ */
+export function reportPossiblyOurFailure(
+  error: unknown,
+  options: ReportOptions,
+): boolean {
+  try {
+    if (!isErrorCaptureSurface()) return false;
+    // Checked here as well as in `reportCaught`, so the documented return value
+    // stays honest: without this a refusal would be dropped downstream and
+    // still reported as sent.
+    if (isAuthorizationRefusal(error)) return false;
+
+    // Prefer a normalized block the SERVER attached. A hosted route classifies
+    // the real failure with the error object in hand and puts the verdict on
+    // its envelope; by the time it reaches here it is a `WebApiError` whose
+    // message is an HTTP status line. `describeError` does not look at
+    // `.normalized`, so re-describing the wrapper resolves `internal/unknown`
+    // — `ambiguous` — and the strict gate below drops the report even when the
+    // server said `mcpjam` outright.
+    const normalized = attachedNormalized(error) ?? describeError(error);
+    const origin = originOf(normalized);
+    // `mcpjam` only — the same policy the server capture path applies, and for
+    // the same reason. `ambiguous` on these routes is dominated by a user's
+    // server behaving unpredictably, and there is no client-side volume data
+    // yet to argue otherwise. That makes this a narrow gate today, which is
+    // the intended trade: these three call sites reported NOTHING before, and
+    // widening later should be a decision made from measurements rather than
+    // from the fear of missing something.
+    if (origin !== "mcpjam") return false;
+
+    reportCaught(error, {
+      ...options,
+      extra: {
+        ...(options.extra ?? {}),
+        slug: normalized.slug,
+        origin,
+      },
+    });
+    return true;
+  } catch {
+    // Reporting must never escalate a failure into a second one.
+    return false;
+  }
 }
 
 function toError(error: unknown): Error {

@@ -52,6 +52,7 @@ import {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
@@ -1754,13 +1755,7 @@ export async function handleRoute<T>(
     return c.json(result, successStatus);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
-      c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details
-    );
+    return webErrorFromRoute(c, routeError);
   }
 }
 
@@ -2186,12 +2181,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      routeError,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
@@ -2204,6 +2196,7 @@ export {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,

@@ -17,8 +17,10 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
+import { markUserServerHop } from "./route-error-report.js";
 import {
   MCPClientManager,
+  describeError,
   type Harness,
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
@@ -1000,10 +1002,45 @@ export async function prepareChatV2(
       : undefined;
 
   // 1. Get MCP + skill tools
-  const mcpTools = await mcpClientManager.getToolsForAiSdk(
-    knownSelectedServers,
-    toolOptions
-  );
+  let mcpTools;
+  try {
+    mcpTools = await mcpClientManager.getToolsForAiSdk(
+      knownSelectedServers,
+      toolOptions
+    );
+  } catch (error) {
+    // The ONE hop in this function that leaves MCPJam: listing tools reaches
+    // into the user's own MCP servers, so a dead or slow server lands here.
+    // The chat route's outer catch declares `mcpjam_internal` — correct for
+    // everything else it wraps — and without this mark that declaration would
+    // promote every one of those to a page.
+    //
+    // Scoped to this await on purpose. Marking the whole of `prepareChatV2`
+    // would silence a genuine bug in the preparation work that follows, which
+    // is MCPJam's and has no other capture point.
+    //
+    // This call is not purely a network hop either — it also converts and
+    // flattens the results into an AI SDK tool set, which is our code. A
+    // programming fault in that conversion is ours and keeps the internal
+    // verdict; everything else is the user's hop.
+    //
+    // The split is made by the CLASSIFIER, not by the error's constructor.
+    // `error instanceof TypeError` looks like it names a programming fault and
+    // does not: undici reports a dead HTTP server as `TypeError: fetch
+    // failed`, which the describer resolves to `transport/fetch_failed`. A
+    // type-based rule would hand every dead user server straight back to the
+    // internal boundary — the exact attribution this mark exists to prevent.
+    // Only a native error type the describer ALSO cannot place stays ours.
+    const isProgrammerFault =
+      (error instanceof TypeError ||
+        error instanceof RangeError ||
+        error instanceof ReferenceError) &&
+      describeError(error).slug === "internal/unknown";
+    if (isProgrammerFault) {
+      throw error;
+    }
+    throw markUserServerHop(error);
+  }
 
   // SEP-1865: tools whose `_meta.ui.visibility` is exactly `["app"]` are
   // hidden from the model — they remain callable from the iframe via the

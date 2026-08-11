@@ -21,7 +21,11 @@ vi.mock("../PosthogUtils", () => ({
 
 import { ConvexError } from "convex/values";
 
-import { reportBoundaryError, reportCaught } from "../error-reporting";
+import {
+  reportBoundaryError,
+  reportCaught,
+  reportPossiblyOurFailure,
+} from "../error-reporting";
 
 // A refusal is not a defect. The backend says so explicitly with
 // `kind: 'forbidden'`; everything else — including a Convex error that carries
@@ -243,5 +247,84 @@ describe("reportBoundaryError", () => {
       expect.any(Error),
       expect.objectContaining({ tags: { source: "react_boundary" } }),
     );
+  });
+});
+
+describe("reportPossiblyOurFailure — server-attached normalization", () => {
+  it("honors a normalized block the server attached to the error", () => {
+    // A hosted route classifies the real failure with the error object in
+    // hand. By the time it lands here it is a `WebApiError` whose message is
+    // an HTTP status line, and `describeError` does not look at `.normalized`
+    // — so re-describing the wrapper resolves `ambiguous` and the strict gate
+    // drops a failure the server called ours outright.
+    const error = Object.assign(new Error("HTTP 500"), {
+      normalized: {
+        slug: "internal/unknown",
+        title: "Unexpected error",
+        oneLine: "Something failed inside MCPJam.",
+        likelyCauses: [],
+        nextSteps: [],
+        docsAnchor: "/troubleshooting/error-codes",
+        severity: "error",
+        rawMessage: "bundler crashed",
+        origin: "mcpjam",
+      },
+    });
+
+    expect(
+      reportPossiblyOurFailure(error, { source: "execute_tool" }),
+    ).toBe(true);
+  });
+
+  it("reports a refusal as NOT sent, even when the block claims it is ours", () => {
+    // The return value is the gate callers assert on. `reportCaught` drops a
+    // refusal downstream, so without its own check this would answer `true`
+    // for something it never sent.
+    const error = Object.assign(new ConvexError({ kind: "forbidden" }), {
+      normalized: {
+        slug: "internal/unknown",
+        title: "Unexpected error",
+        oneLine: "Something failed inside MCPJam.",
+        likelyCauses: [],
+        nextSteps: [],
+        docsAnchor: "/troubleshooting/error-codes",
+        severity: "error",
+        rawMessage: "refused",
+        origin: "mcpjam",
+      },
+    });
+
+    expect(reportPossiblyOurFailure(error, { source: "execute_tool" })).toBe(
+      false,
+    );
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("ignores a PARTIAL attached block, even one claiming to be ours", () => {
+    // The dangerous shape is not a garbage one — it is a half-formed block
+    // carrying `origin: "mcpjam"`, which would page on the strength of one
+    // proxy-controlled string and then read `undefined` for everything else.
+    const error = Object.assign(new Error("HTTP 500"), {
+      normalized: { slug: "internal/unknown", origin: "mcpjam" },
+    });
+
+    expect(
+      reportPossiblyOurFailure(error, { source: "execute_tool" }),
+    ).toBe(false);
+  });
+
+  it("falls back to describeError when the normalized getter throws", () => {
+    // Reporting runs on a path that is already handling a failure; a hostile
+    // getter must not suppress an otherwise classifiable one.
+    const error = new Error("HTTP 500");
+    Object.defineProperty(error, "normalized", {
+      get() {
+        throw new Error("trap");
+      },
+    });
+
+    expect(() =>
+      reportPossiblyOurFailure(error, { source: "execute_tool" }),
+    ).not.toThrow();
   });
 });
