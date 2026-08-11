@@ -1,6 +1,10 @@
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
-import { describeError, originOf } from "@mcpjam/sdk/browser";
+import {
+  describeError,
+  originOf,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
 import {
   isCredentialBearingPath,
   isErrorCaptureSurface,
@@ -16,6 +20,25 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+}
+
+/**
+ * A `NormalizedError` the server already attached, if the shape holds up.
+ *
+ * Shape-validated rather than trusted: this rides in on a response body, so a
+ * proxy or an older server can put anything there, and `originOf` would fall
+ * back to `ambiguous` on a malformed block anyway — silently, which is the
+ * failure mode worth avoiding.
+ */
+function attachedNormalized(error: unknown): NormalizedError | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const candidate = (error as { normalized?: unknown }).normalized;
+  if (typeof candidate !== "object" || candidate === null) return undefined;
+  const { slug, rawMessage } = candidate as Record<string, unknown>;
+  if (typeof slug !== "string" || typeof rawMessage !== "string") {
+    return undefined;
+  }
+  return candidate as NormalizedError;
 }
 
 /**
@@ -42,7 +65,14 @@ export function reportPossiblyOurFailure(
   try {
     if (!isErrorCaptureSurface()) return false;
 
-    const normalized = describeError(error);
+    // Prefer a normalized block the SERVER attached. A hosted route classifies
+    // the real failure with the error object in hand and puts the verdict on
+    // its envelope; by the time it reaches here it is a `WebApiError` whose
+    // message is an HTTP status line. `describeError` does not look at
+    // `.normalized`, so re-describing the wrapper resolves `internal/unknown`
+    // — `ambiguous` — and the strict gate below drops the report even when the
+    // server said `mcpjam` outright.
+    const normalized = attachedNormalized(error) ?? describeError(error);
     const origin = originOf(normalized);
     // `mcpjam` only — the same policy the server capture path applies, and for
     // the same reason. `ambiguous` on these routes is dominated by a user's

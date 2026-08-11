@@ -245,38 +245,30 @@ function attachCause<T extends Error>(target: T, cause: unknown): T {
 }
 
 /**
- * A native error type that only a bug in OUR code produces.
+ * DELIBERATELY no ownership inference here.
  *
- * Closes the other half of the blindness this work exists to remove. A
- * `TypeError` thrown by a hosted web handler is MCPJam's, but `describeError`
- * resolves it to `internal/unknown` — i.e. `ambiguous` — and the strict
- * capture policy declines it. Because `web.onError` converts the throw into a
- * response instead of rethrowing, and this mapper stamps the error as decided,
- * nothing downstream captures it either: a genuine bug on the whole
- * `/api/web/*` surface reaches Sentry nowhere at all.
+ * There is a real gap: a `TypeError` thrown by a hosted web handler is
+ * MCPJam's, but `describeError` resolves it to `internal/unknown` — i.e.
+ * `ambiguous` — which the strict policy declines. `web.onError` converts the
+ * throw into a response without rethrowing and this mapper stamps it as
+ * decided, so such a bug currently reaches Sentry through no path at all.
  *
- * A blanket `mcpjam_internal` on this mapper would be the wrong fix — it also
- * handles every timeout and connection reset from a user's own MCP server,
- * which land in `ambiguous` too and would flood the channel. So the boundary
- * is declared only for the narrow case that cannot be anyone else's.
+ * The tempting fix is to declare `mcpjam_internal` here for native
+ * programmer-fault types. It was tried and reverted, because this mapper is a
+ * SHARED envelope: it handles our own bugs and proxied user-server failures
+ * with equal frequency, and it has no hop information to tell them apart. A
+ * `TypeError` raised while reading a malformed tool result from somebody
+ * else's MCP server satisfies exactly the same predicate, so the rule pages
+ * the on-call for another person's server — the failure mode this whole change
+ * exists to remove. Guessing in either direction is a guess; the policy says
+ * guesses resolve toward not paging.
  *
- * The describer check is load-bearing, not belt-and-braces: undici reports a
- * dead HTTP server as `TypeError: fetch failed`, so the constructor alone
- * would hand somebody's unreachable server back as an MCPJam page.
+ * The gap is closed by DECLARATION, not inference: a catch-site that knows the
+ * hop was ours calls `reportRouteFailure(..., { hop: "mcpjam_internal" })`.
+ * Until a given web route does, its unclassified failures are measured in
+ * Axiom (`http.request.failed` carries `origin` and `slug`) rather than paged,
+ * so promoting the bucket later is a data decision.
  */
-function isProgrammerFault(error: unknown): boolean {
-  if (
-    !(
-      error instanceof TypeError ||
-      error instanceof RangeError ||
-      error instanceof ReferenceError
-    )
-  ) {
-    return false;
-  }
-  return describeError(error).slug === "internal/unknown";
-}
-
 export function mapRuntimeError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) {
     // Backfill normalized on existing WebRouteErrors so onError forwarding
@@ -296,7 +288,6 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   attachCause(routeError, error);
   maybeCaptureOriginError(routeError, routeError.normalized, {
     source: "web.mapRuntimeError",
-    ...(isProgrammerFault(error) ? { boundary: "mcpjam_internal" as const } : {}),
     extra: { status: routeError.status, code: routeError.code },
   });
   // Stamp the ORIGINAL as well. The cause link above makes the original

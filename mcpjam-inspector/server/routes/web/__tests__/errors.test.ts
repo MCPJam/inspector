@@ -175,43 +175,36 @@ describe("mapRuntimeError", () => {
   });
 });
 
-describe("internal-fault boundary", () => {
+describe("ownership inference", () => {
   beforeEach(() => captureException.mockClear());
 
-  it("captures a genuine TypeError from a hosted web handler", () => {
-    // `web.onError` turns a throw into a response without rethrowing, and this
-    // mapper stamps the error as decided, so a real bug on the whole
-    // `/api/web/*` surface reached Sentry nowhere at all. The catalog cannot
-    // help here — it classifies this `ambiguous`, which the strict policy
-    // declines — so the boundary declaration is the only thing that captures it.
-    const mapped = mapRuntimeError(
+  it("does NOT infer MCPJam ownership from a native error type", () => {
+    // Tempting, and wrong here. This mapper is a SHARED envelope: a TypeError
+    // raised while reading a malformed tool result from somebody else's MCP
+    // server is indistinguishable from one raised by our own bug, and paging
+    // on the pair is the failure mode this change removes. Ownership is
+    // DECLARED by a catch-site that knows the hop, never inferred here.
+    mapRuntimeError(
       new TypeError("Cannot read properties of undefined (reading 'id')"),
     );
 
-    expect(originOf(mapped.normalized)).toBe("ambiguous");
-    expect(captureException).toHaveBeenCalledTimes(1);
-    expect(captureException.mock.calls[0]![1]).toMatchObject({
-      tags: expect.objectContaining({ error_origin: "mcpjam" }),
-    });
-  });
-
-  it("does NOT treat undici's fetch failure as our bug", () => {
-    // `TypeError: fetch failed` is how undici reports a dead HTTP server. A
-    // constructor-only rule would hand somebody's unreachable server back as
-    // an MCPJam page, which is the attribution this work removes.
-    const mapped = mapRuntimeError(new TypeError("fetch failed"));
-
-    expect(mapped.normalized?.slug).toBe("transport/fetch_failed");
     expect(captureException).not.toHaveBeenCalled();
   });
 
   it("leaves an ordinary user-server failure uncaptured", () => {
-    // The mapper also handles every timeout and reset from somebody else's
-    // server. A blanket internal boundary here would flood the channel, which
-    // is why the declaration is narrowed to native programmer-fault types.
     mapRuntimeError(new Error("Request timed out"));
 
     expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("still measures the declined failure's origin on the envelope", () => {
+    // Not paging is not the same as not recording: the `ambiguous` bucket
+    // stays visible in Axiom, which is what makes promoting it later a data
+    // decision rather than another guess.
+    const mapped = mapRuntimeError(new TypeError("fetch failed"));
+
+    expect(mapped.normalized?.slug).toBe("transport/fetch_failed");
+    expect(originOf(mapped.normalized)).toBe("ambiguous");
   });
 });
 

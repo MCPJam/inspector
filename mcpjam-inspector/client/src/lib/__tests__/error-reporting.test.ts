@@ -19,7 +19,11 @@ vi.mock("../PosthogUtils", () => ({
   isCredentialBearingPath: () => false,
 }));
 
-import { reportBoundaryError, reportCaught } from "../error-reporting";
+import {
+  reportBoundaryError,
+  reportCaught,
+  reportPossiblyOurFailure,
+} from "../error-reporting";
 
 describe("reportCaught", () => {
   beforeEach(() => {
@@ -164,5 +168,38 @@ describe("reportBoundaryError", () => {
       expect.any(Error),
       expect.objectContaining({ tags: { source: "react_boundary" } }),
     );
+  });
+});
+
+describe("reportPossiblyOurFailure — server-attached normalization", () => {
+  it("honors a normalized block the server attached to the error", () => {
+    // A hosted route classifies the real failure with the error object in
+    // hand. By the time it lands here it is a `WebApiError` whose message is
+    // an HTTP status line, and `describeError` does not look at `.normalized`
+    // — so re-describing the wrapper resolves `ambiguous` and the strict gate
+    // drops a failure the server called ours outright.
+    const error = Object.assign(new Error("HTTP 500"), {
+      normalized: {
+        slug: "internal/unknown",
+        rawMessage: "bundler crashed",
+        origin: "mcpjam",
+      },
+    });
+
+    expect(
+      reportPossiblyOurFailure(error, { source: "execute_tool" }),
+    ).toBe(true);
+  });
+
+  it("ignores a malformed attached block instead of trusting it", () => {
+    // This rides in on a response body, so a proxy or an older server can put
+    // anything there.
+    const error = Object.assign(new Error("HTTP 500"), {
+      normalized: { slug: 42 },
+    });
+
+    expect(
+      reportPossiblyOurFailure(error, { source: "execute_tool" }),
+    ).toBe(false);
   });
 });

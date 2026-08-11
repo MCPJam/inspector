@@ -154,21 +154,31 @@ function isDeclaredClientOutcome(error: unknown): boolean {
  */
 const USER_SERVER_HOP = Symbol.for("mcpjam.errorUserServerHop");
 
-/** Tag `error` as having failed on a hop into the user's MCP server. */
-export function markUserServerHop<T>(error: T): T {
-  if (typeof error !== "object" || error === null) return error;
+/**
+ * Tag a value as having failed on a hop into the user's MCP server.
+ *
+ * Returns the marked value, which may be a WRAPPER: `throw "failure"`, a
+ * frozen error, and a sealed error all refuse the property, and a mark that
+ * silently fails is worse than no mark at all — the outer catch would declare
+ * `mcpjam_internal`, promote the still-ambiguous failure, and page for
+ * somebody else's server. `ensureStampable` produces a wrapper that keeps the
+ * message and links the original as `cause`, so the walk below still finds
+ * everything and the diagnostics are unchanged.
+ */
+export function markUserServerHop(error: unknown): unknown {
+  const target = ensureStampable(error);
   try {
-    Object.defineProperty(error, USER_SERVER_HOP, {
+    Object.defineProperty(target, USER_SERVER_HOP, {
       value: true,
       enumerable: false,
       configurable: true,
       writable: true,
     });
   } catch {
-    // Frozen/sealed. The mark degrades to the boundary's default, which is the
-    // pre-existing behavior.
+    // An exotic object that passed `ensureStampable` and still refuses the
+    // property. The mark degrades to the boundary's default.
   }
-  return error;
+  return target;
 }
 
 /** How far to walk a `.cause` chain before giving up. Mirrors the capture walk. */
