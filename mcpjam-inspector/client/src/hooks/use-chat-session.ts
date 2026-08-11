@@ -2389,6 +2389,10 @@ export function useChatSession(
         status: response.status,
         contentType: response.headers.get("content-type") ?? undefined,
         requestId: response.headers.get("x-request-id") ?? undefined,
+        // The route's own verdict on whose fault this was, when it had the
+        // error object in hand. Read from a header because the body is
+        // consumed by the AI SDK before the reporter ever runs.
+        origin: response.headers.get("x-mcpjam-error-origin") ?? undefined,
       };
 
       if (!response.ok) {

@@ -199,4 +199,41 @@ describe("reportChatFailure", () => {
     const error = reportCaught.mock.calls[0]![0] as Error;
     expect(error.stack ?? "").not.toContain("secret-ish upstream body");
   });
+
+  it("honors the server's origin header instead of guessing from the 5xx", () => {
+    // The chat route 500s when the USER's MCP server fails to list tools. It
+    // classified that with the error object in hand and said so on the
+    // response; the status-only fallback here would relabel it `mcpjam` and
+    // page us for somebody else's outage.
+    const sent = reportChatFailure(new Error("<html>500</html>"), {
+      ok: false,
+      status: 500,
+      origin: "user_server",
+    });
+
+    expect(sent).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("still reports when the server's header says the failure is ours", () => {
+    const sent = reportChatFailure(new Error("<html>500</html>"), {
+      ok: false,
+      status: 500,
+      origin: "mcpjam",
+    });
+
+    expect(sent).toBe(true);
+  });
+
+  it("falls back to the status when the header is absent or unrecognized", () => {
+    // A proxy that strips headers, or an older server, must not silently turn
+    // the 5xx path back off.
+    expect(
+      reportChatFailure(new Error("<html>502</html>"), {
+        ok: false,
+        status: 502,
+        origin: "not-an-origin",
+      }),
+    ).toBe(true);
+  });
 });

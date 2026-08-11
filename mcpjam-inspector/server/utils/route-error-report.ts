@@ -89,20 +89,82 @@ export async function readRequestJson<T = any>(c: {
   } catch (error) {
     throw new ClientInputError("Invalid JSON body", { cause: error });
   }
-  // A body of `null`, `42`, or `"str"` PARSES fine and then throws a
-  // `TypeError` at the caller's `const {x} = body` — an unmarked error, which
-  // an internal hop would happily promote to a page. Every one of these
-  // handlers destructures, so rejecting a non-object body here closes that
-  // hole once for all ~48 call sites instead of adding a guard to each.
-  // Arrays are objects and pass; a handler that wants one still validates it.
-  if (parsed === null || typeof parsed !== "object") {
-    throw new ClientInputError("Request body must be a JSON object");
+  // `null` is the ONLY parseable JSON body whose destructuring throws:
+  // `const {x} = null` is a `TypeError`, an unmarked error an internal hop
+  // would happily promote to a page. Rejecting it here closes that hole for
+  // all ~48 call sites at once.
+  //
+  // Deliberately NOT `typeof parsed !== "object"`. `const {x} = 42` and
+  // `const {x} = "str"` do not throw — they yield `undefined`, the handler's
+  // own required-field check fires, and the caller gets the route's 400. A
+  // blanket non-object guard would turn every one of those into this
+  // `ClientInputError` and therefore a 500, replacing precise validation
+  // responses with a generic failure. Arrays are objects and pass; a handler
+  // that wants one still validates it.
+  if (parsed === null || parsed === undefined) {
+    throw new ClientInputError("Request body must not be null");
   }
   return parsed as T;
 }
 
 function isClientInputFault(error: unknown): boolean {
   return error instanceof ClientInputError;
+}
+
+/**
+ * Marker for a failure that crossed into the USER's MCP server, thrown from
+ * inside a `try` whose catch declares `mcpjam_internal`.
+ *
+ * A catch block declares one hop, but a long handler does not have one. The
+ * chat route's outer catch genuinely wraps MCPJam-owned work — config
+ * resolution, backend dispatch, stream setup — yet it also receives whatever
+ * `prepareChatV2` threw, and the first thing `prepareChatV2` awaits is
+ * `getToolsForAiSdk` against the user's own servers. Under the boundary
+ * declaration alone, every dead or slow user MCP server would page the on-call
+ * through the tool-listing step: the exact false attribution this work removes,
+ * arriving through the route that started it.
+ *
+ * Marking is per-error rather than per-catch because splitting the handler
+ * would mean duplicating its 500 envelope. Symbol-keyed and non-enumerable, so
+ * it never reaches a JSON body; found through the `.cause` chain, so a wrapper
+ * built above it still carries the verdict.
+ */
+const USER_SERVER_HOP = Symbol.for("mcpjam.errorUserServerHop");
+
+/** Tag `error` as having failed on a hop into the user's MCP server. */
+export function markUserServerHop<T>(error: T): T {
+  if (typeof error !== "object" || error === null) return error;
+  try {
+    Object.defineProperty(error, USER_SERVER_HOP, {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    // Frozen/sealed. The mark degrades to the boundary's default, which is the
+    // pre-existing behavior.
+  }
+  return error;
+}
+
+/** How far to walk a `.cause` chain before giving up. Mirrors the capture walk. */
+const MAX_CAUSE_DEPTH = 8;
+
+function isUserServerHopFault(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null || seen.has(current)) {
+      return false;
+    }
+    seen.add(current);
+    if ((current as Record<PropertyKey, unknown>)[USER_SERVER_HOP] === true) {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 export type RouteFailureOptions = {
@@ -165,9 +227,10 @@ export function reportRouteFailure(
   // else's dead server into a page — reintroducing the exact false
   // attribution, for the very case the wrapper exists to handle.
   const normalized = options.normalized ?? describeError(error);
-  const boundary = isClientInputFault(error)
-    ? undefined
-    : BOUNDARY_FOR_HOP[options.hop];
+  const boundary =
+    isClientInputFault(error) || isUserServerHopFault(error)
+      ? undefined
+      : BOUNDARY_FOR_HOP[options.hop];
   const { origin, captured } = maybeCaptureOriginError(reported, normalized, {
     source: `route:${options.source}`,
     boundary,

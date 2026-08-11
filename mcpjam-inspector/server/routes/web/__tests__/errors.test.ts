@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InsufficientScopeError } from "@modelcontextprotocol/client";
 
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../errors.js";
+import { isOriginCaptureHandled } from "../../../utils/error-origin-capture.js";
 
 describe("mapRuntimeError", () => {
   it("passes WebRouteError through unchanged", () => {
@@ -133,5 +134,29 @@ describe("mapRuntimeError", () => {
     expect((mapped.details?.insufficientScope as any)?.requiredScope).toBe(
       "read:tickets",
     );
+  });
+
+  it("stamps the ORIGINAL error, not only the WebRouteError it built", () => {
+    // The mapper constructs a fresh `WebRouteError` and links the original as
+    // its `cause`, but the dedupe walk only goes that direction. Several
+    // handlers keep their own reference and call `logger.error(error)` after
+    // returning the envelope; without a stamp on the original that is a second
+    // Sentry event for one failure.
+    const original = new Error("kaboom");
+    mapRuntimeError(original);
+
+    expect(isOriginCaptureHandled(original)).toBe(true);
+  });
+
+  it("keeps the stamp non-enumerable so it never reaches a JSON body", () => {
+    const original = new Error("kaboom");
+    mapRuntimeError(original);
+
+    expect(Object.keys(original)).not.toContain("cause");
+    expect(
+      Object.getOwnPropertySymbols(original).filter(
+        (s) => original.propertyIsEnumerable(s),
+      ),
+    ).toEqual([]);
   });
 });

@@ -22,7 +22,25 @@ export type ChatResponseMeta = {
   contentType?: string;
   /** Server-issued `x-request-id`, the join key to the Axiom row. */
   requestId?: string;
+  /**
+   * `x-mcpjam-error-origin`, when our own route already made the call.
+   *
+   * The server's chat route reports the failure through `reportRouteFailure`
+   * and knows, for instance, that the 500 came from the user's MCP server
+   * failing to list tools. That verdict has to travel on a HEADER: the body is
+   * unreachable here because the AI SDK consumes the Response before this code
+   * ever sees the failure.
+   */
+  origin?: string;
 };
+
+/** Origins the server may assert, kept in sync with the SDK's `ErrorOrigin`. */
+const SERVER_ASSERTED_ORIGINS = new Set([
+  "user_server",
+  "user_config",
+  "mcpjam",
+  "ambiguous",
+]);
 
 /** Keep a quoted upstream body from bloating the event. */
 const MAX_EXTRA_CHARS = 1000;
@@ -62,6 +80,13 @@ function syntheticMessage(meta: ChatResponseMeta | null): string {
  * A slug that positively identifies the user is never overruled: an
  * ECONNREFUSED to their own MCP server stays theirs even if it somehow arrived
  * alongside a 5xx.
+ *
+ * Neither is a verdict the SERVER already reached. The status fallback is a
+ * guess made from the only evidence that normally survives the AI SDK; when
+ * `x-mcpjam-error-origin` is present the route classified the actual throw,
+ * with the error object in hand, and that answer wins. Without this the chat
+ * route's own "this 500 was the user's MCP server failing to list tools" would
+ * be relabelled `mcpjam` one hop later and page us anyway.
  */
 function attributeChatFailure(
   normalized: NormalizedError,
@@ -69,6 +94,9 @@ function attributeChatFailure(
 ): ReturnType<typeof originOf> {
   const declared = originOf(normalized);
   if (declared === "user_server" || declared === "user_config") return declared;
+  if (meta?.origin && SERVER_ASSERTED_ORIGINS.has(meta.origin)) {
+    return meta.origin as ReturnType<typeof originOf>;
+  }
   if (meta && !meta.ok && meta.status >= 500) return "mcpjam";
   return declared;
 }

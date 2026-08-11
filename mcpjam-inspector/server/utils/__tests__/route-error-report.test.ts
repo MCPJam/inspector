@@ -16,6 +16,7 @@ vi.mock("@axiomhq/js", () => ({
 import * as Sentry from "@sentry/node";
 import {
   ClientInputError,
+  markUserServerHop,
   readRequestJson,
   reportRouteFailure,
 } from "../route-error-report.js";
@@ -211,6 +212,45 @@ describe("reportRouteFailure", () => {
     expect(captureException).toHaveBeenCalledTimes(1);
   });
 
+  it("does not page for a marked user-server hop under an internal boundary", () => {
+    // The chat route's outer catch genuinely wraps MCPJam-owned work, but it
+    // also receives whatever `prepareChatV2` threw — and the first thing that
+    // awaits is a tool listing against the user's own servers. The mark is how
+    // one catch block declares two hops.
+    const { origin } = reportRouteFailure(
+      "[mcp/chat-v2] failed to process chat request",
+      markUserServerHop(new Error("Unknown MCP server")),
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
+    );
+
+    expect(origin).toBe("ambiguous");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("finds the user-server mark through a cause chain", () => {
+    const marked = markUserServerHop(new Error("tool listing failed"));
+    const wrapper = new Error("chat request failed", { cause: marked });
+
+    reportRouteFailure("[mcp/chat-v2] failed", wrapper, {
+      source: "mcp.chat-v2.request",
+      hop: "mcpjam_internal",
+    });
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("survives a self-referential cause chain on the user-server walk", () => {
+    const looping = new Error("loops");
+    Object.defineProperty(looping, "cause", { value: looping });
+
+    expect(() =>
+      reportRouteFailure("Unhandled error", looping, {
+        source: "app.onError",
+        hop: "mcpjam_internal",
+      }),
+    ).not.toThrow();
+  });
+
   it("still reports a genuine internal failure on the same route", () => {
     reportRouteFailure("Error counting tokens", new Error("kaboom"), {
       source: "mcp.tokenizer.tools",
@@ -263,15 +303,25 @@ describe("readRequestJson", () => {
     });
   });
 
-  it.each([[null], [42], ["a string"], [true]])(
-    "rejects a non-object body (%p) that would TypeError at destructure",
+  it("rejects a null body, which would TypeError at destructure", async () => {
+    // `null` PARSES fine and then blows up on the caller's `const {x} = body`,
+    // as an unmarked TypeError an internal hop would happily promote to a
+    // page. Rejecting here closes that for every call site at once.
+    const c = { req: { json: () => Promise.resolve(null) } };
+
+    await expect(readRequestJson(c)).rejects.toBeInstanceOf(ClientInputError);
+  });
+
+  it.each([[42], ["a string"], [true]])(
+    "lets a scalar body (%p) through so the route's own 400 still fires",
     async (body) => {
-      // These PARSE fine and then blow up on the caller's `const {x} = body`,
-      // as an unmarked TypeError an internal hop would happily promote to a
-      // page. Rejecting here closes that for every call site at once.
+      // `const {serverId} = 42` does NOT throw — it yields `undefined`, the
+      // handler's required-field check fires, and the caller gets a precise
+      // 400. Rejecting these here would convert every one of those into a
+      // generic 500.
       const c = { req: { json: () => Promise.resolve(body) } };
 
-      await expect(readRequestJson(c)).rejects.toBeInstanceOf(ClientInputError);
+      await expect(readRequestJson(c)).resolves.toEqual(body);
     },
   );
 

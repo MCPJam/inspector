@@ -6,7 +6,10 @@ import {
   type NormalizedError,
 } from "@mcpjam/sdk";
 import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-serialize.js";
-import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
+import {
+  markOriginCaptureHandled,
+  maybeCaptureOriginError,
+} from "../../utils/error-origin-capture.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -254,6 +257,14 @@ export function mapRuntimeError(error: unknown): WebRouteError {
     source: "web.mapRuntimeError",
     extra: { status: routeError.status, code: routeError.code },
   });
+  // Stamp the ORIGINAL as well. The cause link above makes the original
+  // reachable from `routeError`, but the walk only goes that direction: a
+  // handler that keeps its own reference and later calls `logger.error(error)`
+  // — several do — would hand over an unstamped object and capture a second
+  // time for the same failure. `attachCause` is also allowed to decline (a
+  // pre-existing `cause`, a frozen target), so the link cannot be relied on
+  // for dedupe on its own.
+  markOriginCaptureHandled(error);
   return routeError;
 }
 

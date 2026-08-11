@@ -63,6 +63,7 @@ import {
   reportRouteFailure,
   reportRouteFailureForResponse,
   readRequestJson,
+  markUserServerHop,
 } from "../../utils/route-error-report.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
@@ -1247,7 +1248,14 @@ chatV2.post("/", async (c) => {
       if (msg.includes("Invalid tool name(s) for Anthropic")) {
         return c.json({ error: msg }, 400);
       }
-      throw error;
+      // The outer catch declares `mcpjam_internal`, which is right for the
+      // work IT wraps but wrong for this one: the first thing `prepareChatV2`
+      // awaits is `getToolsForAiSdk` against the user's own MCP servers, so
+      // its dominant failure is somebody else's server being down or slow.
+      // Without this mark the boundary would promote every one of those to a
+      // page. Marked rather than reported-and-returned here so the route keeps
+      // exactly one 500 envelope.
+      throw markUserServerHop(error);
     }
 
     const {
@@ -1828,7 +1836,18 @@ chatV2.post("/", async (c) => {
       error,
       { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
     );
-    return c.json({ error: "Unexpected error", origin }, 500);
+    // Also a HEADER, not just the body. By the time the failure reaches the
+    // client's reporter the Response is gone — the AI SDK throws
+    // `new Error(await response.text())` — so the body's `origin` is
+    // unreachable without re-reading a consumed stream. The header is captured
+    // alongside the status in `ChatResponseMeta`, which is what stops the
+    // client's "our route answered 5xx, so it's ours" fallback from
+    // overwriting a failure we just attributed to the user's server.
+    return c.json(
+      { error: "Unexpected error", origin },
+      500,
+      { "x-mcpjam-error-origin": origin },
+    );
   }
 });
 
