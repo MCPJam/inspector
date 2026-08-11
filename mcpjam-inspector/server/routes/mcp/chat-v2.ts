@@ -59,6 +59,11 @@ import {
   describeAsSlug,
   readXaaEnterprisePolicy,
 } from "@mcpjam/sdk";
+import {
+  reportRouteFailure,
+  reportRouteFailureForResponse,
+  readRequestJson,
+} from "../../utils/route-error-report.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
@@ -505,7 +510,16 @@ function streamDirectChatWithLiveTrace(options: {
       if (abortSignal?.aborted || handle?.isAborted() || isAbortError(error)) {
         return "";
       }
-      logger.error("[mcp/chat-v2] stream error", error);
+      // Deliberately NO `mcpjam_internal` boundary here, unlike the route's
+      // outer catch. Everything a turn touches fails through this handler: the
+      // user's MCP server timing out mid-tool-call, a BYO provider key hitting
+      // a quota wall, a model refusing a schema. That is precisely the traffic
+      // that has been paging us for other people's outages, so the catalog's
+      // verdict stands on its own and only MCPJam-fault slugs escalate.
+      reportRouteFailure("[mcp/chat-v2] stream error", error, {
+        source: "mcp.chat-v2.stream",
+        hop: "user_server_hop",
+      });
       return formatStreamError(error, provider);
     },
     execute: async ({ writer }) => {
@@ -554,6 +568,15 @@ function streamDirectChatWithLiveTrace(options: {
           },
           onError: (error) => {
             if (handle!.isAborted() || isAbortError(error)) return "";
+            // `toUIMessageStream` CONSUMES the error here and emits an error
+            // chunk; it does not rethrow to the enclosing
+            // `createUIMessageStream` handler. Without this call, every model,
+            // provider, and tool failure on the direct-stream path produced a
+            // client error and no telemetry at all.
+            reportRouteFailure("[mcp/chat-v2] direct stream error", error, {
+              source: "mcp.chat-v2.direct-stream",
+              hop: "user_server_hop",
+            });
             return formatStreamError(error, provider);
           },
         })) {
@@ -584,7 +607,7 @@ const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
   try {
-    const body = (await c.req.json()) as ChatV2Request & {
+    const body = (await readRequestJson(c)) as ChatV2Request & {
       // Phase F: when the local inspector serves an owner-preview of a
       // chatbox (the share-link surface running in /mcp), the client
       // passes the resolved chatbox identity so persistence reads
@@ -1224,6 +1247,9 @@ chatV2.post("/", async (c) => {
       if (msg.includes("Invalid tool name(s) for Anthropic")) {
         return c.json({ error: msg }, 400);
       }
+      // Any user-server attribution is marked inside `prepareChatV2`, on the
+      // single await that leaves MCPJam. Marking the whole call here would
+      // silence a genuine bug in the preparation work that follows it.
       throw error;
     }
 
@@ -1795,8 +1821,28 @@ chatV2.post("/", async (c) => {
         : undefined,
     });
   } catch (error) {
-    logger.error("[mcp/chat-v2] failed to process chat request", error);
-    return c.json({ error: "Unexpected error" }, 500);
+    // This catch wraps MCPJam's OWN request handling — config resolution,
+    // backend dispatch, stream setup — not a hop into the user's MCP server,
+    // so an unrecognized throw here is ours by default and the boundary
+    // declaration says so. Without it, `internal/unknown` classifies
+    // `ambiguous` and this route would go quiet in Sentry.
+    const { origin } = reportRouteFailureForResponse(
+      "[mcp/chat-v2] failed to process chat request",
+      error,
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
+    );
+    // Also a HEADER, not just the body. By the time the failure reaches the
+    // client's reporter the Response is gone — the AI SDK throws
+    // `new Error(await response.text())` — so the body's `origin` is
+    // unreachable without re-reading a consumed stream. The header is captured
+    // alongside the status in `ChatResponseMeta`, which is what stops the
+    // client's "our route answered 5xx, so it's ours" fallback from
+    // overwriting a failure we just attributed to the user's server.
+    return c.json(
+      { error: "Unexpected error", origin },
+      500,
+      { "x-mcpjam-error-origin": origin },
+    );
   }
 });
 

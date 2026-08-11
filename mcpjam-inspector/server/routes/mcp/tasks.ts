@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { progressStore } from "../../services/progress-store";
-import { logger } from "../../utils/logger";
 import {
   TasksFeatureError,
   UnknownTaskError,
@@ -12,6 +11,7 @@ import {
   taskCapabilitiesForWire,
   updateTaskForWire,
 } from "../../utils/task-route-handlers";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const tasks = new Hono();
 
@@ -45,7 +45,7 @@ function featureErrorResponse(error: unknown) {
 
 tasks.post("/list", async (c) => {
   try {
-    const { serverId, cursor } = (await c.req.json()) as {
+    const { serverId, cursor } = (await readRequestJson(c)) as {
       serverId?: string;
       cursor?: string;
     };
@@ -57,13 +57,16 @@ tasks.post("/list", async (c) => {
   } catch (error) {
     const feature = featureErrorResponse(error);
     if (feature) return c.json(feature.body, feature.status);
-    logger.error("Error listing tasks", error);
+    reportRouteFailure("Error listing tasks", error, {
+      source: "mcp.tasks.list",
+      hop: "user_server_hop",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
 tasks.post("/get", async (c) => {
-  const body = (await c.req.json()) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
@@ -83,14 +86,17 @@ tasks.post("/get", async (c) => {
     }
     const feature = featureErrorResponse(error);
     if (feature) return c.json(feature.body, feature.status);
-    logger.error("Error getting task", error);
+    reportRouteFailure("Error getting task", error, {
+      source: "mcp.tasks.get",
+      hop: "user_server_hop",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
 // Legacy only: the extension carries the result inline on tasks/get.
 tasks.post("/result", async (c) => {
-  const body = (await c.req.json()) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
@@ -116,14 +122,17 @@ tasks.post("/result", async (c) => {
   } catch (error) {
     const feature = featureErrorResponse(error);
     if (feature) return c.json(feature.body, feature.status);
-    logger.error("Error getting task result", error);
+    reportRouteFailure("Error getting task result", error, {
+      source: "mcp.tasks.result",
+      hop: "user_server_hop",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
 // Extension only: submit responses to the keyed inputRequests snapshot.
 tasks.post("/update", async (c) => {
-  const body = (await c.req.json()) as {
+  const body = (await readRequestJson(c)) as {
     serverId?: string;
     taskId?: string;
     inputResponses?: Record<string, unknown>;
@@ -159,13 +168,16 @@ tasks.post("/update", async (c) => {
     }
     const feature = featureErrorResponse(error);
     if (feature) return c.json(feature.body, feature.status);
-    logger.error("Error updating task", error);
+    reportRouteFailure("Error updating task", error, {
+      source: "mcp.tasks.update",
+      hop: "user_server_hop",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
 tasks.post("/cancel", async (c) => {
-  const body = (await c.req.json()) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
@@ -191,19 +203,27 @@ tasks.post("/cancel", async (c) => {
   } catch (error) {
     const feature = featureErrorResponse(error);
     if (feature) return c.json(feature.body, feature.status);
-    logger.error("Error cancelling task", error);
+    reportRouteFailure("Error cancelling task", error, {
+      source: "mcp.tasks.cancel",
+      hop: "user_server_hop",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
 tasks.post("/capabilities", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
     return c.json(taskCapabilitiesForWire(c.mcpClientManager, serverId));
   } catch (error) {
-    logger.error("Error getting task capabilities", error);
+    reportRouteFailure("Error getting task capabilities", error, {
+      // Reads already-negotiated capability state off the manager; it makes
+      // no request to the server.
+      source: "mcp.tasks.capabilities",
+      hop: "mcpjam_internal",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
@@ -211,28 +231,35 @@ tasks.post("/capabilities", async (c) => {
 // Progress is local-only: hosted connections are ephemeral per request.
 tasks.post("/progress", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
     const progress = progressStore.getLatestProgress(serverId);
     return c.json({ progress: progress ?? null });
   } catch (error) {
-    logger.error("Error getting progress", error);
+    reportRouteFailure("Error getting progress", error, {
+      // Progress is local-only (see the note above the route) — our state.
+      source: "mcp.tasks.progress",
+      hop: "mcpjam_internal",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
 tasks.post("/progress/all", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
     const allProgress = progressStore.getAllProgress(serverId);
     return c.json({ progress: allProgress });
   } catch (error) {
-    logger.error("Error getting all progress", error);
+    reportRouteFailure("Error getting all progress", error, {
+      source: "mcp.tasks.progress.all",
+      hop: "mcpjam_internal",
+    });
     return c.json({ error: errorMessage(error) }, 500);
   }
 });

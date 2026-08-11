@@ -213,10 +213,12 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  extractInsufficientScopeChallenge,
   unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
+export type { InsufficientScopeChallenge } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,
