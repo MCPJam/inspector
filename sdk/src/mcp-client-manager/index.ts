@@ -461,6 +461,7 @@ export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
 } from "./mcp-protocol-version.js";
 
 // Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen`
