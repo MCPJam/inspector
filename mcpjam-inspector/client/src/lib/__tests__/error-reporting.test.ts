@@ -65,6 +65,32 @@ describe("authorization refusals", () => {
     expect(posthogCaptureException).toHaveBeenCalledTimes(1);
   });
 
+  // The three payload shapes nearest the guard's edge. `null` is why the check
+  // null-tests before reading `.kind` (`typeof null` is `"object"`), and an
+  // absent or empty `kind` is the "carries no kind" case called out above.
+  // Empty string earns its own case: a `kind` match rewritten as a substring
+  // test would swallow it silently, since every string contains `""`.
+  it("still reports a ConvexError whose payload is null", () => {
+    reportCaught(new ConvexError(null), { source: "unit" });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reports a ConvexError that carries no kind", () => {
+    reportCaught(new ConvexError({}), { source: "unit" });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reports a ConvexError whose kind is empty", () => {
+    reportCaught(new ConvexError({ kind: "" }), { source: "unit" });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).toHaveBeenCalledTimes(1);
+  });
+
   it("still reports the masked production throw", () => {
     reportCaught(new Error("[CONVEX Q(a:b)] Server Error"), {
       source: "unit",
