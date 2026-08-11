@@ -36,6 +36,10 @@ import {
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
+  describePkceMetadataNonConformance,
+  selectAuthorizationServerFromResourceMetadata,
+} from "./shared/required-metadata.js";
+import {
   resolveDiscoveryResourceIndicator,
   resolveFlowResourceValue,
 } from "./shared/resource-indicator.js";
@@ -551,6 +555,7 @@ export const createDebugOAuthStateMachine = (
     hasClientSecret = false,
     strictConformance = false,
     resourceIndicatorEnforcement = "warn",
+    requiredMetadataEnforcement = "reject",
     registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
     emulation,
   } = config;
@@ -1008,13 +1013,57 @@ export const createDebugOAuthStateMachine = (
               const finalHistory = [...historyWithoutPlaceholder, ...attempts];
 
               const lastAttempt = attempts[attempts.length - 1];
+              // RFC 9728 `authorization_servers` is where the resource names
+              // who may issue tokens for it. Substituting the MCP server's own
+              // URL invents an authorization server the resource never named,
+              // and does it invisibly — so under the current profile the
+              // substitution is an error, not a fallback.
+              const authorizationServerSelection =
+                selectAuthorizationServerFromResourceMetadata({
+                  authorizationServers: resourceMetadata.authorization_servers,
+                  fallbackServerUrl: serverUrl,
+                  protocolVersion: "2025-11-25",
+                });
               const authorizationServerUrl =
-                resourceMetadata.authorization_servers?.[0] || serverUrl;
+                authorizationServerSelection.authorizationServerUrl;
+
+              if (
+                authorizationServerSelection.error &&
+                requiredMetadataEnforcement !== "observe"
+              ) {
+                updateState({
+                  resourceMetadata,
+                  resourceMetadataUrl:
+                    lastAttempt?.request?.url || state.resourceMetadataUrl,
+                  lastRequest: lastAttempt?.request,
+                  lastResponse: lastAttempt?.response,
+                  httpHistory: finalHistory,
+                  error: authorizationServerSelection.error,
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
 
               // The response card is the complete protected-resource metadata.
               // Keep existing logs only for distinct findings, such as a
               // resource identifier mismatch below.
               let infoLogs = state.infoLogs ?? [];
+
+              // Only reachable under `"observe"`. The substitution is not a
+              // silent fallback even there — the debugger's whole value is
+              // showing that this server did not name an authorization server.
+              if (authorizationServerSelection.error) {
+                infoLogs = addInfoLog(
+                  { ...getCurrentState(), infoLogs },
+                  "received_resource_metadata",
+                  "authorization-server-substituted",
+                  "Derived: Authorization Server (not advertised)",
+                  {
+                    Finding: authorizationServerSelection.error,
+                    "Using instead": authorizationServerUrl,
+                  }
+                );
+              }
 
               // Resolve the resource indicator ONCE (rejecting/warning per
               // the surface's enforcement mode); every later request and
@@ -1210,17 +1259,23 @@ export const createDebugOAuthStateMachine = (
                 Date.now() - (lastEntry.timestamp || Date.now());
             }
 
-            // Validate PKCE support (REQUIRED for 2025-11-25)
+            // Validate PKCE support (REQUIRED for 2025-11-25).
+            //
+            // The MCP client requirement is to VERIFY S256 support before
+            // proceeding, so both shapes of failure — no advertised methods at
+            // all, and a list that omits S256 — have to stop the flow. Absent
+            // metadata throws here because there is nothing to show; a list
+            // without S256 is decided by `requiredMetadataEnforcement` below,
+            // so the debugger can still exercise a nonconforming server.
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
+            const pkceNonConformance = describePkceMetadataNonConformance(
+              supportedMethods,
+              "2025-11-25",
+            );
 
-            // 2025-11-25 spec: MUST verify PKCE support
             if (!supportedMethods || supportedMethods.length === 0) {
-              throw new Error(
-                "PKCE is REQUIRED for 2025-11-25 protocol, but authorization server " +
-                  "does not advertise code_challenge_methods_supported. " +
-                  "Server is not compliant with 2025-11-25 spec."
-              );
+              throw new Error(pkceNonConformance);
             }
 
             // The response card already shows the complete metadata document.
@@ -1239,16 +1294,16 @@ export const createDebugOAuthStateMachine = (
               { "CIMD Supported": cimdSupported }
             );
 
-            if (!supportedMethods.includes("S256")) {
-              const s256Error =
-                "Authorization server metadata must advertise S256 in code_challenge_methods_supported for 2025-11-25 conformance.";
-
-              if (strictConformance) {
+            if (pkceNonConformance) {
+              // Fail closed unless the caller explicitly asked to observe a
+              // nonconforming server. Continuing without S256 is a silent PKCE
+              // downgrade, and the downgrade is invisible on the wire.
+              if (strictConformance || requiredMetadataEnforcement !== "observe") {
                 updateState({
                   lastResponse: authServerResponseData,
                   httpHistory: updatedHistoryFinal,
                   infoLogs,
-                  error: s256Error,
+                  error: pkceNonConformance,
                   isInitiatingAuth: false,
                 });
                 return;

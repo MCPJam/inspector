@@ -323,6 +323,11 @@ export function createInspectorOAuthStateMachine(
         (config.getState?.() ?? config.state).currentStep ?? "unknown",
     }),
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
+    // Explicit non-connect intent. The connect paths fail closed when required
+    // PKCE/PRM metadata is missing, which is correct for them and useless here:
+    // the debugger exists to SHOW what a nonconforming server does. Warn and
+    // continue, and only because this surface asked for it by name.
+    requiredMetadataEnforcement: "observe",
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
     // The debugger is a local-dev inspection surface: when the server under
