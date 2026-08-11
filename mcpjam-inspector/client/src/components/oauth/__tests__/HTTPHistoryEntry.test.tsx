@@ -40,67 +40,75 @@ describe("HTTPHistoryEntry unauthenticated probe", () => {
   const PRM =
     "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
 
+  /**
+   * Flagging an exchange as a failure is what surfaces the inline error
+   * message, and that message repeats the status text — so the card renders
+   * "Forbidden" once in its status line and a second time when it flags.
+   * Asserting on the message rather than the error styling keeps this tied to
+   * what the user reads, and `getAllByText` throws when the card did not render
+   * at all, so a broken render fails instead of passing as "not flagged".
+   */
+  const isFlaggedAsError = (statusText: string) =>
+    screen.getAllByText(statusText).length > 1;
+
   const renderProbe = (props: {
     step?: string;
     status: number;
+    statusText: string;
     responseHeaders?: Record<string, string>;
-  }) =>
+  }) => {
     render(
       <HTTPHistoryEntry
         method="POST"
         url="https://mcp.example.com/mcp"
-        statusText="Forbidden"
         view="response"
         step="request_without_token"
         {...props}
       />,
-    ).container;
-
-  /** The card's failure styling, which also gates the inline error message. */
-  const isFlaggedAsError = (container: HTMLElement) =>
-    container.querySelector(".border-red-400") !== null;
+    );
+    return isFlaggedAsError(props.statusText);
+  };
 
   it("does not flag a 403 carrying a Bearer challenge", () => {
     expect(
-      isFlaggedAsError(
-        renderProbe({
-          status: 403,
-          responseHeaders: {
-            "www-authenticate": `Bearer resource_metadata="${PRM}"`,
-          },
-        }),
-      ),
+      renderProbe({
+        status: 403,
+        statusText: "Forbidden",
+        responseHeaders: {
+          "www-authenticate": `Bearer resource_metadata="${PRM}"`,
+        },
+      }),
     ).toBe(false);
   });
 
   it("does not flag the spec-compliant 401", () => {
-    expect(isFlaggedAsError(renderProbe({ status: 401 }))).toBe(false);
+    expect(renderProbe({ status: 401, statusText: "Unauthorized" })).toBe(
+      false,
+    );
   });
 
   it("flags a bare 403, which the flow cannot continue from", () => {
-    expect(isFlaggedAsError(renderProbe({ status: 403 }))).toBe(true);
+    expect(renderProbe({ status: 403, statusText: "Forbidden" })).toBe(true);
   });
 
   it("flags a 403 whose only challenge is a scheme OAuth cannot use", () => {
     expect(
-      isFlaggedAsError(
-        renderProbe({
-          status: 403,
-          responseHeaders: { "www-authenticate": 'Basic realm="admin"' },
-        }),
-      ),
+      renderProbe({
+        status: 403,
+        statusText: "Forbidden",
+        responseHeaders: { "www-authenticate": 'Basic realm="admin"' },
+      }),
     ).toBe(true);
   });
 
   it("flags a challenge-carrying 403 outside the probe step", () => {
     expect(
-      isFlaggedAsError(
-        renderProbe({
-          step: "authenticated_mcp_request",
-          status: 403,
-          responseHeaders: { "www-authenticate": "Bearer" },
-        }),
-      ),
+      renderProbe({
+        step: "authenticated_mcp_request",
+        status: 403,
+        statusText: "Forbidden",
+        responseHeaders: { "www-authenticate": "Bearer" },
+      }),
     ).toBe(true);
   });
 });
