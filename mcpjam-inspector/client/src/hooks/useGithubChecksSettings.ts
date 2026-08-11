@@ -16,13 +16,20 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * types below are hand-mirrored from `convex/github/checkRepoConfigs.ts`. Keep
  * them in sync by hand — nothing checks this at build time.
  *
- * **These hooks can throw, and callers must treat a throw as "unavailable".**
- * `useQuery` re-throws query errors during render, and two ordinary cases
- * produce one here: the backend function is not deployed yet (the two repos
- * release independently), and a caller who is not a member of the active
- * organization (the backend throws there deliberately — answering `disabled`
- * would confirm the org exists). Both callers wrap these in an `ErrorBoundary`
- * for exactly that reason; see `SettingsNav` and `GithubChecksSettingsRoute`.
+ * **These hooks can throw, and every call site MUST sit inside an
+ * `ErrorBoundary`.** `useQuery` re-throws query errors during render, and
+ * ordinary cases produce one here: the backend function is not deployed yet
+ * (the two repos release independently), a guest actor (`signedInQuery` rejects
+ * guests at the boundary), and a caller who is not a member of the org the
+ * caller passed — the backend throws there deliberately, because answering
+ * `disabled` would confirm the org exists.
+ *
+ * The boundary is not optional and not defence in depth: a call in a component
+ * that is not itself inside one takes that component's whole page down. That is
+ * not hypothetical — the suite settings sheet shipped an unguarded call and
+ * crashed `/evals` for every user the backend refused. Call sites:
+ * `IntegrationsRoute`, `GithubChecksRoute`, and
+ * `SuiteGithubChecksSettingsSection` in `suite-iterations-view`.
  */
 
 /**
