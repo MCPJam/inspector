@@ -187,6 +187,12 @@ export function useRunInsights(
   activeRunKeyRef.current = cohortKeyOf(scope);
   /** Monotonic per request, so an older attempt cannot answer for a newer one. */
   const attemptRef = useRef(0);
+  /**
+   * Bumped by every explicit press. A press is the only event that can mean
+   * "the viewer may not be who was refused" — navigating between cohorts, and
+   * the auto-request that follows it, say nothing about identity.
+   */
+  const identityAssertionsRef = useRef(0);
 
   const isSwarm = scope?.kind === "swarm";
   const queryName = isSwarm
@@ -220,9 +226,13 @@ export function useRunInsights(
       // A press is a fresh assertion by the user: the identity that was
       // refused may not be the identity pressing now (they may have signed in
       // since). An auto-request carries no such assertion, so it stays latched.
-      if (!auto) authRefusedRef.current = false;
+      if (!auto) {
+        authRefusedRef.current = false;
+        identityAssertionsRef.current += 1;
+      }
       const firedFor = cohortKeyOf(scope);
       const attempt = ++attemptRef.current;
+      const assertedAt = identityAssertionsRef.current;
       setError(null);
       setRequested(true);
       // The window request takes no group id: the backend anchors it to the
@@ -249,10 +259,18 @@ export function useRunInsights(
         // learned, from whichever cohort learned it — the one fact here that
         // outlives its request.
         if (classified.permanent) featureMissingRef.current = true;
-        // The permission latch does NOT: an explicit retry clears it precisely
-        // because the viewer may have signed in, and letting the superseded
-        // attempt re-latch would undo that from behind.
-        if (classified.authRefused && !stale) authRefusedRef.current = true;
+        // The permission latch turns on WHO IS ASKING, so `stale` is the wrong
+        // test for it in both directions. A refusal that lands after the user
+        // moved to another cohort still holds — otherwise a guest browsing
+        // scenarios out-runs it and fires a doomed request on every one — and
+        // a refusal superseded by an explicit PRESS does not, because the press
+        // is the one event that can mean the viewer signed in since.
+        if (
+          classified.authRefused &&
+          identityAssertionsRef.current === assertedAt
+        ) {
+          authRefusedRef.current = true;
+        }
         if (stale) return;
 
         setRequested(false);

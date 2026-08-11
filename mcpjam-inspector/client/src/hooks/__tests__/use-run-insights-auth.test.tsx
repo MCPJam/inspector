@@ -35,6 +35,11 @@ const SCOPE_B: RunInsightsScope = {
   chatboxId: "cb-2",
   groupId: "g-2",
 };
+const SCOPE_C: RunInsightsScope = {
+  kind: "chatbox",
+  chatboxId: "cb-3",
+  groupId: "g-3",
+};
 
 beforeEach(() => {
   state.requestMock.mockReset();
@@ -94,6 +99,38 @@ describe("useRunInsights permission refusals", () => {
     });
     expect(result.current.error).toBeNull();
     expect(result.current.unavailable).toBe(false);
+  });
+
+  it("latches a refusal that lands after the viewer moved on", async () => {
+    // Navigating does not change who is asking. If the refusal only counted
+    // while its own cohort was still on screen, a guest browsing scenarios
+    // would out-run it and fire a doomed request on every one.
+    let rejectA: ((err: unknown) => void) | undefined;
+    state.requestMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectA = reject;
+        }),
+    );
+    const { rerender } = renderHook(
+      ({ scope }: { scope: RunInsightsScope }) =>
+        useRunInsights(scope, { terminal: true }),
+      { initialProps: { scope: SCOPE_A } },
+    );
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+
+    state.requestMock.mockImplementation(() => new Promise(() => {}));
+    rerender({ scope: SCOPE_B });
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      rejectA?.(new Error("Insufficient workspace permissions"));
+      await Promise.resolve();
+    });
+
+    rerender({ scope: SCOPE_C });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.requestMock).toHaveBeenCalledTimes(2);
   });
 
   it("ignores a superseded attempt on the same cohort", async () => {

@@ -646,18 +646,28 @@ export function UserTestingScenarioDetail({
               }}
               onOpenSession={(threadId) => {
                 // Stash the target in the URL, then flip the tab — the same
-                // reason the tab itself lives there.
+                // reason the tab itself lives there. `sel` and `view` ride
+                // along: this is a trip to look at one session, and coming
+                // back to Insights should find the selection that sent the
+                // user there rather than a reset Flow view.
                 navigate(
                   buildUserTestingScenarioPath(chatbox.chatboxId, {
                     session: threadId,
+                    sel: selParam ?? undefined,
+                    view,
                   }),
                   { replace: true },
                 );
               }}
               onOpenSessionsTab={() => {
-                navigate(buildUserTestingScenarioPath(chatbox.chatboxId), {
-                  replace: true,
-                });
+                navigate(
+                  buildUserTestingScenarioPath(chatbox.chatboxId, {
+                    session: sessionParam ?? undefined,
+                    sel: selParam ?? undefined,
+                    view,
+                  }),
+                  { replace: true },
+                );
               }}
               strugglesSlot={(breakdown) => (
                 <>
@@ -679,6 +689,8 @@ export function UserTestingScenarioDetail({
                         navigate(
                           buildUserTestingScenarioPath(chatbox.chatboxId, {
                             session: threadId,
+                            sel: selParam ?? undefined,
+                            view,
                           }),
                           { replace: true },
                         );
