@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
 
+# Every job here runs untrusted-ish code — `npm ci` lifecycle scripts and the
+# test suites themselves. Pin the token to read-only so that stays true even if
+# the repo-wide default workflow permission is later widened to write.
+permissions:
+  contents: read
+
 # A newer push to the same ref makes in-flight runs obsolete — cancel them so
 # we don't burn runner minutes finishing tests for superseded commits.
 concurrency:
@@ -32,6 +38,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # No step here uses git auth after checkout, so don't leave the token
+          # in .git/config where dependency install scripts and tests could read it.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -79,6 +89,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # No step here uses git auth after checkout, so don't leave the token
+          # in .git/config where dependency install scripts and tests could read it.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -111,6 +125,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # No step here uses git auth after checkout, so don't leave the token
+          # in .git/config where dependency install scripts and tests could read it.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
