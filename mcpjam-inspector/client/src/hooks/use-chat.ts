@@ -792,7 +792,7 @@ function pickDefaultModel(
   }
   const priorities: Array<Model | string> = [
     "google/gemini-3-flash-preview",
-    Model.CLAUDE_3_7_SONNET_LATEST,
+    Model.CLAUDE_SONNET_4_5,
     Model.GPT_4O,
     Model.DEEPSEEK_CHAT,
     Model.GEMINI_2_5_FLASH,

@@ -744,6 +744,12 @@ describe("v1 write routes", () => {
         // The exact failure mode that motivated this: a raw Anthropic API id
         // is not hosted and has no BYOK key, so the run would 202 and then
         // die with zero tokens and an opaque stream error.
+        //
+        // Use a RETIRED id here. The gate admits anything in MODEL_LOOKUP
+        // (BYOK statics ∪ hosted snapshot), so any id we might later add to
+        // SUPPORTED_MODELS stops exercising this path — which is how the
+        // previous fixture, claude-sonnet-4-6, quietly stopped testing the
+        // rejection once that model shipped in the picker (MMA-2).
         const res = await request(
           makeApp(),
           "POST",
@@ -751,7 +757,7 @@ describe("v1 write routes", () => {
           {
             suiteName: "smoke",
             serverIds: ["s1"],
-            tests: [inlineTest("claude-sonnet-4-6")],
+            tests: [inlineTest("claude-3-7-sonnet-latest")],
           }
         );
         expect(res.status).toBe(400);

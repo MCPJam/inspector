@@ -118,6 +118,45 @@ describe("MCPJam-provided model classification", () => {
     }
   });
 
+  it("offers the current Anthropic models to BYOK keys, and no retired ones", () => {
+    // The BYOK Anthropic rows are hand-maintained, so they drift behind
+    // Anthropic's releases: a user with a valid key could not select Sonnet 5
+    // or Opus 5, while three ids that now 404 were still listed. See MMA-2.
+    const anthropicIds = SUPPORTED_MODELS.filter(
+      (m) => m.provider === "anthropic"
+    ).map((m) => String(m.id));
+
+    for (const id of [
+      "claude-opus-5",
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+    ]) {
+      expect(anthropicIds).toContain(id);
+    }
+
+    // Retired upstream — listing them offers a selection that can only 404.
+    for (const id of [
+      "claude-3-7-sonnet-latest",
+      "claude-3-5-haiku-latest",
+      "claude-opus-4-1",
+    ]) {
+      expect(anthropicIds).not.toContain(id);
+    }
+  });
+
+  it("gives every BYOK Anthropic row a context length", () => {
+    // getDefaultModel and the token-budget UI both read contextLength; a row
+    // added without one silently degrades those rather than failing loudly.
+    for (const model of SUPPORTED_MODELS.filter(
+      (m) => m.provider === "anthropic"
+    )) {
+      expect(model.contextLength).toBeGreaterThan(0);
+    }
+  });
+
   it("hostedModelDefinitionsFromSnapshot() is a non-empty, all-hosted fallback", () => {
     const hosted = hostedModelDefinitionsFromSnapshot();
     expect(hosted.length).toBeGreaterThan(100);
