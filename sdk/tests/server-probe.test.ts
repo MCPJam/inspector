@@ -546,6 +546,85 @@ describe("probeMcpServer", () => {
 
       expect(result.oauth.discoveryError).toMatch(/private\/reserved/);
       expect(result.oauth.resourceMetadata).toBeUndefined();
+
+      // Refusing to use the document is not enough. `transport.attempts` is
+      // returned to the caller — on the hosted API, to whoever called the
+      // doctor route — so a recorded response hands over the internal document
+      // the guard just rejected.
+      const attempt = result.transport.attempts.find(
+        (entry) => entry.name === "resource_metadata"
+      );
+      expect(attempt?.response).toBeUndefined();
+      expect(attempt?.error).toMatch(/private\/reserved/);
+    });
+
+    it("does not read the body of a response from a refused destination", async () => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const prm = "https://metadata.example.com/prm";
+      let bodyWasRead = false;
+
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) return challenge(prm);
+        if (url === prm) {
+          const response = jsonResponse({ SECRET: "internal-credentials" });
+          const readText = response.text.bind(response);
+          Object.defineProperty(response, "text", {
+            value: async () => {
+              bodyWasRead = true;
+              return readText();
+            },
+          });
+          Object.defineProperty(response, "url", {
+            value: "http://169.254.169.254/latest/meta-data/",
+          });
+          return response;
+        }
+        return jsonResponse({ error: "unexpected" }, 404);
+      }) as typeof fetch;
+
+      const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+      expect(result.oauth.discoveryError).toMatch(/private\/reserved/);
+      expect(bodyWasRead).toBe(false);
+    });
+
+    // The authorization-server loop tries several candidates on one origin, so
+    // a refused landing URL must leave every one of them response-less.
+    it("records no response for a refused authorization-server hop", async () => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const prm =
+        "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+      const authServer = "https://auth.example.com";
+
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) return challenge(prm);
+        if (url === prm) {
+          return jsonResponse({
+            resource: serverUrl,
+            authorization_servers: [authServer],
+          });
+        }
+        const response = jsonResponse({ issuer: authServer });
+        Object.defineProperty(response, "url", {
+          value: "http://10.1.2.3/.well-known/oauth-authorization-server",
+        });
+        return response;
+      }) as typeof fetch;
+
+      const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+      const authAttempts = result.transport.attempts.filter(
+        (entry) => entry.name === "authorization_server_metadata"
+      );
+      expect(authAttempts.length).toBeGreaterThan(0);
+      for (const attempt of authAttempts) {
+        expect(attempt.response).toBeUndefined();
+      }
+      expect(result.oauth.authorizationServerMetadata).toBeUndefined();
+      // The document already fetched from an allowed origin is still reported.
+      expect(result.oauth.resourceMetadata).toBeDefined();
     });
 
     // The carve-out that keeps the guard from breaking real usage: the origin

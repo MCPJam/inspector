@@ -99,13 +99,6 @@ type ParsedHttpResponse = {
   headers: Record<string, string>;
   body?: unknown;
   contentType?: string;
-  /**
-   * Where the request actually landed. Requests follow redirects, so checking
-   * only the URL we asked for lets a `302` reach a destination the guard would
-   * have refused; metadata fetches re-check this before reading the body. Empty
-   * for a `fetchFn` that does not report a URL.
-   */
-  finalUrl?: string;
 };
 
 function normalizeProtocolVersion(
@@ -383,7 +376,8 @@ function isRetryableProbeStatus(status: number): boolean {
 async function performRequest(
   fetchFn: typeof fetch,
   attempt: ProbeHttpAttempt,
-  timeoutMs: number | undefined
+  timeoutMs: number | undefined,
+  validateLandingUrl?: (url: string) => void
 ): Promise<ParsedHttpResponse> {
   const startedAt = Date.now();
   const { signal, cleanup, didTimeout } = withTimeoutSignal(timeoutMs);
@@ -399,6 +393,16 @@ async function performRequest(
       redirect: "follow",
       signal,
     });
+
+    // Where the response landed, checked before anything is read from it.
+    // Refusing to *use* a body fetched from a blocked host is not enough: this
+    // attempt is already in the array returned as `transport.attempts`, so
+    // recording the response would hand the caller the internal document the
+    // guard just rejected. Best-effort — a `fetchFn` that reports no URL leaves
+    // nothing to check, which is why the hosted path guards the dial itself.
+    if (validateLandingUrl && response.url) {
+      validateLandingUrl(response.url);
+    }
 
     const parsedBody = await readResponseBody(response);
     const normalizedHeaders = normalizeHeaders(response.headers);
@@ -417,7 +421,6 @@ async function performRequest(
       headers: lowerCaseHeaders(normalizedHeaders),
       body: parsedBody.body,
       contentType: parsedBody.contentType,
-      finalUrl: response.url || undefined,
     };
   } catch (error) {
     const requestError = didTimeout() ? createTimeoutError(timeoutMs) : error;
@@ -600,15 +603,9 @@ async function discoverOAuthDetails(
       const response = await performRequest(
         config.fetchFn ?? fetch,
         attempt,
-        config.timeoutMs
+        config.timeoutMs,
+        (landingUrl) => assertMetadataDestinationAllowed(landingUrl, config.url)
       );
-
-      // Redirects are followed, so the guard on the requested URL says nothing
-      // about where the body came from. Refuse to read one fetched from a
-      // destination the guard would have blocked.
-      if (response.finalUrl) {
-        assertMetadataDestinationAllowed(response.finalUrl, config.url);
-      }
 
       return new Response(
         response.body === undefined ? null : JSON.stringify(response.body),
@@ -669,12 +666,10 @@ async function discoverOAuthDetails(
         const response = await performRequest(
           config.fetchFn ?? fetch,
           authAttempt,
-          config.timeoutMs
+          config.timeoutMs,
+          (landingUrl) =>
+            assertMetadataDestinationAllowed(landingUrl, config.url)
         );
-
-        if (response.finalUrl) {
-          assertMetadataDestinationAllowed(response.finalUrl, config.url);
-        }
 
         if (
           response.status >= 200 &&
