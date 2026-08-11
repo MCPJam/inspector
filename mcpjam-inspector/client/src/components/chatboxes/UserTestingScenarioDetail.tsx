@@ -16,6 +16,16 @@ import {
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
+import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
+import { RunInsightsChip } from "@/components/shared/usage-insights/run-insights";
+import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
+import {
+  parseSelectionParam,
+  serializeSelectionParam,
+  type ThemeRef,
+} from "@/hooks/chatbox-usage-filters";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ChatboxPreviewPane } from "@/components/chatboxes/ChatboxPreviewPane";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import { EditableTitle } from "@/components/evals/EditableTitle";
@@ -315,9 +325,26 @@ export function UserTestingScenarioDetail({
   // above remount this route during a cold boot, so state captured on first
   // mount wouldn't survive to the last one.
   const tab = parseUserTestingDetailTab(location.search);
-  const sessionDeepLinkThreadId = new URLSearchParams(location.search).get(
-    "session",
+  const searchParams = new URLSearchParams(location.search);
+  const sessionParam = searchParams.get("session");
+  const sessionDeepLinkThreadId = sessionParam;
+  // Insights selection + which diagram it was made on, so a copied link
+  // reopens exactly what the sender was looking at.
+  const selParam = searchParams.get("sel");
+  const viewParam = searchParams.get("view");
+  const urlSelection = useMemo(
+    () => parseSelectionParam(selParam),
+    [selParam],
   );
+
+  // Requesting narration SPENDS, and dismissing a finding is a judgment that
+  // outlives the viewer — both are member-gated server-side, while viewing
+  // signals and findings is not. User Testing is deliberately guest-visible,
+  // so the affordances gate rather than the surface. Same tier and same
+  // identity paths as promotion, so the same resolver answers it.
+  const { canPromote: canRequestInsights } = usePromoteCapability({
+    projectId: chatbox.projectId ?? null,
+  });
 
   // Present only when the environment can't resolve right now (archived, a
   // pinned plugin disabled, its host gone). The scenario still opens: its
@@ -373,11 +400,19 @@ export function UserTestingScenarioDetail({
 
   const goToTab = (next: UserTestingDetailTab) => {
     // Replace, not push: flipping a sub-tab shouldn't put a stop on the back
-    // button between the scenario and the list. Drops `?session=` — that
-    // selection belongs to the Sessions tab.
-    navigate(buildUserTestingScenarioPath(chatbox.chatboxId, { tab: next }), {
-      replace: true,
-    });
+    // button between the scenario and the list. `session` and `sel` are
+    // PRESERVED: both name something the user picked, and dropping them on a
+    // tab flip loses the selection they came back to the other tab to see —
+    // and makes the URL they copied stop describing what is on screen.
+    navigate(
+      buildUserTestingScenarioPath(chatbox.chatboxId, {
+        tab: next,
+        session: sessionParam ?? undefined,
+        sel: selParam ?? undefined,
+        view: viewParam ?? undefined,
+      }),
+      { replace: true },
+    );
   };
 
   const handleDelete = async () => {
@@ -560,16 +595,44 @@ export function UserTestingScenarioDetail({
           <div className="absolute inset-0">
             <ChatboxUsagePanel
               chatbox={chatbox}
-              section="sessions"
               initialThreadId={sessionDeepLinkThreadId}
             />
           </div>
         ) : null}
         {tab === "insights" ? (
           <div className="absolute inset-0">
-            <ChatboxUsagePanel
-              chatbox={chatbox}
-              section="insights"
+            <InsightsWorkbench
+              scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
+              cohortKey={chatbox.chatboxId}
+              // Scenarios carry real-user traffic; the retired simulation
+              // flow's rows are still in the database and stay hidden.
+              augmentFilter={withHideSynthetic}
+              urlSelection={urlSelection}
+              onSelectionChange={(themes) => {
+                navigate(
+                  buildUserTestingScenarioPath(chatbox.chatboxId, {
+                    tab: "insights",
+                    session: sessionParam ?? undefined,
+                    sel: themes
+                      ? serializeSelectionParam(themes as ThemeRef[])
+                      : undefined,
+                    view: viewParam ?? undefined,
+                  }),
+                  { replace: true },
+                );
+              }}
+              initialView={viewParam === "clusters" ? "clusters" : "flow"}
+              onViewChange={(view) => {
+                navigate(
+                  buildUserTestingScenarioPath(chatbox.chatboxId, {
+                    tab: "insights",
+                    session: sessionParam ?? undefined,
+                    sel: selParam ?? undefined,
+                    view,
+                  }),
+                  { replace: true },
+                );
+              }}
               onOpenSession={(threadId) => {
                 // Stash the target in the URL, then flip the tab — the same
                 // reason the tab itself lives there.
@@ -585,6 +648,52 @@ export function UserTestingScenarioDetail({
                   replace: true,
                 });
               }}
+              strugglesSlot={
+                // Ships dark and guest-tolerant: `useQuery` against an
+                // undeployed query throws, and a guest hitting the
+                // member-only request mutation would too. The boundary makes
+                // both render as nothing rather than as a broken tab — the
+                // same pattern `ChatboxSessionsMetricStrip` uses.
+                <ErrorBoundary fallback={null}>
+                  <RunInsightsChip
+                    surface={{
+                      kind: "chatbox",
+                      chatboxId: chatbox.chatboxId,
+                    }}
+                    onOpenSession={(threadId) => {
+                      navigate(
+                        buildUserTestingScenarioPath(chatbox.chatboxId, {
+                          session: threadId,
+                        }),
+                        { replace: true },
+                      );
+                    }}
+                    canRequest={canRequestInsights}
+                    canDismiss={canRequestInsights}
+                  />
+                </ErrorBoundary>
+              }
+              // Parity with the swarm one-shot: a scenario analyzed before the
+              // topic map existed backfills silently on first Clusters view.
+              // The server mutation dedupes in-flight runs.
+              autoBackfillTopicMap
+              emptyState={
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No tester sessions yet — share the link to start collecting
+                    them.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToTab("edit")}
+                  >
+                    Open Edit to share
+                  </Button>
+                </div>
+              }
+              className="px-8 py-4"
+              testIdPrefix="chatbox-insights"
             />
           </div>
         ) : null}

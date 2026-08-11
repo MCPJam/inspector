@@ -1,5 +1,5 @@
 /**
- * Panel-level wiring for session-flow selection.
+ * Workbench-level wiring for session-flow selection, on the User Testing scope.
  *
  * Pins the regression the per-component tests could not see: the breakdown
  * query that RENDERS the flow must never receive the flow's own selection
@@ -19,7 +19,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatboxUsagePanel } from "../ChatboxUsagePanel";
+import { InsightsWorkbench } from "../InsightsWorkbench";
+import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
 import {
   chipKey,
   type InsightsSelection,
@@ -34,6 +35,17 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(
     mockUseGoalOutcomeDrilldown: vi.fn(),
   })
 );
+
+// The workbench's freshness chip reads Convex directly; these tests render it
+// outside a provider.
+vi.mock("convex/react", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    useQuery: () => undefined,
+    useMutation: () => async () => undefined,
+  };
+});
 
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -60,8 +72,8 @@ const DISCORDANT_LINK: InsightsSelection = {
   ],
 };
 
-vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
-  ChatboxInsightsSankey: ({
+vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
+  SessionFlowSankey: ({
     onSelectNode,
     onSelectLink,
   }: {
@@ -100,8 +112,8 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
 // map fires when a community is clicked, which writes a CLUSTER chip — the same
 // dimension the flow's goal selection writes. That collision is what the
 // map-originated tests below exercise.
-vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
-  ChatboxTopicMapPanel: ({
+vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
+  TopicMapPanel: ({
     onToggleChip,
   }: {
     onToggleChip: (chip: UsageFilterChip) => void;
@@ -198,11 +210,15 @@ function lastDrilldownArgs(): {
   return mockUseGoalOutcomeDrilldown.mock.calls.at(-1)?.[0];
 }
 
+/** Mounted the way `UserTestingScenarioDetail` mounts it. */
 function renderInsightsPanel() {
   return render(
-    <ChatboxUsagePanel
-      chatbox={{ chatboxId: "chatbox-1" } as never}
-      section="insights"
+    <InsightsWorkbench
+      scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+      cohortKey="chatbox-1"
+      augmentFilter={withHideSynthetic}
+      autoBackfillTopicMap
+      testIdPrefix="chatbox-insights"
     />
   );
 }
@@ -226,7 +242,7 @@ beforeEach(() => {
   });
 });
 
-describe("ChatboxUsagePanel flow selection", () => {
+describe("InsightsWorkbench flow selection", () => {
   it("never feeds the selection chips back into the breakdown query", async () => {
     const user = userEvent.setup();
     renderInsightsPanel();

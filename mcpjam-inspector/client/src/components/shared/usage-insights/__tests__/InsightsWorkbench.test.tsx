@@ -11,7 +11,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SwarmInsightsPanel } from "../SwarmInsightsPanel";
+import { InsightsWorkbench } from "../InsightsWorkbench";
 import {
   chipKey,
   type InsightsSelection,
@@ -32,6 +32,18 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown, toastMock } =
 
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
+// The workbench's freshness chip reads Convex directly. These suites render it
+// outside a provider, and the chip's own query is chatbox-scoped (skipped on a
+// swarm scope), so a stub client is the whole requirement.
+vi.mock("convex/react", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    useQuery: () => undefined,
+    useMutation: () => async () => undefined,
+  };
+});
+
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -48,8 +60,8 @@ const JOURNEY_NODE: InsightsSelection = {
   ],
 };
 
-vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
-  ChatboxInsightsSankey: ({
+vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
+  SessionFlowSankey: ({
     onSelectNode,
     selection,
     stageTitles,
@@ -73,8 +85,8 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
   ),
 }));
 
-vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
-  ChatboxTopicMapPanel: ({
+vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
+  TopicMapPanel: ({
     journeyRunIds,
     headerActions,
   }: {
@@ -105,6 +117,38 @@ function lastDrilldownCall() {
   };
 }
 
+/**
+ * Render the workbench the way `swarm-run-detail` mounts it, so these tests
+ * keep asserting the swarm surface's wiring rather than the shared body's
+ * defaults.
+ */
+function renderSwarmWorkbench(props: {
+  projectId: string | null;
+  journeyRunIds?: string[];
+  urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
+  onSelectionChange?: (themes: unknown) => void;
+} = { projectId: "proj-1" }) {
+  const { projectId, journeyRunIds, ...rest } = props;
+  return render(
+    <InsightsWorkbench
+      scope={
+        projectId
+          ? {
+              kind: "swarm",
+              projectId,
+              ...(journeyRunIds?.length ? { journeyRunIds } : {}),
+            }
+          : null
+      }
+      cohortKey={`${projectId ?? ""}\0${(journeyRunIds ?? []).join("\0")}`}
+      autoBackfillTopicMap
+      emptyState={<div>Sign in to view swarm insights.</div>}
+      testIdPrefix="swarm-insights"
+      {...(rest as Record<string, unknown>)}
+    />,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseUsageInsights.mockReset().mockReturnValue({
@@ -117,9 +161,9 @@ beforeEach(() => {
     .mockReturnValue({ drilldown: undefined, isLoading: false });
 });
 
-describe("SwarmInsightsPanel", () => {
+describe("InsightsWorkbench", () => {
   it("reads the breakdown through the swarm scope with the shared Goal column", () => {
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
     expect(lastInsightsCall().scope).toEqual({
       kind: "swarm",
       projectId: "proj-1",
@@ -128,12 +172,7 @@ describe("SwarmInsightsPanel", () => {
   });
 
   it("forwards journeyRunIds onto the swarm scope for a wave-scoped Sankey", () => {
-    render(
-      <SwarmInsightsPanel
-        projectId="proj-1"
-        journeyRunIds={["run-a", "run-b"]}
-      />,
-    );
+    renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a", "run-b"] });
     expect(lastInsightsCall().scope).toEqual({
       kind: "swarm",
       projectId: "proj-1",
@@ -143,9 +182,7 @@ describe("SwarmInsightsPanel", () => {
 
   it("a flow click narrows the drill-down but not the breakdown that draws the flow", async () => {
     const user = userEvent.setup();
-    render(
-      <SwarmInsightsPanel projectId="proj-1" journeyRunIds={["run-a"]} />,
-    );
+    renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a"] });
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));
 
     // Drill-down: swarm scope, filter carrying the selection's cluster chip.
@@ -163,13 +200,7 @@ describe("SwarmInsightsPanel", () => {
   });
 
   it("restores a URL selection and keeps it beside the Sankey", async () => {
-    render(
-      <SwarmInsightsPanel
-        projectId="proj-1"
-        fillViewport
-        urlSelection={[{ dimension: "goal", clusterId: "journey-1" }]}
-      />,
-    );
+    renderSwarmWorkbench({ projectId: "proj-1", urlSelection: [{ dimension: "goal", clusterId: "journey-1" }] });
 
     await waitFor(() =>
       expect(screen.getByTestId("selected-themes")).toHaveTextContent(
@@ -183,13 +214,7 @@ describe("SwarmInsightsPanel", () => {
   it("persists click and close changes, including Escape", async () => {
     const user = userEvent.setup();
     const onSelectionChange = vi.fn();
-    render(
-      <SwarmInsightsPanel
-        projectId="proj-1"
-        fillViewport
-        onSelectionChange={onSelectionChange}
-      />,
-    );
+    renderSwarmWorkbench({ projectId: "proj-1", onSelectionChange });
 
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));
     expect(onSelectionChange).toHaveBeenLastCalledWith([
@@ -197,18 +222,18 @@ describe("SwarmInsightsPanel", () => {
     ]);
     await user.keyboard("{Escape}");
     expect(onSelectionChange).toHaveBeenLastCalledWith(null);
-    expect(screen.queryByTestId("swarm-insights-drill-panel")).toBeNull();
+    // Hidden, not unmounted: the workbench adopts the User Testing contract,
+    // where closing toggles the drill-down query's `enabled` instead of
+    // tearing the component down and refetching on reopen.
+    expect(screen.getByTestId("swarm-insights-drill-panel")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
   });
 
   it("fillViewport keeps the statline and diagram visible beside the drill-down", async () => {
     const user = userEvent.setup();
-    render(
-      <SwarmInsightsPanel
-        projectId="proj-1"
-        journeyRunIds={["run-a"]}
-        fillViewport
-      />,
-    );
+    renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a"] });
     const panel = screen.getByTestId("swarm-insights-panel");
     expect(panel.className).toContain("flex-col");
     expect(screen.getByTestId("swarm-insights-statline")).toBeInTheDocument();
@@ -221,19 +246,13 @@ describe("SwarmInsightsPanel", () => {
   });
 
   it("renders a sign-in gate with no project", () => {
-    render(<SwarmInsightsPanel projectId={null} />);
+    renderSwarmWorkbench({ projectId: null });
     expect(screen.getByText(/sign in/i)).toBeInTheDocument();
   });
 
   it("toggles between Session flow and Clusters", async () => {
     const user = userEvent.setup();
-    render(
-      <SwarmInsightsPanel
-        projectId="proj-1"
-        journeyRunIds={["run-a", "run-b"]}
-        fillViewport
-      />,
-    );
+    renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a", "run-b"] });
     expect(screen.getByTestId("goal-header")).toBeInTheDocument();
     expect(screen.queryByTestId("topic-map-panel")).toBeNull();
 
@@ -275,7 +294,7 @@ describe("SwarmInsightsPanel", () => {
       rebuild,
     });
 
-    render(<SwarmInsightsPanel projectId="proj-legacy" fillViewport />);
+    renderSwarmWorkbench({ projectId: "proj-legacy" });
     expect(rebuild).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Clusters" }));
@@ -309,7 +328,7 @@ describe("SwarmInsightsPanel", () => {
       rebuild,
     });
 
-    render(<SwarmInsightsPanel projectId="proj-ready" fillViewport />);
+    renderSwarmWorkbench({ projectId: "proj-ready" });
     await user.click(screen.getByRole("button", { name: "Clusters" }));
     await waitFor(() => {
       expect(screen.getByTestId("topic-map-panel")).toBeInTheDocument();

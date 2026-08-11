@@ -137,16 +137,27 @@ const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
  * share. A HOST id is still accepted by the surface (links minted under the
  * older scheme redirect onto the chatbox id), but new links should never be
  * built with one. `session` opens straight into one tester session, which is
- * what a copied session link carries.
+ * what a copied session link carries; `sel` and `view` carry an Insights
+ * selection and which diagram it was made on, so a link to "this cluster, in
+ * the flow view" reopens exactly that — the same shape `buildSwarmPath`
+ * already supports.
  */
 export function buildUserTestingScenarioPath(
   scenarioId: string,
-  opts: { tab?: UserTestingDetailTab; session?: string } = {}
+  opts: {
+    tab?: UserTestingDetailTab;
+    session?: string;
+    sel?: string;
+    view?: string;
+  } = {}
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
   if (opts.tab && opts.tab !== "sessions") search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
+  if (opts.sel) search.set("sel", opts.sel);
+  // `flow` is the default; only the non-default view needs saying.
+  if (opts.view && opts.view !== "flow") search.set("view", opts.view);
   const query = search.toString();
   return query ? `${base}?${query}` : base;
 }

@@ -8,7 +8,7 @@
  */
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ChatboxInsightsSankey } from "../ChatboxInsightsSankey";
+import { SessionFlowSankey } from "../SessionFlowSankey";
 import type { UsageBreakdown } from "@/hooks/useUsageInsights";
 
 const EMPTY_BREAKDOWN = {
@@ -18,7 +18,7 @@ const EMPTY_BREAKDOWN = {
 
 function renderSankey(breakdown: UsageBreakdown | null | undefined) {
   return render(
-    <ChatboxInsightsSankey
+    <SessionFlowSankey
       breakdown={breakdown}
       selection={null}
       onSelectNode={vi.fn()}
@@ -30,7 +30,7 @@ function renderSankey(breakdown: UsageBreakdown | null | undefined) {
   );
 }
 
-describe("ChatboxInsightsSankey tuning control placement", () => {
+describe("SessionFlowSankey tuning control placement", () => {
   it("offers the settings before anything has been clustered", () => {
     renderSankey(EMPTY_BREAKDOWN);
     expect(screen.getByText("No session flow yet")).toBeInTheDocument();
@@ -44,7 +44,7 @@ describe("ChatboxInsightsSankey tuning control placement", () => {
 
   it("omits the control entirely when the surface passes no handler", () => {
     render(
-      <ChatboxInsightsSankey
+      <SessionFlowSankey
         breakdown={EMPTY_BREAKDOWN}
         selection={null}
         onSelectNode={vi.fn()}

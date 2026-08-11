@@ -6,7 +6,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { ChatboxInsightsSankey } from "../ChatboxInsightsSankey";
+import { SessionFlowSankey } from "../SessionFlowSankey";
 import type {
   ClusterRunState,
   InsightsSankey,
@@ -104,13 +104,13 @@ function breakdown(overrides: Partial<UsageBreakdown> = {}): UsageBreakdown {
 }
 
 function renderSankey(
-  props: Partial<React.ComponentProps<typeof ChatboxInsightsSankey>> = {},
+  props: Partial<React.ComponentProps<typeof SessionFlowSankey>> = {},
 ) {
   const onSelectNode = props.onSelectNode ?? vi.fn();
   const onSelectLink = props.onSelectLink ?? vi.fn();
   const onRebuild = props.onRebuild ?? vi.fn();
   render(
-    <ChatboxInsightsSankey
+    <SessionFlowSankey
       breakdown={breakdown()}
       selection={null}
       onSelectNode={onSelectNode}
@@ -123,7 +123,7 @@ function renderSankey(
   return { onSelectNode, onSelectLink, onRebuild };
 }
 
-describe("ChatboxInsightsSankey", () => {
+describe("SessionFlowSankey", () => {
   it("shows a loading state until the breakdown arrives", () => {
     renderSankey({ breakdown: undefined });
     expect(screen.getByText(/Loading session flow/)).toBeInTheDocument();

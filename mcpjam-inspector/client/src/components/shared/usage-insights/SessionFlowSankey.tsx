@@ -29,7 +29,7 @@ import {
   stageValueLabel,
   type SankeyLayoutLink,
   type SankeyLayoutNode,
-} from "@/components/chatboxes/insights-sankey";
+} from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
 
 interface ChatboxInsightsSankeyProps {
@@ -167,7 +167,7 @@ function RebuildButton({
  * vocabulary to render, which is why the behavior column can say "Guessed an id
  * after truncation" rather than picking from a list written in advance.
  */
-export function ChatboxInsightsSankey({
+export function SessionFlowSankey({
   breakdown,
   selection,
   onSelectNode,

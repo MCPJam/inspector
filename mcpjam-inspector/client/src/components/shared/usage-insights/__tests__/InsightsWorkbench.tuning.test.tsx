@@ -7,7 +7,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SwarmInsightsPanel } from "../SwarmInsightsPanel";
+import { InsightsWorkbench } from "../InsightsWorkbench";
 import { CLUSTER_TUNING_PRESETS, type ClusterTuning } from "@/lib/cluster-tuning";
 
 const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown, toastMock } =
@@ -24,6 +24,18 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown, toastMock } =
 
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
+// The workbench's freshness chip reads Convex directly. These suites render it
+// outside a provider, and the chip's own query is chatbox-scoped (skipped on a
+// swarm scope), so a stub client is the whole requirement.
+vi.mock("convex/react", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    useQuery: () => undefined,
+    useMutation: () => async () => undefined,
+  };
+});
+
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -34,14 +46,14 @@ vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   };
 });
 
-vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
-  ChatboxTopicMapPanel: () => <div data-testid="topic-map-panel" />,
+vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
+  TopicMapPanel: () => <div data-testid="topic-map-panel" />,
 }));
 
 // Stubbed to the one prop under test plus a trigger, so this file exercises the
 // panel's forwarding rather than re-testing the control (which has its own).
-vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
-  ChatboxInsightsSankey: ({
+vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
+  SessionFlowSankey: ({
     onApplyTuning,
     showLinkThreshold,
     headerActions,
@@ -71,6 +83,38 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
 
 let rebuild: ReturnType<typeof vi.fn>;
 
+/**
+ * Render the workbench the way `swarm-run-detail` mounts it, so these tests
+ * keep asserting the swarm surface's wiring rather than the shared body's
+ * defaults.
+ */
+function renderSwarmWorkbench(props: {
+  projectId: string | null;
+  journeyRunIds?: string[];
+  urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
+  onSelectionChange?: (themes: unknown) => void;
+} = { projectId: "proj-1" }) {
+  const { projectId, journeyRunIds, ...rest } = props;
+  return render(
+    <InsightsWorkbench
+      scope={
+        projectId
+          ? {
+              kind: "swarm",
+              projectId,
+              ...(journeyRunIds?.length ? { journeyRunIds } : {}),
+            }
+          : null
+      }
+      cohortKey={`${projectId ?? ""}\0${(journeyRunIds ?? []).join("\0")}`}
+      autoBackfillTopicMap
+      emptyState={<div>Sign in to view swarm insights.</div>}
+      testIdPrefix="swarm-insights"
+      {...(rest as Record<string, unknown>)}
+    />,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   rebuild = vi.fn().mockResolvedValue({
@@ -88,9 +132,9 @@ beforeEach(() => {
     .mockReturnValue({ drilldown: undefined, isLoading: false });
 });
 
-describe("SwarmInsightsPanel tuning", () => {
+describe("InsightsWorkbench tuning", () => {
   it("offers the topic-map link-threshold knob", () => {
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
     expect(screen.getByTestId("show-link-threshold")).toHaveTextContent(
       "true",
     );
@@ -98,7 +142,7 @@ describe("SwarmInsightsPanel tuning", () => {
 
   it("forwards the applied tuning — including linkThreshold — to the rebuild", async () => {
     const user = userEvent.setup();
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
     await user.click(screen.getByRole("button", { name: "apply tuning" }));
 
     expect(rebuild).toHaveBeenCalledWith({
@@ -119,7 +163,7 @@ describe("SwarmInsightsPanel tuning", () => {
       alreadyRunning: true,
       tuningMismatch: true,
     });
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
     await user.click(screen.getByRole("button", { name: "apply tuning" }));
 
     expect(toastMock.warning).toHaveBeenCalledWith(

@@ -131,7 +131,7 @@ export function resolveNextBefore(
   return live !== undefined ? live.nextBefore : lastSettled ?? null;
 }
 
-export function ChatboxGoalOutcomeDrilldown({
+export function GoalOutcomeDrilldown({
   scope,
   selection,
   filter,

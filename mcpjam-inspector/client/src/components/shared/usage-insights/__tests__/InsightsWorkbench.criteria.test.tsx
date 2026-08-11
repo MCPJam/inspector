@@ -11,7 +11,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SwarmInsightsPanel } from "../SwarmInsightsPanel";
+import { InsightsWorkbench } from "../InsightsWorkbench";
 import { chipKey, type UsageFilterState } from "@/hooks/chatbox-usage-filters";
 import type { CriterionFacet } from "@/hooks/useUsageInsights";
 
@@ -19,6 +19,18 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(() => (
   mockUseUsageInsights: vi.fn(),
   mockUseGoalOutcomeDrilldown: vi.fn(),
 }));
+
+// The workbench's freshness chip reads Convex directly. These suites render it
+// outside a provider, and the chip's own query is chatbox-scoped (skipped on a
+// swarm scope), so a stub client is the whole requirement.
+vi.mock("convex/react", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    useQuery: () => undefined,
+    useMutation: () => async () => undefined,
+  };
+});
 
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -30,12 +42,12 @@ vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   };
 });
 
-vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
-  ChatboxInsightsSankey: () => <div data-testid="sankey" />,
+vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
+  SessionFlowSankey: () => <div data-testid="sankey" />,
 }));
 
-vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
-  ChatboxTopicMapPanel: () => <div data-testid="topic-map-panel" />,
+vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
+  TopicMapPanel: () => <div data-testid="topic-map-panel" />,
 }));
 
 const FACETS: CriterionFacet[] = [
@@ -64,9 +76,53 @@ function withFacets(facets: CriterionFacet[] | undefined) {
   });
 }
 
+/**
+ * The scorecard lives behind the statline's Checks chip.
+ *
+ * That is where it has always rendered on the surface a user actually sees —
+ * the workbench dropped the scroll-area layout that also rendered it inline,
+ * which had no production caller. Every assertion below is unchanged; they
+ * just open the popover first.
+ */
+async function openChecks(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: /Checks/ }));
+}
+
 function lastBreakdownFilters(): UsageFilterState {
   return (mockUseUsageInsights.mock.calls.at(-1)?.[0] as { filters: UsageFilterState })
     .filters;
+}
+
+/**
+ * Render the workbench the way `swarm-run-detail` mounts it, so these tests
+ * keep asserting the swarm surface's wiring rather than the shared body's
+ * defaults.
+ */
+function renderSwarmWorkbench(props: {
+  projectId: string | null;
+  journeyRunIds?: string[];
+  urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
+  onSelectionChange?: (themes: unknown) => void;
+} = { projectId: "proj-1" }) {
+  const { projectId, journeyRunIds, ...rest } = props;
+  return render(
+    <InsightsWorkbench
+      scope={
+        projectId
+          ? {
+              kind: "swarm",
+              projectId,
+              ...(journeyRunIds?.length ? { journeyRunIds } : {}),
+            }
+          : null
+      }
+      cohortKey={`${projectId ?? ""}\0${(journeyRunIds ?? []).join("\0")}`}
+      autoBackfillTopicMap
+      emptyState={<div>Sign in to view swarm insights.</div>}
+      testIdPrefix="swarm-insights"
+      {...(rest as Record<string, unknown>)}
+    />,
+  );
 }
 
 beforeEach(() => {
@@ -77,16 +133,20 @@ beforeEach(() => {
   withFacets(FACETS);
 });
 
-describe("SwarmInsightsPanel — criterion scorecard", () => {
-  it("renders one row per criterion, named by label then by predicate kind", () => {
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+describe("InsightsWorkbench — criterion scorecard", () => {
+  it("renders one row per criterion, named by label then by predicate kind", async () => {
+    const user = userEvent.setup();
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     expect(screen.getByText("Quick resolution")).toBeInTheDocument();
     // No author label ⇒ the predicate kind's label, never the raw uuid.
     expect(screen.getByText("Tool was called at least once")).toBeInTheDocument();
   });
 
-  it("headlines a verdict-weighted score across every graded session", () => {
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+  it("headlines a verdict-weighted score across every graded session", async () => {
+    const user = userEvent.setup();
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     // 13 passed of 20 graded verdicts — the 2 ungraded are outside the
     // denominator, and the score is per-verdict, not per-criterion.
     expect(screen.getByText("Score 65%")).toBeInTheDocument();
@@ -96,8 +156,10 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
     ).toBeInTheDocument();
   });
 
-  it("reports ungraded separately instead of folding it into the fail count", () => {
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+  it("reports ungraded separately instead of folding it into the fail count", async () => {
+    const user = userEvent.setup();
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     // 6 failed out of the 10 GRADED — the 2 ungraded are named, not summed in.
     expect(screen.getByText(/6\/10 sessions failed/)).toBeInTheDocument();
     expect(screen.getByText(/2 not graded/)).toBeInTheDocument();
@@ -105,7 +167,8 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
 
   it("a fail click NARROWS the breakdown — criterion chips are not flow-owned", async () => {
     const user = userEvent.setup();
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     expect(lastBreakdownFilters().chips).toEqual([]);
 
     // The fail count is the primary affordance.
@@ -120,7 +183,8 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
 
   it("chips for two DIFFERENT criteria stack, so the cohort narrows", async () => {
     const user = userEvent.setup();
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     await user.click(
       screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
     );
@@ -138,7 +202,8 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
 
   it("clicking the same chip again removes it", async () => {
     const user = userEvent.setup();
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     await user.click(
       screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
     );
@@ -150,7 +215,8 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
 
   it("makes the ungraded count clickable — it is the question the number provokes", async () => {
     const user = userEvent.setup();
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     await user.click(
       screen.getByRole("button", { name: /Quick resolution: 2 not graded/ }),
     );
@@ -159,8 +225,10 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
     ]);
   });
 
-  it("names each button with its criterion so identical counts stay distinguishable", () => {
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+  it("names each button with its criterion so identical counts stay distinguishable", async () => {
+    const user = userEvent.setup();
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    await openChecks(user);
     // Both cards would otherwise expose bare "N failed" / "N passed" names.
     expect(
       screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
@@ -174,13 +242,13 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
 
   it("renders nothing at all when no run in the window carried a rubric", () => {
     withFacets([]);
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
     expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
   });
 
   it("renders nothing when the server predates criterionBreakdown", () => {
     withFacets(undefined);
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    renderSwarmWorkbench({ projectId: "proj-1" });
     expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
   });
 });

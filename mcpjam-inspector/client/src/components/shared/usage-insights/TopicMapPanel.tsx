@@ -164,15 +164,9 @@ type GraphHandle = {
   d3ReheatSimulation?: () => void;
 };
 
-interface ChatboxTopicMapPanelProps {
-  /**
-   * Preferred: insights scope (chatbox or swarm). When set, `chatboxId` is
-   * ignored. Kept optional so existing chatbox callers can keep passing
-   * `chatboxId` alone.
-   */
+interface TopicMapPanelProps {
+  /** Which surface's map to render. Null renders the empty state. */
   scope?: InsightsScope | TopicMapScope | null;
-  /** @deprecated Prefer `scope`. Kept for chatbox call sites. */
-  chatboxId?: string;
   /**
    * When set (swarm wave), hide nodes whose `journeyRunId` is outside this
    * set. Nodes without a `journeyRunId` stay visible so older blobs still
@@ -606,9 +600,8 @@ export function topicMapNodeHoverLabel(node: {
   return node.sessionId;
 }
 
-export function ChatboxTopicMapPanel({
+export function TopicMapPanel({
   scope: scopeProp,
-  chatboxId,
   journeyRunIds,
   filter,
   onToggleChip,
@@ -617,16 +610,14 @@ export function ChatboxTopicMapPanel({
   rebuildBusy,
   onOpenSession,
   headerActions,
-}: ChatboxTopicMapPanelProps) {
+}: TopicMapPanelProps) {
   const topicMapScope = useMemo<TopicMapScope | null>(() => {
-    if (scopeProp) {
-      if (scopeProp.kind === "swarm") {
-        return { kind: "swarm", projectId: scopeProp.projectId };
-      }
-      return { kind: "chatbox", chatboxId: scopeProp.chatboxId };
+    if (!scopeProp) return null;
+    if (scopeProp.kind === "swarm") {
+      return { kind: "swarm", projectId: scopeProp.projectId };
     }
-    return chatboxId ? { kind: "chatbox", chatboxId } : null;
-  }, [scopeProp, chatboxId]);
+    return { kind: "chatbox", chatboxId: scopeProp.chatboxId };
+  }, [scopeProp]);
 
   const journeyRunIdSet = useMemo(
     () => (journeyRunIds?.length ? new Set(journeyRunIds) : null),

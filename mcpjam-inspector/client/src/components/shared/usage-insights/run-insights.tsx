@@ -1,5 +1,12 @@
 /**
- * Swarm run insights — the answer, above the fold.
+ * Run insights — the answer, above the fold. One rail for Swarms and User
+ * Testing.
+ *
+ * The two surfaces mine different populations but produce the SAME shape: a
+ * deterministic signal, a registry finding that tracks it over time, and a
+ * model explanation that enriches it. So the rail branches only on which
+ * queries to read and how a detector phrases itself; everything about the
+ * layout, the lifecycle, and the dismissal flow is shared.
  *
  * ONE list, not two. The deterministic miner and the model are two lanes over
  * the same problems, so rendering them as separate sections produced the same
@@ -33,7 +40,62 @@ import {
   type SwarmWaveSignalCandidate,
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
-import { useSwarmRunInsights } from "@/hooks/use-swarm-run-insights";
+import {
+  useRunInsights,
+  type RunInsightsScope,
+} from "@/hooks/use-run-insights";
+import {
+  CHATBOX_INSIGHTS_QUERIES,
+  type ChatboxFinding,
+  type ChatboxWindowSignals,
+} from "@/lib/chatbox-insights-api";
+
+/**
+ * Which surface's rail this is. The chatbox arm carries no group id: the rail
+ * DERIVES it from `getWindowSignals.latestGroupId`, so the narration it reads
+ * always describes the window whose signals it is showing.
+ */
+export type RunInsightsSurface =
+  | { kind: "swarm"; projectId: string; swarmRunGroupId: string }
+  | { kind: "chatbox"; chatboxId: string };
+
+/**
+ * A signal, in the shape the rail renders. Structurally the swarm candidate
+ * with the detector widened to a string: the two miners emit disjoint detector
+ * unions over the same row shape, and the rail phrases both.
+ */
+export type RailSignalCandidate = Omit<
+  SwarmWaveSignalCandidate,
+  "detector" | "subjectKind"
+> & {
+  detector: string;
+  subjectKind: string;
+};
+
+/** Registry row, in the shape the rail renders (the two DTOs differ in id key). */
+type RailFinding = {
+  findingId: string;
+  fingerprint: string;
+  status: "new" | "recurring" | "resolved" | "regressed";
+  occurrenceCount: number;
+  dismissedAt: number | null;
+};
+
+/** Live signals, in the shape the rail renders. */
+type RailSignals = {
+  candidates: RailSignalCandidate[];
+  sessionCount: number;
+  lowConfidence: boolean;
+  truncated: boolean;
+  /** Swarm only — a window has no judge. */
+  judgeCoverage?: { graded: number; total: number };
+  /** User Testing only — direct user voice in the window. */
+  feedbackCount?: number;
+  /** Ready to narrate: swarm runs must be terminal, windows must be frozen. */
+  terminal: boolean;
+  /** The frozen window this rail is showing (User Testing only). */
+  latestGroupId?: string | null;
+};
 
 /** Rows visible before "Show all" — enough to see the shape of the run. */
 const VISIBLE_ROWS = 3;
@@ -91,12 +153,31 @@ export function signalFingerprint(candidate: {
  * verbatim — phrasing is the ONLY thing this layer adds, and it is what the
  * model is explicitly forbidden from restating.
  */
-export function signalSentence(c: SwarmWaveSignalCandidate): string {
+export function signalSentence(
+  c: RailSignalCandidate,
+  opts?: { cohort?: "run" | "window" },
+): string {
+  // Relative detectors compare a slice against everything else measured. On a
+  // swarm that population is "the run"; on a hosted surface it is the window
+  // of recent visits, and calling those "the run" would name something the
+  // reader has no concept of.
+  const rest = opts?.cohort === "window" ? "these sessions" : "the run";
   switch (c.detector) {
     case "tool_errors":
       return `${c.subjectLabel} failed ${c.metric ?? c.affectedSessions}× across ${c.affectedSessions} of ${c.sliceTotal} sessions`;
     case "hallucinated_tool":
-      return `Agents invented a tool named "${c.subjectLabel}" in ${c.affectedSessions} ${plural(c.affectedSessions, "session")}`;
+      // "Agents" is swarm vocabulary; a hosted visitor talked to one
+      // assistant, and never called it an agent.
+      return opts?.cohort === "window"
+        ? `The assistant called a tool named "${c.subjectLabel}" that does not exist, in ${c.affectedSessions} ${plural(c.affectedSessions, "session")}`
+        : `Agents invented a tool named "${c.subjectLabel}" in ${c.affectedSessions} ${plural(c.affectedSessions, "session")}`;
+    // ── User Testing detectors ──
+    case "negative_feedback":
+      return `${c.affectedSessions} of ${c.sliceTotal} rated ${plural(c.sliceTotal, "session")} left negative feedback${c.subjectKind === "route" || c.subjectKind === "path" ? ` on ${c.subjectLabel}` : ""}`;
+    case "cohort_struggles":
+      return `${c.subjectLabel} visitors struggled in ${c.affectedSessions} of ${c.sliceTotal} sessions`;
+    case "terminal_error_concentration":
+      return `${c.affectedSessions} of ${c.sliceTotal} sessions ended on a tool error${c.subjectKind === "route" || c.subjectKind === "path" ? ` in ${c.subjectLabel}` : ""}`;
     case "criterion_fail":
       return `"${c.subjectLabel}" failed in ${c.affectedSessions} of ${c.sliceTotal} graded sessions`;
     case "target_failures":
@@ -110,9 +191,9 @@ export function signalSentence(c: SwarmWaveSignalCandidate): string {
     case "error_recovered_pass":
       return `${c.affectedSessions} passing ${plural(c.affectedSessions, "session")} in "${c.subjectLabel}" recovered from tool errors first`;
     case "token_outlier":
-      return `"${c.subjectLabel}" uses ~${ratioLabel(c)} the tokens of the rest of the run`;
+      return `"${c.subjectLabel}" uses ~${ratioLabel(c)} the tokens of the rest of ${rest}`;
     case "latency_outlier":
-      return `${c.subjectLabel} p95 latency is ${ratioLabel(c)} the rest of the run`;
+      return `${c.subjectLabel} p95 latency is ${ratioLabel(c)} the rest of ${rest}`;
     case "no_tools_used":
       return `${c.affectedSessions} ${plural(c.affectedSessions, "session")} in "${c.subjectLabel}" never called a tool`;
     default:
@@ -124,7 +205,7 @@ function plural(n: number, singular: string, pluralForm?: string): string {
   return n === 1 ? singular : (pluralForm ?? `${singular}s`);
 }
 
-function ratioLabel(c: SwarmWaveSignalCandidate): string {
+function ratioLabel(c: RailSignalCandidate): string {
   if (
     typeof c.metric !== "number" ||
     typeof c.waveMetric !== "number" ||
@@ -142,39 +223,137 @@ function isBlockingShaped(detector: string): boolean {
 
 type Row = {
   fingerprint: string;
-  signal: SwarmWaveSignalCandidate;
+  signal: RailSignalCandidate;
   insight?: SwarmWaveInsightCandidate;
-  finding?: SwarmFinding;
+  finding?: RailFinding;
 };
 
-export function SwarmRunInsights({
-  projectId,
-  swarmRunGroupId,
-  onOpenSession,
-}: {
-  projectId: string;
-  /** Durable run id — the parent renders this only when present. */
-  swarmRunGroupId: string;
-  onOpenSession: (sessionId: string) => void;
-}) {
-  const signals = useQuery(
+/**
+ * The rail's data, resolved per surface.
+ *
+ * Both queries are guest-readable by design on User Testing, so this hook is
+ * safe to mount for a viewer who cannot request generation — `canRequest`
+ * below is what gates the spending act, separately from the reading one.
+ */
+function useRailData(surface: RunInsightsSurface): {
+  signals: RailSignals | null | undefined;
+  findings: RailFinding[] | undefined;
+  cohort: "run" | "window";
+} {
+  const isSwarm = surface.kind === "swarm";
+
+  const swarmSignals = useQuery(
     SWARM_QUERIES.getWaveSignals as any,
-    { projectId, swarmRunGroupId } as any,
+    (isSwarm
+      ? {
+          projectId: surface.projectId,
+          swarmRunGroupId: surface.swarmRunGroupId,
+        }
+      : "skip") as any,
   ) as SwarmWaveSignals | null | undefined;
+  const swarmFindings = useQuery(
+    SWARM_QUERIES.listSwarmFindings as any,
+    (isSwarm ? { projectId: surface.projectId } : "skip") as any,
+  ) as SwarmFinding[] | undefined;
+
+  const windowSignals = useQuery(
+    CHATBOX_INSIGHTS_QUERIES.getWindowSignals as any,
+    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any,
+  ) as ChatboxWindowSignals | null | undefined;
+  const windowFindings = useQuery(
+    CHATBOX_INSIGHTS_QUERIES.listChatboxFindings as any,
+    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any,
+  ) as ChatboxFinding[] | undefined;
+
+  if (isSwarm) {
+    return {
+      signals: swarmSignals
+        ? {
+            candidates: swarmSignals.candidates,
+            sessionCount: swarmSignals.sessionCount,
+            lowConfidence: swarmSignals.lowConfidence,
+            truncated: swarmSignals.truncated,
+            judgeCoverage: swarmSignals.judgeCoverage,
+            terminal: swarmSignals.terminal,
+          }
+        : swarmSignals,
+      findings: swarmFindings?.map((f) => ({
+        findingId: f.findingId,
+        fingerprint: f.fingerprint,
+        status: f.status,
+        occurrenceCount: f.occurrenceCount,
+        dismissedAt: f.dismissedAt,
+      })),
+      cohort: "run",
+    };
+  }
+  return {
+    signals: windowSignals
+      ? {
+          candidates: windowSignals.candidates,
+          sessionCount: windowSignals.sessionCount,
+          lowConfidence: windowSignals.lowConfidence,
+          truncated: windowSignals.truncated,
+          feedbackCount: windowSignals.feedbackCount,
+          // A window is narratable once an analysis has frozen one. Before
+          // that there is no group id to attach narration to.
+          terminal: windowSignals.latestGroupId !== null,
+          latestGroupId: windowSignals.latestGroupId,
+        }
+      : windowSignals,
+    findings: windowFindings?.map((f) => ({
+      findingId: f._id,
+      fingerprint: f.fingerprint,
+      status: f.status,
+      occurrenceCount: f.occurrenceCount,
+      dismissedAt: f.dismissedAt,
+    })),
+    cohort: "window",
+  };
+}
+
+export function RunInsights({
+  surface,
+  onOpenSession,
+  canRequest = true,
+  canDismiss = true,
+}: {
+  surface: RunInsightsSurface;
+  onOpenSession: (sessionId: string) => void;
+  /**
+   * May this viewer SPEND? Generation is member-gated while viewing is not, so
+   * a guest sees the signals and the findings and simply never auto-requests
+   * narration — rather than watching a request fail.
+   */
+  canRequest?: boolean;
+  /** May this viewer dismiss a finding? Same split: a judgment, not a view. */
+  canDismiss?: boolean;
+}) {
+  const { signals, findings, cohort } = useRailData(surface);
   const terminal = signals?.terminal === true;
   // Nothing concentrated anywhere means there is nothing to explain, so a
-  // clean run never spends a model call — "no anomalies" IS the answer.
+  // clean cohort never spends a model call — "no anomalies" IS the answer.
   const hasSignals = (signals?.candidates.length ?? 0) > 0;
 
+  const scope = useMemo<RunInsightsScope | null>(() => {
+    if (surface.kind === "swarm") {
+      return {
+        kind: "swarm",
+        projectId: surface.projectId,
+        swarmRunGroupId: surface.swarmRunGroupId,
+      };
+    }
+    const groupId = signals?.latestGroupId;
+    return groupId
+      ? { kind: "chatbox", chatboxId: surface.chatboxId, groupId }
+      : null;
+  }, [surface, signals?.latestGroupId]);
+
   const { insights, discovery, busy, unavailable, error, request } =
-    useSwarmRunInsights(projectId, swarmRunGroupId, {
+    useRunInsights(scope, {
       terminal,
-      autoRequest: hasSignals,
+      autoRequest: hasSignals && canRequest,
     });
-  const findings = useQuery(
-    SWARM_QUERIES.listSwarmFindings as any,
-    { projectId } as any,
-  ) as SwarmFinding[] | undefined;
 
   const [showAll, setShowAll] = useState(false);
 
@@ -202,9 +381,11 @@ export function SwarmRunInsights({
     return (
       <p
         className="text-sm text-muted-foreground"
-        data-testid="swarm-run-insights-pending-run"
+        data-testid="run-insights-pending-run"
       >
-        Insights appear when the run finishes.
+        {cohort === "window"
+          ? "Insights appear once sessions settle."
+          : "Insights appear when the run finishes."}
       </p>
     );
   }
@@ -212,7 +393,7 @@ export function SwarmRunInsights({
     return (
       <p
         className="text-sm text-muted-foreground"
-        data-testid="swarm-run-insights-empty"
+        data-testid="run-insights-empty"
       >
         No anomalies detected across {signals.sessionCount} sessions.
       </p>
@@ -221,8 +402,15 @@ export function SwarmRunInsights({
 
   const visible = showAll ? rows : rows.slice(0, VISIBLE_ROWS);
   const caveats: string[] = [];
-  if (signals.judgeCoverage.graded === 0 && signals.judgeCoverage.total > 0) {
+  if (
+    signals.judgeCoverage &&
+    signals.judgeCoverage.graded === 0 &&
+    signals.judgeCoverage.total > 0
+  ) {
     caveats.push("no judge verdicts — goal completion not assessed");
+  }
+  if (cohort === "window" && signals.feedbackCount === 0) {
+    caveats.push("no feedback left yet");
   }
   if (signals.lowConfidence) caveats.push("most sessions still analyzing");
   if (signals.truncated) caveats.push("newest sessions only");
@@ -233,14 +421,14 @@ export function SwarmRunInsights({
   return (
     <section
       className="rounded-lg border border-border/60 bg-muted/20"
-      data-testid="swarm-run-insights"
+      data-testid="run-insights"
     >
       {(insights?.summary || busy) && (
         <div className="flex items-start gap-2 border-b border-border/40 px-3 py-2">
           {busy ? (
             <p
               className="flex items-center gap-2 text-sm text-muted-foreground"
-              data-testid="swarm-run-insights-generating"
+              data-testid="run-insights-generating"
             >
               <Loader2 className="size-3.5 animate-spin" />
               Working out what went wrong…
@@ -248,12 +436,12 @@ export function SwarmRunInsights({
           ) : (
             <RunSummary summary={insights!.summary} />
           )}
-          {!busy && !error && !unavailable ? (
+          {!busy && !error && !unavailable && canRequest ? (
             <button
               type="button"
               className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
               onClick={() => request(true)}
-              data-testid="swarm-run-insights-regenerate"
+              data-testid="run-insights-regenerate"
             >
               Redo
             </button>
@@ -266,6 +454,8 @@ export function SwarmRunInsights({
           <InsightRow
             key={row.fingerprint}
             row={row}
+            cohort={cohort}
+            canDismiss={canDismiss}
             onOpenSession={onOpenSession}
           />
         ))}
@@ -282,7 +472,7 @@ export function SwarmRunInsights({
               type="button"
               className="shrink-0 text-[11px] font-medium text-primary hover:underline"
               onClick={() => setShowAll((prev) => !prev)}
-              data-testid="swarm-run-insights-toggle"
+              data-testid="run-insights-toggle"
             >
               {showAll ? "Show fewer" : `Show all ${rows.length}`}
             </button>
@@ -291,17 +481,19 @@ export function SwarmRunInsights({
         {error ? (
           <p
             className="text-[11px] text-muted-foreground"
-            data-testid="swarm-run-insights-error"
+            data-testid="run-insights-error"
           >
             {error}{" "}
-            <button
-              type="button"
-              className="font-medium text-primary hover:underline"
-              onClick={() => request(true)}
-              data-testid="swarm-run-insights-retry"
-            >
-              Try again
-            </button>
+            {canRequest ? (
+              <button
+                type="button"
+                className="font-medium text-primary hover:underline"
+                onClick={() => request(true)}
+                data-testid="run-insights-retry"
+              >
+                Try again
+              </button>
+            ) : null}
           </p>
         ) : null}
       </div>
@@ -315,23 +507,21 @@ export function SwarmRunInsights({
 }
 
 /** Compact statline chip for the signal/finding detail popover. */
-export function SwarmRunInsightsChip({
-  projectId,
-  swarmRunGroupId,
+export function RunInsightsChip({
+  surface,
   onOpenSession,
+  canRequest = true,
+  canDismiss = true,
 }: {
-  projectId: string;
-  swarmRunGroupId: string;
+  surface: RunInsightsSurface;
   onOpenSession: (sessionId: string) => void;
+  canRequest?: boolean;
+  canDismiss?: boolean;
 }) {
-  const signals = useQuery(
-    SWARM_QUERIES.getWaveSignals as any,
-    { projectId, swarmRunGroupId } as any,
-  ) as SwarmWaveSignals | null | undefined;
-  const findings = useQuery(
-    SWARM_QUERIES.listSwarmFindings as any,
-    { projectId } as any,
-  ) as SwarmFinding[] | undefined;
+  // Signals FIRST. On User Testing the group id the narration is addressed by
+  // comes out of this payload, so the chip cannot engage the insights hook
+  // before it lands — and it must not guess one.
+  const { signals, findings, cohort } = useRailData(surface);
 
   const activeCount = useMemo(() => {
     if (!signals || !findings) return 0;
@@ -349,9 +539,9 @@ export function SwarmRunInsightsChip({
     return (
       <span
         className="inline-flex items-center rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs text-muted-foreground"
-        data-testid="swarm-run-insights-chip"
+        data-testid="run-insights-chip"
       >
-        Analyzing…
+        {cohort === "window" ? "Insights appear once sessions settle" : "Analyzing…"}
       </span>
     );
   }
@@ -371,7 +561,7 @@ export function SwarmRunInsightsChip({
               ? STATUS_CHIP.new.className
               : "border-border/50 bg-muted/25 text-muted-foreground hover:bg-muted/50",
           )}
-          data-testid="swarm-run-insights-chip"
+          data-testid="run-insights-chip"
         >
           {label}
         </button>
@@ -380,10 +570,11 @@ export function SwarmRunInsightsChip({
         align="start"
         className="max-h-[65vh] w-[34rem] max-w-[90vw] overflow-y-auto p-0"
       >
-        <SwarmRunInsights
-          projectId={projectId}
-          swarmRunGroupId={swarmRunGroupId}
+        <RunInsights
+          surface={surface}
           onOpenSession={onOpenSession}
+          canRequest={canRequest}
+          canDismiss={canDismiss}
         />
       </PopoverContent>
     </Popover>
@@ -396,7 +587,7 @@ function RunSummary({ summary }: { summary: string }) {
   return (
     <p
       className="min-w-0 flex-1 text-sm text-foreground"
-      data-testid="swarm-run-insights-summary"
+      data-testid="run-insights-summary"
     >
       <span className={cn(!expanded && needsClamp && "line-clamp-2")}>
         {summary}
@@ -406,7 +597,7 @@ function RunSummary({ summary }: { summary: string }) {
           type="button"
           className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
           onClick={() => setExpanded((prev) => !prev)}
-          data-testid="swarm-run-insights-summary-toggle"
+          data-testid="run-insights-summary-toggle"
         >
           {expanded ? "Less" : "More"}
         </button>
@@ -417,12 +608,20 @@ function RunSummary({ summary }: { summary: string }) {
 
 function InsightRow({
   row,
+  cohort,
+  canDismiss,
   onOpenSession,
 }: {
   row: Row;
+  cohort: "run" | "window";
+  canDismiss: boolean;
   onOpenSession: (sessionId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // ONE mutation for both surfaces. It is scope-branched server-side — the
+  // finding row's own scope decides whether it authorizes by project role or
+  // by the chatbox's workspace role — so the rail names it once, from where it
+  // lives.
   const dismissMut = useMutation(SWARM_MUTATIONS.dismissFinding as any);
   const undismissMut = useMutation(SWARM_MUTATIONS.undismissFinding as any);
   const [dismissedOptimistic, setDismissedOptimistic] = useState<
@@ -453,7 +652,7 @@ function InsightRow({
   return (
     <div
       className={cn("px-3 py-1.5", dismissed && "opacity-50")}
-      data-testid="swarm-run-insight"
+      data-testid="run-insight"
       data-detector={signal.detector}
       data-dismissed={dismissed ? "true" : "false"}
     >
@@ -462,7 +661,7 @@ function InsightRow({
           type="button"
           className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
-          data-testid="swarm-run-insight-headline"
+          data-testid="run-insight-headline"
         >
           <span
             className={cn(
@@ -474,7 +673,7 @@ function InsightRow({
             aria-hidden="true"
           />
           <span className="min-w-0 text-sm text-foreground">
-            {signalSentence(signal)}
+            {signalSentence(signal, { cohort })}
           </span>
           {hasDetail ? (
             <ChevronRight
@@ -492,7 +691,7 @@ function InsightRow({
               "mt-0.5 shrink-0 rounded border px-1 py-0 text-[10px] font-medium",
               chip.className,
             )}
-            data-testid="swarm-run-insight-status"
+            data-testid="run-insight-status"
           >
             {chip.label}
             {finding && finding.occurrenceCount > 1
@@ -500,12 +699,12 @@ function InsightRow({
               : ""}
           </span>
         ) : null}
-        {finding ? (
+        {finding && canDismiss ? (
           <button
             type="button"
             className="mt-0.5 shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
             onClick={toggleDismiss}
-            data-testid="swarm-run-insight-dismiss"
+            data-testid="run-insight-dismiss"
           >
             {dismissed ? "Undo" : "Dismiss"}
           </button>
@@ -515,7 +714,7 @@ function InsightRow({
       {expanded ? (
         <div
           className="mt-1 space-y-1 pl-3.5"
-          data-testid="swarm-run-insight-detail"
+          data-testid="run-insight-detail"
         >
           {insight?.rootCause ? (
             <p className="text-xs text-muted-foreground">
@@ -569,13 +768,13 @@ function DiscoverySection({
   return (
     <div
       className="border-t border-border/40 px-3 py-1.5"
-      data-testid="swarm-run-discovery"
+      data-testid="run-discovery"
     >
       <button
         type="button"
         className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
         onClick={() => setOpen((prev) => !prev)}
-        data-testid="swarm-run-discovery-toggle"
+        data-testid="run-discovery-toggle"
       >
         <ChevronRight
           className={cn("size-3 transition-transform", open && "rotate-90")}
@@ -588,7 +787,7 @@ function DiscoverySection({
           {discovery.findings.map((finding) => (
             <div
               key={finding.slug}
-              data-testid="swarm-run-discovery-finding"
+              data-testid="run-discovery-finding"
               data-kind={finding.kind}
             >
               <p className="text-xs text-foreground">{finding.title}</p>
@@ -635,7 +834,7 @@ function SuggestedCheckChip({ toolName }: { toolName: string }) {
     <div className="mt-1 flex items-center gap-2">
       <span
         className="rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 font-mono text-[11px] text-foreground/80"
-        data-testid="swarm-run-discovery-check"
+        data-testid="run-discovery-check"
       >
         {predicate}
       </span>
@@ -646,7 +845,7 @@ function SuggestedCheckChip({ toolName }: { toolName: string }) {
           void navigator.clipboard?.writeText(predicate);
           setCopied(true);
         }}
-        data-testid="swarm-run-discovery-check-copy"
+        data-testid="run-discovery-check-copy"
       >
         {copied ? "Copied" : "Copy"}
       </button>
@@ -673,7 +872,7 @@ function SessionChip({
           ? "border-border/50 text-muted-foreground"
           : "border-border text-foreground/80",
       )}
-      data-testid="swarm-run-insight-session-link"
+      data-testid="run-insight-session-link"
     >
       {label}
     </button>

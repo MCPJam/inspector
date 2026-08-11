@@ -11,10 +11,10 @@ import type {
   SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import {
-  SwarmRunInsights,
+  RunInsights,
   signalFingerprint,
   signalSentence,
-} from "../swarm-run-insights";
+} from "../run-insights";
 
 /**
  * Swarm run insights — ONE list over two lanes.
@@ -162,9 +162,12 @@ function finding(overrides: Partial<SwarmFinding> = {}): SwarmFinding {
 function renderInsights() {
   const onOpenSession = vi.fn();
   render(
-    <SwarmRunInsights
-      projectId="proj-1"
-      swarmRunGroupId="run-1"
+    <RunInsights
+      surface={{
+        kind: "swarm",
+        projectId: "proj-1",
+        swarmRunGroupId: "run-1",
+      }}
       onOpenSession={onOpenSession}
     />,
   );
@@ -185,14 +188,14 @@ describe("one row per problem", () => {
   it("renders the deterministic sentence ONCE, not beside a model restatement", () => {
     state.dto = completed();
     renderInsights();
-    expect(screen.getAllByTestId("swarm-run-insight")).toHaveLength(1);
-    expect(screen.getByTestId("swarm-run-insight-headline")).toHaveTextContent(
+    expect(screen.getAllByTestId("run-insight")).toHaveLength(1);
+    expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
       /never called a tool/i,
     );
     // The model's contribution lives behind the expand, never as a second
     // headline saying the same thing.
     expect(
-      screen.queryByTestId("swarm-run-insight-detail"),
+      screen.queryByTestId("run-insight-detail"),
     ).not.toBeInTheDocument();
   });
 
@@ -201,7 +204,7 @@ describe("one row per problem", () => {
     // insights row yet is still fully readable.
     state.dto = null;
     renderInsights();
-    expect(screen.getByTestId("swarm-run-insight-headline")).toHaveTextContent(
+    expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
       /never called a tool/i,
     );
   });
@@ -209,8 +212,8 @@ describe("one row per problem", () => {
   it("enriches the matching row with why and fix on expand", () => {
     state.dto = completed();
     renderInsights();
-    fireEvent.click(screen.getByTestId("swarm-run-insight-headline"));
-    const detail = screen.getByTestId("swarm-run-insight-detail");
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    const detail = screen.getByTestId("run-insight-detail");
     expect(detail).toHaveTextContent(/Why:/);
     expect(detail).toHaveTextContent(/omits the checkpoint id/);
     expect(detail).toHaveTextContent(/Fix:/);
@@ -223,9 +226,9 @@ describe("one row per problem", () => {
       candidates: [insightCandidate({ fingerprint: "mismatched" })],
     });
     renderInsights();
-    fireEvent.click(screen.getByTestId("swarm-run-insight-headline"));
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
     expect(
-      screen.getByTestId("swarm-run-insight-detail"),
+      screen.getByTestId("run-insight-detail"),
     ).not.toHaveTextContent(/Why:/);
   });
 
@@ -239,9 +242,9 @@ describe("one row per problem", () => {
       ],
     });
     renderInsights();
-    expect(screen.getAllByTestId("swarm-run-insight")).toHaveLength(3);
-    fireEvent.click(screen.getByTestId("swarm-run-insights-toggle"));
-    expect(screen.getAllByTestId("swarm-run-insight")).toHaveLength(4);
+    expect(screen.getAllByTestId("run-insight")).toHaveLength(3);
+    fireEvent.click(screen.getByTestId("run-insights-toggle"));
+    expect(screen.getAllByTestId("run-insight")).toHaveLength(4);
   });
 
   it("opens evidence and contrast sessions from the expanded row", () => {
@@ -249,8 +252,8 @@ describe("one row per problem", () => {
       candidates: [signal({ contrastSessionIds: ["s-9"] })],
     });
     const onOpenSession = renderInsights();
-    fireEvent.click(screen.getByTestId("swarm-run-insight-headline"));
-    const links = screen.getAllByTestId("swarm-run-insight-session-link");
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    const links = screen.getAllByTestId("run-insight-session-link");
     expect(links).toHaveLength(2);
     fireEvent.click(links[0]!);
     expect(onOpenSession).toHaveBeenCalledWith("s-1");
@@ -261,7 +264,7 @@ describe("summary and caveats", () => {
   it("leads with the summary and demotes caveats to the footer", () => {
     state.dto = completed();
     renderInsights();
-    expect(screen.getByTestId("swarm-run-insights-summary")).toHaveTextContent(
+    expect(screen.getByTestId("run-insights-summary")).toHaveTextContent(
       /answered with advice instead of calling the restore tool/i,
     );
     // Coverage is a footnote, not a preamble — a reader scanning for what to
@@ -292,21 +295,21 @@ describe("summary and caveats", () => {
     state.signals = signals({ terminal: false });
     renderInsights();
     expect(
-      screen.getByTestId("swarm-run-insights-pending-run"),
+      screen.getByTestId("run-insights-pending-run"),
     ).toHaveTextContent(/when the run finishes/i);
-    expect(screen.queryByTestId("swarm-run-insight")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-insight")).not.toBeInTheDocument();
   });
 
   it("renders nothing while signals load", () => {
     state.signals = undefined;
     renderInsights();
-    expect(screen.queryByTestId("swarm-run-insights")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-insights")).not.toBeInTheDocument();
   });
 
   it("reports a clean run", () => {
     state.signals = signals({ candidates: [] });
     renderInsights();
-    expect(screen.getByTestId("swarm-run-insights-empty")).toHaveTextContent(
+    expect(screen.getByTestId("run-insights-empty")).toHaveTextContent(
       /no anomalies detected across 20 sessions/i,
     );
   });
@@ -337,12 +340,12 @@ describe("generation lifecycle", () => {
       updatedAt: 1,
     };
     renderInsights();
-    expect(screen.getByTestId("swarm-run-insights-error")).toHaveTextContent(
+    expect(screen.getByTestId("run-insights-error")).toHaveTextContent(
       /spending cap/i,
     );
     // The deterministic rows survive a failed generation.
-    expect(screen.getByTestId("swarm-run-insight")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("swarm-run-insights-retry"));
+    expect(screen.getByTestId("run-insight")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("run-insights-retry"));
     expect(state.requestMock).toHaveBeenCalledWith(
       expect.objectContaining({ force: true }),
     );
@@ -361,7 +364,7 @@ describe("generation lifecycle", () => {
       );
     renderInsights();
     await waitFor(() =>
-      expect(screen.getByTestId("swarm-run-insights-error")).toHaveTextContent(
+      expect(screen.getByTestId("run-insights-error")).toHaveTextContent(
         /daily insights limit/i,
       ),
     );
@@ -373,7 +376,7 @@ describe("registry lifecycle", () => {
     state.dto = completed();
     state.findings = [finding()];
     renderInsights();
-    expect(screen.getByTestId("swarm-run-insight-status")).toHaveTextContent(
+    expect(screen.getByTestId("run-insight-status")).toHaveTextContent(
       "Recurring ×3",
     );
   });
@@ -384,13 +387,13 @@ describe("registry lifecycle", () => {
     state.dismissMock = vi.fn().mockRejectedValue(new Error("nope"));
     renderInsights();
 
-    fireEvent.click(screen.getByTestId("swarm-run-insight-dismiss"));
-    expect(screen.getByTestId("swarm-run-insight")).toHaveAttribute(
+    fireEvent.click(screen.getByTestId("run-insight-dismiss"));
+    expect(screen.getByTestId("run-insight")).toHaveAttribute(
       "data-dismissed",
       "true",
     );
     await waitFor(() =>
-      expect(screen.getByTestId("swarm-run-insight")).toHaveAttribute(
+      expect(screen.getByTestId("run-insight")).toHaveAttribute(
         "data-dismissed",
         "false",
       ),
@@ -424,15 +427,15 @@ describe("Lane B discovery", () => {
   it("stays collapsed behind a labelled toggle — weaker evidence, quieter", () => {
     state.dto = withDiscovery([observation]);
     renderInsights();
-    expect(screen.getByTestId("swarm-run-discovery-toggle")).toHaveTextContent(
+    expect(screen.getByTestId("run-discovery-toggle")).toHaveTextContent(
       /not measured by any check/i,
     );
     expect(
-      screen.queryByTestId("swarm-run-discovery-finding"),
+      screen.queryByTestId("run-discovery-finding"),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("swarm-run-discovery-toggle"));
-    expect(screen.getByTestId("swarm-run-discovery-finding")).toHaveTextContent(
+    fireEvent.click(screen.getByTestId("run-discovery-toggle"));
+    expect(screen.getByTestId("run-discovery-finding")).toHaveTextContent(
       /opaque error string/i,
     );
   });
@@ -449,8 +452,8 @@ describe("Lane B discovery", () => {
       },
     ]);
     renderInsights();
-    fireEvent.click(screen.getByTestId("swarm-run-discovery-toggle"));
-    expect(screen.getByTestId("swarm-run-discovery-check")).toHaveTextContent(
+    fireEvent.click(screen.getByTestId("run-discovery-toggle"));
+    expect(screen.getByTestId("run-discovery-check")).toHaveTextContent(
       "toolCalledAtLeastOnce(search_flights)",
     );
   });
@@ -458,7 +461,7 @@ describe("Lane B discovery", () => {
   it("hides against a backend without Lane B", () => {
     state.dto = completed();
     renderInsights();
-    expect(screen.queryByTestId("swarm-run-discovery")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-discovery")).not.toBeInTheDocument();
   });
 });
 
@@ -508,9 +511,9 @@ describe("rail density", () => {
     // problem rows out of the viewport and cut itself off mid-word.
     state.dto = completed({ summary: "x".repeat(200) });
     renderInsights();
-    fireEvent.click(screen.getByTestId("swarm-run-insights-summary-toggle"));
+    fireEvent.click(screen.getByTestId("run-insights-summary-toggle"));
     expect(
-      screen.getByTestId("swarm-run-insights-summary-toggle"),
+      screen.getByTestId("run-insights-summary-toggle"),
     ).toHaveTextContent("Less");
   });
 
@@ -518,7 +521,7 @@ describe("rail density", () => {
     state.dto = completed({ summary: "Fix the restore tool description." });
     renderInsights();
     expect(
-      screen.queryByTestId("swarm-run-insights-summary-toggle"),
+      screen.queryByTestId("run-insights-summary-toggle"),
     ).not.toBeInTheDocument();
   });
 });
