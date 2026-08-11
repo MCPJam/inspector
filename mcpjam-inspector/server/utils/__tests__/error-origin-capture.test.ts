@@ -8,6 +8,7 @@ vi.mock("@sentry/node", () => ({
 
 import * as Sentry from "@sentry/node";
 import {
+  ensureStampable,
   isOriginCaptureHandled,
   markOriginCaptureHandled,
   maybeCaptureOriginError,
@@ -162,13 +163,39 @@ describe("capture dedupe", () => {
     expect(isOriginCaptureHandled({ normalized })).toBe(true);
   });
 
-  it("terminates on a cyclic cause chain", () => {
+  it("traverses a cyclic cause chain and still terminates", () => {
     const a: { cause?: unknown } = new Error("a");
     const b: { cause?: unknown } = new Error("b");
     a.cause = b;
     b.cause = a;
 
     expect(isOriginCaptureHandled(a)).toBe(false);
+
+    // Stamping INSIDE the cycle is what makes this test able to fail: without
+    // it, the depth cap alone would return false and the `seen` guard would be
+    // untested.
+    markOriginCaptureHandled(b);
+    expect(isOriginCaptureHandled(a)).toBe(true);
+  });
+
+  it("wraps a frozen error so the decision is not silently lost", () => {
+    // A frozen error is an object, so it passes the stampable type guard, but
+    // `defineProperty` cannot attach anything to it — the decision would be
+    // invisible to `logger.error` exactly as it is for a primitive.
+    const frozen = Object.freeze(new Error("frozen upstream error"));
+    const wrapped = ensureStampable(frozen);
+
+    expect(wrapped).not.toBe(frozen);
+    markOriginCaptureHandled(wrapped);
+    expect(isOriginCaptureHandled(wrapped)).toBe(true);
+    // The original stays reachable for anything walking the chain.
+    expect((wrapped as Error & { cause?: unknown }).cause).toBe(frozen);
+    expect((wrapped as Error).message).toBe("frozen upstream error");
+  });
+
+  it("returns an ordinary error unchanged — identity matters for the walk", () => {
+    const error = new Error("ordinary");
+    expect(ensureStampable(error)).toBe(error);
   });
 
   it("treats unstampable values as unhandled rather than throwing", () => {

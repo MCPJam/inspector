@@ -403,6 +403,16 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     });
   } catch (error) {
     if (transcriptionSignal?.timedOut()) {
+      // Returned before the reporter below ever ran, so every transcription
+      // timeout — a failure of OUR proxy — was invisible.
+      reportRouteFailure(
+        "[audio-transcriptions] Voice transcription timed out",
+        error,
+        {
+          source: "mcp.audio-transcriptions.transcribe",
+          hop: "mcpjam_internal",
+        }
+      );
       return c.json(
         {
           error: "Voice transcription timed out. Try a shorter recording.",

@@ -219,8 +219,10 @@ tasks.post("/capabilities", async (c) => {
     return c.json(taskCapabilitiesForWire(c.mcpClientManager, serverId));
   } catch (error) {
     reportRouteFailure("Error getting task capabilities", error, {
+      // Reads already-negotiated capability state off the manager; it makes
+      // no request to the server.
       source: "mcp.tasks.capabilities",
-      hop: "user_server_hop",
+      hop: "mcpjam_internal",
     });
     return c.json({ error: errorMessage(error) }, 500);
   }

@@ -79,8 +79,24 @@ export function markOriginCaptureHandled(value: unknown): void {
  * unchanged — identity matters for the `.cause` walk.
  */
 export function ensureStampable(value: unknown): unknown {
-  if (isStampable(value)) return value;
-  return new Error(String(value));
+  if (!isStampable(value)) return new Error(String(value));
+  // A frozen or sealed error is an OBJECT, so it passes the type guard, but
+  // `defineProperty` still cannot attach the stamp to it — same invisible
+  // decision, same double-or-missed capture. Wrap it too, keeping the original
+  // reachable as `cause` so the chain walk still finds everything.
+  if (!Object.isExtensible(value)) {
+    const wrapped = new Error(
+      value instanceof Error ? value.message : String(value),
+    );
+    Object.defineProperty(wrapped, "cause", {
+      value,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    return wrapped;
+  }
+  return value;
 }
 
 /** How far to walk a `.cause` chain before giving up. */

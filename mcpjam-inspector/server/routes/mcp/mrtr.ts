@@ -331,8 +331,10 @@ export function registerLocalMrtrCollector(
     // Pass the original error as the 2nd (error) arg so Sentry captures a stack
     // and Axiom serializes the real message; serverId is the context (3rd) arg.
     reportRouteFailure("[mrtr] Failed to register MRTR collector", err, {
+      // A Map write on our own manager. Nothing leaves the process, so a
+      // failure here cannot be the user's server.
       source: "mcp.mrtr.register-collector",
-      hop: "user_server_hop",
+      hop: "mcpjam_internal",
       context: { serverId },
     });
   }

@@ -13,7 +13,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { MCPClientManager, originOf } from "@mcpjam/sdk";
+import { MCPClientManager } from "@mcpjam/sdk";
 import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
@@ -311,7 +311,7 @@ const app = new Hono().onError((err, c) => {
   //
   // Path + method are what make the issue actionable; without them every
   // unhandled route error groups into one blob.
-  const normalized = reportRouteFailure("Unhandled error", err, {
+  const { normalized, origin } = reportRouteFailure("Unhandled error", err, {
     source: "app.onError",
     hop: "mcpjam_internal",
     context: { path: c.req.path, method: c.req.method },
@@ -327,7 +327,10 @@ const app = new Hono().onError((err, c) => {
     code:
       err instanceof HTTPException ? "http_exception" : "unhandled_exception",
     message: err instanceof Error ? err.message : String(err),
-    origin: originOf(normalized),
+    // The EFFECTIVE origin, including the internal-boundary promotion — not
+    // `originOf(normalized)`, which would report `ambiguous` for a failure
+    // Sentry was just paged for as `mcpjam`.
+    origin,
     slug: normalized.slug,
   });
 

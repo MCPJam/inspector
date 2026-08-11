@@ -2336,6 +2336,13 @@ async function processOneStep(
     const normalized = describeBackendStreamFailure(res.status, errorText);
     maybeCaptureOriginError(new Error(parsed.message), normalized, {
       source: "route:mcp.chat-v2.backend-stream",
+      // Declared even though a 5xx already resolves to `mcpjam` on its own:
+      // it tags the Sentry event with the boundary the rest of the codebase
+      // triages on, and it escalates an UNRECOGNIZED status from our own
+      // backend, which `describeBackendStreamFailure` leaves `ambiguous`
+      // because that function classifies the response alone and cannot know
+      // whose backend answered.
+      boundary: "mcpjam_internal",
       extra: { httpStatus: res.status, code: parsed.code },
     });
     safelyEmitEngineError(onEngineError, {

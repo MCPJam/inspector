@@ -567,6 +567,15 @@ function streamDirectChatWithLiveTrace(options: {
           },
           onError: (error) => {
             if (handle!.isAborted() || isAbortError(error)) return "";
+            // `toUIMessageStream` CONSUMES the error here and emits an error
+            // chunk; it does not rethrow to the enclosing
+            // `createUIMessageStream` handler. Without this call, every model,
+            // provider, and tool failure on the direct-stream path produced a
+            // client error and no telemetry at all.
+            reportRouteFailure("[mcp/chat-v2] direct stream error", error, {
+              source: "mcp.chat-v2.direct-stream",
+              hop: "user_server_hop",
+            });
             return formatStreamError(error, provider);
           },
         })) {

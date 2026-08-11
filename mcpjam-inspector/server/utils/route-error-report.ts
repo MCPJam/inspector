@@ -1,4 +1,5 @@
-import { describeError, originOf, type NormalizedError } from "@mcpjam/sdk";
+import type { ErrorOrigin, NormalizedError } from "@mcpjam/sdk";
+import { describeError } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import {
   ensureStampable,
@@ -37,6 +38,29 @@ const BOUNDARY_FOR_HOP: Record<
   mcpjam_internal: "mcpjam_internal",
 };
 
+/**
+ * A malformed request body is never MCPJam's fault, whatever the hop says.
+ *
+ * Several handlers call `await c.req.json()` inside the same `try` whose catch
+ * declares `mcpjam_internal`. Without this, anyone holding a session could page
+ * the on-call by POSTing invalid JSON: the `SyntaxError` classifies
+ * `internal/unknown`, the boundary promotes it to `mcpjam`, and Sentry fires —
+ * precisely the false attribution this whole change removes, arriving through
+ * the fix for it.
+ *
+ * Handled here rather than by restructuring each handler because it is a
+ * property of the ERROR, not of any one route: a body-parse failure cannot be
+ * ours no matter where it is caught, and a rule in one place also covers the
+ * catch-sites nobody has audited yet.
+ *
+ * Narrow on purpose. Only `SyntaxError` — a real syntax error in our own
+ * shipped code would be a load-time failure, not something a request handler
+ * catches at runtime.
+ */
+function isClientInputFault(error: unknown): boolean {
+  return error instanceof SyntaxError;
+}
+
 export type RouteFailureOptions = {
   /**
    * Stable identifier for this catch-site, e.g. `"mcp.resources.read"`.
@@ -54,6 +78,20 @@ export type RouteFailureOptions = {
   normalized?: NormalizedError;
 };
 
+export type RouteFailureReport = {
+  normalized: NormalizedError;
+  /**
+   * The origin the capture decision was ACTUALLY made on, including the
+   * `mcpjam_internal` promotion of `ambiguous`.
+   *
+   * Not `originOf(normalized)`. Recomputing from the catalog drops the
+   * promotion, which would let a response body and an `http.request.failed`
+   * row say `ambiguous` about a failure Sentry was paged for as `mcpjam` —
+   * exactly the attribution drift this work exists to remove.
+   */
+  origin: ErrorOrigin;
+};
+
 /**
  * Report a route failure: classify it, page only if it is MCPJam's fault, and
  * always keep the Axiom row.
@@ -69,7 +107,7 @@ export function reportRouteFailure(
   message: string,
   error: unknown,
   options: RouteFailureOptions,
-): NormalizedError {
+): RouteFailureReport {
   // A primitive throw (`throw "failure"`, `Promise.reject(null)`) cannot carry
   // the capture stamp, so the decision made just below would be invisible to
   // the `logger.error` call after it — a declined user-fault primitive would
@@ -77,9 +115,12 @@ export function reportRouteFailure(
   // front, and use the SAME value for both, so the stamp survives.
   const reported = ensureStampable(error);
   const normalized = options.normalized ?? describeError(reported);
+  const boundary = isClientInputFault(error)
+    ? undefined
+    : BOUNDARY_FOR_HOP[options.hop];
   const { origin, captured } = maybeCaptureOriginError(reported, normalized, {
     source: `route:${options.source}`,
-    boundary: BOUNDARY_FOR_HOP[options.hop],
+    boundary,
     extra: options.context,
   });
 
@@ -94,18 +135,14 @@ export function reportRouteFailure(
     captured,
   });
 
-  return normalized;
+  return { normalized, origin };
 }
 
 /**
- * `reportRouteFailure` for a site that also serializes `normalized` /`origin`
- * into its response body, returning both so the caller doesn't classify twice.
+ * Alias kept for call sites that read as "report and serialize".
+ *
+ * Identical to `reportRouteFailure` — it used to re-derive the origin from the
+ * catalog here, which silently disagreed with the capture decision on any
+ * internal-hop failure.
  */
-export function reportRouteFailureForResponse(
-  message: string,
-  error: unknown,
-  options: RouteFailureOptions,
-): { normalized: NormalizedError; origin: ReturnType<typeof originOf> } {
-  const normalized = reportRouteFailure(message, error, options);
-  return { normalized, origin: originOf(normalized) };
-}
+export const reportRouteFailureForResponse = reportRouteFailure;

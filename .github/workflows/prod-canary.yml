@@ -9,10 +9,19 @@ name: Prod canary
 # The point is not just "is it up". It is telling apart failures that look
 # identical to a user:
 #
-#   both probes fail            -> the edge or shared infrastructure
-#   app fails, cf-ray present   -> Cloudflare is fine, OUR ORIGIN is down
-#                                  (this is the reported 502 class)
-#   only the MCP target fails   -> the canary's target, app is healthy
+#   both probes fail          -> independent targets failing together; look
+#                                for a shared dependency before assuming two
+#                                separate incidents
+#   app 5xx WITH a cf-ray on   -> Cloudflare answered for an origin that did
+#     that same request           not; the reported 502 shape
+#   app fails, no such pair    -> report the statuses; a non-2xx with no
+#                                cf-ray may never have reached Cloudflare
+#   only the MCP target fails  -> the canary's target, app probes passed
+#
+# The middle two are the distinction that matters, and it is why cf-ray is
+# recorded only from a FAILING 5xx request: a cf-ray from a healthy path says
+# nothing about a different path, and a 4xx behind Cloudflare is a routing or
+# auth answer, not an outage.
 #
 # Anti-false-alarm rules, in priority order over reporting anything at all:
 #
@@ -80,7 +89,12 @@ jobs:
           set -uo pipefail
           failures=""
           details=""
-          cf_ray=""
+          # cf-ray is recorded ONLY from a request that actually failed with a
+          # 5xx, and only that combination supports the origin conclusion
+          # below. A cf-ray from a HEALTHY path proves nothing about a
+          # different path, and a 4xx behind Cloudflare is a routing or auth
+          # answer, not an origin outage.
+          origin_5xx_ray=""
           for path in /health /api/mcp/health /api/apps/health; do
             url="${BASE_URL}${path}"
             # -D dumps headers so cf-ray survives; the body is capped because a
@@ -88,16 +102,18 @@ jobs:
             code=$(curl -sS --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors \
               -D /tmp/headers.txt -o /tmp/body.txt -w '%{http_code}' "$url" || echo "000")
             ray=$(grep -i '^cf-ray:' /tmp/headers.txt | tr -d '\r' | cut -d' ' -f2- || true)
-            [ -n "$ray" ] && cf_ray="$ray"
             if [ "${code:0:1}" != "2" ]; then
               failures="${failures}${path} "
+              if [ "${code:0:1}" = "5" ] && [ -n "$ray" ]; then
+                origin_5xx_ray="$ray"
+              fi
               snippet=$(head -c 300 /tmp/body.txt | tr -d '\r' | tr '\n' ' ')
               details="${details}- \`${path}\` -> HTTP ${code}${ray:+ (cf-ray ${ray})}: ${snippet}"$'\n'
             fi
           done
           {
             echo "failures=${failures}"
-            echo "cf_ray=${cf_ray}"
+            echo "origin_5xx_ray=${origin_5xx_ray}"
             echo "details<<EOF"
             echo "${details}"
             echo "EOF"
@@ -141,7 +157,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
           APP_FAILURES: ${{ steps.app.outputs.failures }}
           APP_DETAILS: ${{ steps.app.outputs.details }}
-          CF_RAY: ${{ steps.app.outputs.cf_ray }}
+          ORIGIN_5XX_RAY: ${{ steps.app.outputs.origin_5xx_ray }}
           MCP_STATUS: ${{ steps.mcp.outputs.status }}
           MCP_DETAIL: ${{ steps.mcp.outputs.detail }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -154,14 +170,21 @@ jobs:
 
           # The disambiguation matrix, resolved here so the message states a
           # conclusion rather than making whoever is on call re-derive it.
+          #
+          # Each branch states what was OBSERVED and, at most, what it is
+          # consistent with. The two probes are independent targets, so
+          # simultaneous failure is a correlation worth flagging, not a proven
+          # common cause — and only a 5xx WITH a cf-ray, on the failing request
+          # itself, is evidence that Cloudflare answered for an origin that
+          # did not.
           if [ "$app_down" = true ] && [ "$mcp_down" = true ]; then
-            headline=":rotating_light: Prod canary: app AND MCP target both failing — suspect the edge or shared infrastructure."
-          elif [ "$app_down" = true ] && [ -n "${CF_RAY}" ]; then
-            headline=":rotating_light: Prod canary: Cloudflare answered but the app did not — OUR ORIGIN is down. This is the hosted-502 class."
+            headline=":rotating_light: Prod canary: the app and the MCP target are BOTH failing. Independent targets, so check for a shared dependency (edge, DNS, network) before assuming two incidents."
+          elif [ "$app_down" = true ] && [ -n "${ORIGIN_5XX_RAY}" ]; then
+            headline=":rotating_light: Prod canary: the app returned 5xx *through* Cloudflare (cf-ray ${ORIGIN_5XX_RAY}). Consistent with our origin failing rather than the edge — this is the hosted-502 shape."
           elif [ "$app_down" = true ]; then
-            headline=":rotating_light: Prod canary: the app is unreachable and no cf-ray came back — the request may not be reaching Cloudflare."
+            headline=":rotating_light: Prod canary: the app probe failed with no 5xx-plus-cf-ray. Check the statuses below — a non-2xx without a cf-ray may mean the request never reached Cloudflare."
           else
-            headline=":warning: Prod canary: the MCP target is failing; the app itself is healthy."
+            headline=":warning: Prod canary: the MCP target probe is failing; the app probes passed."
           fi
 
           # Assembled line by line so every line stays inside this YAML block
@@ -187,9 +210,15 @@ jobs:
             exit 1
           fi
 
-          jq -n --arg text "$body" '{text: $text}' \
-            | curl -sS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
-                -d @- "$SLACK_WEBHOOK_URL"
+          # `-f` matters: without it curl exits 0 on a 4xx/5xx from Slack, and
+          # the run would claim it posted an alert that was never delivered.
+          if ! jq -n --arg text "$body" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"; then
+            echo "::error::Canary detected a failure AND could not deliver the Slack alert."
+            echo "$body"
+            exit 1
+          fi
 
           echo "::error::Canary detected a failure — see the Slack post."
           exit 1

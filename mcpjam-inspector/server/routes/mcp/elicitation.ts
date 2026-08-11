@@ -169,6 +169,12 @@ export function initElicitationCallback(manager: MCPClientManager): void {
               context: { requestId },
             },
           );
+          // The resolver was never stored, so the later `/respond` call has
+          // nothing to settle. Broadcasting anyway would show the user a
+          // prompt that can never complete and leave the originating MCP
+          // request pending forever — fail it now instead.
+          reject(err);
+          return;
         }
         broadcastElicitation({
           type: "elicitation_request",

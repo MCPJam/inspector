@@ -62,18 +62,33 @@ export function reportChatFailure(
   if (!isErrorCaptureSurface()) return false;
 
   const normalized = describeError(error);
+  const origin = originOf(normalized);
+  // Same rule the server envelopes follow, for the same reason. A chat turn
+  // dying because the user's own MCP server refused a connection, or because
+  // their BYO key ran out of credit, is not an MCPJam incident — and this path
+  // is high volume. Reporting it would rebuild on the client precisely the
+  // noise the server-side policy removes, and the synthetic message below is
+  // deliberately built to slip past the by-message filter that used to catch
+  // some of it.
+  if (origin === "user_server" || origin === "user_config") return false;
+
   const isRequestFailure = Boolean(meta && !meta.ok);
 
+  // NOT `synthetic.stack = error.stack`. V8 renders a stack as
+  // "<name>: <message>\n at …", so copying the stack would smuggle the raw
+  // message back in through the field below being careful about it.
   const synthetic = new Error(syntheticMessage(meta));
-  // Keep the real stack; only the message is replaced.
-  synthetic.stack = error.stack;
 
   reportCaught(synthetic, {
     source: isRequestFailure ? "chat_request_failed" : "chat_stream_error",
     extra: {
-      rawMessage: error.message.slice(0, MAX_EXTRA_CHARS),
+      // `normalized.rawMessage`, NOT `error.message`. The describer has
+      // already redacted bearer tokens, OAuth secrets, and provider keys —
+      // and the raw text here is an upstream RESPONSE BODY, which is exactly
+      // the kind of thing that carries them.
+      rawMessage: normalized.rawMessage.slice(0, MAX_EXTRA_CHARS),
       slug: normalized.slug,
-      origin: originOf(normalized),
+      origin,
       ...(meta
         ? {
             httpStatus: meta.status,

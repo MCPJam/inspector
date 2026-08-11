@@ -30,7 +30,12 @@ describe("ErrorCard origin badge", () => {
     );
 
     expect(screen.getByTestId(BADGE)).toHaveTextContent("MCPJam issue");
+    // Says only what the origin establishes. This component renders whatever
+    // it is handed and reports nothing itself, so it must not claim the error
+    // "has been reported" — callers pass errors here from paths with no
+    // capture at all.
     expect(screen.getByText(/This one is on us/)).toBeInTheDocument();
+    expect(screen.queryByText(/been reported/)).not.toBeInTheDocument();
   });
 
   it("shows no badge when the evidence does not settle the question", () => {

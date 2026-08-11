@@ -44,7 +44,14 @@ export function reportPossiblyOurFailure(
 
     const normalized = describeError(error);
     const origin = originOf(normalized);
-    if (origin === "user_server" || origin === "user_config") return false;
+    // `mcpjam` only — the same policy the server capture path applies, and for
+    // the same reason. `ambiguous` on these routes is dominated by a user's
+    // server behaving unpredictably, and there is no client-side volume data
+    // yet to argue otherwise. That makes this a narrow gate today, which is
+    // the intended trade: these three call sites reported NOTHING before, and
+    // widening later should be a decision made from measurements rather than
+    // from the fear of missing something.
+    if (origin !== "mcpjam") return false;
 
     reportCaught(error, {
       ...options,

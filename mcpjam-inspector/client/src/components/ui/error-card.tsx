@@ -146,7 +146,11 @@ function originBadge(
         label: "MCPJam issue",
         className:
           "border-destructive/30 bg-destructive/10 text-destructive",
-        note: "This one is on us — MCPJam hit an internal error, and it has been reported.",
+        // Says only what the origin establishes. An earlier draft claimed the
+        // error "has been reported", which this component cannot know: it
+        // renders whatever `NormalizedError` it is handed and reports nothing
+        // itself, and callers pass errors here from paths with no capture.
+        note: "This one is on us — the failure is inside MCPJam, not your server or your configuration.",
       };
     default:
       return null;

@@ -43,11 +43,15 @@ describe("reportRouteFailure", () => {
     // The regression this whole sweep exists to prevent: before it, every one
     // of these catch-sites called `logger.error`, which captures
     // unconditionally, so somebody else's server being down paged the team.
-    const normalized = reportRouteFailure("Error fetching resources", deadServerError(), {
-      source: "mcp.resources.list",
-      hop: "user_server_hop",
-      context: { serverId: "srv_1" },
-    });
+    const { normalized } = reportRouteFailure(
+      "Error fetching resources",
+      deadServerError(),
+      {
+        source: "mcp.resources.list",
+        hop: "user_server_hop",
+        context: { serverId: "srv_1" },
+      },
+    );
 
     expect(normalized.slug).toBe("transport/econnrefused");
     expect(captureException).not.toHaveBeenCalled();
@@ -162,6 +166,51 @@ describe("reportRouteFailure", () => {
     ).not.toThrow();
   });
 
+  it("reports the EFFECTIVE origin, including the internal promotion", () => {
+    // Recomputing from the catalog would say `ambiguous` for a failure Sentry
+    // was just paged for as `mcpjam`, so the response body and the Axiom row
+    // would contradict the alert.
+    const { origin } = reportRouteFailure("Unhandled error", new Error("kaboom"), {
+      source: "app.onError",
+      hop: "mcpjam_internal",
+    });
+
+    expect(origin).toBe("mcpjam");
+  });
+
+  it("never promotes a malformed request body to an MCPJam failure", () => {
+    // Several handlers parse `c.req.json()` inside the same try whose catch
+    // declares an internal hop. Without this rule, anyone with a session could
+    // page the on-call by POSTing invalid JSON.
+    const { origin } = reportRouteFailure(
+      "Error counting tokens",
+      new SyntaxError("Unexpected token < in JSON at position 0"),
+      { source: "mcp.tokenizer.tools", hop: "mcpjam_internal" },
+    );
+
+    expect(origin).toBe("ambiguous");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("still reports a genuine internal failure on the same route", () => {
+    reportRouteFailure("Error counting tokens", new Error("kaboom"), {
+      source: "mcp.tokenizer.tools",
+      hop: "mcpjam_internal",
+    });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not page for a frozen user-server error", () => {
+    const frozen = Object.freeze(deadServerError());
+
+    reportRouteFailure("Error fetching resources", frozen, {
+      source: "mcp.resources.list",
+      hop: "user_server_hop",
+    });
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
   it("captures a paged failure exactly once, even though it also logs", () => {
     // `logger.error` still captures by default; it must skip an error the
     // report already ruled on, or every MCPJam-fault error would be

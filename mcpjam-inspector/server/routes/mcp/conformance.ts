@@ -330,10 +330,11 @@ conformance.post("/oauth/authorize", async (c) => {
     return c.json({ success: true });
   } catch (error) {
     reportRouteFailure("[Conformance OAuth Authorize]", error, {
-      // Conformance probes EXIST to make a user's server misbehave. Paging
-      // on that would be paging on the feature working.
+      // Unlike its siblings, this handler contacts nothing: it parses the
+      // request and hands the code to a local conformance session. A failure
+      // is our session bookkeeping.
       source: "mcp.conformance.oauth.authorize",
-      hop: "user_server_hop",
+      hop: "mcpjam_internal",
     });
     return c.json(
       {

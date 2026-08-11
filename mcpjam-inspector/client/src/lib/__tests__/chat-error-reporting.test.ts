@@ -115,21 +115,61 @@ describe("reportChatFailure", () => {
   it("truncates a huge upstream body instead of shipping it whole", () => {
     reportChatFailure(new Error("x".repeat(50_000)), { ok: false, status: 502 });
 
+
     const rawMessage = reportCaught.mock.calls[0]![1].extra.rawMessage as string;
     expect(rawMessage.length).toBeLessThanOrEqual(1000);
   });
 
-  it("carries the classified origin so the event is triageable", () => {
-    reportChatFailure(
+  it("does not report a failure the catalog blames on the user", () => {
+    // Same rule the server envelopes follow. A chat turn dying because the
+    // user's own MCP server refused a connection is not an MCPJam incident,
+    // and this is a high-volume path — reporting it would rebuild on the
+    // client the noise the server-side policy removes.
+    const sent = reportChatFailure(
       Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), {
         code: "ECONNREFUSED",
       }),
       null,
     );
 
-    expect(reportCaught.mock.calls[0]![1].extra).toMatchObject({
-      slug: "transport/econnrefused",
-      origin: "user_config",
+    expect(sent).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("carries the classified origin so what IS reported stays triageable", () => {
+    reportChatFailure(new Error("<html>502 Bad Gateway</html>"), {
+      ok: false,
+      status: 502,
     });
+
+    expect(reportCaught.mock.calls[0]![1].extra).toMatchObject({
+      slug: "internal/unknown",
+      origin: "ambiguous",
+    });
+  });
+
+  it("sends the describer's redacted message, not the raw upstream text", () => {
+    // The raw text here is an upstream RESPONSE BODY — exactly the kind of
+    // thing that carries a bearer token — and it would otherwise go straight
+    // to Sentry and PostHog.
+    reportChatFailure(
+      new Error("upstream said: Authorization: Bearer sk-abcdefghijklmnop"),
+      { ok: false, status: 502 },
+    );
+
+    const rawMessage = reportCaught.mock.calls[0]![1].extra.rawMessage as string;
+    expect(rawMessage).not.toContain("sk-abcdefghijklmnop");
+  });
+
+  it("does not copy the original stack, which would smuggle the message back", () => {
+    // V8 renders a stack as "<name>: <message>\n at …", so copying it would
+    // defeat the redaction above.
+    reportChatFailure(new Error("secret-ish upstream body"), {
+      ok: false,
+      status: 502,
+    });
+
+    const error = reportCaught.mock.calls[0]![0] as Error;
+    expect(error.stack ?? "").not.toContain("secret-ish upstream body");
   });
 });

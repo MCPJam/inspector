@@ -323,7 +323,13 @@ export function extractInsufficientScopeChallenge(
             (rawResourceMetadataUrl &&
               typeof rawResourceMetadataUrl === "object" &&
               typeof rawResourceMetadataUrl.href === "string")
-          ? String(rawResourceMetadataUrl)
+          ? // `.href`, NOT `String(value)`. Both branches of the guard above
+            // carry an href, and a real `URL` stringifies to the same thing —
+            // but a URL-LIKE object (a cross-realm or deserialized URL that
+            // merely has the field) stringifies to "[object Object]", and that
+            // invalid value would reach the step-up authorization caller as
+            // the resource metadata URL.
+            rawResourceMetadataUrl.href
           : undefined;
     const errorDescription =
       typeof node.errorDescription === "string"
