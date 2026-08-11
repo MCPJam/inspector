@@ -51,13 +51,56 @@ jobs:
         # unlike the `--with-deps` browser libs we dropped.
         run: apt-get update && apt-get install -y ripgrep
 
-      - name: Run SDK → CLI → Inspector verification
+      - name: Run SDK → CLI verification
+        # Everything except the inspector suite, which the sharded `inspector`
+        # job below owns. Running all ten suites in one job meant the inspector
+        # (1189 files / ~14k tests) contended with the other nine for the same
+        # four cores and pinned the job at ~18 min.
+        #
         # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
         # The vitest workspace (server + client + shared) runs concurrently and
         # exceeds that cap. 6 GB gives headroom without exhausting the runner.
         env:
           NODE_OPTIONS: "--max-old-space-size=6144"
-        run: npm test
+        run: npm run test:ci:rest
+
+  inspector:
+    runs-on: ubuntu-latest
+    name: Inspector Tests ${{ matrix.shard }}/4
+    # Same pinned Playwright image as the other jobs — see the note above.
+    container: mcr.microsoft.com/playwright:v1.59.1-noble
+    strategy:
+      # Report every shard's result. Cancelling siblings on the first failure
+      # would hide unrelated breakage in the other three quarters of the suite.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build the SDK
+        # The inspector's vitest configs alias many @mcpjam/sdk subpaths to
+        # source, but the bare package export still resolves to dist. The root
+        # `npm test` chain builds the SDK before any suite runs; this job is not
+        # in that chain, so it builds the SDK itself.
+        run: npm run build -w @mcpjam/sdk
+
+      - name: Run inspector tests (shard ${{ matrix.shard }}/4)
+        # `npm run test -w @mcpjam/inspector` also fires the workspace's
+        # `pretest` bundling step, which the suite needs; args after `--` reach
+        # vitest. Shards split by test file, so no shard depends on another.
+        run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/4
 
   e2e:
     runs-on: ubuntu-latest
