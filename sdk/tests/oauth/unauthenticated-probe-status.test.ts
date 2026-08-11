@@ -276,6 +276,49 @@ describe("parseBearerAuthenticateParameters", () => {
       parseBearerAuthenticateParameters(header as string | undefined)
     ).toEqual({});
   });
+
+  // `auth-param` permits BWS around `=` (RFC 7235 §2.1), which makes a spaced
+  // parameter look exactly like a scheme followed by a value. It must stay
+  // attached to its challenge rather than opening one named after itself.
+  it.each([
+    ["space both sides", `Bearer realm="x", scope = "a b"`],
+    ["space before", `Bearer realm="x", scope ="a b"`],
+    ["space after", `Bearer realm="x", scope= "a b"`],
+    ["several spaces", `Bearer realm="x", scope   =   "a b"`],
+  ])("keeps a BWS auth-param on its challenge (%s)", (_label, header) => {
+    expect(hasBearerChallenge(header)).toBe(true);
+    expect(parseBearerAuthenticateParameters(header)).toEqual({
+      realm: "x",
+      scope: "a b",
+    });
+  });
+
+  it("keeps a BWS resource_metadata hint readable", () => {
+    expect(
+      parseBearerAuthenticateParameters(
+        `Bearer realm="x", resource_metadata = "${PRM}"`
+      )
+    ).toEqual({ realm: "x", resource_metadata: PRM });
+  });
+
+  it("unescapes quoted-pairs inside a parameter value", () => {
+    expect(
+      parseBearerAuthenticateParameters('Bearer realm="say \\"hi\\""')
+    ).toEqual({ realm: 'say "hi"' });
+  });
+
+  it("still splits on a genuine second scheme", () => {
+    expect(
+      parseBearerAuthenticateParameters('Bearer realm="x", Basic realm="y"')
+    ).toEqual({ realm: "x" });
+  });
+
+  it("does not mistake a token68 credential for an auth-param", () => {
+    const header = 'Negotiate abcdef==, Bearer scope="s"';
+
+    expect(hasBearerChallenge(header)).toBe(true);
+    expect(parseBearerAuthenticateParameters(header)).toEqual({ scope: "s" });
+  });
 });
 
 describe("param-less challenge grouping", () => {

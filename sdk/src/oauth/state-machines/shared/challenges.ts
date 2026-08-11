@@ -1,14 +1,23 @@
-/** Parse one challenge's auth-param list (`key=value, key="value"`). */
+/**
+ * Parse one challenge's auth-param list (`key=value, key="value"`).
+ *
+ * `auth-param` allows BWS around the `=` (RFC 7235 §2.1), and a quoted value may
+ * contain quoted-pairs, so `realm = "say \"hi\""` has to read as one parameter
+ * whose value is `say "hi"`.
+ */
 function parseAuthParams(paramsString: string): Record<string, string> {
   const params: Record<string, string> = {};
-  const pattern = /([a-zA-Z_][a-zA-Z0-9_-]*)=(?:"([^"]*)"|([^,\s]+))/g;
+  const pattern =
+    /([a-zA-Z_][a-zA-Z0-9_-]*)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^,\s]+))/g;
 
   for (
     let next = pattern.exec(paramsString);
     next;
     next = pattern.exec(paramsString)
   ) {
-    params[next[1].toLowerCase()] = next[2] ?? next[3] ?? "";
+    const quoted = next[2];
+    params[next[1].toLowerCase()] =
+      quoted !== undefined ? quoted.replace(/\\([\s\S])/g, "$1") : next[3] ?? "";
   }
 
   return params;
@@ -137,7 +146,16 @@ function parseBearerChallenges(header?: string): Array<Record<string, string>> {
   // `1Other error="…"` fall through to the auth-param branch, which credited a
   // following scheme's parameters to the challenge before it.
   const SCHEME_TOKEN = "[A-Za-z0-9!#$%&'*+.^_`|~-]+";
-  const CHALLENGE_START = new RegExp(`^(${SCHEME_TOKEN})\\s+(.+)$`, "s");
+  // `<token> <rest>` opens a challenge, but `auth-param` permits BWS around its
+  // `=` (RFC 7235 §2.1), so `resource_metadata = "…"` is a parameter that looks
+  // exactly like a scheme followed by a value. Refusing the match when `=` is
+  // what follows the token keeps such a parameter attached to its challenge
+  // instead of opening one named after it — which dropped the very
+  // `resource_metadata` and `scope` this step reads.
+  const CHALLENGE_START = new RegExp(
+    `^(${SCHEME_TOKEN})\\s+(?!\\s*=)(.+)$`,
+    "s",
+  );
   const BARE_SCHEME = new RegExp(`^(${SCHEME_TOKEN})$`);
   for (const raw of segments) {
     const seg = raw.trim();
