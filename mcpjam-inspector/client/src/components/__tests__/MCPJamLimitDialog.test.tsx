@@ -19,6 +19,7 @@ const sortedOrganizationsState: Array<{
 
 const upgradeState = {
   currentPlan: "free" as string,
+  effectivePlan: "free" as string,
   canManageBilling: true,
   start: vi.fn(),
 };
@@ -39,6 +40,7 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
     teamName: "Team",
     teamEvalIterations: 15000,
     currentPlan: upgradeState.currentPlan,
+    effectivePlan: upgradeState.effectivePlan,
     organizationName: "Acme Robotics",
     canManageBilling: upgradeState.canManageBilling,
     isStarting: false,
@@ -87,6 +89,7 @@ beforeEach(() => {
   signIn.mockReset();
   upgradeState.start.mockReset();
   upgradeState.currentPlan = "free";
+  upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
   authState.isLoading = false;
   authState.user = null;
@@ -173,6 +176,23 @@ describe("MCPJamLimitDialog", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /use your own API key/i })
+    ).toBeInTheDocument();
+  });
+
+  it("does not pitch Team when a Team trial runs out of credits", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    upgradeState.currentPlan = "free";
+    upgradeState.effectivePlan = "team";
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /Buy credits to keep your team going/
+    );
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^buy credits$/i })
     ).toBeInTheDocument();
   });
 

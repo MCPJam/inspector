@@ -108,7 +108,7 @@ export function MCPJamLimitDialog() {
   // Pitching Team to an org already on Team would be nonsense; those orgs get
   // the buy-credits path only.
   const showCreditsUpgrade =
-    creditsUpgrade.currentPlan === "free" && creditsUpgrade.canManageBilling;
+    creditsUpgrade.effectivePlan === "free" && creditsUpgrade.canManageBilling;
 
   return (
     <>
@@ -139,9 +139,9 @@ export function MCPJamLimitDialog() {
           description={
             isKnownNonManager
               ? "Ask an organization owner or admin to buy credits or upgrade the plan."
-              : creditsUpgrade.currentPlan === "free"
-                ? `Free credits reset daily. Our ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
-                : "Buy credits to keep your team going, or use your own API key."
+              : creditsUpgrade.effectivePlan === "free"
+              ? `Free credits reset daily. Our ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
+              : "Buy credits to keep your team going, or use your own API key."
           }
           isKnownNonManager={isKnownNonManager}
           showUpgrade={showCreditsUpgrade}

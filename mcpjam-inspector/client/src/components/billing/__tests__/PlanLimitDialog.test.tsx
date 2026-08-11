@@ -13,17 +13,20 @@ const {
   upgradeState,
   billingState,
   recipientsState,
-} =
-  vi.hoisted(() => ({
-    toastSuccess: vi.fn(),
-    trackMock: vi.fn(),
-    startMock: vi.fn(),
-    upgradeState: { currentPlan: "free" as string, canManageBilling: true },
-    recipientsState: {
-      current: [] as Array<{ email: string; name?: string | null }>,
-    },
-    billingState: { plan: "free" as string, isLoading: false },
-  }));
+} = vi.hoisted(() => ({
+  toastSuccess: vi.fn(),
+  trackMock: vi.fn(),
+  startMock: vi.fn(),
+  upgradeState: {
+    currentPlan: "free" as string,
+    effectivePlan: "free" as string,
+    canManageBilling: true,
+  },
+  recipientsState: {
+    current: [] as Array<{ email: string; name?: string | null }>,
+  },
+  billingState: { plan: "free" as string, isLoading: false },
+}));
 
 vi.mock("@/lib/toast", () => ({
   toast: { success: toastSuccess, error: vi.fn() },
@@ -32,8 +35,9 @@ vi.mock("@/lib/toast", () => ({
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/use-upgrade-checkout")>();
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-upgrade-checkout")
+  >();
   return {
     ...actual,
     useUpgradeCheckout: () => ({
@@ -47,6 +51,7 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
       teamName: "Team",
       teamEvalIterations: 5000,
       currentPlan: upgradeState.currentPlan,
+      effectivePlan: upgradeState.effectivePlan,
       organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
       isStarting: false,
@@ -92,6 +97,7 @@ beforeEach(() => {
   trackMock.mockReset();
   startMock.mockReset();
   upgradeState.currentPlan = "free";
+  upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
   recipientsState.current = [];
   billingState.plan = "free";
@@ -164,16 +170,12 @@ describe("PlanLimitDialog", () => {
     expect(
       screen.queryByRole("button", { name: /wait for reset/i })
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /close/i })
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /close/i })).toBeInTheDocument();
   });
 
   it("offers an owner email instead of a CTA the server would reject", () => {
     upgradeState.canManageBilling = false;
-    recipientsState.current = [
-      { email: "dana@acme.test", name: "Dana Ruiz" },
-    ];
+    recipientsState.current = [{ email: "dana@acme.test", name: "Dana Ruiz" }];
     openEvalLimit();
     render(<PlanLimitDialog />);
 
@@ -205,6 +207,7 @@ describe("PlanLimitDialog", () => {
 
   it("points an org already on Team at Enterprise instead of Team", () => {
     upgradeState.currentPlan = "team";
+    upgradeState.effectivePlan = "team";
     openEvalLimit({ allowed: 5000, windowKind: "month" });
     render(<PlanLimitDialog />);
 
@@ -213,14 +216,15 @@ describe("PlanLimitDialog", () => {
     expect(description).toHaveTextContent(/Enterprise adds negotiated usage/);
     expect(description).not.toHaveTextContent(/Our Team plan/);
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
-    expect(
-      screen.getByTestId("plan-limit-enterprise-cta")
-    ).toHaveTextContent(/Request upgrade/);
+    expect(screen.getByTestId("plan-limit-enterprise-cta")).toHaveTextContent(
+      /Request upgrade/
+    );
   });
 
   it("reports the Enterprise CTA click", async () => {
     const user = userEvent.setup();
     upgradeState.currentPlan = "team";
+    upgradeState.effectivePlan = "team";
     openEvalLimit({ allowed: 5000, windowKind: "month" });
     render(<PlanLimitDialog />);
 
@@ -234,6 +238,7 @@ describe("PlanLimitDialog", () => {
 
   it("offers nothing to pitch when the org is already on Enterprise", () => {
     upgradeState.currentPlan = "enterprise";
+    upgradeState.effectivePlan = "enterprise";
     openEvalLimit({ allowed: 50000, windowKind: "month" });
     render(<PlanLimitDialog />);
 
@@ -243,6 +248,20 @@ describe("PlanLimitDialog", () => {
     expect(
       screen.queryByTestId("plan-limit-enterprise-cta")
     ).not.toBeInTheDocument();
+  });
+
+  it("routes a capped Team trial to Enterprise instead of Team checkout", () => {
+    upgradeState.currentPlan = "free";
+    upgradeState.effectivePlan = "team";
+    openEvalLimit({ allowed: 5000, windowKind: "month" });
+    render(<PlanLimitDialog />);
+
+    const description = screen.getByTestId("plan-limit-dialog-description");
+    expect(description).toHaveTextContent(/Your plan includes 5,000 a month/);
+    expect(description).toHaveTextContent(/Enterprise adds negotiated usage/);
+    expect(description).not.toHaveTextContent(/Our Team plan/);
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
+    expect(screen.getByTestId("plan-limit-enterprise-cta")).toBeInTheDocument();
   });
 
   it("closes and reports a dismissal", async () => {

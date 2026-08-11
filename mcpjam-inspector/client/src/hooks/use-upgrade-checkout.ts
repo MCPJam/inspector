@@ -41,7 +41,7 @@ function formatMoney(cents: number, currency: string): string {
 export function formatSeatMonthlyPrice(
   amountInCents: number | null,
   currency: string | undefined,
-  interval: BillingInterval,
+  interval: BillingInterval
 ): string | null {
   if (amountInCents == null || !currency) return null;
   if (interval === "monthly") {
@@ -67,12 +67,8 @@ export function useUpgradeCheckout({
   origin,
   limitKind,
 }: UseUpgradeCheckoutParams) {
-  const {
-    billingStatus,
-    planCatalog,
-    startPlanChange,
-    isStartingPlanChange,
-  } = useOrganizationBilling(organizationId);
+  const { billingStatus, planCatalog, startPlanChange, isStartingPlanChange } =
+    useOrganizationBilling(organizationId);
 
   const teamEntry = planCatalog?.plans.team;
   const supportedIntervals = teamEntry?.checkout?.supportedIntervals ?? [
@@ -85,18 +81,18 @@ export function useUpgradeCheckout({
   // Annual leads: it's the cheaper per-seat figure and matches the pricing
   // page. Both prices render at once, so nothing is hidden behind the choice.
   const [interval, setInterval] = useState<BillingInterval>(
-    annualSupported ? "annual" : "monthly",
+    annualSupported ? "annual" : "monthly"
   );
 
   const annualPriceLabel = formatSeatMonthlyPrice(
     teamEntry?.prices.annual ?? null,
     planCatalog?.currency,
-    "annual",
+    "annual"
   );
   const monthlyPriceLabel = formatSeatMonthlyPrice(
     teamEntry?.prices.monthly ?? null,
     planCatalog?.currency,
-    "monthly",
+    "monthly"
   );
 
   const start = useCallback(async () => {
@@ -121,8 +117,8 @@ export function useUpgradeCheckout({
         result.kind === "checkout"
           ? result.checkoutUrl
           : result.kind === "portal"
-            ? result.portalUrl
-            : null;
+          ? result.portalUrl
+          : null;
       if (nextUrl) {
         // Same tab, so the return URL brings the user back in place.
         window.location.assign(nextUrl);
@@ -133,7 +129,7 @@ export function useUpgradeCheckout({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Couldn't start checkout. Please try again.",
+          : "Couldn't start checkout. Please try again."
       );
       return { redirected: false as const };
     }
@@ -152,6 +148,12 @@ export function useUpgradeCheckout({
      * in the copy. Whether the catalog itself matches the public pricing page
      * is a separate question, tracked in the PR. */
     teamEvalIterations: teamEntry?.limits.maxEvalIterationsPerMonth ?? null,
+    // Limit-wall copy and destinations follow the plan whose limits the user
+    // is actually receiving. During a Team trial the persisted billing plan is
+    // still Free, while the effective plan (and its limits) is Team.
+    effectivePlan:
+      billingStatus?.effectivePlan ?? billingStatus?.plan ?? "free",
+    // Keep the persisted plan separate for real billing/checkout decisions.
     currentPlan: billingStatus?.plan ?? "free",
     organizationName: billingStatus?.organizationName ?? "your organization",
     canManageBilling: billingStatus?.canManageBilling ?? false,
