@@ -2762,6 +2762,11 @@ describe("App hosted OAuth callback handling", () => {
         },
       },
     }));
+    // Convex-shaped ids on purpose: only a real document id is synced and
+    // persisted now, so that a catalog slug in the URL (`/hosts/chatgpt`)
+    // can't be stored as this project's previewed host — see
+    // `HostsRoute.non-id-url.test.tsx`.
+    //
     // The route only PERSISTS a host id the project's list confirms, so the
     // list has to actually contain it — the suite default leaves every query
     // but `getCurrentUser` unresolved, which reads as "still loading" and is
@@ -2772,7 +2777,7 @@ describe("App hosted OAuth callback handling", () => {
         : ref === "hosts:listHosts"
           ? [
               {
-                hostId: "host-slack",
+                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
                 name: "Slack",
                 hostConfigId: "host-config-slack",
                 modelId: "claude-sonnet-4",
@@ -2785,16 +2790,16 @@ describe("App hosted OAuth callback handling", () => {
     );
     localStorage.setItem(
       "mcp-previewed-host-id",
-      JSON.stringify({ project_shared: "host-claude" })
+      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" })
     );
-    window.history.replaceState({}, "", "/hosts/host-slack");
+    window.history.replaceState({}, "", "/hosts/m17b6q9xw2tv4kz8p3r5s0dc");
 
     render(<App />);
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"))
         .toEqual({
-          project_shared: "host-slack",
+          project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
         });
     });
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
