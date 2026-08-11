@@ -3180,6 +3180,13 @@ export function useServerState({
         }
       }
 
+      // Capture provenance before saving: saveOAuthConfigToLocalStorage updates
+      // the server URL first, so reading it afterward would make a stale
+      // resource indicator look like it belonged to the edited endpoint.
+      const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
+      const storedServerUrlBeforeSave = HOSTED_MODE
+        ? undefined
+        : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
       saveOAuthConfigToLocalStorage(formData);
 
       try {
@@ -3349,10 +3356,8 @@ export function useServerState({
                   capturedForServerUrl: existingOAuthProfile?.serverUrl,
                 },
                 {
-                  resourceUrl: readStoredOAuthConfig(formData.name).resourceUrl,
-                  capturedForServerUrl:
-                    localStorage.getItem(`mcp-serverUrl-${formData.name}`) ??
-                    undefined,
+                  resourceUrl: storedOAuthConfigBeforeSave.resourceUrl,
+                  capturedForServerUrl: storedServerUrlBeforeSave,
                 },
               ]),
               clientId: oauthInputs.clientId,
