@@ -9,7 +9,7 @@ import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { getProductionGuestAuthSession } from "../../utils/guest-auth.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const DEFAULT_STT_MODEL = "openai/whisper-1";
 const STT_TIMEOUT_MS = 55_000;
@@ -266,7 +266,7 @@ async function checkGuestRateLimit(c: Context): Promise<Response | null> {
 audioTranscriptions.post("/transcriptions", async (c) => {
   let body: TranscriptionRequestBody;
   try {
-    body = (await c.req.json()) as TranscriptionRequestBody;
+    body = (await readRequestJson(c)) as TranscriptionRequestBody;
   } catch {
     return c.json({ error: "Invalid JSON body" }, 400);
   }

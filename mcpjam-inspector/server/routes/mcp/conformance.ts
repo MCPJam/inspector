@@ -19,7 +19,7 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const conformance = new Hono();
 
@@ -75,7 +75,7 @@ const protocolSchema = z.object({
 
 conformance.post("/protocol", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = protocolSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -125,7 +125,7 @@ const appsSchema = z.object({
 
 conformance.post("/apps", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = appsSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -180,7 +180,7 @@ const tasksSchema = z.object({
 
 conformance.post("/tasks", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = tasksSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -236,7 +236,7 @@ const oauthStartSchema = z.object({
 
 conformance.post("/oauth/start", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = oauthStartSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -305,7 +305,7 @@ const oauthAuthorizeSchema = z.object({
 
 conformance.post("/oauth/authorize", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = oauthAuthorizeSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -354,7 +354,7 @@ const oauthCompleteSchema = z.object({
 
 conformance.post("/oauth/complete", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = oauthCompleteSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(

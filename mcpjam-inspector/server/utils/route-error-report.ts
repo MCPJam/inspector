@@ -39,26 +39,59 @@ const BOUNDARY_FOR_HOP: Record<
 };
 
 /**
- * A malformed request body is never MCPJam's fault, whatever the hop says.
+ * A malformed REQUEST body, thrown by {@link readRequestJson}.
  *
  * Several handlers call `await c.req.json()` inside the same `try` whose catch
- * declares `mcpjam_internal`. Without this, anyone holding a session could page
- * the on-call by POSTing invalid JSON: the `SyntaxError` classifies
+ * declares `mcpjam_internal`. Without a marker, anyone holding a session could
+ * page the on-call by POSTing invalid JSON: the parse error classifies
  * `internal/unknown`, the boundary promotes it to `mcpjam`, and Sentry fires —
  * precisely the false attribution this whole change removes, arriving through
  * the fix for it.
  *
- * Handled here rather than by restructuring each handler because it is a
- * property of the ERROR, not of any one route: a body-parse failure cannot be
- * ours no matter where it is caught, and a rule in one place also covers the
- * catch-sites nobody has audited yet.
- *
- * Narrow on purpose. Only `SyntaxError` — a real syntax error in our own
- * shipped code would be a load-time failure, not something a request handler
- * catches at runtime.
+ * An explicit class rather than `error instanceof SyntaxError`, because that
+ * test cannot tell a REQUEST body apart from a RESPONSE body. `models.ts`
+ * parses our own Convex backend's JSON inside an internal catch, and malformed
+ * output from our backend IS our problem — a type-based rule would have
+ * silently stopped capturing it.
  */
+export class ClientInputError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "ClientInputError";
+    if (options?.cause !== undefined) {
+      Object.defineProperty(this, "cause", {
+        value: options.cause,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+}
+
+/**
+ * Read and parse a request body, marking a parse failure as the caller's.
+ *
+ * Use instead of a bare `await c.req.json()` in any handler whose catch
+ * declares `mcpjam_internal`.
+ *
+ * `T` defaults to `any` to match what `c.req.json()` already returns, so this
+ * is a true drop-in — swapping it in must not silently start type-erroring
+ * call sites that were compiling before.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function readRequestJson<T = any>(c: {
+  req: { json: () => Promise<unknown> };
+}): Promise<T> {
+  try {
+    return (await c.req.json()) as T;
+  } catch (error) {
+    throw new ClientInputError("Invalid JSON body", { cause: error });
+  }
+}
+
 function isClientInputFault(error: unknown): boolean {
-  return error instanceof SyntaxError;
+  return error instanceof ClientInputError;
 }
 
 export type RouteFailureOptions = {
@@ -114,7 +147,13 @@ export function reportRouteFailure(
   // page anyway, and an escalated one would be captured twice. Wrap once, up
   // front, and use the SAME value for both, so the stamp survives.
   const reported = ensureStampable(error);
-  const normalized = options.normalized ?? describeError(reported);
+  // Classify the ORIGINAL, never the wrapper. `describeError` reads `code` /
+  // `status` off the TOP-LEVEL object and does not follow `.cause`, so
+  // describing a wrapper would drop a frozen error's `code: "ECONNREFUSED"`,
+  // resolve `internal/unknown`, and let an internal boundary promote somebody
+  // else's dead server into a page — reintroducing the exact false
+  // attribution, for the very case the wrapper exists to handle.
+  const normalized = options.normalized ?? describeError(error);
   const boundary = isClientInputFault(error)
     ? undefined
     : BOUNDARY_FOR_HOP[options.hop];

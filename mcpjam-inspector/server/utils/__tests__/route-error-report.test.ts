@@ -14,7 +14,11 @@ vi.mock("@axiomhq/js", () => ({
 }));
 
 import * as Sentry from "@sentry/node";
-import { reportRouteFailure } from "../route-error-report.js";
+import {
+  ClientInputError,
+  readRequestJson,
+  reportRouteFailure,
+} from "../route-error-report.js";
 
 const captureException = vi.mocked(Sentry.captureException);
 
@@ -179,17 +183,32 @@ describe("reportRouteFailure", () => {
   });
 
   it("never promotes a malformed request body to an MCPJam failure", () => {
-    // Several handlers parse `c.req.json()` inside the same try whose catch
+    // Several handlers parse the request inside the same try whose catch
     // declares an internal hop. Without this rule, anyone with a session could
     // page the on-call by POSTing invalid JSON.
     const { origin } = reportRouteFailure(
       "Error counting tokens",
-      new SyntaxError("Unexpected token < in JSON at position 0"),
+      new ClientInputError("Invalid JSON body"),
       { source: "mcp.tokenizer.tools", hop: "mcpjam_internal" },
     );
 
     expect(origin).toBe("ambiguous");
     expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("STILL captures a SyntaxError that did not come from the request", () => {
+    // Deliberately not `error instanceof SyntaxError`: that cannot tell a
+    // request body from a response body, and `models.ts` parses our own Convex
+    // backend's JSON inside an internal catch. Malformed output from our
+    // backend is our problem, and a type-based rule would have silently
+    // stopped capturing it.
+    reportRouteFailure(
+      "[models] Convex backend error",
+      new SyntaxError("Unexpected token < in JSON at position 0"),
+      { source: "mcp.models.fetch", hop: "mcpjam_internal" },
+    );
+
+    expect(captureException).toHaveBeenCalledTimes(1);
   });
 
   it("still reports a genuine internal failure on the same route", () => {
@@ -221,5 +240,32 @@ describe("reportRouteFailure", () => {
     });
 
     expect(captureException).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("readRequestJson", () => {
+  it("marks a malformed body so the internal boundary cannot promote it", async () => {
+    const c = {
+      req: {
+        json: () => Promise.reject(new SyntaxError("Unexpected token <")),
+      },
+    };
+
+    await expect(readRequestJson(c)).rejects.toBeInstanceOf(ClientInputError);
+  });
+
+  it("keeps the underlying parse error as the cause", async () => {
+    const underlying = new SyntaxError("Unexpected token <");
+    const c = { req: { json: () => Promise.reject(underlying) } };
+
+    await expect(readRequestJson(c)).rejects.toMatchObject({
+      cause: underlying,
+    });
+  });
+
+  it("passes a well-formed body straight through", async () => {
+    const c = { req: { json: () => Promise.resolve({ serverId: "srv_1" }) } };
+
+    await expect(readRequestJson(c)).resolves.toEqual({ serverId: "srv_1" });
   });
 });

@@ -20,7 +20,7 @@ import type {
   SkillFile,
   SkillFileContent,
 } from "../../../shared/skill-types";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const skills = new Hono();
 
@@ -182,7 +182,7 @@ skills.post("/list", async (c) => {
  */
 skills.post("/get", async (c) => {
   try {
-    const { name } = (await c.req.json()) as { name?: string };
+    const { name } = (await readRequestJson(c)) as { name?: string };
 
     if (!name) {
       return c.json({ success: false, error: "name is required" }, 400);
@@ -243,7 +243,7 @@ skills.post("/get", async (c) => {
  */
 skills.post("/upload", async (c) => {
   try {
-    const { name, description, content } = (await c.req.json()) as {
+    const { name, description, content } = (await readRequestJson(c)) as {
       name?: string;
       description?: string;
       content?: string;
@@ -490,7 +490,7 @@ skills.post("/upload-folder", async (c) => {
  */
 skills.post("/delete", async (c) => {
   try {
-    const { name } = (await c.req.json()) as { name?: string };
+    const { name } = (await readRequestJson(c)) as { name?: string };
 
     if (!name) {
       return c.json({ success: false, error: "name is required" }, 400);
@@ -551,7 +551,7 @@ skills.post("/delete", async (c) => {
  */
 skills.post("/files", async (c) => {
   try {
-    const { name } = (await c.req.json()) as { name?: string };
+    const { name } = (await readRequestJson(c)) as { name?: string };
 
     if (!name) {
       return c.json({ success: false, error: "name is required" }, 400);
@@ -588,7 +588,7 @@ skills.post("/files", async (c) => {
  */
 skills.post("/read-file", async (c) => {
   try {
-    const { name, filePath } = (await c.req.json()) as {
+    const { name, filePath } = (await readRequestJson(c)) as {
       name?: string;
       filePath?: string;
     };

@@ -56,33 +56,60 @@ describe("reportChatFailure", () => {
     expect(options.extra.rawMessage).toBe("Failed to fetch");
   });
 
-  it("tags a mid-stream failure differently from a failed request", () => {
-    reportChatFailure(new Error("provider blew up"), {
-      ok: true,
-      status: 200,
-      requestId: "req_xyz",
-    });
-
-    const [error, options] = reportCaught.mock.calls[0]!;
-    expect(options.source).toBe("chat_stream_error");
-    expect((error as Error).message).toBe("chat_stream_error");
-    // The request id survives an ok response, which is what joins this event
-    // to the server-side row.
-    expect(options.extra.requestId).toBe("req_xyz");
+  it("does not report an unattributable mid-stream failure", () => {
+    // The response was fine; something inside the turn failed for a reason the
+    // catalog cannot place. Under the same `mcpjam`-only policy the server
+    // applies, an unattributable failure on a high-volume path does not page.
+    expect(
+      reportChatFailure(new Error("provider blew up"), {
+        ok: true,
+        status: 200,
+        requestId: "req_xyz",
+      }),
+    ).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
   });
 
-  it("still reports when no response was ever seen", () => {
-    // The fetch itself rejected — DNS failure, connection refused, offline —
-    // so there is no status to attribute. `chatFetch` clears its ref before
-    // awaiting precisely so this arrives as `null` rather than as the PREVIOUS
-    // turn's status and request id, which would group a fresh network failure
-    // under a stale 502 and link it to somebody else's server request.
-    expect(reportChatFailure(new Error("boom"), null)).toBe(true);
-    const [error, options] = reportCaught.mock.calls[0]!;
-    expect(options.source).toBe("chat_stream_error");
-    expect((error as Error).message).toBe("chat_stream_error");
-    expect(options.extra).not.toHaveProperty("httpStatus");
-    expect(options.extra).not.toHaveProperty("requestId");
+  it("does not report when no response was ever seen", () => {
+    // The fetch itself rejected — DNS failure, connection refused, offline. A
+    // user's network dying is not an MCPJam incident, and there is no status
+    // to attribute it with. `chatFetch` clears its ref before awaiting so this
+    // arrives as `null` rather than as the PREVIOUS turn's status, which would
+    // otherwise mis-attribute a fresh network failure to a stale 502.
+    expect(reportChatFailure(new Error("boom"), null)).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("attributes a 5xx from OUR chat route to MCPJam", () => {
+    // The describer sees only an HTML page — `internal/unknown`, i.e.
+    // `ambiguous` — so a strict policy would report nothing for the exact
+    // failure this exists to catch. The STATUS closes that gap, the same way
+    // the server's `describeBackendStreamFailure` does.
+    expect(
+      reportChatFailure(new Error("<html>502</html>"), { ok: false, status: 502 }),
+    ).toBe(true);
+    expect(reportCaught.mock.calls[0]![1].extra.origin).toBe("mcpjam");
+  });
+
+  it("does not treat a 4xx as MCPJam's failure", () => {
+    expect(
+      reportChatFailure(new Error("bad request"), { ok: false, status: 400 }),
+    ).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("does not let a 5xx overrule positive user-fault evidence", () => {
+    // An ECONNREFUSED to the user's own MCP server stays theirs even if it
+    // somehow arrived alongside a 5xx from our route.
+    expect(
+      reportChatFailure(
+        Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), {
+          code: "ECONNREFUSED",
+        }),
+        { ok: false, status: 502 },
+      ),
+    ).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
   });
 
   it("does not report an abort — that is the user pressing Stop", () => {
@@ -136,7 +163,7 @@ describe("reportChatFailure", () => {
     expect(reportCaught).not.toHaveBeenCalled();
   });
 
-  it("carries the classified origin so what IS reported stays triageable", () => {
+  it("carries the classified slug so what IS reported stays triageable", () => {
     reportChatFailure(new Error("<html>502 Bad Gateway</html>"), {
       ok: false,
       status: 502,
@@ -144,7 +171,7 @@ describe("reportChatFailure", () => {
 
     expect(reportCaught.mock.calls[0]![1].extra).toMatchObject({
       slug: "internal/unknown",
-      origin: "ambiguous",
+      origin: "mcpjam",
     });
   });
 

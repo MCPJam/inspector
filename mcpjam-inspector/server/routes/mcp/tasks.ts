@@ -11,7 +11,7 @@ import {
   taskCapabilitiesForWire,
   updateTaskForWire,
 } from "../../utils/task-route-handlers";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const tasks = new Hono();
 
@@ -45,7 +45,7 @@ function featureErrorResponse(error: unknown) {
 
 tasks.post("/list", async (c) => {
   try {
-    const { serverId, cursor } = (await c.req.json()) as {
+    const { serverId, cursor } = (await readRequestJson(c)) as {
       serverId?: string;
       cursor?: string;
     };
@@ -66,7 +66,7 @@ tasks.post("/list", async (c) => {
 });
 
 tasks.post("/get", async (c) => {
-  const body = (await c.req.json()) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
@@ -96,7 +96,7 @@ tasks.post("/get", async (c) => {
 
 // Legacy only: the extension carries the result inline on tasks/get.
 tasks.post("/result", async (c) => {
-  const body = (await c.req.json()) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
@@ -132,7 +132,7 @@ tasks.post("/result", async (c) => {
 
 // Extension only: submit responses to the keyed inputRequests snapshot.
 tasks.post("/update", async (c) => {
-  const body = (await c.req.json()) as {
+  const body = (await readRequestJson(c)) as {
     serverId?: string;
     taskId?: string;
     inputResponses?: Record<string, unknown>;
@@ -177,7 +177,7 @@ tasks.post("/update", async (c) => {
 });
 
 tasks.post("/cancel", async (c) => {
-  const body = (await c.req.json()) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
@@ -213,7 +213,7 @@ tasks.post("/cancel", async (c) => {
 
 tasks.post("/capabilities", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
     return c.json(taskCapabilitiesForWire(c.mcpClientManager, serverId));
@@ -231,7 +231,7 @@ tasks.post("/capabilities", async (c) => {
 // Progress is local-only: hosted connections are ephemeral per request.
 tasks.post("/progress", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
@@ -249,7 +249,7 @@ tasks.post("/progress", async (c) => {
 
 tasks.post("/progress/all", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 

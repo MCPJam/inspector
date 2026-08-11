@@ -2336,14 +2336,20 @@ async function processOneStep(
     const normalized = describeBackendStreamFailure(res.status, errorText);
     maybeCaptureOriginError(new Error(parsed.message), normalized, {
       source: "route:mcp.chat-v2.backend-stream",
-      // Declared even though a 5xx already resolves to `mcpjam` on its own:
-      // it tags the Sentry event with the boundary the rest of the codebase
-      // triages on, and it escalates an UNRECOGNIZED status from our own
-      // backend, which `describeBackendStreamFailure` leaves `ambiguous`
-      // because that function classifies the response alone and cannot know
-      // whose backend answered.
-      boundary: "mcpjam_internal",
-      extra: { httpStatus: res.status, code: parsed.code },
+      // The boundary is declared for a genuine TRANSPORT failure only, and
+      // NOT for `isJsonDenial`. A denial is an HTTP 200 carrying a structured
+      // refusal (`{ok:false, code:"user_rate_limit"}`) — the backend working
+      // correctly, and a routine, user-owned outcome. Promoting it would page
+      // the team on every ordinary spend-limit rejection, which is precisely
+      // the noise class this work removes.
+      //
+      // On a real failure the declaration earns its place twice: it tags the
+      // event with the boundary the rest of the codebase triages on, and it
+      // escalates an unrecognized status from our own backend, which
+      // `describeBackendStreamFailure` leaves `ambiguous` because it
+      // classifies the response alone and cannot know whose backend answered.
+      ...(isJsonDenial ? {} : { boundary: "mcpjam_internal" as const }),
+      extra: { httpStatus: res.status, code: parsed.code, isJsonDenial },
     });
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,

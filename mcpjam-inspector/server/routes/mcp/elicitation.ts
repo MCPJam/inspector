@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ElicitResult } from "@modelcontextprotocol/client";
 import type { MCPClientManager } from "@mcpjam/sdk";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const elicitation = new Hono();
 
@@ -255,7 +255,7 @@ elicitation.get("/stream", async (c) => {
 // Endpoint for UI to respond to elicitation
 elicitation.post("/respond", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const { requestId, action, content } = body as {
       requestId: string;
       action: "accept" | "decline" | "cancel";

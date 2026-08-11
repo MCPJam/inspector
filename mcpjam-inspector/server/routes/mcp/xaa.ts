@@ -55,7 +55,7 @@ import type {
 } from "../../utils/server-secrets.js";
 import { getClientIp as getTrustedClientIp } from "../../utils/client-ip.js";
 import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
@@ -938,7 +938,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     path: "/authenticate" | "/token-exchange" | "/negative-tests"
   ): Promise<Response | null> => {
     if (!options.forwardHostedIssuer) return null;
-    const body = await c.req.json().catch(() => null);
+    const body = await readRequestJson(c).catch(() => null);
     if (
       !body ||
       typeof body !== "object" ||
@@ -1350,7 +1350,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // response body (which must stay byte-identical for hosted forwarding).
   const handleAuthenticate = async (c: Context, issuer: string) => {
     try {
-      const body = await c.req.json();
+      const body = await readRequestJson(c);
       const parsed = parseRequest(authenticateSchema, body);
       const result = handleXaaAuthenticate({
         issuer,
@@ -1387,7 +1387,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // and maps to the server's 400 shape.
   const handleTokenExchange = async (c: Context, issuer: string) => {
     try {
-      const body = await c.req.json();
+      const body = await readRequestJson(c);
       const parsed = parseRequest(tokenExchangeSchema, body);
       const negativeTestMode = resolveNegativeTestMode(parsed.negativeTestMode);
 
@@ -1426,7 +1426,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   router.post("/proxy/token", async (c) => {
     try {
-      const body = await c.req.json();
+      const body = await readRequestJson(c);
       const parsed = parseRequest(proxyTokenSchema, body);
       const authMethod = parsed.tokenEndpointAuthMethod;
       let resolvedConfidentialCimdProvider = confidentialCimdProvider;
@@ -1583,7 +1583,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   router.post("/discover-as", async (c) => {
     let parsed;
     try {
-      parsed = parseRequest(discoverAsSchema, await c.req.json());
+      parsed = parseRequest(discoverAsSchema, await readRequestJson(c));
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid discovery request",
@@ -1654,7 +1654,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   router.post("/health-check", async (c) => {
     let parsed;
     try {
-      parsed = parseRequest(healthCheckSchema, await c.req.json());
+      parsed = parseRequest(healthCheckSchema, await readRequestJson(c));
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid health check request",
@@ -1732,7 +1732,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   ) => {
     let parsed;
     try {
-      parsed = parseRequest(negativeTestsSchema, await c.req.json());
+      parsed = parseRequest(negativeTestsSchema, await readRequestJson(c));
     } catch (error) {
       return toJsonError(
         error instanceof Error
@@ -2102,7 +2102,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   //     the machine.
   //   - not hosted: mint and fire locally.
   router.post("/negative-tests", async (c) => {
-    const body = await c.req.json().catch(() => null);
+    const body = await readRequestJson(c).catch(() => null);
     const isHosted =
       Boolean(options.forwardHostedIssuer) &&
       body &&

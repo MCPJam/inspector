@@ -17,7 +17,7 @@ import {
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const evals = new Hono();
 
@@ -75,7 +75,7 @@ const TraceRepairStopSchema = z.object({
 
 evals.post("/run", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = RunEvalsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -126,7 +126,7 @@ evals.post("/run", async (c) => {
 
 evals.post("/trace-repair/start", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = TraceRepairStartSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -185,7 +185,7 @@ evals.post("/trace-repair/start", async (c) => {
 
 evals.post("/trace-repair/stop", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = TraceRepairStopSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -212,7 +212,7 @@ evals.post("/trace-repair/stop", async (c) => {
 
 evals.post("/replay-run", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = ReplayRunRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -259,7 +259,7 @@ evals.post("/replay-run", async (c) => {
 
 evals.post("/run-test-case", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = RunTestCaseRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -289,7 +289,7 @@ evals.post("/run-test-case", async (c) => {
 
 evals.post("/stream-test-case", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = RunTestCaseRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -327,7 +327,7 @@ evals.post("/stream-test-case", async (c) => {
 
 evals.post("/cancel", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const { runId, convexAuthToken } = body;
 
     if (!runId) {
@@ -368,7 +368,7 @@ evals.post("/cancel", async (c) => {
 
 evals.post("/generate-tests", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = GenerateTestsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -397,7 +397,7 @@ evals.post("/generate-tests", async (c) => {
 
 evals.post("/generate-negative-tests", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = GenerateNegativeTestsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(

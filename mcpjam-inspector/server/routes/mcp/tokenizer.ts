@@ -7,7 +7,7 @@ import {
   getFetchErrorCause,
 } from "../../utils/tokenizer-helpers";
 import { logger } from "../../utils/logger";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const tokenizer = new Hono();
 
@@ -18,7 +18,7 @@ const tokenizer = new Hono();
  */
 tokenizer.post("/count-tools", async (c) => {
   try {
-    const body = (await c.req.json()) as {
+    const body = (await readRequestJson(c)) as {
       selectedServers?: string[];
       modelId?: string;
     };
@@ -178,7 +178,7 @@ tokenizer.post("/count-tools", async (c) => {
  */
 tokenizer.post("/count-text", async (c) => {
   try {
-    const body = (await c.req.json()) as {
+    const body = (await readRequestJson(c)) as {
       text?: string;
       modelId?: string;
     };

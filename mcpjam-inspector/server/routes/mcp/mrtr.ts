@@ -8,7 +8,7 @@ import type {
   MrtrInputCollector,
   MrtrOperationState,
 } from "@mcpjam/sdk";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 /**
  * `mrtr.ts` — the LOCAL Inspector bridge for the modern multi-round-trip
@@ -487,7 +487,7 @@ mrtr.get("/stream", async (c) => {
 // Submit a whole round's responses (all keys together).
 mrtr.post("/respond", async (c) => {
   try {
-    const body = (await c.req.json()) as {
+    const body = (await readRequestJson(c)) as {
       opId?: string;
       responses?: Record<
         string,

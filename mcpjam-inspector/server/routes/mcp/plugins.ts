@@ -26,7 +26,7 @@ import {
 } from "../../services/plugins/local-stdio.js";
 import { createZipPluginFileSource } from "../../services/plugins/bundle-file-sources.js";
 import { MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES } from "../../../shared/plugin-bundle-limits.js";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const plugins = new Hono();
 
@@ -116,7 +116,7 @@ plugins.post("/materialize", async (c) => {
 });
 
 plugins.post("/gc", async (c) => {
-  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const body = await readRequestJson(c).catch(() => ({}) as Record<string, unknown>);
   const keepBundleHashes = Array.isArray(
     (body as { keepBundleHashes?: unknown }).keepBundleHashes
   )

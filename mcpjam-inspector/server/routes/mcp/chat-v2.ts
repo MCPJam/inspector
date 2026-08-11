@@ -62,6 +62,7 @@ import {
 import {
   reportRouteFailure,
   reportRouteFailureForResponse,
+  readRequestJson,
 } from "../../utils/route-error-report.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
@@ -606,7 +607,7 @@ const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
   try {
-    const body = (await c.req.json()) as ChatV2Request & {
+    const body = (await readRequestJson(c)) as ChatV2Request & {
       // Phase F: when the local inspector serves an owner-preview of a
       // chatbox (the share-link surface running in /mcp), the client
       // passes the resolved chatbox identity so persistence reads

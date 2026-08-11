@@ -1,4 +1,8 @@
-import { describeError, originOf } from "@mcpjam/sdk/browser";
+import {
+  describeError,
+  originOf,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
 import { isAbortError } from "@/shared/abort-errors";
 import { reportCaught } from "./error-reporting";
 import { isErrorCaptureSurface } from "./PosthogUtils";
@@ -40,6 +44,36 @@ function syntheticMessage(meta: ChatResponseMeta | null): string {
 }
 
 /**
+ * Whose fault a chat turn dying was.
+ *
+ * The describer alone cannot answer this. The AI SDK throws
+ * `new Error(await response.text())`, so a hosted 502 arrives as an Error whose
+ * message is an HTML page — `internal/unknown`, i.e. `ambiguous`, which under a
+ * strict `mcpjam`-only policy would report nothing for the exact failure this
+ * reporting was built to see.
+ *
+ * The status closes that gap, the same way the server's
+ * `describeBackendStreamFailure` does: a 5xx here came from MCPJam's OWN chat
+ * route, and our own route answering 5xx is ours. Everything else keeps the
+ * catalog's verdict — a 4xx is a request problem, and a fetch that never
+ * produced a response at all is most often the user's network, which is not an
+ * MCPJam incident.
+ *
+ * A slug that positively identifies the user is never overruled: an
+ * ECONNREFUSED to their own MCP server stays theirs even if it somehow arrived
+ * alongside a 5xx.
+ */
+function attributeChatFailure(
+  normalized: NormalizedError,
+  meta: ChatResponseMeta | null,
+): ReturnType<typeof originOf> {
+  const declared = originOf(normalized);
+  if (declared === "user_server" || declared === "user_config") return declared;
+  if (meta && !meta.ok && meta.status >= 500) return "mcpjam";
+  return declared;
+}
+
+/**
  * Report a chat-turn failure, if this surface reports at all.
  *
  * Returns whether anything was sent, so callers and tests can assert the
@@ -62,15 +96,13 @@ export function reportChatFailure(
   if (!isErrorCaptureSurface()) return false;
 
   const normalized = describeError(error);
-  const origin = originOf(normalized);
-  // Same rule the server envelopes follow, for the same reason. A chat turn
-  // dying because the user's own MCP server refused a connection, or because
-  // their BYO key ran out of credit, is not an MCPJam incident — and this path
-  // is high volume. Reporting it would rebuild on the client precisely the
-  // noise the server-side policy removes, and the synthetic message below is
-  // deliberately built to slip past the by-message filter that used to catch
-  // some of it.
-  if (origin === "user_server" || origin === "user_config") return false;
+  const origin = attributeChatFailure(normalized, meta);
+  // EXACTLY the server capture policy: `mcpjam` and nothing else. This path is
+  // high volume and mostly other people's infrastructure, and the synthetic
+  // message below is deliberately built to slip past the by-message filter
+  // that used to catch some of it — so anything looser here would rebuild on
+  // the client the noise the server-side policy removes.
+  if (origin !== "mcpjam") return false;
 
   const isRequestFailure = Boolean(meta && !meta.ok);
 

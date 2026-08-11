@@ -15,7 +15,7 @@ import { LOCAL_SERVER_ADDR } from "../../config";
 import "../../types/hono";
 import { getRequestLogger } from "../../utils/request-logger";
 import { classifyTunnelError } from "../../utils/error-classify";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const tunnels = new Hono();
 
@@ -132,7 +132,7 @@ tunnels.post("/rotate/:serverId", async (c) => {
 
   let full = false;
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     full = body?.full === true;
   } catch {}
 

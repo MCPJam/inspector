@@ -17,7 +17,7 @@ import type {
   SubscriptionStreamView,
 } from "@/shared/subscription-bridge.js";
 import { SUBSCRIPTION_BRIDGE_EVENT_LIMIT } from "@/shared/subscription-bridge.js";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 /**
  * `subscriptions.ts` — the LOCAL Inspector bridge for MCP 2026-07-28
@@ -386,7 +386,7 @@ subscriptions.get("/stream", async (c) => {
 
 subscriptions.post("/state", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
@@ -413,7 +413,7 @@ subscriptions.post("/state", async (c) => {
 subscriptions.post("/desired", async (c) => {
   let serverId: string | undefined;
   try {
-    const body = (await c.req.json()) as {
+    const body = (await readRequestJson(c)) as {
       serverId?: string;
       desired?: unknown;
     };
@@ -455,7 +455,7 @@ subscriptions.post("/desired", async (c) => {
 subscriptions.post("/cancel", async (c) => {
   let serverId: string | undefined;
   try {
-    const body = (await c.req.json()) as { serverId?: string };
+    const body = (await readRequestJson(c)) as { serverId?: string };
     serverId = body.serverId;
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);

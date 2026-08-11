@@ -5,7 +5,7 @@ import {
   type DeliveredRpcLogEvent,
 } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import {
   executeLocalServerConnect,
   parseLocalConnectRequestBody,
@@ -235,7 +235,7 @@ servers.delete("/:serverId", async (c) => {
 servers.post("/reconnect", async (c) => {
   let body: unknown;
   try {
-    body = await c.req.json();
+    body = await readRequestJson(c);
   } catch (error) {
     return c.json(
       {
