@@ -20,6 +20,7 @@ import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
 import {
   MCPClientManager,
+  describeError,
   type Harness,
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
@@ -1020,11 +1021,22 @@ export async function prepareChatV2(
     //
     // This call is not purely a network hop either — it also converts and
     // flattens the results into an AI SDK tool set, which is our code. A
-    // `TypeError` or `RangeError` here is a programming fault in that
-    // conversion, never a symptom of somebody's server being down, so it keeps
-    // the internal verdict. Everything else (transport failures, protocol
-    // errors, schema rejections from the server) is the user's hop.
-    if (error instanceof TypeError || error instanceof RangeError) {
+    // programming fault in that conversion is ours and keeps the internal
+    // verdict; everything else is the user's hop.
+    //
+    // The split is made by the CLASSIFIER, not by the error's constructor.
+    // `error instanceof TypeError` looks like it names a programming fault and
+    // does not: undici reports a dead HTTP server as `TypeError: fetch
+    // failed`, which the describer resolves to `transport/fetch_failed`. A
+    // type-based rule would hand every dead user server straight back to the
+    // internal boundary — the exact attribution this mark exists to prevent.
+    // Only a native error type the describer ALSO cannot place stays ours.
+    const isProgrammerFault =
+      (error instanceof TypeError ||
+        error instanceof RangeError ||
+        error instanceof ReferenceError) &&
+      describeError(error).slug === "internal/unknown";
+    if (isProgrammerFault) {
       throw error;
     }
     throw markUserServerHop(error);

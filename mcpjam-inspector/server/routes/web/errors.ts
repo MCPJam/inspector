@@ -244,6 +244,39 @@ function attachCause<T extends Error>(target: T, cause: unknown): T {
   return target;
 }
 
+/**
+ * A native error type that only a bug in OUR code produces.
+ *
+ * Closes the other half of the blindness this work exists to remove. A
+ * `TypeError` thrown by a hosted web handler is MCPJam's, but `describeError`
+ * resolves it to `internal/unknown` — i.e. `ambiguous` — and the strict
+ * capture policy declines it. Because `web.onError` converts the throw into a
+ * response instead of rethrowing, and this mapper stamps the error as decided,
+ * nothing downstream captures it either: a genuine bug on the whole
+ * `/api/web/*` surface reaches Sentry nowhere at all.
+ *
+ * A blanket `mcpjam_internal` on this mapper would be the wrong fix — it also
+ * handles every timeout and connection reset from a user's own MCP server,
+ * which land in `ambiguous` too and would flood the channel. So the boundary
+ * is declared only for the narrow case that cannot be anyone else's.
+ *
+ * The describer check is load-bearing, not belt-and-braces: undici reports a
+ * dead HTTP server as `TypeError: fetch failed`, so the constructor alone
+ * would hand somebody's unreachable server back as an MCPJam page.
+ */
+function isProgrammerFault(error: unknown): boolean {
+  if (
+    !(
+      error instanceof TypeError ||
+      error instanceof RangeError ||
+      error instanceof ReferenceError
+    )
+  ) {
+    return false;
+  }
+  return describeError(error).slug === "internal/unknown";
+}
+
 export function mapRuntimeError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) {
     // Backfill normalized on existing WebRouteErrors so onError forwarding
@@ -263,6 +296,7 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   attachCause(routeError, error);
   maybeCaptureOriginError(routeError, routeError.normalized, {
     source: "web.mapRuntimeError",
+    ...(isProgrammerFault(error) ? { boundary: "mcpjam_internal" as const } : {}),
     extra: { status: routeError.status, code: routeError.code },
   });
   // Stamp the ORIGINAL as well. The cause link above makes the original

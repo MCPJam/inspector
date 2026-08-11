@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+
+vi.mock("@sentry/node", () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
+import * as Sentry from "@sentry/node";
+const captureException = vi.mocked(Sentry.captureException);
+import { originOf } from "@mcpjam/sdk";
 import { InsufficientScopeError } from "@modelcontextprotocol/client";
 
 import {
@@ -164,6 +172,46 @@ describe("mapRuntimeError", () => {
         (s) => original.propertyIsEnumerable(s),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("internal-fault boundary", () => {
+  beforeEach(() => captureException.mockClear());
+
+  it("captures a genuine TypeError from a hosted web handler", () => {
+    // `web.onError` turns a throw into a response without rethrowing, and this
+    // mapper stamps the error as decided, so a real bug on the whole
+    // `/api/web/*` surface reached Sentry nowhere at all. The catalog cannot
+    // help here — it classifies this `ambiguous`, which the strict policy
+    // declines — so the boundary declaration is the only thing that captures it.
+    const mapped = mapRuntimeError(
+      new TypeError("Cannot read properties of undefined (reading 'id')"),
+    );
+
+    expect(originOf(mapped.normalized)).toBe("ambiguous");
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException.mock.calls[0]![1]).toMatchObject({
+      tags: expect.objectContaining({ error_origin: "mcpjam" }),
+    });
+  });
+
+  it("does NOT treat undici's fetch failure as our bug", () => {
+    // `TypeError: fetch failed` is how undici reports a dead HTTP server. A
+    // constructor-only rule would hand somebody's unreachable server back as
+    // an MCPJam page, which is the attribution this work removes.
+    const mapped = mapRuntimeError(new TypeError("fetch failed"));
+
+    expect(mapped.normalized?.slug).toBe("transport/fetch_failed");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("leaves an ordinary user-server failure uncaptured", () => {
+    // The mapper also handles every timeout and reset from somebody else's
+    // server. A blanket internal boundary here would flood the channel, which
+    // is why the declaration is narrowed to native programmer-fault types.
+    mapRuntimeError(new Error("Request timed out"));
+
+    expect(captureException).not.toHaveBeenCalled();
   });
 });
 
