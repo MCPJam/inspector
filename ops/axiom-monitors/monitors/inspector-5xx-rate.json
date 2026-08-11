@@ -1,0 +1,41 @@
+{
+  "key": "inspector-5xx-rate",
+  "name": "MCPJam Inspector 5xx rate (prod)",
+  "tier": "PAGE",
+  "owner": "marcelo",
+  "dataset": "inspector-logs",
+  "notifier": "mcpjam-alerts-page",
+  "monitor": {
+    "type": "Threshold",
+    "columnName": "Count",
+    "operator": "Above",
+    "threshold": 100,
+    "rangeMinutes": 60,
+    "intervalMinutes": 15,
+    "notifyByGroup": false,
+    "alertOnNoData": false,
+    "resolvable": true,
+    "notifyEveryRun": false
+  },
+  "aplQuery": [
+    "['inspector-logs']",
+    "| where _sysTime >= ago(60m)",
+    "| where event == 'http.request.failed'",
+    "| where tostring(environment) in ('prod','production')",
+    "| summarize Count = count()"
+  ],
+  "description": [
+    "PAGE — owner: marcelo. Inspector returned more than 100 5xx in one hour (prod).",
+    "",
+    "WHY THIS THRESHOLD: measured hourly 5xx over 630h is p50=8, p95=37, p99=65. 100/hr is ~1.5x p99, so normal traffic cannot reach it. The 2026-08-06 incident hit 3,705 in a single hour and nothing alerted; this monitor exists for that.",
+    "",
+    "SCOPE: 5xx only, deliberately. Including 4xx moves hourly p99 from 65 to 135 and would make this fire on ordinary traffic. 4xx storms are covered by 'MCPJam Inspector 4xx storm'. There is no route exclusion: pathological total volume is an operational symptom even when a user's server triggered it.",
+    "",
+    "TRIAGE:",
+    "1. Find the class. Run: ['inspector-logs'] | where _time > ago(2h) | where event == 'http.request.failed' | summarize n=count(), orgs=dcount(orgId), sample=any(errorMessage) by tostring(route), tostring(errorCode) | sort by n desc",
+    "2. Check concentration. Few orgs with huge per-org volume = an amplification loop on our side (see the 08-06 precedent). Many orgs, thin each = third-party servers are down and this is the product working; consider whether the threshold or a route needs revisiting rather than treating it as an outage.",
+    "3. Check deploy. Compare `release` on the failing rows against the previous hour. A version change at the boundary is your answer; roll back.",
+    "",
+    "ROLLBACK: node ops/axiom-monitors/apply.mjs --only inspector-5xx-rate after reverting the definition file, or disable in the Axiom UI. Do not raise the threshold to silence a real regression."
+  ]
+}
