@@ -10,6 +10,7 @@ import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
   buildOAuthRequest,
+  selectStoredResourceUrl,
   type BuiltOAuthRequest,
 } from "@/lib/oauth/oauth-request";
 import {
@@ -212,8 +213,21 @@ function buildReconnectOAuthOptions(
       serverName: server.name,
       serverUrl,
       scopes: profileScopes ?? oauthConfig.scopes,
-      resourceUrl:
-        nonEmptyString(profile?.resourceUrl) ?? oauthConfig.resourceUrl,
+      // A stored resource indicator belongs to the endpoint it was captured
+      // for. After a server URL edit the old value is stale: on a new origin it
+      // would block the reconnect, and on the same origin it would quietly mint
+      // a token for the wrong endpoint.
+      resourceUrl: selectStoredResourceUrl(serverUrl, [
+        {
+          resourceUrl: profile?.resourceUrl,
+          capturedForServerUrl: profile?.serverUrl,
+        },
+        {
+          resourceUrl: oauthConfig.resourceUrl,
+          capturedForServerUrl:
+            localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined,
+        },
+      ]),
       customHeaders:
         profileHeadersToRecord(profile?.customHeaders) ??
         normalizeHeaders((server.config as any)?.requestInit?.headers) ??

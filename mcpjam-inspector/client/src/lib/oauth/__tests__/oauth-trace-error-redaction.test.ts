@@ -65,6 +65,19 @@ describe("client-side OAuth trace error redaction (hosted)", () => {
     expect(trace.error).toBe("Bearer token is expired");
   });
 
+  it("passes an empty message through without throwing", async () => {
+    const { traceOAuthErrorMessage } = await import("../trace-redaction");
+    expect(traceOAuthErrorMessage("")).toBe("");
+
+    const { createOAuthTrace, failOAuthTraceStep } = await import(
+      "../oauth-trace"
+    );
+    const trace = createOAuthTrace({ source: "refresh" });
+    expect(() =>
+      failOAuthTraceStep(trace, "token_request", new Error("")),
+    ).not.toThrow();
+  });
+
   it("redacts credentials echoed into a proxy transport failure", async () => {
     const { traceOAuthErrorMessage } = await import("../trace-redaction");
 

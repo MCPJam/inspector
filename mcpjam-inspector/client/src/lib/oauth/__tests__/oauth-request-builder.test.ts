@@ -60,10 +60,9 @@ describe("buildOAuthRequest produces one shared shape for every intent", () => {
       const { buildOAuthRequest, pickSharedOAuthRequestFields } = await import(
         "../oauth-request"
       );
-      const { buildOAuthRequest: build2 } = await import("../oauth-request");
-
+      // The baseline every other connect-like intent must match.
       const reference = pickSharedOAuthRequestFields(
-        build2(STORED_SERVER, { intent: "connect" }),
+        buildOAuthRequest(STORED_SERVER, { intent: "connect" }),
       );
       const actual = pickSharedOAuthRequestFields(
         buildOAuthRequest(STORED_SERVER, { intent }),
@@ -124,6 +123,106 @@ describe("buildOAuthRequest produces one shared shape for every intent", () => {
     const reconnect = buildOAuthRequest(STORED_SERVER, { intent: "reconnect" });
     expect(reconnect.scopes).toEqual(["openid", "profile"]);
     expect(reconnect.resourceMetadataUrl).toBeUndefined();
+  });
+});
+
+describe("a stored resource indicator is discarded when it is stale", () => {
+  const PROFILE_RESOURCE = "https://mcp.example.com/mcp";
+
+  it("keeps a stored resource captured for this exact server URL", async () => {
+    const { selectStoredResourceUrl } = await import("../oauth-request");
+
+    expect(
+      selectStoredResourceUrl(SERVER_URL, [
+        {
+          resourceUrl: PROFILE_RESOURCE,
+          capturedForServerUrl: SERVER_URL,
+        },
+      ]),
+    ).toBe(PROFILE_RESOURCE);
+  });
+
+  // The loud half: after an edit to a new origin the stale value fails
+  // validation and would block a connection the user just asked for, blaming a
+  // resource they never configured.
+  it("discards a resource captured for a different origin", async () => {
+    const { selectStoredResourceUrl } = await import("../oauth-request");
+
+    expect(
+      selectStoredResourceUrl("https://new.example.com/mcp", [
+        {
+          resourceUrl: PROFILE_RESOURCE,
+          capturedForServerUrl: SERVER_URL,
+        },
+      ]),
+    ).toBeUndefined();
+  });
+
+  // The quiet half, and the worse one: same origin, different path. The stale
+  // value passes validation and is then minted as the audience for an endpoint
+  // it does not describe.
+  it("discards a resource captured for a different path on the same origin", async () => {
+    const { selectStoredResourceUrl } = await import("../oauth-request");
+
+    expect(
+      selectStoredResourceUrl("https://mcp.example.com/other", [
+        {
+          resourceUrl: PROFILE_RESOURCE,
+          capturedForServerUrl: SERVER_URL,
+        },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("tolerates cosmetic URL differences rather than treating them as a move", async () => {
+    const { selectStoredResourceUrl } = await import("../oauth-request");
+
+    expect(
+      selectStoredResourceUrl("https://MCP.example.com:443/mcp", [
+        {
+          resourceUrl: PROFILE_RESOURCE,
+          capturedForServerUrl: SERVER_URL,
+        },
+      ]),
+    ).toBe(PROFILE_RESOURCE);
+  });
+
+  it("falls through to the next candidate and ignores unprovenanced ones", async () => {
+    const { selectStoredResourceUrl } = await import("../oauth-request");
+
+    expect(
+      selectStoredResourceUrl(SERVER_URL, [
+        { resourceUrl: "https://stale.example.com/mcp", capturedForServerUrl: "https://old.example.com/mcp" },
+        { resourceUrl: PROFILE_RESOURCE, capturedForServerUrl: SERVER_URL },
+      ]),
+    ).toBe(PROFILE_RESOURCE);
+
+    // No provenance at all is not a licence to use it.
+    expect(
+      selectStoredResourceUrl(SERVER_URL, [{ resourceUrl: PROFILE_RESOURCE }]),
+    ).toBeUndefined();
+  });
+
+  // Staleness and misconfiguration are different: a foreign resource configured
+  // for the CURRENT server is still a rejection, not a silent discard.
+  it("still rejects a foreign resource configured for the current server", async () => {
+    const { buildOAuthRequest, selectStoredResourceUrl, OAuthRequestRejectedError } =
+      await import("../oauth-request");
+
+    const configured = selectStoredResourceUrl(SERVER_URL, [
+      {
+        resourceUrl: "https://attacker.example.com/mcp",
+        capturedForServerUrl: SERVER_URL,
+      },
+    ]);
+    expect(configured).toBe("https://attacker.example.com/mcp");
+
+    expect(() =>
+      buildOAuthRequest(
+        { ...STORED_SERVER, resourceUrl: configured },
+        { intent: "connect" },
+      ),
+    ).toThrow(OAuthRequestRejectedError);
   });
 });
 

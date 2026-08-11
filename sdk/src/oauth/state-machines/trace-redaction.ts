@@ -75,27 +75,77 @@ function normalizeSensitiveKey(key: string): string {
     .toLowerCase();
 }
 
+/**
+ * Names that DESCRIBE a credential capability rather than carry one.
+ *
+ * The heuristic below fires on any name containing a `token`/`secret`/`auth`
+ * segment, which is right for an unbounded name space and wrong for the OAuth
+ * metadata documents a trace exists to show: `token_endpoint`, `token_type`,
+ * `token_endpoint_auth_methods_supported`, `id_token_signing_alg_values_supported`.
+ * Redacting those would empty out the discovery view without protecting
+ * anything — none of them is a value an attacker can spend.
+ *
+ * Matched on the normalized name's suffix, because that is what separates "this
+ * IS the thing" from "this describes the thing".
+ */
+const DESCRIPTIVE_NAME_SUFFIXES = [
+  "_type",
+  "_types",
+  "_endpoint",
+  "_endpoints",
+  "_supported",
+  "_method",
+  "_methods",
+  "_uri",
+  "_uris",
+  "_url",
+  "_urls",
+  "_alg",
+  "_algs",
+  "_values",
+  "_in",
+];
+
+function isDescriptiveName(normalized: string): boolean {
+  return DESCRIPTIVE_NAME_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+/**
+ * The one name policy, shared by structured fields, headers, and query params.
+ *
+ * These used to disagree: headers and query parameters applied the
+ * `token|secret|password|credential|cookie|auth` heuristic and structured
+ * fields did not, so a response field named `session_token` was redacted in a
+ * URL and emitted raw in a JSON body. Where a value appears is not a property
+ * of how secret it is.
+ */
+function matchesSensitiveName(normalized: string): boolean {
+  if (OAUTH_TRACE_SENSITIVE_FIELD_NAMES.has(normalized)) {
+    return true;
+  }
+  if (isDescriptiveName(normalized)) {
+    return false;
+  }
+  return (
+    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(normalized) ||
+    /(^|_)api_?key(_|$)/.test(normalized)
+  );
+}
+
 export function isSensitiveTraceFieldName(key: string): boolean {
-  return OAUTH_TRACE_SENSITIVE_FIELD_NAMES.has(normalizeSensitiveKey(key));
+  return matchesSensitiveName(normalizeSensitiveKey(key));
 }
 
 export function isSensitiveHeaderName(key: string): boolean {
   const normalized = normalizeSensitiveKey(key);
   return (
-    OAUTH_TRACE_SENSITIVE_FIELD_NAMES.has(normalized) ||
-    SENSITIVE_HEADER_PATTERNS.some((pattern) => pattern.test(key)) ||
-    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(normalized) ||
-    /(^|_)api_?key(_|$)/.test(normalized)
+    matchesSensitiveName(normalized) ||
+    SENSITIVE_HEADER_PATTERNS.some((pattern) => pattern.test(key))
   );
 }
 
 export function isSensitiveQueryParamName(key: string): boolean {
-  const normalized = normalizeSensitiveKey(key);
-  return (
-    OAUTH_TRACE_SENSITIVE_FIELD_NAMES.has(normalized) ||
-    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(normalized) ||
-    /(^|_)api_?key(_|$)/.test(normalized)
-  );
+  return matchesSensitiveName(normalizeSensitiveKey(key));
 }
 
 /**
@@ -132,8 +182,29 @@ export function redactSensitiveTraceValue(value: unknown): string {
 const CREDENTIAL_PARAM_NAMES =
   "client_secret|access_token|refresh_token|id_token|code_verifier|code|assertion|password|api[-_]?key|token|secret|state";
 
-/** Final length of a redacted message. */
-const MAX_REPORTED = 500;
+/**
+ * Built once from the module-level literal above rather than per call. The
+ * alternations are static and unambiguous; constructing them on every
+ * projection was pure waste on a render path.
+ */
+const CREDENTIAL_QUERY_PARAM_RE = new RegExp(
+  `(^|[^\\w-])((?:[\\w-]*[_-])?(?:${CREDENTIAL_PARAM_NAMES}))=[^&\\s"'<>]+`,
+  "gi",
+);
+const CREDENTIAL_JSON_FIELD_NAME =
+  `(?:(?:[\\w-]*[_-])?(?:${CREDENTIAL_PARAM_NAMES}))`;
+const CREDENTIAL_JSON_FIELD_RE = new RegExp(
+  `("${CREDENTIAL_JSON_FIELD_NAME}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`,
+  "gi",
+);
+const CREDENTIAL_JSON_FIELD_UNTERMINATED_RE = new RegExp(
+  `("${CREDENTIAL_JSON_FIELD_NAME}"\\s*:\\s*)"(?:\\\\[\\s\\S]?|[^"\\\\])*$`,
+  "gi",
+);
+
+/** Default output length of a redacted message. Exported so a test can
+ * derive its boundary inputs instead of hardcoding a number derived from it. */
+export const MAX_REPORTED = 500;
 
 /**
  * How much raw input the redactors are allowed to scan.
@@ -143,10 +214,7 @@ const MAX_REPORTED = 500;
  * times on a render path. It is deliberately wider than `MAX_REPORTED` so the
  * redactors still see the context around anything that survives to the output.
  */
-const MAX_SCANNED = 4_000;
-
-const CREDENTIAL_JSON_FIELD_NAME =
-  `(?:(?:[\\w-]*[_-])?(?:${CREDENTIAL_PARAM_NAMES}))`;
+export const MAX_SCANNED = 4_000;
 
 /**
  * Names that can ONLY be a credential, so the value is redactable after a bare
@@ -188,9 +256,24 @@ const UNAMBIGUOUS_CREDENTIAL_NAMES =
  * human-readable string; an error message must never be reshaped into an
  * object.
  */
-export function sanitizeTraceErrorMessage(message: string): string {
-  const truncated = message.length > MAX_SCANNED;
-  const bounded = truncated ? message.slice(0, MAX_SCANNED) : message;
+export function sanitizeTraceErrorMessage(
+  message: string,
+  options: {
+    /**
+     * Output cap. Defaults to {@link MAX_REPORTED}, which suits one error
+     * message. A caller with a genuinely multi-line payload (a stack trace)
+     * raises it rather than redacting line by line — splitting first separates
+     * a JSON credential's key from its value and defeats rule 4.
+     */
+    maxLength?: number;
+    /** Scan cap. Raise alongside `maxLength`; see {@link MAX_SCANNED}. */
+    maxScanned?: number;
+  } = {},
+): string {
+  const maxScanned = options.maxScanned ?? MAX_SCANNED;
+  const maxReported = options.maxLength ?? MAX_REPORTED;
+  const truncated = message.length > maxScanned;
+  const bounded = truncated ? message.slice(0, maxScanned) : message;
 
   const redacted = bounded
     // 1a. scheme://user:pass@host. Greedy up to the LAST `@` of the
@@ -213,10 +296,11 @@ export function sanitizeTraceErrorMessage(message: string): string {
         `${name}${separator}${value.startsWith('"') ? '"[redacted]"' : "[redacted]"}`,
     )
     // 2. ?client_secret=… / &token=… / &state=…
-    .replace(
-      new RegExp(`\\b(${CREDENTIAL_PARAM_NAMES})=[^&\\s"'<>]+`, "gi"),
-      "$1=[redacted]",
-    )
+    //
+    // NOT `\b(name)=`: `_` is a word character, so there is no boundary inside
+    // `user_access_token=` and the value would stay raw. Match an optional
+    // vendor prefix instead, anchored on a genuine non-name character.
+    .replace(CREDENTIAL_QUERY_PARAM_RE, "$1$2=[redacted]")
     // 3a. An echoed `Authorization:` header — redact whatever follows.
     .replace(
       /\b((?:proxy-)?authorization\s*[:=]\s*)(bearer|basic)\s+\S+/gi,
@@ -240,13 +324,7 @@ export function sanitizeTraceErrorMessage(message: string): string {
     // 4. "client_secret": "…" — `(?:\\.|[^"\\])*` rather than `[^"]*`, or an
     // escaped quote inside the value ends the match early and leaves the
     // secret's tail in the report.
-    .replace(
-      new RegExp(
-        `("${CREDENTIAL_JSON_FIELD_NAME}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`,
-        "gi",
-      ),
-      '$1"[redacted]"',
-    );
+    .replace(CREDENTIAL_JSON_FIELD_RE, '$1"[redacted]"');
 
   // Patterns 1b/2/3 all match to end-of-string, so a value the cap cut in half
   // is still redacted. The JSON and scheme-userinfo forms need a closing
@@ -255,20 +333,14 @@ export function sanitizeTraceErrorMessage(message: string): string {
   // merely ends in a URL keeps its hostname.
   const tailGuarded = truncated
     ? redacted
-        .replace(
-          // Escape-aware like the terminated form above, or an unterminated
-          // value containing `\\"` stops the match at that quote and leaks its
-          // tail. `[\\s\\S]?` so a trailing backslash at the cut still matches.
-          new RegExp(
-            `("${CREDENTIAL_JSON_FIELD_NAME}"\\s*:\\s*)"(?:\\\\[\\s\\S]?|[^"\\\\])*$`,
-            "gi",
-          ),
-          '$1"[redacted]',
-        )
+        // Escape-aware like the terminated form above, or an unterminated
+        // value containing `\"` stops the match at that quote and leaks its
+        // tail.
+        .replace(CREDENTIAL_JSON_FIELD_UNTERMINATED_RE, '$1"[redacted]')
         .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*$/gi, "$1[redacted]")
     : redacted;
 
-  return tailGuarded.slice(0, MAX_REPORTED);
+  return tailGuarded.slice(0, maxReported);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,13 +427,21 @@ export function parseOAuthRequestFields(
  */
 function looksLikeRequestFields(fields: OAuthRequestFields): boolean {
   return Object.keys(fields).every(
-    (key) => key.length <= 64 && /^[A-Za-z0-9_.:\-[\]]+$/.test(key),
+    // No `:` — it is not legal in an OAuth parameter name, and allowing it lets
+    // `rejected:access_token=…` parse as one "field" whose key is in no
+    // sensitive set, losing the redaction the string path would have applied.
+    (key) => key.length <= 64 && /^[A-Za-z0-9_.\-[\]]+$/.test(key),
   );
 }
 
 export function sanitizeOAuthUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
+    // Userinfo round-trips through `toString()`, so the parse-SUCCESS branch
+    // has to strip it explicitly. Only the catch branch reaches
+    // `sanitizeTraceErrorMessage`, whose rule 1a covers it.
+    url.username = "";
+    url.password = "";
     for (const key of [...url.searchParams.keys()]) {
       if (isSensitiveQueryParamName(key)) {
         url.searchParams.set(key, "[redacted]");

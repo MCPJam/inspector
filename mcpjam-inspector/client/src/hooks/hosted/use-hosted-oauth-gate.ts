@@ -7,7 +7,11 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
+import {
+  getStoredTokens,
+  initiateOAuth,
+  OAUTH_PENDING_STORAGE_KEY,
+} from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
   buildOAuthRequest,
@@ -603,7 +607,7 @@ export function useHostedOAuthGate({
         );
       } catch (error) {
         clearHostedOAuthPendingState();
-        localStorage.removeItem("mcp-oauth-pending");
+        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem(pendingKey);
         setOAuthStateByServerId((previous) => ({
@@ -625,7 +629,7 @@ export function useHostedOAuthGate({
 
       if (!result.success) {
         clearHostedOAuthPendingState();
-        localStorage.removeItem("mcp-oauth-pending");
+        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem(pendingKey);
         setOAuthStateByServerId((previous) => ({
@@ -653,7 +657,7 @@ export function useHostedOAuthGate({
 
       if (accessToken) {
         clearHostedOAuthPendingState();
-        localStorage.removeItem("mcp-oauth-pending");
+        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem(pendingKey);
       }

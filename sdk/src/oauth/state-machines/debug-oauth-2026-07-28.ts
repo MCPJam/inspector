@@ -1574,20 +1574,17 @@ export const createDebugOAuthStateMachine = (
             //
             // The MCP client requirement is to VERIFY S256 support before
             // proceeding, so both shapes of failure — no advertised methods at
-            // all, and a list that omits S256 — have to stop the flow. Absent
-            // metadata throws here because there is nothing to show; a list
-            // without S256 is decided by `requiredMetadataEnforcement` below,
-            // so the debugger can still exercise a nonconforming server.
+            // all, and a list that omits S256 — stop the flow. BOTH go through
+            // the one enforcement branch below rather than one throwing here:
+            // the debugger's whole purpose is showing what a nonconforming
+            // server did, and "advertises no PKCE metadata" is precisely such a
+            // server. Connect still fails closed; only `"observe"` continues.
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
             const pkceNonConformance = describePkceMetadataNonConformance(
               supportedMethods,
               "2026-07-28",
             );
-
-            if (!supportedMethods || supportedMethods.length === 0) {
-              throw new Error(pkceNonConformance);
-            }
 
             // The response card already shows the complete metadata document.
             // Keep only the CIMD decision, which is derived from an absent-or-

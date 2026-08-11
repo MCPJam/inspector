@@ -21,6 +21,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockTrack = vi.fn();
 vi.mock("@/lib/analytics", () => ({ track: mockTrack }));
 
+// The whole point of retiring the legacy exchange is that this path redeems
+// NOTHING. Asserting only the error message would pass a regression that
+// re-added a token request and happened to reuse the same copy, so watch both
+// network seams directly.
+const mockAuthFetch = vi.fn(() => {
+  throw new Error("no request may be made on the no-session recovery path");
+});
+vi.mock("@/lib/session-token", () => ({ authFetch: mockAuthFetch }));
+
+const directFetch = vi.fn(() => {
+  throw new Error("no request may be made on the no-session recovery path");
+});
+window.fetch = directFetch as unknown as typeof fetch;
+
 /**
  * Every `mcp-*` key an OAuth flow writes for one server.
  *
@@ -99,6 +113,17 @@ describe("clearOAuthData owns the full per-server key list", () => {
   });
 });
 
+describe("the pending marker has one name", () => {
+  // Two modules read the marker with a literal rather than importing the
+  // constant (a module edge neither wants). This is the ratchet that makes a
+  // rename of OAUTH_PENDING_STORAGE_KEY fail here instead of silently leaving
+  // those readers pointed at a key nobody writes.
+  it("matches every literal reader", async () => {
+    const { OAUTH_PENDING_STORAGE_KEY } = await import("../mcp-oauth");
+    expect(OAUTH_PENDING_STORAGE_KEY).toBe("mcp-oauth-pending");
+  });
+});
+
 describe("callback with no stored flow session", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -128,6 +153,9 @@ describe("callback with no stored flow session", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/re-?authoriz/i);
+    // Directly, not by inference from the message.
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(directFetch).not.toHaveBeenCalled();
     // The pending marker is cleared so the dead-end cannot be retried forever.
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
@@ -146,17 +174,16 @@ describe("callback with no stored flow session", () => {
     );
   });
 
-  // The guard must not be reachable by an ordinary flow: initiation runs its
-  // own cleanup first, and must leave a session behind the marker it writes.
-  it("is unreachable after a normal initiation's own cleanup", async () => {
+  // Cleanup leaves no marker at all, so a stray callback afterwards cannot find
+  // a server name to half-recover from. (That initiation itself re-writes the
+  // marker with a session behind it is covered by the integration test.)
+  it("leaves no marker for a stray callback to find", async () => {
     const { clearOAuthData } = await import("../mcp-oauth");
 
     localStorage.setItem("mcp-oauth-pending", "delta");
     seedServer("delta");
     clearOAuthData("delta");
 
-    // After cleanup there is no marker at all, so a stray callback cannot find
-    // a server name to half-recover.
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
 });

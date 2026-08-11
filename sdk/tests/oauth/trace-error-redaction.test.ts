@@ -173,3 +173,27 @@ describe("sanitizeTraceErrorMessage", () => {
     );
   });
 });
+
+describe("credential names the word-boundary anchor used to miss", () => {
+  const SECRET = "ntn_supersecretvalue1234567890";
+
+  // `_` is a word character, so `\b(access_token)=` finds no boundary inside
+  // `user_access_token=` and the value stayed raw. Vendor-prefixed parameter
+  // names are common enough that this is not a hypothetical.
+  it.each([
+    "user_access_token",
+    "mcp-refresh_token",
+    "x_client_secret",
+    "app_state",
+  ])("redacts a vendor-prefixed %s", (name) => {
+    const out = sanitizeTraceErrorMessage(`rejected ${name}=${SECRET}`);
+    expect(out).not.toContain(SECRET);
+    expect(out).toContain("[redacted]");
+  });
+
+  it("still leaves an unrelated parameter alone", () => {
+    expect(
+      sanitizeTraceErrorMessage("failed with grant_type=authorization_code"),
+    ).toBe("failed with grant_type=authorization_code");
+  });
+});

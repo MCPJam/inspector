@@ -37,39 +37,46 @@ export type RequiredMetadataEnforcement =
   | "observe";
 
 /**
- * Eras whose authorization spec states that the protected-resource metadata
- * document MUST name at least one authorization server.
+ * Eras that PREDATE each requirement.
  *
- * 2025-03-26 predates the MCP profile's adoption of RFC 9728 entirely, so its
- * machine keeps the historical fallback.
+ * DENYLISTS, not allowlists. Naming the current eras positively reads more
+ * naturally and fails in the wrong direction: a 2027 era would match no
+ * literal, silently revert to warn-and-continue, and produce no compiler
+ * diagnostic to notice it by. For a fail-closed policy the default has to be
+ * "strict", so a new era is protected on the day it is added rather than on the
+ * day someone remembers this list.
+ *
+ * There are two of them because the two requirements entered the spec at
+ * different times. A single gate covering both would either miss an era that
+ * genuinely states one requirement or invent one for an era that is silent —
+ * and the first of those turns the version selector into a bypass.
  */
-const ERAS_REQUIRING_ADVERTISED_AUTHORIZATION_SERVERS: readonly string[] = [
-  "2025-06-18",
-  "2025-11-25",
-  "2026-07-28",
-];
 
 /**
- * Eras whose authorization spec requires the client to verify advertised PKCE
- * support before proceeding.
+ * 2025-03-26 predates the MCP profile's adoption of RFC 9728 entirely, so its
+ * machine keeps the historical fallback. 2025-06-18 onward states that the
+ * protected-resource metadata document MUST name at least one authorization
+ * server.
  */
-const ERAS_REQUIRING_ADVERTISED_S256: readonly string[] = [
-  "2025-11-25",
-  "2026-07-28",
-];
+const ERAS_BEFORE_REQUIRED_AUTHORIZATION_SERVERS = new Set(["2025-03-26"]);
+
+/**
+ * 2025-06-18 and earlier say nothing at all about
+ * `code_challenge_methods_supported`, so verifying advertised S256 support
+ * starts at 2025-11-25.
+ */
+const ERAS_BEFORE_REQUIRED_S256 = new Set(["2025-03-26", "2025-06-18"]);
 
 /** Whether `protocolVersion` requires the PRM to name an authorization server. */
 export function requiresAdvertisedAuthorizationServers(
   protocolVersion: string,
 ): boolean {
-  return ERAS_REQUIRING_ADVERTISED_AUTHORIZATION_SERVERS.includes(
-    protocolVersion,
-  );
+  return !ERAS_BEFORE_REQUIRED_AUTHORIZATION_SERVERS.has(protocolVersion);
 }
 
 /** Whether `protocolVersion` requires the AS to advertise S256 for PKCE. */
 export function requiresAdvertisedS256(protocolVersion: string): boolean {
-  return ERAS_REQUIRING_ADVERTISED_S256.includes(protocolVersion);
+  return !ERAS_BEFORE_REQUIRED_S256.has(protocolVersion);
 }
 
 /**
@@ -85,6 +92,11 @@ export function requiresAdvertisedS256(protocolVersion: string): boolean {
  * MUST-refuse only for metadata that omits `code_challenge_methods_supported`
  * altogether. Refusing a `plain`-only server is the right call, but it is a
  * downgrade refusal, not a conformance failure we can cite.
+ *
+ * Era scoping is THIS function's, not the caller's: it returns `undefined` for
+ * an era that never required S256, so every machine can call it and get its own
+ * era's policy. A caller-scoped gate is what lets a new era's machine silently
+ * omit the check.
  */
 export function describePkceMetadataNonConformance(
   supportedMethods: readonly string[] | undefined,
@@ -141,9 +153,12 @@ export function selectAuthorizationServerFromResourceMetadata(input: {
   fallbackServerUrl: string;
   protocolVersion: string;
 }): AuthorizationServerSelection {
-  const advertised = input.authorizationServers?.find(
-    (entry) => typeof entry === "string" && entry.trim() !== "",
-  );
+  // Trimmed, not the original: the emptiness test already trims, so a padded
+  // entry would otherwise pass the check and reach URL parsing with whitespace
+  // intact.
+  const advertised = input.authorizationServers
+    ?.find((entry) => typeof entry === "string" && entry.trim() !== "")
+    ?.trim();
 
   if (advertised) {
     return { authorizationServerUrl: advertised, substituted: false };

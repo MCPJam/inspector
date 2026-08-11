@@ -4,6 +4,7 @@
 
 import type { ResourceIndicatorDecision } from "../resource-policy.js";
 import type { OAuthEmulationConfig } from "../emulation/types.js";
+import type { RequiredMetadataEnforcement } from "./shared/required-metadata.js";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -343,7 +344,7 @@ export interface BaseOAuthStateMachineConfig {
    * Orthogonal to `strictConformance` (registration strictness) and to
    * `resourceIndicatorEnforcement` (the advertised resource indicator).
    */
-  requiredMetadataEnforcement?: "reject" | "observe";
+  requiredMetadataEnforcement?: RequiredMetadataEnforcement;
   strictConformance?: boolean;
   /**
    * Opt-in: accept authorization-server metadata whose advertised `issuer` is

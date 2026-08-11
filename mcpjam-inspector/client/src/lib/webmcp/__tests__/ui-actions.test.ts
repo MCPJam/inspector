@@ -94,6 +94,8 @@ describe("ui-actions (local mode)", () => {
     for (const tab of ["tracing", "skills", "tasks", "playground"]) {
       expect(targets).toContain(tab);
     }
+    // The Auth surface is retired; it must not come back as a nav target.
+    expect(targets).not.toContain("auth");
   });
 
   describe("navigateAction", () => {
