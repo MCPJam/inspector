@@ -339,6 +339,20 @@ export function UserTestingScenarioDetail({
     if (tab === "edit") setHasOpenedEdit(true);
   }, [tab]);
 
+  // The preview's remount discriminator, FROZEN while Edit is hidden. The
+  // frame must follow a rebind (same share link, different environment), but
+  // the Edit tree stays mounted-hidden off-tab — remounting there would
+  // silently start a fresh guest session nobody is looking at (a
+  // collaborator's rebind can land on any tab). Adjusted during render, not
+  // in an effect, so returning to Edit re-renders once with the fresh key
+  // and mounts a single frame instead of mount-then-remount.
+  const liveEnvironmentKey = chatbox.environmentId ?? "";
+  const [previewEnvironmentKey, setPreviewEnvironmentKey] =
+    useState(liveEnvironmentKey);
+  if (tab === "edit" && previewEnvironmentKey !== liveEnvironmentKey) {
+    setPreviewEnvironmentKey(liveEnvironmentKey);
+  }
+
   // The host config sets the preview iframe's `allow` ceiling. Waiting for it
   // is about FIDELITY, not enforcement: the attribute only takes effect at
   // mount and its no-config default is permissive, so mounting early would
@@ -517,6 +531,13 @@ export function UserTestingScenarioDetail({
                       <ChatboxPreviewPane
                         publishLink={environmentError ? null : publishLink}
                         mcpProfile={previewHost?.config.mcpProfile}
+                        // A rebind repoints this scenario at a different
+                        // environment without touching the share link, so the
+                        // frame would keep testing the pre-rebind setup.
+                        // Follows `chatbox.environmentId` (reactive) while
+                        // Edit is visible; frozen off-tab — see the state
+                        // above.
+                        remountKey={previewEnvironmentKey}
                         emptyTitle={
                           environmentError
                             ? "This scenario can't be previewed"

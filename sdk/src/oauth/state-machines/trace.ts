@@ -208,6 +208,29 @@ function sanitizeOAuthUrl(rawUrl: string): string {
   }
 }
 
+/**
+ * Redact credential-shaped substrings from a free-form error message.
+ *
+ * Error strings interpolate upstream response fields — e.g.
+ * `Token request failed: ${body.error} - ${body.error_description}` — so an
+ * authorization server that echoes a credential back in `error_description`
+ * would otherwise land it verbatim in rendered trace output.
+ *
+ * Unlike `sanitizeOAuthTraceString`, this never re-shapes the value into an
+ * object: an error message must stay a human-readable string. The key list is
+ * kept identical to that function's so redaction behaves predictably across
+ * both paths.
+ */
+function sanitizeTraceErrorMessage(message: string): string {
+  return message
+    .replace(
+      /\b(access_token|refresh_token|id_token|client_secret|code_verifier)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
+      (_match, key: string, separator: string) =>
+        `${key}${separator}[redacted]`,
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]");
+}
+
 function sanitizeOAuthTraceString(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -308,6 +331,11 @@ function sanitizeHttpHistoryEntry(entry: HttpHistoryEntry): HttpHistoryEntry {
       ? {
           error: {
             ...entry.error,
+            // `message` is free-form and interpolates upstream fields, so it
+            // needs redacting just as much as `details` does.
+            ...(entry.error.message
+              ? { message: sanitizeTraceErrorMessage(entry.error.message) }
+              : {}),
             details: sanitizeOAuthTraceValue(entry.error.details),
           },
         }
@@ -531,7 +559,13 @@ export function projectOAuthTraceSnapshot(input: {
     httpHistory: (state.httpHistory ?? []).map((entry) =>
       sanitizeTraces ? sanitizeHttpHistoryEntry(entry) : cloneHttpHistoryEntry(entry),
     ),
-    ...(state.error ? { error: state.error } : {}),
+    ...(state.error
+      ? {
+          error: sanitizeTraces
+            ? sanitizeTraceErrorMessage(state.error)
+            : state.error,
+        }
+      : {}),
   };
 
   const currentStepIndex = getStepIndex(state.currentStep);
@@ -555,7 +589,9 @@ export function projectOAuthTraceSnapshot(input: {
     }
     const entryError = inferHttpHistoryEntryError(entry);
     if (entryError) {
-      record.error = entryError;
+      record.error = sanitizeTraces
+        ? sanitizeTraceErrorMessage(entryError)
+        : entryError;
     }
   }
 
@@ -574,7 +610,9 @@ export function projectOAuthTraceSnapshot(input: {
       record.details = logData as Record<string, unknown>;
     }
     if (log.error?.message) {
-      record.error = log.error.message;
+      record.error = sanitizeTraces
+        ? sanitizeTraceErrorMessage(log.error.message)
+        : log.error.message;
     }
   }
 
@@ -673,7 +711,9 @@ export function projectOAuthTraceSnapshot(input: {
     inferStepEntry(entries, context, state.currentStep, true, undefined, sanitizeTraces);
     const currentEntry = entries.get(state.currentStep);
     if (currentEntry) {
-      currentEntry.error = state.error;
+      currentEntry.error = sanitizeTraces
+        ? sanitizeTraceErrorMessage(state.error)
+        : state.error;
     }
   }
 

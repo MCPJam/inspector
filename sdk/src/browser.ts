@@ -35,11 +35,14 @@ export {
   describeError,
   describeAsSlug,
   isNormalizedError,
+  originOf,
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,
 } from "./error-describer/index.js";
 export type {
+  DescribeContext,
+  ErrorOrigin,
   NormalizedError,
   ErrorCatalogEntry,
   ErrorCatalogSlug,
@@ -456,6 +459,7 @@ export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
 

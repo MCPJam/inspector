@@ -21,6 +21,7 @@ import {
 import {
   ERROR_CATALOG,
   type ErrorCatalogEntry,
+  type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
 
@@ -233,6 +234,23 @@ function messageSlug(message: string): string | undefined {
   const lower = message.toLowerCase();
   if (/\bsocket\s+hang\s+up\b/i.test(message)) {
     return "transport/socket_hang_up";
+  }
+  // An errno spelled out in the text beats every generic phrase below. undici
+  // reports connection failures as `TypeError: fetch failed` and appends the
+  // real reason ("... : connect ECONNREFUSED 127.0.0.1:9999"), so matching
+  // `fetch failed` first threw away the only actionable half of the message —
+  // "we couldn't reach it" instead of "nothing is listening on that port".
+  // Every candidate token is checked, not just the first. These messages are
+  // concatenations — a combined transport failure quotes both attempts, and
+  // words like `ERROR` tokenize the same way — so stopping at the first
+  // unmapped match would step over the `ECONNREFUSED` further along.
+  for (const match of message.matchAll(
+    /\b(E[A-Z]{2,}(?:_[A-Z]+)*|UND_ERR_[A-Z_]+)\b/g,
+  )) {
+    const errnoSlug = nodeErrnoToSlug(match[1]);
+    if (errnoSlug) {
+      return errnoSlug;
+    }
   }
   if (/\bfetch\s+failed\b/i.test(message)) {
     return "transport/fetch_failed";
@@ -451,15 +469,86 @@ function resolveSlug(error: unknown): {
   return { slug: "internal/unknown" };
 }
 
-export function describeError(error: unknown): NormalizedError {
+/**
+ * Slugs whose default `user_config` origin rests on an assumption the wire
+ * cannot check: that the credential belongs to the user. When MCPJam holds it
+ * — a managed provider key, a hosted OAuth token it stored and refreshes —
+ * the same failure is MCPJam's to fix, and silently filing it under the user
+ * would hide an outage we are responsible for.
+ */
+const CREDENTIAL_OWNED_SLUGS: ReadonlySet<string> = new Set([
+  "auth/http_401",
+  "auth/http_403",
+  "auth/missing_bearer",
+  "auth/oauth_refresh_failed",
+  "oauth/invalid_client",
+  "oauth/invalid_grant",
+  "provider/auth_error",
+  "provider/quota",
+]);
+
+export type DescribeContext = {
+  /**
+   * Who owns the credential this request used. Omit when unknown; only
+   * `"mcpjam"` changes anything, so callers on hosted paths that refresh
+   * their own tokens or bill their own provider keys must pass it.
+   */
+  credentialOwner?: "user" | "mcpjam";
+};
+
+/**
+ * Read an origin off a normalized error, defaulting a missing value to
+ * `ambiguous`. Always use this rather than touching `.origin` directly:
+ * payloads cross versions (an older server's normalized error has no origin
+ * at all), and `ambiguous` is the safe reading — visible, but not paging.
+ */
+const VALID_ERROR_ORIGINS: ReadonlySet<ErrorOrigin> = new Set([
+  "user_server",
+  "user_config",
+  "mcpjam",
+  "ambiguous",
+]);
+
+function isErrorOrigin(value: unknown): value is ErrorOrigin {
+  return (
+    typeof value === "string" &&
+    VALID_ERROR_ORIGINS.has(value as ErrorOrigin)
+  );
+}
+
+export function originOf(
+  value: { origin?: unknown } | null | undefined,
+): ErrorOrigin {
+  const origin = value?.origin;
+  return isErrorOrigin(origin) ? origin : "ambiguous";
+}
+
+function applyOriginContext(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  context: DescribeContext | undefined,
+): ErrorCatalogEntry {
+  if (
+    context?.credentialOwner === "mcpjam" &&
+    CREDENTIAL_OWNED_SLUGS.has(slug)
+  ) {
+    return { ...entry, origin: "mcpjam" };
+  }
+  return entry;
+}
+
+export function describeError(
+  error: unknown,
+  context?: DescribeContext,
+): NormalizedError {
   // Crash-safe: every branch is wrapped so the describer never throws.
   try {
     const rawMessage = redactString(getErrorMessage(error));
     const { slug, rawCode } = resolveSlug(error);
-    const entry = maybePromoteRawMessage(
-      lookupCatalog(slug),
+    const entry = applyOriginContext(
+      maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
       slug,
-      rawMessage,
+      context,
     );
     const cause = captureCause(error);
     return {
@@ -489,9 +578,10 @@ export function describeError(error: unknown): NormalizedError {
 export function describeAsSlug(
   slug: string,
   error?: unknown,
+  context?: DescribeContext,
 ): NormalizedError {
   try {
-    const entry = lookupCatalog(slug);
+    const entry = applyOriginContext(lookupCatalog(slug), slug, context);
     const rawMessage =
       error !== undefined ? redactString(getErrorMessage(error)) : "";
     const cause = captureCause(error);

@@ -183,6 +183,7 @@ export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
   type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
 
@@ -212,10 +213,12 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  extractInsufficientScopeChallenge,
   unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
+export type { InsufficientScopeChallenge } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,
@@ -688,11 +691,14 @@ export {
   describeError,
   describeAsSlug,
   isNormalizedError,
+  originOf,
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,
 } from "./error-describer/index.js";
 export type {
+  DescribeContext,
+  ErrorOrigin,
   NormalizedError,
   ErrorCatalogEntry,
   ErrorCatalogSlug,
