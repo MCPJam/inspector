@@ -145,6 +145,9 @@ const MAX_REPORTED = 500;
  */
 const MAX_SCANNED = 4_000;
 
+const CREDENTIAL_JSON_FIELD_NAME =
+  `(?:(?:[\\w-]*[_-])?(?:${CREDENTIAL_PARAM_NAMES}))`;
+
 /**
  * Redact credential-shaped substrings from a free-form error message.
  *
@@ -203,7 +206,7 @@ export function sanitizeTraceErrorMessage(message: string): string {
     // secret's tail in the report.
     .replace(
       new RegExp(
-        `("(?:${CREDENTIAL_PARAM_NAMES})"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`,
+        `("${CREDENTIAL_JSON_FIELD_NAME}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`,
         "gi",
       ),
       '$1"[redacted]"',
@@ -221,7 +224,7 @@ export function sanitizeTraceErrorMessage(message: string): string {
           // value containing `\\"` stops the match at that quote and leaks its
           // tail. `[\\s\\S]?` so a trailing backslash at the cut still matches.
           new RegExp(
-            `("(?:${CREDENTIAL_PARAM_NAMES})"\\s*:\\s*)"(?:\\\\[\\s\\S]?|[^"\\\\])*$`,
+            `("${CREDENTIAL_JSON_FIELD_NAME}"\\s*:\\s*)"(?:\\\\[\\s\\S]?|[^"\\\\])*$`,
             "gi",
           ),
           '$1"[redacted]',

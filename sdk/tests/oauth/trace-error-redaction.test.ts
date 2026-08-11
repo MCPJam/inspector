@@ -62,6 +62,15 @@ describe("sanitizeTraceErrorMessage", () => {
     expect(out).toContain("https://a.test");
   });
 
+  it("redacts vendor-prefixed JSON credential fields", () => {
+    const out = sanitizeTraceErrorMessage(
+      '{"user_access_token":"vendor-secret","error":"invalid_token"}',
+    );
+    expect(out).not.toContain("vendor-secret");
+    expect(out).toContain('"user_access_token":"[redacted]"');
+    expect(out).toContain('"error":"invalid_token"');
+  });
+
   it("keeps an escaped quote inside a JSON credential value redacted", () => {
     // `[^"]*` would treat the escaped quote as the end of the string and
     // leave the secret's tail in the report.
