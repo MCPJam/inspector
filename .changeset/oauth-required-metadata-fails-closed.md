@@ -1,5 +1,5 @@
 ---
-"@mcpjam/sdk": minor
+"@mcpjam/sdk": major
 "@mcpjam/inspector": patch
 ---
 
