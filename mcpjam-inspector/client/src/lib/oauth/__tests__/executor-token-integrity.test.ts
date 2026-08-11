@@ -62,6 +62,15 @@ vi.mock("@mcpjam/sdk/browser", async () => {
 const ACCESS_TOKEN = "ntn_supersecretaccesstokenvalue1234567890";
 const REFRESH_TOKEN = "rt_supersecretrefreshtokenvalue0987654321";
 
+/**
+ * The direct (non-proxied) leg of the interceptor. mcp-oauth captures
+ * `const originalFetch = window.fetch` at module load, so this has to be
+ * installed before the module's first dynamic import — reassigning
+ * `window.fetch` from inside a test would be too late to be observed.
+ */
+const directFetch = vi.fn();
+window.fetch = directFetch as unknown as typeof fetch;
+
 /** Runs initiateOAuth far enough to capture the executor it builds. */
 async function captureRequestExecutor() {
   mockRegisterClient.mockResolvedValue({ client_id: "test-client-id" });
@@ -178,6 +187,48 @@ describe("OAuth request executor token integrity", () => {
       "cs_supersecretclientsecretvalue1234567890"
     );
     expect(String(body.client_secret)).not.toContain("[redacted]");
+  });
+
+  // The other changed site. When the direct fetch throws and the request
+  // targets the configured server URL, the executor retries through
+  // executeRequestViaProxy — a separate return path that also used to redact.
+  it("returns proxy-fallback responses verbatim in hosted mode", async () => {
+    const requestExecutor = await captureRequestExecutor();
+
+    // Force the direct attempt to fail so the executor takes the catch branch.
+    directFetch.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    mockAuthFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 200,
+          statusText: "OK",
+          headers: { "content-type": "application/json" },
+          body: {
+            access_token: ACCESS_TOKEN,
+            refresh_token: REFRESH_TOKEN,
+            token_type: "Bearer",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+
+    // Must equal the executor's serverUrl, or shouldRetryMcpRequestViaProxy
+    // declines the retry and the throw propagates instead.
+    const result = await requestExecutor({
+      url: "https://mcp.example.com/mcp",
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: { jsonrpc: "2.0", id: 1, method: "initialize" },
+    });
+
+    const body = result.body as Record<string, unknown>;
+    expect(body.access_token).toBe(ACCESS_TOKEN);
+    expect(body.refresh_token).toBe(REFRESH_TOKEN);
+    expect(String(body.access_token)).not.toContain("[redacted]");
+    expect(directFetch).toHaveBeenCalled();
+    expect(mockAuthFetch).toHaveBeenCalled();
   });
 
   // The counterpart invariant: because the executor no longer redacts, the
