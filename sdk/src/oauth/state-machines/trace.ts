@@ -552,6 +552,18 @@ export function projectOAuthTraceSnapshot(input: {
   sanitize?: boolean;
 }): OAuthTraceSnapshot {
   const { state, context, sanitize: sanitizeTraces = true } = input;
+
+  // The single projection of `state.error`. Every consumer below reads this
+  // variable rather than `state.error`, so there is exactly one place where the
+  // raw value crosses into display output and exactly one place to keep in sync
+  // with the redaction policy. (A previous fix patched one of two fallback
+  // branches and the other kept emitting the raw string.)
+  const projectedStateError = state.error
+    ? sanitizeTraces
+      ? sanitizeTraceErrorMessage(state.error)
+      : state.error
+    : undefined;
+
   const trace: OAuthTraceSnapshot = {
     version: 1,
     currentStep: state.currentStep,
@@ -559,13 +571,7 @@ export function projectOAuthTraceSnapshot(input: {
     httpHistory: (state.httpHistory ?? []).map((entry) =>
       sanitizeTraces ? sanitizeHttpHistoryEntry(entry) : cloneHttpHistoryEntry(entry),
     ),
-    ...(state.error
-      ? {
-          error: sanitizeTraces
-            ? sanitizeTraceErrorMessage(state.error)
-            : state.error,
-        }
-      : {}),
+    ...(projectedStateError ? { error: projectedStateError } : {}),
   };
 
   const currentStepIndex = getStepIndex(state.currentStep);
@@ -711,9 +717,7 @@ export function projectOAuthTraceSnapshot(input: {
     inferStepEntry(entries, context, state.currentStep, true, undefined, sanitizeTraces);
     const currentEntry = entries.get(state.currentStep);
     if (currentEntry) {
-      currentEntry.error = sanitizeTraces
-        ? sanitizeTraceErrorMessage(state.error)
-        : state.error;
+      currentEntry.error = projectedStateError;
     }
   }
 
@@ -729,7 +733,8 @@ export function projectOAuthTraceSnapshot(input: {
         entry.step === state.currentStep &&
         Boolean(state.error) &&
         !usesRecoveredDynamicClientRegistrationFallback(state);
-      const error = entry.error ?? (usesStateError ? state.error : undefined);
+      const error =
+        entry.error ?? (usesStateError ? projectedStateError : undefined);
       const status =
         entry.recovered
           ? "success"
