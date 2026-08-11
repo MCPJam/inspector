@@ -19,6 +19,7 @@ import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel"
 import { InsightsStatline } from "@/components/shared/usage-insights/InsightsStatline";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -335,13 +336,20 @@ export function InsightsWorkbench({
         checksExtras={checksExtras}
         trailing={
           <>
-            <InsightsFreshnessChip
-              scope={scope}
-              latestRun={breakdown?.latestRun}
-              onRebuild={handleRebuild}
-              rebuildBusy={rebuildBusy}
-              testId={`${testIdPrefix}-freshness-chip`}
-            />
+            {/* The chip reads `getWindowSignals` for its staleness watermark,
+                and that query ships with the backend PR — `useQuery` against an
+                undeployed function THROWS, which without this boundary would
+                take the whole Insights tab down rather than one chip. Same
+                reason the findings rail is wrapped at its mount. */}
+            <ErrorBoundary fallback={null}>
+              <InsightsFreshnessChip
+                scope={scope}
+                latestRun={breakdown?.latestRun}
+                onRebuild={handleRebuild}
+                rebuildBusy={rebuildBusy}
+                testId={`${testIdPrefix}-freshness-chip`}
+              />
+            </ErrorBoundary>
             {viewToggle}
           </>
         }

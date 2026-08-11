@@ -117,14 +117,17 @@ function classifyRunInsightError(err: unknown): {
   }
   // Requesting spends, so it is member-gated while viewing is not. A guest
   // hitting it is a normal outcome on a guest-visible surface, not a broken
-  // backend.
+  // backend — and NOT `permanent`, which the caller latches to mean "this
+  // deployment does not have the feature". Who is asking can change within a
+  // session; what is deployed cannot. The caller already suppresses
+  // auto-request for guests through `canRequest`, so nothing needs the latch.
   if (
     raw.includes("Insufficient workspace permissions") ||
     raw.includes("Not a member of this workspace")
   ) {
     return {
       unavailable: false,
-      permanent: true,
+      permanent: false,
       message: "Ask a workspace member to generate insights.",
     };
   }

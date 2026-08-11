@@ -22,8 +22,8 @@ import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
 import {
   parseSelectionParam,
   serializeSelectionParam,
-  type ThemeRef,
 } from "@/hooks/chatbox-usage-filters";
+import type { InsightsView } from "@/hooks/useInsightsFlowController";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ChatboxPreviewPane } from "@/components/chatboxes/ChatboxPreviewPane";
@@ -329,9 +329,13 @@ export function UserTestingScenarioDetail({
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;
   // Insights selection + which diagram it was made on, so a copied link
-  // reopens exactly what the sender was looking at.
+  // reopens exactly what the sender was looking at. The view is NORMALIZED
+  // here rather than forwarded raw: an unrecognized value renders as flow
+  // anyway, and passing it on would re-persist a typo into every subsequent
+  // navigation instead of dropping it on the first one.
   const selParam = searchParams.get("sel");
-  const viewParam = searchParams.get("view");
+  const view: InsightsView =
+    searchParams.get("view") === "clusters" ? "clusters" : "flow";
   const urlSelection = useMemo(
     () => parseSelectionParam(selParam),
     [selParam],
@@ -409,7 +413,7 @@ export function UserTestingScenarioDetail({
         tab: next,
         session: sessionParam ?? undefined,
         sel: selParam ?? undefined,
-        view: viewParam ?? undefined,
+        view,
       }),
       { replace: true },
     );
@@ -613,22 +617,20 @@ export function UserTestingScenarioDetail({
                   buildUserTestingScenarioPath(chatbox.chatboxId, {
                     tab: "insights",
                     session: sessionParam ?? undefined,
-                    sel: themes
-                      ? serializeSelectionParam(themes as ThemeRef[])
-                      : undefined,
-                    view: viewParam ?? undefined,
+                    sel: themes ? serializeSelectionParam(themes) : undefined,
+                    view,
                   }),
                   { replace: true },
                 );
               }}
-              initialView={viewParam === "clusters" ? "clusters" : "flow"}
-              onViewChange={(view) => {
+              initialView={view}
+              onViewChange={(nextView) => {
                 navigate(
                   buildUserTestingScenarioPath(chatbox.chatboxId, {
                     tab: "insights",
                     session: sessionParam ?? undefined,
                     sel: selParam ?? undefined,
-                    view,
+                    view: nextView,
                   }),
                   { replace: true },
                 );

@@ -66,7 +66,10 @@ export function InsightsFreshnessChip({
     : running
       ? "Analyzing…"
       : builtAt
-        ? `Built ${formatDistanceToNow(builtAt)} ago`
+        ? // `addSuffix` rather than a literal "ago": a backend clock slightly
+          // ahead of the viewer's would otherwise render a future timestamp as
+          // "Built 5 minutes ago".
+          `Built ${formatDistanceToNow(builtAt, { addSuffix: true })}`
         : "Not analyzed";
 
   return (

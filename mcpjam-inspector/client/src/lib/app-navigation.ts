@@ -14,6 +14,7 @@ import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
+import type { InsightsView } from "@/hooks/useInsightsFlowController";
 
 /**
  * Every organization settings section.
@@ -139,8 +140,8 @@ const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
  * built with one. `session` opens straight into one tester session, which is
  * what a copied session link carries; `sel` and `view` carry an Insights
  * selection and which diagram it was made on, so a link to "this cluster, in
- * the flow view" reopens exactly that — the same shape `buildSwarmPath`
- * already supports.
+ * the flow view" reopens exactly that. `buildSwarmPath` carries `sel` in the
+ * same shape but not `view` — Swarms always reopens on the flow diagram.
  */
 export function buildUserTestingScenarioPath(
   scenarioId: string,
@@ -148,7 +149,8 @@ export function buildUserTestingScenarioPath(
     tab?: UserTestingDetailTab;
     session?: string;
     sel?: string;
-    view?: string;
+    /** Typed like `tab`, so an unknown view cannot be minted into a link. */
+    view?: InsightsView;
   } = {}
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;

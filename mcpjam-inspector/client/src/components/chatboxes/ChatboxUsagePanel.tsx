@@ -4,8 +4,8 @@ import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   compareThreadsForUsageList,
   threadMatchesFilterState,
+  EMPTY_USAGE_FILTER,
 } from "@/hooks/chatbox-usage-filters";
-import { useInsightsFlowController } from "@/hooks/useInsightsFlowController";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
 import {
@@ -40,6 +40,15 @@ interface ChatboxUsagePanelProps {
  * `InsightsWorkbench` directly, which is also what Swarms does, so the two
  * surfaces share one body instead of two divergent copies of it.
  */
+/**
+ * The scenario's traffic policy, fixed. With Insights on its own mount there
+ * is no filter UI left here — no chips, no diagram, no view toggle — so the
+ * only chip in play is the force-applied hide-synthetic one, and a whole flow
+ * controller (view state, selection, chip ownership, a window keydown
+ * listener) would be carried for nothing.
+ */
+const SESSIONS_FILTER = withHideSynthetic(EMPTY_USAGE_FILTER);
+
 export function ChatboxUsagePanel({
   chatbox,
   initialThreadId,
@@ -67,16 +76,10 @@ export function ChatboxUsagePanel({
     [chatbox.chatboxId],
   );
 
-  const cohortKey = chatbox.chatboxId;
-  const flow = useInsightsFlowController({
-    cohortKey,
-    augmentFilter: withHideSynthetic,
-  });
-
   const { threads } = useUsageInsights({
     sourceType: "chatbox",
     sourceId: chatbox.chatboxId,
-    filters: flow.breakdownFilter,
+    filters: SESSIONS_FILTER,
     // Sessions only: the breakdown backs Insights, which is a different mount
     // now, so subscribing to it here would scan for a view nobody is looking
     // at. (The thread-list query takes no filters — `filters` above only ever
@@ -91,9 +94,9 @@ export function ChatboxUsagePanel({
   const sortedThreads = useMemo(() => {
     if (!threads) return undefined;
     return threads
-      .filter((t) => threadMatchesFilterState(t, flow.effectiveFilter))
+      .filter((t) => threadMatchesFilterState(t, SESSIONS_FILTER))
       .sort(compareThreadsForUsageList);
-  }, [threads, flow.effectiveFilter]);
+  }, [threads]);
 
   // Reset thread selection only on chatbox *switches*. Guarded by comparing
   // against the previous chatboxId so StrictMode's dev replay does not wipe a
@@ -161,7 +164,7 @@ export function ChatboxUsagePanel({
                   threads={sortedThreads}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={setSelectedThreadId}
-                  filterState={flow.effectiveFilter}
+                  filterState={SESSIONS_FILTER}
                 />
               </div>
             </div>
@@ -188,7 +191,7 @@ export function ChatboxUsagePanel({
                     <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
                     <p className="text-sm text-muted-foreground">
                       {sortedThreads && sortedThreads.length === 0
-                        ? "No sessions match this filter"
+                        ? "No sessions yet"
                         : "Select a conversation to view"}
                     </p>
                   </div>

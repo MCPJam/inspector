@@ -333,12 +333,22 @@ export function SwarmRunDetail({
                     />
                   ) : null
                 }
+                // A wave analyzed before the topic map existed backfills
+                // silently on first Clusters view, as it did before the
+                // workbench. The server mutation dedupes in-flight runs.
+                autoBackfillTopicMap
                 emptyState={
-                  // Swarms are sign-in-only, unlike User Testing: with no
-                  // project there is nothing to scope insights to. The copy
-                  // belongs to this surface, not to the shared workbench.
+                  // The workbench routes BOTH "nothing to scope to" and "no
+                  // sessions" here, and on this surface those are different
+                  // sentences: Swarms is sign-in-only, unlike User Testing, so
+                  // a signed-out viewer has no project — but a signed-in one
+                  // whose wave produced nothing analyzable must not be told to
+                  // sign in. The copy belongs to this surface, not the shared
+                  // workbench, which is why it arrives as a prop.
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Sign in to view swarm insights.
+                    {projectId
+                      ? "No sessions in this swarm run yet."
+                      : "Sign in to view swarm insights."}
                   </div>
                 }
                 testIdPrefix="swarm-insights"

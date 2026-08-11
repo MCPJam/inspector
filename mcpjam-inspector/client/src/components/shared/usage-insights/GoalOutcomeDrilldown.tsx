@@ -30,7 +30,7 @@ type DrilldownRow = {
   lastActivityAt: number;
 };
 
-interface ChatboxGoalOutcomeDrilldownProps {
+interface GoalOutcomeDrilldownProps {
   /** Which surface's sessions to page: a chatbox or a project's swarm. */
   scope: InsightsScope;
   /** The open flow selection, or null when nothing is selected. */
@@ -139,7 +139,7 @@ export function GoalOutcomeDrilldown({
   onOpenSession,
   variant = "inline",
   footer,
-}: ChatboxGoalOutcomeDrilldownProps) {
+}: GoalOutcomeDrilldownProps) {
   const open = selection !== null && !isEmptySelection(selection);
   const requestKey = requestKeyOf(scope, open ? selection : null, filter);
 

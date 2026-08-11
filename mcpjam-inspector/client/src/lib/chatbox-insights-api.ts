@@ -50,7 +50,7 @@ export const CHATBOX_INSIGHTS_MUTATIONS = {
 /**
  * Detector ids the chatbox miner emits. Three have no swarm equivalent —
  * there is no feedback, no terminal-error facet, and no visitor cohort in a
- * swarm wave — and three are shared with it.
+ * swarm wave — and four are shared with it.
  */
 export type ChatboxDetectorId =
   | "tool_errors"
