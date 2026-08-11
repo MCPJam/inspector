@@ -15,6 +15,8 @@ export interface LoadedInspectorEnv {
 export interface InspectorClientRuntimeConfig {
   convexUrl?: string;
   convexSiteUrl?: string;
+  workosClientId?: string;
+  workosApiHostname?: string;
 }
 
 function getInspectorEnvMode(): InspectorEnvMode {
@@ -116,6 +118,11 @@ function replaceConvexHostnameSuffix(
   }
 }
 
+function getNonEmptyEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig {
   const convexSiteUrl =
     normalizeUrlOrigin(process.env.CONVEX_HTTP_URL) ??
@@ -132,15 +139,39 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
       ".convex.cloud",
     ) ?? normalizeUrlOrigin(process.env.VITE_CONVEX_URL);
 
+  // WorkOS client config is served at runtime rather than inlined by Vite.
+  // A build-time value has to be listed in THREE places that are maintained by
+  // hand — the Railway service variables, the `ARG` allowlist in
+  // `mcpjam-inspector/Dockerfile`, and the environment it is set for — and a
+  // value present in one but missing from another produces a client that is
+  // silently misconfigured rather than one that fails to build. Staging shipped
+  // without `VITE_WORKOS_API_HOSTNAME` for months: its AuthKit refresh went
+  // cross-site to `api.workos.com`, the session cookie was never sent, and
+  // every page load ended in a 400 that wiped the session. Read here, the same
+  // variable takes effect on restart, in every environment, with no rebuild.
+  //
+  // The unprefixed names are canonical; the `VITE_`-prefixed ones are accepted
+  // so an environment already carrying the build-time variable keeps working
+  // through the migration.
+  const workosClientId =
+    getNonEmptyEnv("WORKOS_CLIENT_ID") ??
+    getNonEmptyEnv("VITE_WORKOS_CLIENT_ID");
+
+  const workosApiHostname =
+    getNonEmptyEnv("WORKOS_API_HOSTNAME") ??
+    getNonEmptyEnv("VITE_WORKOS_API_HOSTNAME");
+
   return {
     convexUrl,
     convexSiteUrl,
+    workosClientId,
+    workosApiHostname,
   };
 }
 
 export function getInspectorClientRuntimeConfigScript(): string | null {
   const runtimeConfig = getInspectorClientRuntimeConfig();
-  if (!runtimeConfig.convexUrl && !runtimeConfig.convexSiteUrl) {
+  if (!Object.values(runtimeConfig).some((value) => value !== undefined)) {
     return null;
   }
 
