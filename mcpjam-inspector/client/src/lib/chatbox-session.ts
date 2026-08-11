@@ -52,6 +52,17 @@ export interface ChatboxBootstrapServer {
   oauthProtocolVersion?: string | null;
   /** Effective host/per-server MCP wire pin, when one is configured. */
   wireProtocolVersion?: string | null;
+  /**
+   * Per-server OAuth facts the shared request builder consumes. Optional
+   * because an older bootstrap payload does not send them; when it does, the
+   * hosted authorization honors them instead of quietly building a different
+   * request than a local connect would.
+   */
+  oauthResourceUrl?: string | null;
+  hasClientSecret?: boolean | null;
+  oauthCustomHeaders?: Record<string, string> | null;
+  oauthAllowPathScopedIssuer?: boolean | null;
+  registrationMode?: string | null;
   /** When true, excluded from initial OAuth and chat until enabled by the tester. */
   optional?: boolean;
 }

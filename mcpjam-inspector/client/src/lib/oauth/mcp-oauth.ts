@@ -78,6 +78,7 @@ import {
   type OAuthTrace,
 } from "./oauth-trace";
 import type { OAuthRequestFields } from "./trace-redaction";
+import type { BuiltOAuthRequest } from "./oauth-request";
 import {
   parseOAuthRequestFields,
   traceOAuthErrorMessage,
@@ -2575,8 +2576,17 @@ function readStoredClientInformation(
 /**
  * Initiates OAuth flow for an MCP server
  */
+/**
+ * Start an interactive OAuth flow.
+ *
+ * Takes only a `BuiltOAuthRequest` — an options bag `buildOAuthRequest` (and
+ * nothing else) can produce. Four entry points used to hand-roll their own bag
+ * and disagree about which security-sensitive fields to include, so the same
+ * server behaved differently depending on which button the user pressed. The
+ * brand makes a fifth divergent bag a compile error rather than a bug report.
+ */
 export async function initiateOAuth(
-  options: MCPOAuthOptions
+  options: BuiltOAuthRequest
 ): Promise<OAuthResult> {
   let state = cloneEmptyFlowState();
   const updateState = (updates: Partial<OAuthFlowState>) => {
