@@ -9,6 +9,8 @@ The redaction policy — which field names are secret, what a redacted value loo
 
 There is now one source of truth: `oauth/state-machines/trace-redaction.ts` in the SDK, exported from `@mcpjam/sdk/browser`. The inspector's `lib/oauth/trace-redaction.ts` re-exports it and adds the `SANITIZE_OAUTH_TRACES` gate; `mcp-oauth.ts`, `oauth-trace.ts`, and `App.tsx`'s OAuth-debugger error boundary all call it instead of their own copies. The surviving error redactor is the debugger's, which already handled URL userinfo, named parameters, echoed `Authorization` headers, JSON credential fields, and truncation tails — and preserves diagnostic wording.
 
+Consolidating on it dropped two cases the SDK's redactor did have, both restored here. A credential after a bare `:` — `access_token: <value>` is how prose in an `error_description` writes it, and the surviving rule matched `=` only. And short opaque `Bearer`/`Basic` values carrying no base64url punctuation, such as `Basic dXNlcjpwYXNz`, which the surviving rule skipped because it keyed on punctuation-or-length to avoid eating "Bearer token is expired". That test is now inverted rather than dropped: redact unless the value is a plain lowercase word, so the diagnostic wording survives and short credentials do not.
+
 Three leaks closed on the way:
 
 - **`state` in sanitized traces.** It is not a bearer credential, which is why it was easy to leave out, but a still-live `state` is the CSRF correlation secret for an in-flight authorization. It is now redacted as a structured field, in URL queries, in form and JSON bodies, and inside error strings. Diagnostics use the new `describeOAuthStateMatch`, which reports `statePresent`/`stateMatched` instead of the nonce.

@@ -127,4 +127,49 @@ describe("sanitizeTraceErrorMessage", () => {
       "token exchange failed: 401",
     );
   });
+
+  it("redacts colon-delimited credential fields", () => {
+    // An `error_description` is prose, not a query string, so a server that
+    // echoes request context back writes `access_token: <value>` at least as
+    // often as `access_token=<value>`. Redacting only the `=` form leaves the
+    // credential in persisted traces and copied error details.
+    for (const input of [
+      "rejected: access_token: SUPERSECRETVALUE",
+      "client_secret = SUPERSECRETVALUE",
+      "clientSecret: SUPERSECRETVALUE",
+      'access_token: "SUPERSECRETVALUE"',
+      "user_refresh_token: SUPERSECRETVALUE",
+    ]) {
+      expect(sanitizeTraceErrorMessage(input), input).not.toContain(
+        "SUPERSECRETVALUE",
+      );
+    }
+  });
+
+  it("keeps ambiguous names readable after a colon", () => {
+    // The colon form is restricted to names that can only be credentials.
+    // `code`, `token` and `state` are ordinary English in an error string,
+    // and `status code: 401` must not become `status code: [redacted]`.
+    expect(sanitizeTraceErrorMessage("status code: 401")).toBe(
+      "status code: 401",
+    );
+    expect(sanitizeTraceErrorMessage("state: mismatched")).toBe(
+      "state: mismatched",
+    );
+  });
+
+  it("redacts short opaque bearer and basic credentials", () => {
+    // `Basic dXNlcjpwYXNz` is a valid credential and carries no base64url
+    // punctuation, so a rule keyed on punctuation-or-length misses it.
+    expect(sanitizeTraceErrorMessage("got Basic dXNlcjpwYXNz back")).toBe(
+      "got Basic [redacted] back",
+    );
+    expect(sanitizeTraceErrorMessage("sent Bearer YWJjZGVm")).toBe(
+      "sent Bearer [redacted]",
+    );
+    // Still not at the cost of the diagnostic vocabulary.
+    expect(sanitizeTraceErrorMessage("Bearer token is expired.")).toBe(
+      "Bearer token is expired.",
+    );
+  });
 });

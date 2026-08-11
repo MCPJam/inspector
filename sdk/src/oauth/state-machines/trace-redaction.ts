@@ -149,6 +149,24 @@ const CREDENTIAL_JSON_FIELD_NAME =
   `(?:(?:[\\w-]*[_-])?(?:${CREDENTIAL_PARAM_NAMES}))`;
 
 /**
+ * Names that can ONLY be a credential, so the value is redactable after a bare
+ * `:` and not just a `=`.
+ *
+ * An `error_description` is prose. A server echoing request context back
+ * writes `access_token: <value>` at least as often as `access_token=<value>`,
+ * and redacting only the query-string form leaves the credential in persisted
+ * traces. The colon form cannot use the full `CREDENTIAL_PARAM_NAMES` list,
+ * though: `code`, `token`, `secret` and `state` are ordinary English words in
+ * an error message, and "status code: 401" must survive intact. This is the
+ * same split the pre-consolidation SDK redactor drew.
+ *
+ * `[-_]?` rather than a literal `_` so the camelCase spellings a JSON API
+ * actually emits (`clientSecret`) match under the `i` flag.
+ */
+const UNAMBIGUOUS_CREDENTIAL_NAMES =
+  "client[-_]?secret|access[-_]?token|refresh[-_]?token|id[-_]?token|code[-_]?verifier";
+
+/**
  * Redact credential-shaped substrings from a free-form error message.
  *
  * Error strings interpolate whatever the server put in `error` /
@@ -182,6 +200,18 @@ export function sanitizeTraceErrorMessage(message: string): string {
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi, "$1[redacted]@")
     // 1b. bare user:pass@host (no scheme), same greediness.
     .replace(/(^|[\s(<"'])[^\s/@:]+:[^\s/]+@(?=[\w.-]+)/g, "$1[redacted]@")
+    // 2a. Free-form `access_token: …` / `clientSecret = …`, quoted or bare.
+    // Runs before 2 so the unambiguous names get the colon form too; a
+    // quoted KEY (`"access_token": "…"`) does not match here and is left to
+    // rule 4, which keeps the JSON shape intact.
+    .replace(
+      new RegExp(
+        `\\b((?:[\\w-]*[_-])?(?:${UNAMBIGUOUS_CREDENTIAL_NAMES}))(\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|[^&\\s"'<>,;]+)`,
+        "gi",
+      ),
+      (_match, name: string, separator: string, value: string) =>
+        `${name}${separator}${value.startsWith('"') ? '"[redacted]"' : "[redacted]"}`,
+    )
     // 2. ?client_secret=… / &token=… / &state=…
     .replace(
       new RegExp(`\\b(${CREDENTIAL_PARAM_NAMES})=[^&\\s"'<>]+`, "gi"),
@@ -192,15 +222,21 @@ export function sanitizeTraceErrorMessage(message: string): string {
       /\b((?:proxy-)?authorization\s*[:=]\s*)(bearer|basic)\s+\S+/gi,
       "$1$2 [redacted]",
     )
-    // 3b. A bare `Bearer <value>` with no header context. This one must only
-    // fire on a credential-SHAPED value: `\b(bearer|basic)\s+\w+` turns the
-    // very common "Bearer token is expired" into "Bearer [redacted] is
-    // expired", destroying the diagnostic word this function promises to keep.
-    // Real values carry base64url/JWT punctuation or are simply long.
-    .replace(
-      /\b(bearer|basic)\s+(?:[\w-]*[._~+/=][\w\-._~+/=]*|\w{20,})/gi,
-      "$1 [redacted]",
-    )
+    // 3b. A bare `Bearer <value>` with no header context. This one must not
+    // fire on prose: `\b(bearer|basic)\s+\w+` turns the very common "Bearer
+    // token is expired" into "Bearer [redacted] is expired", destroying the
+    // diagnostic word this function promises to keep.
+    //
+    // Keying on punctuation-or-length gets that right but misses short opaque
+    // credentials — `Basic dXNlcjpwYXNz` is a valid header value with neither.
+    // So invert the test and ask whether the value could be a WORD instead:
+    // anything carrying mixed case, a digit, or base64url punctuation is
+    // credential-shaped, and a plain lowercase run is vocabulary.
+    .replace(/\b(bearer|basic)(\s+)(\S+)/gi, (match, scheme, gap, value) => {
+      // Trailing sentence punctuation belongs to the prose, not the value.
+      const core = (value as string).replace(/[.,;:!?)\]}]+$/, "");
+      return /^[a-z]{1,20}$/.test(core) ? match : `${scheme}${gap}[redacted]`;
+    })
     // 4. "client_secret": "…" — `(?:\\.|[^"\\])*` rather than `[^"]*`, or an
     // escaped quote inside the value ends the match early and leaves the
     // secret's tail in the report.
