@@ -213,3 +213,44 @@ describe("capture dedupe", () => {
     expect(JSON.stringify({ ...error })).not.toContain("Capture");
   });
 });
+
+describe("hostile error values", () => {
+  /** A proxy that throws from every trap the stamp walk touches. */
+  function hostileProxy(): unknown {
+    return new Proxy(new Error("hostile"), {
+      get() {
+        throw new Error("trap: get");
+      },
+      isExtensible() {
+        throw new Error("trap: isExtensible");
+      },
+      defineProperty() {
+        throw new Error("trap: defineProperty");
+      },
+    });
+  }
+
+  it("does not throw out of ensureStampable", () => {
+    // This runs BEFORE the Axiom row is written. A throw escaping here would
+    // lose the whole report, and a failure whose diagnostics vanish is worse
+    // than one recorded twice.
+    expect(() => ensureStampable(hostileProxy())).not.toThrow();
+  });
+
+  it("reports a hostile value as NOT handled rather than throwing", () => {
+    // Called from inside `logger.error`. Throwing would take out the logging
+    // of the original failure and replace it with one from the dedupe check.
+    expect(() => isOriginCaptureHandled(hostileProxy())).not.toThrow();
+    expect(isOriginCaptureHandled(hostileProxy())).toBe(false);
+  });
+
+  it("does not throw out of markOriginCaptureHandled", () => {
+    expect(() => markOriginCaptureHandled(hostileProxy())).not.toThrow();
+  });
+
+  it("survives a hostile value in the middle of a cause chain", () => {
+    const outer = new Error("outer", { cause: hostileProxy() });
+
+    expect(() => isOriginCaptureHandled(outer)).not.toThrow();
+  });
+});

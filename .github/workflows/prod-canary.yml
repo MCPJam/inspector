@@ -98,8 +98,13 @@ jobs:
           # different path, and a 4xx behind Cloudflare is a routing or auth
           # answer, not an origin outage.
           origin_5xx_ray=""
+          # Strip trailing slashes before appending. A repo variable set to
+          # `https://app.mcpjam.com/` would otherwise build `//health`, which
+          # Hono does not route — a healthy deployment answering 404 and a
+          # Slack outage alert for nothing, which is how a canary gets muted.
+          base="${BASE_URL%"${BASE_URL##*[!/]}"}"
           for path in /health /api/mcp/health /api/apps/health; do
-            url="${BASE_URL}${path}"
+            url="${base}${path}"
             # -D dumps headers so cf-ray survives; the body is capped because a
             # gateway error page can be arbitrarily large.
             code=$(curl -sS --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors \

@@ -112,6 +112,29 @@ function isClientInputFault(error: unknown): boolean {
 }
 
 /**
+ * A failure the code DELIBERATELY answered with a 4xx.
+ *
+ * Routes routinely throw `new WebRouteError(400, VALIDATION_ERROR, …)` for
+ * ordinary user outcomes — "No tools found for selected servers" when someone
+ * generates eval tests against servers that expose none — and catch it in the
+ * same block that declares `mcpjam_internal`. Those errors classify
+ * `internal/unknown` (the describer reads transport shapes, not our status
+ * codes), so the boundary would promote a routine validation result into a
+ * page. A 4xx is a statement that the REQUEST was wrong; that is never
+ * evidence of an MCPJam fault, so it blocks the promotion.
+ *
+ * Structural rather than `instanceof WebRouteError`: upstream HTTP errors from
+ * the SDK carry a numeric `status` too, and a 404 from a user's own server
+ * deserves exactly the same treatment. 5xx is untouched — that one really can
+ * be ours.
+ */
+function isDeclaredClientOutcome(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
  * Marker for a failure that crossed into the USER's MCP server, thrown from
  * inside a `try` whose catch declares `mcpjam_internal`.
  *
@@ -228,7 +251,9 @@ export function reportRouteFailure(
   // attribution, for the very case the wrapper exists to handle.
   const normalized = options.normalized ?? describeError(error);
   const boundary =
-    isClientInputFault(error) || isUserServerHopFault(error)
+    isClientInputFault(error) ||
+    isUserServerHopFault(error) ||
+    isDeclaredClientOutcome(error)
       ? undefined
       : BOUNDARY_FOR_HOP[options.hop];
   const { origin, captured } = maybeCaptureOriginError(reported, normalized, {

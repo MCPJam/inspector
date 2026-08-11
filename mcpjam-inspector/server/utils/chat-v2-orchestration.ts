@@ -1017,6 +1017,16 @@ export async function prepareChatV2(
     // Scoped to this await on purpose. Marking the whole of `prepareChatV2`
     // would silence a genuine bug in the preparation work that follows, which
     // is MCPJam's and has no other capture point.
+    //
+    // This call is not purely a network hop either — it also converts and
+    // flattens the results into an AI SDK tool set, which is our code. A
+    // `TypeError` or `RangeError` here is a programming fault in that
+    // conversion, never a symptom of somebody's server being down, so it keeps
+    // the internal verdict. Everything else (transport failures, protocol
+    // errors, schema rejections from the server) is the user's hop.
+    if (error instanceof TypeError || error instanceof RangeError) {
+      throw error;
+    }
     throw markUserServerHop(error);
   }
 

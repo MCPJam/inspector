@@ -24,6 +24,19 @@ function isStampable(value: unknown): value is Stampable {
 }
 
 /**
+ * `String(value)` / `.message` on a proxy can run a `get` trap that throws.
+ * Every caller here is on a failure path, so a throw would replace a real
+ * error with a confusing one from the reporting code.
+ */
+function safeErrorMessage(value: unknown): string {
+  try {
+    return value instanceof Error ? value.message : String(value);
+  } catch {
+    return "[unreadable error value]";
+  }
+}
+
+/**
  * Mark a value as "capture already decided". Non-enumerable and
  * non-writable-by-accident; a frozen or exotic object silently declines the
  * stamp rather than throwing — stamping is an optimization, and failing to
@@ -66,9 +79,21 @@ export function ensureStampable(value: unknown): unknown {
   // `defineProperty` still cannot attach the stamp to it — same invisible
   // decision, same double-or-missed capture. Wrap it too, keeping the original
   // reachable as `cause` so the chain walk still finds everything.
-  if (!Object.isExtensible(value)) {
+  //
+  // `Object.isExtensible` is itself a Proxy trap and a rejecting proxy can
+  // throw from it. This helper runs BEFORE `reportRouteFailure` writes its
+  // Axiom row, so an escaping throw here would lose the whole report — a
+  // failure the diagnostics vanish for is strictly worse than one reported
+  // twice. Treat a throwing check as "cannot be stamped".
+  let extensible: boolean;
+  try {
+    extensible = Object.isExtensible(value);
+  } catch {
+    extensible = false;
+  }
+  if (!extensible) {
     const wrapped = new Error(
-      value instanceof Error ? value.message : String(value),
+      safeErrorMessage(value),
     );
     Object.defineProperty(wrapped, "cause", {
       value,
@@ -101,12 +126,21 @@ export function isOriginCaptureHandled(error: unknown): boolean {
   for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
     if (!isStampable(current) || seen.has(current)) return false;
     seen.add(current);
-    if (current[CAPTURE_STAMP] === true) return true;
-    const normalized = current.normalized;
-    if (isStampable(normalized) && normalized[CAPTURE_STAMP] === true) {
-      return true;
+    // Every read below can run a Proxy `get` trap, and this function is called
+    // from inside `logger.error`. A throw escaping here would take out the
+    // logging of the ORIGINAL failure and replace it with a confusing one from
+    // the dedupe check. Answering "not handled" is the safe direction: the
+    // error still gets recorded, at worst twice.
+    try {
+      if (current[CAPTURE_STAMP] === true) return true;
+      const normalized = current.normalized;
+      if (isStampable(normalized) && normalized[CAPTURE_STAMP] === true) {
+        return true;
+      }
+      current = (current as { cause?: unknown }).cause;
+    } catch {
+      return false;
     }
-    current = (current as { cause?: unknown }).cause;
   }
   return false;
 }

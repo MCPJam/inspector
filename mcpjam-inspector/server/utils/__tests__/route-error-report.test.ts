@@ -227,6 +227,35 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("never promotes a deliberate 4xx to an MCPJam failure", () => {
+    // Routes throw `new WebRouteError(400, …)` for ordinary user outcomes —
+    // "No tools found for selected servers" when someone generates eval tests
+    // against servers that expose none — and catch them in the same block that
+    // declares an internal hop. Those classify `internal/unknown`, so without
+    // this rule a routine validation result pages the on-call.
+    const { origin } = reportRouteFailure(
+      "Error in /evals/generate-tests",
+      Object.assign(new Error("No tools found for selected servers"), {
+        status: 400,
+      }),
+      { source: "mcp.evals.generate-tests", hop: "mcpjam_internal" },
+    );
+
+    expect(origin).toBe("ambiguous");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("STILL promotes a 5xx on an internal hop", () => {
+    // Only 4xx says "the request was wrong". A 5xx really can be ours.
+    reportRouteFailure(
+      "Error in /evals/generate-tests",
+      Object.assign(new Error("upstream exploded"), { status: 503 }),
+      { source: "mcp.evals.generate-tests", hop: "mcpjam_internal" },
+    );
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
   it("still pages for an UNMARKED failure from the same catch block", () => {
     // The mark is scoped to the one await that leaves MCPJam. A bug in the
     // preparation work that follows it reaches the same catch and has no other
