@@ -1,4 +1,5 @@
-import { describeError } from "@mcpjam/sdk";
+import { describeError, originOf } from "@mcpjam/sdk";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 
 /** The `WWW-Authenticate` step-up challenge fields surfaced to the client. */
 export type InsufficientScopeChallenge = {
@@ -115,13 +116,36 @@ export function jsonError(c: any, error: unknown, fallbackStatus = 500) {
   const status =
     explicitStatus ?? (details.insufficientScope ? 403 : fallbackStatus);
   const normalized = describeError(error);
+  // The `/api/mcp/*` envelope's capture point. Most of what lands here is a
+  // user's own MCP server misbehaving, which is exactly why the routes' bare
+  // `logger.error` calls have been paging us: this decides once, records the
+  // verdict on the error, and only escalates MCPJam-fault failures.
+  const { origin } = maybeCaptureOriginError(error, normalized, {
+    source: "mcp.jsonError",
+    extra: { status },
+  });
+  if (typeof c?.set === "function") {
+    c.set("webErrorMeta", {
+      status,
+      code: String(details.code ?? "mcp_error"),
+      message: String(details.message ?? ""),
+      origin,
+      slug: normalized.slug,
+    });
+  }
   return c.json(
     // `success: false` preserves the pre-existing route error contract (the
     // `/resources/read`, `/prompts/get`, and tool routes all returned it before
     // switching to this shared serializer) so existing consumers/tests that read
     // the flag keep working; `mcpError.insufficientScope` still carries the
     // SEP-2350 step-up challenge.
-    { success: false, error: details.message as string, mcpError: details, normalized },
+    {
+      success: false,
+      error: details.message as string,
+      mcpError: details,
+      normalized,
+      origin: originOf(normalized),
+    },
     status,
   );
 }

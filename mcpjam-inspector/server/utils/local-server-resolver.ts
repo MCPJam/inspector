@@ -22,6 +22,7 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import {
   parseXaaPolicyValue,
   resolveEffectiveAuthMethod,
@@ -1535,12 +1536,29 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
   const normalized = error.normalized ?? describeError(error);
+  // Skip-if-stamped by construction: most callers reach here holding a
+  // `WebRouteError` that `mapRuntimeError` already ruled on, and the helper
+  // short-circuits on the stamp. The call is still made so the local-mode
+  // paths that build a `WebRouteError` by hand — never passing through the
+  // mapper — are classified too.
+  const { origin } = maybeCaptureOriginError(error, normalized, {
+    source: "mcp.localRouteError",
+    extra: { status: error.status, code: error.code },
+  });
+  c.set("webErrorMeta", {
+    status: error.status,
+    code: error.code,
+    message: error.message,
+    origin,
+    slug: normalized.slug,
+  });
   return c.json(
     {
       success: false,
       error: error.message,
       ...(error.details ?? {}),
       normalized,
+      origin,
     },
     error.status as any
   );

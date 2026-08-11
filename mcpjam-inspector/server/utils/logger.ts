@@ -8,6 +8,7 @@ import type {
   SystemLogContext,
 } from "./log-events.js";
 import { scrubLogPayload } from "./log-scrubber.js";
+import { isOriginCaptureHandled } from "./error-origin-capture.js";
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -89,9 +90,18 @@ export const logger = {
    * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
    */
   error(message: string, error?: unknown, context?: Record<string, unknown>) {
-    Sentry.captureException(error ?? new Error(message), {
-      extra: { message, ...context },
-    });
+    // `logger.error` still captures by DEFAULT. Genuinely-ours background
+    // failures (schedulers, eval workers) reach Sentry through here and must
+    // not vanish. The single exception is an error an error-origin capture
+    // point has already ruled on: a route that logs an error and then
+    // serializes it into an envelope holds the same object at both sites, and
+    // without this check every declined user-fault error would be re-captured
+    // here — rebuilding the noise the origin policy exists to remove.
+    if (!isOriginCaptureHandled(error)) {
+      Sentry.captureException(error ?? new Error(message), {
+        extra: { message, ...context },
+      });
+    }
 
     ingestToAxiom("error", message, {
       ...context,

@@ -1,3 +1,5 @@
+import type { ErrorOrigin } from "@mcpjam/sdk";
+
 export type Environment =
   | "prod"
   | "staging"
@@ -76,6 +78,19 @@ export type RequestEventMap = {
     statusCode: number;
     errorCode: string;
     errorMessage?: string;
+    /**
+     * Whose fault the failure was, per the SDK error-origin taxonomy, when
+     * the failing route produced a normalized describe-error block.
+     *
+     * This is the measurement half of the error-origin work. Sentry capture is
+     * deliberately restricted to `origin: "mcpjam"`; every other bucket —
+     * above all `ambiguous`, which holds the whole timeout/reset/fetch-failure
+     * family — is counted here instead, at no issue-tracker cost. Promoting a
+     * bucket into the paging path should be argued from this field.
+     */
+    origin?: ErrorOrigin;
+    /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
+    slug?: string;
   };
   "http.stream.opened": { statusCode: number };
   "http.stream.closed": { statusCode: number; durationMs: number };

@@ -185,6 +185,32 @@ describe("logger", () => {
         );
       });
 
+      it("skips Sentry for an error an origin capture point already ruled on", async () => {
+        // Routes commonly log an error and then serialize the SAME object into
+        // an envelope. The envelope's origin policy may have deliberately
+        // declined to page (a user's dead MCP server); without this skip,
+        // `logger.error` would re-capture it here and the noise the policy
+        // exists to remove would come straight back through the side door.
+        const Sentry = await import("@sentry/node");
+        const { markOriginCaptureHandled } = await import(
+          "../error-origin-capture.js"
+        );
+        const error = new Error("their server refused the connection");
+        markOriginCaptureHandled(error);
+
+        logger.error("connect failed", error);
+
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+        // Axiom still gets it — the row stays queryable, only the page is gone.
+        expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+          expect.objectContaining({
+            level: "error",
+            message: "connect failed",
+            error: "their server refused the connection",
+          }),
+        ]);
+      });
+
       it("ingests info logs to Axiom", () => {
         logger.info("started", { port: 3000 });
 
