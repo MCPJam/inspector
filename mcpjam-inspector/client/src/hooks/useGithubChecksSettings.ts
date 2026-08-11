@@ -30,6 +30,12 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * crashed `/evals` for every user the backend refused. Call sites:
  * `IntegrationsRoute`, `GithubChecksRoute`, and
  * `SuiteGithubChecksSettingsSection` in `suite-iterations-view`.
+ *
+ * A boundary catching this still reports it, which is right for a defect and
+ * wrong for a refusal — and an org guest opening a suite produces one every
+ * time. The refusals now arrive as a `ConvexError` tagged `kind: 'forbidden'`,
+ * which `reportCaught` drops. The not-yet-deployed case stays a plain throw and
+ * still reports, which is also right: that one means the two repos drifted.
  */
 
 /**

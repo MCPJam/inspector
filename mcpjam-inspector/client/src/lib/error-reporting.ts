@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
+import { ConvexError } from "convex/values";
 import {
   describeError,
   isNormalizedError,
@@ -74,6 +75,10 @@ export function reportPossiblyOurFailure(
 ): boolean {
   try {
     if (!isErrorCaptureSurface()) return false;
+    // Checked here as well as in `reportCaught`, so the documented return value
+    // stays honest: without this a refusal would be dropped downstream and
+    // still reported as sent.
+    if (isAuthorizationRefusal(error)) return false;
 
     // Prefer a normalized block the SERVER attached. A hosted route classifies
     // the real failure with the error object in hand and puts the verdict on
@@ -118,6 +123,30 @@ function toError(error: unknown): Error {
 }
 
 /**
+ * Did the backend refuse, or did it fail?
+ *
+ * A `ConvexError` carrying `kind: 'forbidden'` is the server declining to
+ * answer — the caller is not a member, the role is too low. The UI already
+ * handles that (it hides the surface), so it is not a defect and must not reach
+ * the error sinks: an expected refusal that pages the team trains everyone to
+ * ignore the channel.
+ *
+ * This is deliberately narrow. Only the explicit `forbidden` shape is quiet;
+ * every other `ConvexError`, and every plain throw, still reports. Convex masks
+ * plain throws as `Server Error` on production, so a backend that wants silence
+ * here has to say so.
+ */
+function isAuthorizationRefusal(error: unknown): boolean {
+  if (!(error instanceof ConvexError)) return false;
+  const data: unknown = error.data;
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { kind?: unknown }).kind === "forbidden"
+  );
+}
+
+/**
  * Forward a caught error to both error sinks.
  *
  * PostHog's `capture_exceptions` only sees uncaught errors on `window.onerror`
@@ -130,6 +159,8 @@ function toError(error: unknown): Error {
  * a path that is already handling one.
  */
 export function reportCaught(error: unknown, options: ReportOptions): void {
+  if (isAuthorizationRefusal(error)) return;
+
   const normalized = toError(error);
 
   try {
