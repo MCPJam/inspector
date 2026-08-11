@@ -18,7 +18,10 @@
  * fifth divergent bag cannot be added by accident.
  */
 
-import { evaluateResourceIndicator } from "@mcpjam/sdk/browser";
+import {
+  canonicalizeResourceUrl,
+  evaluateResourceIndicator,
+} from "@mcpjam/sdk/browser";
 import type {
   OAuthProtocolMode,
   OAuthProtocolVersion,
@@ -124,6 +127,54 @@ export interface BuildOAuthRequestOptions {
    * discovery honors a non-default metadata location on re-authorization.
    */
   resourceMetadataUrl?: string;
+}
+
+/**
+ * Pick a stored resource indicator only if it still belongs to this server URL.
+ *
+ * A stored `resourceUrl` is a fact about the endpoint it was captured for. Edit
+ * a server's URL and it becomes stale in two different ways, both bad:
+ *
+ *   - New origin: the stale value fails validation and blocks a connection the
+ *     user just asked for, reporting a "misconfigured resource" they never
+ *     configured.
+ *   - Same origin, new path: the stale value passes validation and is then used
+ *     as the audience, so the token is minted for the wrong endpoint. Quiet,
+ *     and worse.
+ *
+ * A candidate is only honored when the record it came from names the URL being
+ * connected. A user-configured value for the CURRENT url is still validated and
+ * still rejected if it names a foreign resource — that is a real
+ * misconfiguration, not staleness.
+ */
+export function selectStoredResourceUrl(
+  serverUrl: string,
+  candidates: Array<{ resourceUrl?: string; capturedForServerUrl?: string }>,
+): string | undefined {
+  for (const candidate of candidates) {
+    const resourceUrl = nonEmpty(candidate.resourceUrl);
+    if (!resourceUrl) continue;
+    if (!sameServerUrl(candidate.capturedForServerUrl, serverUrl)) continue;
+    return resourceUrl;
+  }
+  return undefined;
+}
+
+function sameServerUrl(
+  left: string | undefined,
+  right: string | undefined,
+): boolean {
+  const a = nonEmpty(left);
+  const b = nonEmpty(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  try {
+    // Tolerate the cosmetic differences a stored URL picks up (trailing slash,
+    // default port, case in the host) without tolerating a different endpoint.
+    return canonicalizeResourceUrl(a) === canonicalizeResourceUrl(b);
+  } catch {
+    return false;
+  }
 }
 
 export class OAuthRequestRejectedError extends Error {

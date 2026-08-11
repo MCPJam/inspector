@@ -30,6 +30,18 @@ export type RequiredMetadataEnforcement =
   | "observe";
 
 /**
+ * Eras that predate the current profile. Everything else inherits it.
+ *
+ * A DENYLIST, not an allowlist. Naming the current eras positively reads more
+ * naturally and fails in the wrong direction: a 2027 era would match neither
+ * literal, silently revert to warn-and-continue, and produce no compiler
+ * diagnostic to notice it by. For a fail-closed policy the default has to be
+ * "strict", so a new era is protected on the day it is added rather than on the
+ * day someone remembers this list.
+ */
+const LEGACY_METADATA_PROFILE_ERAS = new Set(["2025-03-26", "2025-06-18"]);
+
+/**
  * Whether an era is governed by the current MCP protected-resource + PKCE
  * profile. Older eras keep their own behavior — this is not a place to
  * retroactively tighten a specification that genuinely said something else.
@@ -37,7 +49,7 @@ export type RequiredMetadataEnforcement =
 export function usesCurrentRequiredMetadataProfile(
   protocolVersion: string,
 ): boolean {
-  return protocolVersion === "2025-11-25" || protocolVersion === "2026-07-28";
+  return !LEGACY_METADATA_PROFILE_ERAS.has(protocolVersion);
 }
 
 /**
@@ -47,6 +59,8 @@ export function usesCurrentRequiredMetadataProfile(
  * Advertising `plain` ALONGSIDE S256 is not a failure — the client picks S256.
  * Only the absence of S256 is.
  */
+/* Era scoping is the CALLER's: this reports non-conformance for whatever
+ * version it is handed, and only the current-profile machines consult it. */
 export function describePkceMetadataNonConformance(
   supportedMethods: readonly string[] | undefined,
   protocolVersion: string,
@@ -94,9 +108,12 @@ export function selectAuthorizationServerFromResourceMetadata(input: {
   fallbackServerUrl: string;
   protocolVersion: string;
 }): AuthorizationServerSelection {
-  const advertised = input.authorizationServers?.find(
-    (entry) => typeof entry === "string" && entry.trim() !== "",
-  );
+  // Trimmed, not the original: the emptiness test already trims, so a padded
+  // entry would otherwise pass the check and reach URL parsing with whitespace
+  // intact.
+  const advertised = input.authorizationServers
+    ?.find((entry) => typeof entry === "string" && entry.trim() !== "")
+    ?.trim();
 
   if (advertised) {
     return { authorizationServerUrl: advertised, substituted: false };

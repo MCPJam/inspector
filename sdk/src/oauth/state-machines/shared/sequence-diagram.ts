@@ -56,6 +56,22 @@ function truncate(value: string, length: number): string {
   return `${value.substring(0, length)}...`;
 }
 
+/**
+ * The pathname, or the raw value when it will not parse.
+ *
+ * These URLs come from persisted flow state and, transitively, from a
+ * `WWW-Authenticate` challenge the server under test wrote. A malformed one
+ * would otherwise throw here and take down the whole sequence diagram — hiding
+ * the discovery error that explains it.
+ */
+function safePathname(value: string): string {
+  try {
+    return new URL(value).pathname;
+  } catch {
+    return value;
+  }
+}
+
 function resourceDetailValue(
   flowState: OAuthFlowState,
   era: SequenceDiagramEraSpec,
@@ -105,7 +121,7 @@ function protectedResourceMetadataActions(
         ? [
             {
               label: "GET",
-              value: new URL(flowState.resourceMetadataUrl).pathname,
+              value: safePathname(flowState.resourceMetadataUrl),
             },
           ]
         : undefined,
@@ -287,15 +303,15 @@ export function buildOAuthSequenceDiagramActions(
         ? [
             {
               label: "Token",
-              value: new URL(
+              value: safePathname(
                 flowState.authorizationServerMetadata.token_endpoint,
-              ).pathname,
+              ),
             },
             {
               label: "Auth",
-              value: new URL(
+              value: safePathname(
                 flowState.authorizationServerMetadata.authorization_endpoint,
-              ).pathname,
+              ),
             },
           ]
         : undefined,

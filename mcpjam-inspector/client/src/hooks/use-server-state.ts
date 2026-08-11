@@ -41,9 +41,11 @@ import {
   initiateOAuth,
   isElectronMcpCallbackState,
   readStoredOAuthConfig,
+  OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
 import {
   buildOAuthRequest,
+  selectStoredResourceUrl,
   type BuiltOAuthRequest,
 } from "@/lib/oauth/oauth-request";
 import {
@@ -961,7 +963,7 @@ export function useServerState({
 
   const failPendingOAuthConnection = useCallback(
     (errorMessage: string, oauthTrace?: OAuthTrace) => {
-      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       if (pendingServerName) {
         dispatch({
           type: "CONNECT_FAILURE",
@@ -973,7 +975,7 @@ export function useServerState({
 
       clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-return-hash");
-      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
 
       return pendingServerName;
     },
@@ -2605,7 +2607,7 @@ export function useServerState({
       iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>
     ) => {
-      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
         HOSTED_MODE &&
         isAuthenticated &&
@@ -2642,7 +2644,7 @@ export function useServerState({
           clearHostedOAuthPendingState();
         }
         if (result.success) {
-          localStorage.removeItem("mcp-oauth-pending");
+          localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
         if (result.success && result.serverConfig && result.serverName) {
@@ -2931,7 +2933,7 @@ export function useServerState({
       // fall back to the legacy localStorage key.
       const earlyPendingName =
         hostedOAuthCallbackContext?.serverName ??
-        localStorage.getItem("mcp-oauth-pending");
+        localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       if (earlyPendingName) {
         const earlyServer = effectiveServers[earlyPendingName];
         if (earlyServer) {
@@ -3320,7 +3322,17 @@ export function useServerState({
             formData.registrationMode ??
             existingOAuthProfile?.registrationStrategy ??
             "auto";
-          const oauthOptions = buildOAuthRequest(
+          // The builder refuses a configured resource indicator that is not
+          // this server's, BEFORE the redirect. Handle it here as the sibling
+          // entry points do: without a local catch it falls to the outer
+          // handler and is reported as "Network error: …", which is the one
+          // label it definitely is not. The escalation marker has to be
+          // cleared too — `markPending` already ran above, and leaving it set
+          // makes the next 401 read as a completed-but-failed OAuth attempt
+          // and refuse to offer authorization at all.
+          let oauthOptions: BuiltOAuthRequest;
+          try {
+            oauthOptions = buildOAuthRequest(
             {
               serverName: formData.name,
               serverUrl: formData.url,
@@ -3328,10 +3340,21 @@ export function useServerState({
               // Previously omitted here while every other entry point sent it,
               // so a server with a configured resource indicator authorized
               // against a different audience on first connect than on
-              // reconnect.
-              resourceUrl:
-                existingOAuthProfile?.resourceUrl ??
-                readStoredOAuthConfig(formData.name).resourceUrl,
+              // reconnect. Both candidates are gated on still belonging to
+              // THIS url — editing a server's endpoint must not carry the old
+              // endpoint's audience forward.
+              resourceUrl: selectStoredResourceUrl(formData.url, [
+                {
+                  resourceUrl: existingOAuthProfile?.resourceUrl,
+                  capturedForServerUrl: existingOAuthProfile?.serverUrl,
+                },
+                {
+                  resourceUrl: readStoredOAuthConfig(formData.name).resourceUrl,
+                  capturedForServerUrl:
+                    localStorage.getItem(`mcp-serverUrl-${formData.name}`) ??
+                    undefined,
+                },
+              ]),
               clientId: oauthInputs.clientId,
               clientSecret: oauthInputs.clientSecret,
               hasClientSecret: oauthInputs.hasClientSecret,
@@ -3354,7 +3377,21 @@ export function useServerState({
               },
             },
             { intent: "connect" },
-          );
+            );
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error
+                ? error.message
+                : "Failed to build the OAuth request";
+            autoOAuthEscalation.markFailed(escalationIdentity);
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: formData.name,
+              error: errorMessage,
+            });
+            toast.error(errorMessage);
+            return;
+          }
           prepareHostedProjectOAuthRedirect({
             serverId: hostedServerId,
             serverName: formData.name,
@@ -4580,9 +4617,20 @@ export function useServerState({
             serverName,
             serverUrl,
             scopes: profileScopes ?? storedOAuthConfig.scopes,
-            resourceUrl:
-              server.oauthFlowProfile?.resourceUrl ??
-              storedOAuthConfig.resourceUrl,
+            // Same staleness gate as the connect path: a stored resource
+            // belongs to the endpoint it was captured for.
+            resourceUrl: selectStoredResourceUrl(serverUrl, [
+              {
+                resourceUrl: server.oauthFlowProfile?.resourceUrl,
+                capturedForServerUrl: server.oauthFlowProfile?.serverUrl,
+              },
+              {
+                resourceUrl: storedOAuthConfig.resourceUrl,
+                capturedForServerUrl:
+                  localStorage.getItem(`mcp-serverUrl-${serverName}`) ??
+                  undefined,
+              },
+            ]),
             clientId:
               server.oauthTokens?.client_id ??
               server.oauthFlowProfile?.clientId ??

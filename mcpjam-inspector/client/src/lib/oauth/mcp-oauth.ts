@@ -136,7 +136,7 @@ const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
  * `/oauth/callback` URL with nothing but the code and state — there is no
  * server name in it to key off.
  */
-const OAUTH_PENDING_STORAGE_KEY = "mcp-oauth-pending";
+export const OAUTH_PENDING_STORAGE_KEY = "mcp-oauth-pending";
 
 interface StoredOAuthClientInformation {
   client_id?: string;

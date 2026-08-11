@@ -84,7 +84,13 @@ const CONSUMED_CREDENTIAL_FIELDS = [
  * would fail real logins — the guard must only fire on values that are
  * unambiguously our own output.
  */
-const REDACTION_SENTINELS = [/^\[redacted\]$/, /^.{4}\.\.\.\[redacted\]\.\.\..{2}$/];
+const REDACTION_SENTINELS = [
+  /^\[redacted\]$/,
+  // `[\s\S]` rather than `.`: a value whose first four or last two characters
+  // include a line terminator still produces the sentinel, and `.` would not
+  // match it — leaving the one shape the guard exists for undetected.
+  /^[\s\S]{4}\.\.\.\[redacted\]\.\.\.[\s\S]{2}$/,
+];
 
 /** Strip query and fragment: the target is for diagnosis, not for echoing
  * request parameters (which can themselves carry credentials) into an error. */

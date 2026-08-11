@@ -184,7 +184,7 @@ describe.each(CURRENT_ERAS)("PKCE metadata verification (%s)", (version) => {
     await advance(machine);
 
     // Still surfaced, but as a warning attached to metadata the flow kept.
-    expect(getState().error ?? "").toMatch(/^Warning:|S256/);
+    expect(getState().error ?? "").toMatch(/^Warning:/);
     expect(getState().authorizationServerMetadata).toBeTruthy();
   });
 

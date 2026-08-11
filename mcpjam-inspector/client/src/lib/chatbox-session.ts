@@ -165,6 +165,16 @@ export function chatboxEnabledOptionalStorageKey(chatboxId: string): string {
 // /web/chatbox/redeem responses. Returns `undefined` when no recognized
 // surface is present; the hosted runtime only consumes the `welcome`
 // surface today (feedback never reaches the bootstrap payload).
+/** A plain object whose every value is a string — the shape of custom headers. */
+function isStringRecord(input: unknown): input is Record<string, string> {
+  return (
+    !!input &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Object.values(input).every((value) => typeof value === "string")
+  );
+}
+
 function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
   if (!input || typeof input !== "object") return undefined;
   const surfaces = (input as { surfaces?: unknown }).surfaces;
@@ -362,6 +372,26 @@ export function normalizeChatboxSession(
             : {}),
           ...(typeof server.wireProtocolVersion === "string"
             ? { wireProtocolVersion: server.wireProtocolVersion }
+            : {}),
+          // Per-server OAuth facts the hosted authorization needs to build the
+          // same request a local connect builds. This mapping is an allowlist,
+          // so a field absent here is silently dropped no matter what the
+          // payload carried — which is exactly how the hosted path came to
+          // authorize differently from every other entry point.
+          ...(typeof server.oauthResourceUrl === "string"
+            ? { oauthResourceUrl: server.oauthResourceUrl }
+            : {}),
+          ...(typeof server.hasClientSecret === "boolean"
+            ? { hasClientSecret: server.hasClientSecret }
+            : {}),
+          ...(isStringRecord(server.oauthCustomHeaders)
+            ? { oauthCustomHeaders: server.oauthCustomHeaders }
+            : {}),
+          ...(typeof server.oauthAllowPathScopedIssuer === "boolean"
+            ? { oauthAllowPathScopedIssuer: server.oauthAllowPathScopedIssuer }
+            : {}),
+          ...(typeof server.registrationMode === "string"
+            ? { registrationMode: server.registrationMode }
             : {}),
           optional: Boolean(server.optional),
         })),

@@ -239,7 +239,18 @@ interface RunOptions {
   version: OAuthProtocolVersion;
   registrationStrategy: RegistrationStrategy;
   knobs?: RouterKnobs;
-  machineConfig?: Record<string, unknown>;
+  /**
+   * Typed against the factory config, not `Record<string, unknown>`: an
+   * untyped bag lets a renamed knob (`resourceIndicatorEnforcement`) be
+   * silently dropped, and these tests exist precisely to pin the branch that
+   * knob selects.
+   */
+  machineConfig?: Partial<
+    Omit<
+      Parameters<typeof createOAuthStateMachine>[0],
+      "protocolVersion" | "registrationStrategy" | "requestExecutor"
+    >
+  >;
   /** RFC 9207 `iss` delivered with the authorization code. */
   authorizationResponseIss?: string | null;
   /** Provide pre-registered credentials (required by the `preregistered` strategy). */
@@ -299,12 +310,17 @@ async function run(options: RunOptions): Promise<RunResult> {
       requests.push(request);
       return route(request);
     },
-    ...(machineConfig as never),
+    ...machineConfig,
   });
 
+  const MAX_STEPS = 40;
   let deliveredCode = false;
-  for (let index = 0; index < 40; index += 1) {
-    if (state.currentStep === "complete" || state.error) break;
+  let settled = false;
+  for (let index = 0; index < MAX_STEPS; index += 1) {
+    if (state.currentStep === "complete" || state.error) {
+      settled = true;
+      break;
+    }
 
     // Cross the human step exactly once.
     if (state.currentStep === "authorization_request" && !deliveredCode) {
@@ -330,6 +346,16 @@ async function run(options: RunOptions): Promise<RunResult> {
       };
       break;
     }
+  }
+
+  if (!settled) {
+    // A machine stuck mid-ladder would otherwise surface as `completed: false`
+    // with no error, and every negative-branch assertion below would pass
+    // without the branch ever running.
+    throw new Error(
+      `${version}/${registrationStrategy} did not settle within ${MAX_STEPS} ` +
+        `steps (stuck at "${state.currentStep}")`,
+    );
   }
 
   return {
@@ -549,6 +575,7 @@ describe.each(ALL_VERSIONS)("branch catalog (%s)", (version) => {
     });
 
     expect(result.completed).toBe(false);
+    expect(result.error).toMatch(/registration/i);
     expect(tokenRequest(result)).toBeUndefined();
   });
 
@@ -687,6 +714,7 @@ describe.each(ALL_VERSIONS)("branch catalog (%s)", (version) => {
       });
 
       expect(result.completed).toBe(false);
+      expect(result.error).toContain("code_challenge_methods_supported");
       expect(authorizationUrl(result)).toBeUndefined();
       expect(tokenRequest(result)).toBeUndefined();
     });
