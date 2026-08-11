@@ -5,6 +5,7 @@ import {
   GUEST_ISSUER,
   OAUTH_DISCOVERY_HEADERS,
   normalizeIssuer,
+  resourceIdentifier,
   verifyBearerToken,
   type VerifyConfig,
 } from "./auth.js";
@@ -30,7 +31,9 @@ const LANDING_PAGE = `<!doctype html>
 
 function protectedResourceMetadata(origin: string, issuer: string) {
   return {
-    resource: `${origin}/mcp`,
+    // Shared with the audience check in `verifyBearerToken` — we must accept
+    // exactly the identifier we advertise here.
+    resource: resourceIdentifier(origin),
     authorization_servers: [issuer],
     bearer_methods_supported: ["header"],
   };
@@ -78,8 +81,9 @@ function withMcpCors(response: Response): Response {
 /**
  * The verified bearer in the shape the v2 handler passes through to the server
  * factory. Only `token` is read downstream; `clientId` is required by the type
- * and set to the WorkOS client id these tokens are audience-pinned to (a guest
- * token has no client of its own), and the claims ride along in `extra` for
+ * and set to our own WorkOS client id — not the caller's, which for a
+ * third-party OAuth client we never learn (a guest token likewise has no
+ * client of its own) — and the claims ride along in `extra` for
  * future per-principal behavior. `expiresAt` carries the token's own `exp`
  * (seconds since epoch, the same unit `AuthInfo` uses) — `verifyBearerToken`
  * has already enforced it, so this just keeps the pass-through faithful for
