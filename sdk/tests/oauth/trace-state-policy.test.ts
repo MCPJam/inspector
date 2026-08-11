@@ -130,6 +130,45 @@ describe("shapes a name-only or exact-match policy used to miss", () => {
     },
   );
 
+  // The descriptive-suffix exemption is about the NAME. A name ending in
+  // `_url`/`_uri`/`_endpoint` still carries a value, and that value is
+  // routinely another URL with a query string of its own — so exempting the
+  // name must not exempt what it points at.
+  it("sanitizes the value behind a descriptive name", () => {
+    const nested = encodeURIComponent(
+      `https://evil.test/cb?access_token=${SECRET}`,
+    );
+    for (const name of [
+      "session_token_url",
+      "password_uri",
+      "client_secret_endpoint",
+    ]) {
+      const sanitized = sanitizeOAuthUrl(
+        `https://a.example.com/x?${name}=${nested}`,
+      );
+      expect(sanitized, name).not.toContain(SECRET);
+      // The name and its host are the diagnostic and survive.
+      expect(sanitized, name).toContain(name);
+      expect(decodeURIComponent(sanitized), name).toContain("evil.test");
+    }
+  });
+
+  it("sanitizes an inline credential under a non-URL descriptive name", () => {
+    const sanitized = sanitizeOAuthUrl(
+      `https://a.example.com/x?next_url=${encodeURIComponent(
+        `/cb&access_token=${SECRET}`,
+      )}`,
+    );
+    expect(sanitized).not.toContain(SECRET);
+  });
+
+  it("leaves a URL with nothing to redact byte-identical", () => {
+    // The nested pass must not re-encode an untouched query string, or every
+    // golden that contains a URL churns.
+    const url = "https://a.example.com/x?token_endpoint=https%3A%2F%2Fb.test%2Ft&scope=openid+profile";
+    expect(sanitizeOAuthUrl(url)).toBe(url);
+  });
+
   // …but the heuristic must not empty out the discovery view. These name a
   // capability; none of them is a value anyone can spend.
   it("keeps protocol metadata that merely describes a credential", () => {

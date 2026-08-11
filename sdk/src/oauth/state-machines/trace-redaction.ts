@@ -234,6 +234,11 @@ export const MAX_SCANNED = 4_000;
 const UNAMBIGUOUS_CREDENTIAL_NAMES =
   "client[-_]?secret|access[-_]?token|refresh[-_]?token|id[-_]?token|code[-_]?verifier";
 
+const CREDENTIAL_ASSIGNMENT_RE = new RegExp(
+  `\\b((?:[\\w-]*[_-])?(?:${UNAMBIGUOUS_CREDENTIAL_NAMES}))(\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|[^&\\s"'<>,;]+)`,
+  "gi",
+);
+
 /**
  * Redact credential-shaped substrings from a free-form error message.
  *
@@ -288,10 +293,7 @@ export function sanitizeTraceErrorMessage(
     // quoted KEY (`"access_token": "…"`) does not match here and is left to
     // rule 4, which keeps the JSON shape intact.
     .replace(
-      new RegExp(
-        `\\b((?:[\\w-]*[_-])?(?:${UNAMBIGUOUS_CREDENTIAL_NAMES}))(\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|[^&\\s"'<>,;]+)`,
-        "gi",
-      ),
+      CREDENTIAL_ASSIGNMENT_RE,
       (_match, name: string, separator: string, value: string) =>
         `${name}${separator}${value.startsWith('"') ? '"[redacted]"' : "[redacted]"}`,
     )
@@ -434,7 +436,35 @@ function looksLikeRequestFields(fields: OAuthRequestFields): boolean {
   );
 }
 
-export function sanitizeOAuthUrl(rawUrl: string): string {
+/**
+ * How deep a URL nested inside a query parameter is followed.
+ *
+ * A redirect chain can nest a handful of times legitimately; past that the
+ * value is not something a trace reader is going to interpret anyway, so it is
+ * cheaper to redact it than to keep parsing.
+ */
+const MAX_NESTED_URL_DEPTH = 3;
+
+/**
+ * Sanitize a query parameter VALUE whose name was not itself sensitive.
+ *
+ * `isDescriptiveName` exempts `*_url`, `*_uri` and `*_endpoint` so the
+ * discovery view keeps its metadata, but that exemption is a statement about
+ * the name, not about what the name points at. `session_token_url`,
+ * `password_uri` and `client_secret_endpoint` all pass the exemption while
+ * carrying a URL that can have `access_token=…` in its own query string.
+ */
+function sanitizeNestedQueryValue(value: string, depth: number): string {
+  if (/^https?:\/\//i.test(value)) {
+    return depth >= MAX_NESTED_URL_DEPTH
+      ? "[redacted]"
+      : sanitizeOAuthUrl(value, depth + 1);
+  }
+  // Not a URL, but a decoded value can still carry an inline assignment.
+  return value.replace(CREDENTIAL_QUERY_PARAM_RE, "$1$2=[redacted]");
+}
+
+export function sanitizeOAuthUrl(rawUrl: string, depth = 0): string {
   try {
     const url = new URL(rawUrl);
     // Userinfo round-trips through `toString()`, so the parse-SUCCESS branch
@@ -442,11 +472,23 @@ export function sanitizeOAuthUrl(rawUrl: string): string {
     // `sanitizeTraceErrorMessage`, whose rule 1a covers it.
     url.username = "";
     url.password = "";
-    for (const key of [...url.searchParams.keys()]) {
-      if (isSensitiveQueryParamName(key)) {
-        url.searchParams.set(key, "[redacted]");
-      }
+
+    // Rebuilt in order, and only assigned back when something actually
+    // changed: `url.search = …` re-serializes the whole query, which would
+    // churn every golden containing an untouched URL.
+    let changed = false;
+    const rebuilt = new URLSearchParams();
+    for (const [key, value] of url.searchParams.entries()) {
+      const next = isSensitiveQueryParamName(key)
+        ? "[redacted]"
+        : sanitizeNestedQueryValue(value, depth);
+      changed ||= next !== value;
+      rebuilt.append(key, next);
     }
+    if (changed) {
+      url.search = rebuilt.toString();
+    }
+
     if (url.hash) {
       url.hash = "#[redacted]";
     }
