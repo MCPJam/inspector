@@ -223,13 +223,18 @@ describe("HostsRoute — deleted-client permalink", () => {
     const { rerender } = render(<HostsRoute />);
 
     expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
+    // Unverified is not the same as dead: nothing may act on it yet.
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
 
     // List resolves without the id: now it is confirmed dead.
     mockHostList.hosts = [{ hostId: LIVE_HOST_ID }];
     mockHostList.isLoading = false;
     rerender(<HostsRoute />);
 
-    await waitFor(() => expect(mockNavigate).toHaveBeenCalled());
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledTimes(1));
+    // Exactly once: crossing pending → dead is one arrival, not one per render.
+    expect(mockToastError).toHaveBeenCalledTimes(1);
     expect(mockSetPreviewedHostId).not.toHaveBeenCalledWith(DEAD_HOST_ID);
   });
 
