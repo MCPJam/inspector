@@ -281,6 +281,26 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("survives a hostile proxy without losing the report", () => {
+    // The walk inspects the ORIGINAL value, so a throwing `get` trap would
+    // take out `reportRouteFailure` itself — losing both the capture decision
+    // and the Axiom row, and replacing the route's error response with a
+    // secondary failure from the reporting code.
+    const hostile = new Proxy(new Error("hostile"), {
+      get() {
+        throw new Error("trap: get");
+      },
+    });
+
+    expect(() =>
+      reportRouteFailure("Error listing tasks", hostile, {
+        source: "mcp.tasks.list",
+        hop: "user_server_hop",
+      }),
+    ).not.toThrow();
+    expect(mockIngest).toHaveBeenCalled();
+  });
+
   it("survives a self-referential cause chain on the user-server walk", () => {
     const looping = new Error("loops");
     Object.defineProperty(looping, "cause", { value: looping });

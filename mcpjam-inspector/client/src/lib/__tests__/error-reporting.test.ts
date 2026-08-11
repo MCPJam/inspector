@@ -181,6 +181,12 @@ describe("reportPossiblyOurFailure — server-attached normalization", () => {
     const error = Object.assign(new Error("HTTP 500"), {
       normalized: {
         slug: "internal/unknown",
+        title: "Unexpected error",
+        oneLine: "Something failed inside MCPJam.",
+        likelyCauses: [],
+        nextSteps: [],
+        docsAnchor: "/troubleshooting/error-codes",
+        severity: "error",
         rawMessage: "bundler crashed",
         origin: "mcpjam",
       },
@@ -191,15 +197,31 @@ describe("reportPossiblyOurFailure — server-attached normalization", () => {
     ).toBe(true);
   });
 
-  it("ignores a malformed attached block instead of trusting it", () => {
-    // This rides in on a response body, so a proxy or an older server can put
-    // anything there.
+  it("ignores a PARTIAL attached block, even one claiming to be ours", () => {
+    // The dangerous shape is not a garbage one — it is a half-formed block
+    // carrying `origin: "mcpjam"`, which would page on the strength of one
+    // proxy-controlled string and then read `undefined` for everything else.
     const error = Object.assign(new Error("HTTP 500"), {
-      normalized: { slug: 42 },
+      normalized: { slug: "internal/unknown", origin: "mcpjam" },
     });
 
     expect(
       reportPossiblyOurFailure(error, { source: "execute_tool" }),
     ).toBe(false);
+  });
+
+  it("falls back to describeError when the normalized getter throws", () => {
+    // Reporting runs on a path that is already handling a failure; a hostile
+    // getter must not suppress an otherwise classifiable one.
+    const error = new Error("HTTP 500");
+    Object.defineProperty(error, "normalized", {
+      get() {
+        throw new Error("trap");
+      },
+    });
+
+    expect(() =>
+      reportPossiblyOurFailure(error, { source: "execute_tool" }),
+    ).not.toThrow();
   });
 });

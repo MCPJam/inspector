@@ -130,8 +130,13 @@ function isClientInputFault(error: unknown): boolean {
  */
 function isDeclaredClientOutcome(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" && status >= 400 && status < 500;
+  try {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === "number" && status >= 400 && status < 500;
+  } catch {
+    // Proxy `get` trap. See `isUserServerHopFault`.
+    return false;
+  }
 }
 
 /**
@@ -192,10 +197,20 @@ function isUserServerHopFault(error: unknown): boolean {
       return false;
     }
     seen.add(current);
-    if ((current as Record<PropertyKey, unknown>)[USER_SERVER_HOP] === true) {
-      return true;
+    // Both reads can run a Proxy `get` trap. `ensureStampable` already treats
+    // a hostile value defensively, but this walk inspects the ORIGINAL, so an
+    // escaping throw would take out `reportRouteFailure` itself — losing the
+    // capture decision AND the Axiom row, and replacing the route's error
+    // response with a secondary failure from the reporting code. An
+    // uninspectable value is treated as unmarked.
+    try {
+      if ((current as Record<PropertyKey, unknown>)[USER_SERVER_HOP] === true) {
+        return true;
+      }
+      current = (current as { cause?: unknown }).cause;
+    } catch {
+      return false;
     }
-    current = (current as { cause?: unknown }).cause;
   }
   return false;
 }
@@ -252,14 +267,28 @@ export function reportRouteFailure(
   // the `logger.error` call after it — a declined user-fault primitive would
   // page anyway, and an escalated one would be captured twice. Wrap once, up
   // front, and use the SAME value for both, so the stamp survives.
-  const reported = ensureStampable(error);
+  let reported = ensureStampable(error);
   // Classify the ORIGINAL, never the wrapper. `describeError` reads `code` /
   // `status` off the TOP-LEVEL object and does not follow `.cause`, so
   // describing a wrapper would drop a frozen error's `code: "ECONNREFUSED"`,
   // resolve `internal/unknown`, and let an internal boundary promote somebody
   // else's dead server into a page — reintroducing the exact false
   // attribution, for the very case the wrapper exists to handle.
-  const normalized = options.normalized ?? describeError(error);
+  let normalized: NormalizedError;
+  try {
+    normalized = options.normalized ?? describeError(error);
+  } catch {
+    // A value whose property reads throw — a Proxy with a `get` trap, most
+    // plausibly from a sandboxed or instrumented dependency. `describeError`
+    // reads `code`, `status`, `message`, and the cause chain off it, and so
+    // does `logger.error` right after. Letting that escape would lose the
+    // capture decision AND the Axiom row, and replace the route's error
+    // response with a secondary failure from the reporting code — strictly
+    // worse than the failure being reported. Substitute a value everything
+    // downstream can read, for BOTH the classification and the log.
+    reported = new Error("[unreadable error value]");
+    normalized = describeError(reported);
+  }
   const boundary =
     isClientInputFault(error) ||
     isUserServerHopFault(error) ||

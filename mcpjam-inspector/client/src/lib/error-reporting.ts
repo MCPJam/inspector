@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
 import {
   describeError,
+  isNormalizedError,
   originOf,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
@@ -31,14 +32,23 @@ export interface ReportOptions {
  * failure mode worth avoiding.
  */
 function attachedNormalized(error: unknown): NormalizedError | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const candidate = (error as { normalized?: unknown }).normalized;
-  if (typeof candidate !== "object" || candidate === null) return undefined;
-  const { slug, rawMessage } = candidate as Record<string, unknown>;
-  if (typeof slug !== "string" || typeof rawMessage !== "string") {
+  // Every read below can run a getter, and this whole path exists to report a
+  // failure that already happened. A throwing `normalized` getter must fall
+  // back to `describeError` rather than suppress an otherwise classifiable
+  // MCPJam failure, so the reads are guarded rather than trusted.
+  try {
+    if (typeof error !== "object" || error === null) return undefined;
+    const candidate = (error as { normalized?: unknown }).normalized;
+    // The SDK's own guard, not a hand-rolled subset. It checks the COMPLETE
+    // shape, which matters here: a half-formed block carrying
+    // `origin: "mcpjam"` would otherwise pass the gate below and page on the
+    // strength of one proxy-controlled string. It is also the guard the render
+    // path already uses, so "trusted enough to report" and "trusted enough to
+    // display" cannot drift apart.
+    return isNormalizedError(candidate) ? candidate : undefined;
+  } catch {
     return undefined;
   }
-  return candidate as NormalizedError;
 }
 
 /**
