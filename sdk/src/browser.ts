@@ -162,6 +162,10 @@ export {
   PROTOCOL_VERSION_INFO,
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
+  // Exported so a consumer can distinguish "MCPJam redacted its own live data"
+  // from an authorization-server rejection; both otherwise end in a 401.
+  assertOAuthResultCredentialsUnredacted,
+  OAuthRedactedCredentialError,
 } from "./oauth/state-machines/factory.js";
 export type {
   ProbeHttpAttempt,
