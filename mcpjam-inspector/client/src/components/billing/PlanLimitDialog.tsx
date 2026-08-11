@@ -80,7 +80,7 @@ function stripUpgradeReturnParams(): void {
     "",
     window.location.pathname +
       (search ? `?${search}` : "") +
-      window.location.hash,
+      window.location.hash
   );
 }
 
@@ -94,7 +94,7 @@ function stripUpgradeReturnParams(): void {
  */
 function useUpgradeReturnFlow(): void {
   const [upgradeReturn] = useState<UpgradeReturn | null>(() =>
-    readUpgradeReturn(),
+    readUpgradeReturn()
   );
   const [settlementGraceElapsed, setSettlementGraceElapsed] = useState(false);
   const handledRef = useRef(false);
@@ -132,7 +132,7 @@ function useUpgradeReturnFlow(): void {
       toast.success(
         upgradeReturn.origin === "credits"
           ? `You're on our ${teamName} plan. Your credits are available now.`
-          : `You're on our ${teamName} plan. Run your suite again to pick up where you left off.`,
+          : `You're on our ${teamName} plan. Run your suite again to pick up where you left off.`
       );
     }
 
@@ -192,11 +192,11 @@ export function PlanLimitDialog() {
       location: "plan_limit_dialog",
       limit_kind: limit?.kind ?? "evalIterations",
       origin: limit?.origin,
-      plan: upgrade.currentPlan,
+      plan: upgrade.effectivePlan,
     });
     window.open(ENTERPRISE_CONTACT_URL, "_blank", "noopener,noreferrer");
     close();
-  }, [close, limit, upgrade.currentPlan]);
+  }, [close, limit, upgrade.effectivePlan]);
 
   const handleDismiss = useCallback(() => {
     if (limit) {
@@ -216,7 +216,7 @@ export function PlanLimitDialog() {
 
   // An org already on a paid plan can hit its own ceiling. Naming "Free" there
   // would be wrong, and so would pitching the plan they're already on.
-  const isFreePlan = upgrade.currentPlan === "free";
+  const isFreePlan = upgrade.effectivePlan === "free";
   const planName = isFreePlan ? "Free" : "Your plan";
   const planSentence =
     limit.allowed != null
@@ -227,14 +227,14 @@ export function PlanLimitDialog() {
     : null;
   const resetSentence = limit.resetsAt
     ? `${planSentence ? "yours reset" : "Yours reset"} at ${formatResetClock(
-        limit.resetsAt,
+        limit.resetsAt
       )}${resetDistance ? `, ${resetDistance} from now` : ""}.`
     : "";
 
   const showUpgrade = isFreePlan && upgrade.canManageBilling;
   // A paid org at its own ceiling has no self-serve step left, so it gets the
   // sales path instead of a checkout button.
-  const showEnterprise = !isFreePlan && upgrade.currentPlan !== "enterprise";
+  const showEnterprise = !isFreePlan && upgrade.effectivePlan !== "enterprise";
   // The eval figure comes from the plan catalog, never a hardcoded string, so
   // it tracks whatever billing actually enforces. Credits deliberately have no
   // figure: they aren't in the catalog, so the only source would be the
@@ -246,8 +246,8 @@ export function PlanLimitDialog() {
           : "a monthly allowance instead of a daily cap"
       }, so evals can run smoothly on every PR instead of limiting your daily quality checks.`
     : showEnterprise
-      ? "Enterprise adds negotiated usage and a custom LLM budget."
-      : "";
+    ? "Enterprise adds negotiated usage and a custom LLM budget."
+    : "";
 
   return (
     <PlanLimitDialogView
