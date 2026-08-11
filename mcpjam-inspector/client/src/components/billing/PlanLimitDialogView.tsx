@@ -24,7 +24,6 @@ export interface PlanLimitDialogViewProps {
   showEnterprise: boolean;
   /** Owner-request path: free orgs whose user can't manage billing. */
   requestRecipients: UpgradeRequestRecipient[];
-  isLoadingRecipients?: boolean;
   organizationName: string;
   origin: UpgradeOrigin;
   limitKind: string;
@@ -60,7 +59,6 @@ export function PlanLimitDialogView({
   showUpgrade,
   showEnterprise,
   requestRecipients,
-  isLoadingRecipients = false,
   organizationName,
   origin,
   limitKind,
@@ -129,7 +127,6 @@ export function PlanLimitDialogView({
         {showRequest ? (
           <RequestUpgradeButton
             recipients={requestRecipients}
-            isLoadingRecipients={isLoadingRecipients}
             organizationName={organizationName}
             teamName={teamName}
             origin={origin}

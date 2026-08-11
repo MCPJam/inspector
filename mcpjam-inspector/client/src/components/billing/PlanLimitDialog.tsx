@@ -143,8 +143,7 @@ export function PlanLimitDialog() {
     origin: "evals",
     limitKind: limit?.kind ?? "evalIterations",
   });
-  const { recipients: requestRecipients, isLoading: isLoadingRecipients } =
-    useUpgradeRequestRecipients(organizationId);
+  const requestRecipients = useUpgradeRequestRecipients(organizationId);
 
   useEffect(() => {
     if (!isOpen || !limit) return;
@@ -234,7 +233,6 @@ export function PlanLimitDialog() {
       showUpgrade={showUpgrade}
       showEnterprise={showEnterprise}
       requestRecipients={requestRecipients}
-      isLoadingRecipients={isLoadingRecipients}
       organizationName={upgrade.organizationName}
       origin="evals"
       limitKind={limit.kind}

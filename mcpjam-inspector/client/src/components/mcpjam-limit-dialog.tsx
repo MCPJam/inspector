@@ -64,8 +64,7 @@ export function MCPJamLimitDialog() {
     origin: "credits",
     limitKind: "credits",
   });
-  const { recipients: requestRecipients, isLoading: isLoadingRecipients } =
-    useUpgradeRequestRecipients(resolveBillingOrgId());
+  const requestRecipients = useUpgradeRequestRecipients(resolveBillingOrgId());
 
   if (isLoading) return null;
 
@@ -161,7 +160,6 @@ export function MCPJamLimitDialog() {
             {isKnownNonManager ? (
               <RequestUpgradeButton
                 recipients={requestRecipients}
-                isLoadingRecipients={isLoadingRecipients}
                 organizationName={creditsUpgrade.organizationName}
                 teamName={creditsUpgrade.teamName}
                 origin="credits"

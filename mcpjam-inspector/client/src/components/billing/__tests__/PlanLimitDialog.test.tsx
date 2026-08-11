@@ -21,7 +21,6 @@ const {
     upgradeState: { currentPlan: "free" as string, canManageBilling: true },
     recipientsState: {
       current: [] as Array<{ email: string; name?: string | null }>,
-      isLoading: false,
     },
     billingState: { plan: "free" as string, isLoading: false },
   }));
@@ -67,10 +66,7 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
-  useUpgradeRequestRecipients: () => ({
-    recipients: recipientsState.current,
-    isLoading: recipientsState.isLoading,
-  }),
+  useUpgradeRequestRecipients: () => recipientsState.current,
 }));
 
 const RESETS_AT = Date.UTC(2026, 7, 11, 4, 0);
@@ -98,7 +94,6 @@ beforeEach(() => {
   upgradeState.currentPlan = "free";
   upgradeState.canManageBilling = true;
   recipientsState.current = [];
-  recipientsState.isLoading = false;
   billingState.plan = "free";
   billingState.isLoading = false;
   window.history.replaceState(null, "", "/evals");
@@ -197,25 +192,9 @@ describe("PlanLimitDialog", () => {
     expect(screen.getByText(/Opens a draft to Dana Ruiz/)).toBeInTheDocument();
   });
 
-  it("holds a disabled button while the owner lookup is in flight", () => {
-    upgradeState.canManageBilling = false;
-    recipientsState.isLoading = true;
-    openEvalLimit();
-    render(<PlanLimitDialog />);
-
-    // Empty recipients plus loading must not read as "no owner": that would
-    // render nothing now and pop a button in a beat later.
-    const button = screen.getByRole("button", { name: /email your owner/i });
-    expect(button).toBeDisabled();
-    expect(
-      screen.queryByTestId("request-upgrade-mail")
-    ).not.toBeInTheDocument();
-  });
-
-  it("hides the owner email when the lookup finishes with no owner", () => {
+  it("hides the owner email when there is no address to write to", () => {
     upgradeState.canManageBilling = false;
     recipientsState.current = [];
-  recipientsState.isLoading = false;
     openEvalLimit();
     render(<PlanLimitDialog />);
 
