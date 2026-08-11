@@ -218,32 +218,123 @@ export function isUnauthorized401(error: unknown): boolean {
   return /\b(?:http|status)[:\s-]*401\b/i.test(message);
 }
 
+/** The `WWW-Authenticate` step-up challenge fields surfaced to a caller. */
+export type InsufficientScopeChallenge = {
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+  errorDescription?: string;
+};
+
 /**
- * Strictly detects an upstream `InsufficientScopeError` (SEP-2350 runtime scope
- * step-up) anywhere in the error / cause chain.
+ * Walk an error's `.cause` chain, returning the first non-`undefined` result
+ * from `visit`.
  *
- * Matches ONLY the real class — by its brand (`constructor.mcpBrand ===
- * "mcp.InsufficientScopeError"`, which survives minification / cross-realm) or
- * `.name` — never a duck-typed `requiredScope` field, so an unrelated error
- * carrying that field can't masquerade as a step-up challenge. This mirrors the
- * host-side `extractInsufficientScopeChallenge` recognizer exactly. Used to keep
- * a connect-time 403 `insufficient_scope` from being swallowed / downgraded by
- * the Streamable→SSE transport fallback, which would strip the challenge fields.
+ * Shared by the two SEP-2350 recognizers below so the traversal — including
+ * its cycle guard — exists once. They used to be separate walks in two
+ * repositories, which is how they drifted: only one of them knew that
+ * `resourceMetadataUrl` arrives as a `URL` object rather than a string.
  */
-export function isInsufficientScopeError(error: unknown): boolean {
+function findInCauseChain<T>(
+  error: unknown,
+  visit: (node: any) => T | undefined,
+): T | undefined {
   const seen = new Set<unknown>();
   let current: any = error;
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
-    if (
-      current.constructor?.mcpBrand === "mcp.InsufficientScopeError" ||
-      current.name === "InsufficientScopeError"
-    ) {
-      return true;
-    }
+    const result = visit(current);
+    if (result !== undefined) return result;
     current = current.cause;
   }
-  return false;
+  return undefined;
+}
+
+/**
+ * Recognize the real `InsufficientScopeError` class, and nothing else.
+ *
+ * By its brand (`constructor.mcpBrand`, which survives minification and
+ * cross-realm) or `.name` — never by duck-typing a `requiredScope` field. An
+ * unrelated error that happens to carry that field must not be serialized to a
+ * client as an OAuth step-up challenge, because that would trigger a spurious
+ * re-authorization.
+ */
+function isInsufficientScopeNode(node: any): boolean {
+  return (
+    node?.constructor?.mcpBrand === "mcp.InsufficientScopeError" ||
+    node?.name === "InsufficientScopeError"
+  );
+}
+
+/**
+ * Strictly detects an upstream `InsufficientScopeError` (SEP-2350 runtime scope
+ * step-up) anywhere in the error / cause chain.
+ *
+ * Used to keep a connect-time 403 `insufficient_scope` from being swallowed /
+ * downgraded by the Streamable→SSE transport fallback, which would strip the
+ * challenge fields.
+ *
+ * Deliberately NOT `extractInsufficientScopeChallenge(error) !== undefined`:
+ * this returns true for a branded error carrying no challenge fields at all,
+ * because the transport-fallback protection cares that the class was seen, not
+ * that it was actionable.
+ */
+export function isInsufficientScopeError(error: unknown): boolean {
+  return (
+    findInCauseChain(error, (node) =>
+      isInsufficientScopeNode(node) ? true : undefined,
+    ) === true
+  );
+}
+
+/**
+ * Recognize an upstream `InsufficientScopeError` (SEP-2350) anywhere in the
+ * error / cause chain and return its `WWW-Authenticate` challenge fields.
+ *
+ * A runtime `403 insufficient_scope` from a live MCP request surfaces as this
+ * transport-layer error (the transport is constructed with
+ * `onInsufficientScope: "throw"`, so it never attempts a doomed server-side
+ * interactive re-authorization). Returning the challenge lets a client drive
+ * the union-scope step-up re-authorization.
+ *
+ * The fields originate from the resource server's header, so treat them as
+ * UNTRUSTED when rendering.
+ *
+ * Returns `undefined` when no challenge field is present — a bare name match
+ * carries nothing actionable — and keeps walking in that case, so a branded but
+ * empty wrapper does not hide a populated challenge deeper in the chain.
+ */
+export function extractInsufficientScopeChallenge(
+  error: unknown,
+): InsufficientScopeChallenge | undefined {
+  return findInCauseChain(error, (node) => {
+    if (!isInsufficientScopeNode(node)) return undefined;
+
+    const requiredScope =
+      typeof node.requiredScope === "string" ? node.requiredScope : undefined;
+    // `resourceMetadataUrl` is a `URL` OBJECT at runtime — the transport builds
+    // it with `new URL(...)` when parsing the `WWW-Authenticate` header — even
+    // though older callers passed a string. A bare `typeof === "string"` check
+    // silently DROPS the real production value.
+    const rawResourceMetadataUrl = node.resourceMetadataUrl;
+    const resourceMetadataUrl =
+      typeof rawResourceMetadataUrl === "string"
+        ? rawResourceMetadataUrl
+        : rawResourceMetadataUrl instanceof URL ||
+            (rawResourceMetadataUrl &&
+              typeof rawResourceMetadataUrl === "object" &&
+              typeof rawResourceMetadataUrl.href === "string")
+          ? String(rawResourceMetadataUrl)
+          : undefined;
+    const errorDescription =
+      typeof node.errorDescription === "string"
+        ? node.errorDescription
+        : undefined;
+
+    if (requiredScope || resourceMetadataUrl || errorDescription) {
+      return { requiredScope, resourceMetadataUrl, errorDescription };
+    }
+    return undefined;
+  });
 }
 
 /**

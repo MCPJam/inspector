@@ -1,79 +1,18 @@
-import { describeError, originOf } from "@mcpjam/sdk";
+// SEP-2350 recognition lives in the SDK. This module used to carry a
+// hand-maintained copy of the same walker, and the two drifted: only one of
+// them knew `resourceMetadataUrl` arrives as a `URL` object. Re-exported
+// rather than merely imported so the existing server-side importers
+// (`insufficient-scope-step-up.ts`, `routes/web/errors.ts`) keep their path.
+import {
+  describeError,
+  extractInsufficientScopeChallenge,
+  originOf,
+} from "@mcpjam/sdk";
+export {
+  extractInsufficientScopeChallenge,
+} from "@mcpjam/sdk";
+export type { InsufficientScopeChallenge } from "@mcpjam/sdk";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
-
-/** The `WWW-Authenticate` step-up challenge fields surfaced to the client. */
-export type InsufficientScopeChallenge = {
-  requiredScope?: string;
-  resourceMetadataUrl?: string;
-  errorDescription?: string;
-};
-
-/**
- * Recognize an upstream `InsufficientScopeError` (SEP-2350) anywhere in the
- * error / cause chain and return its `WWW-Authenticate` challenge fields.
- *
- * A runtime `403 insufficient_scope` from a live MCP request surfaces here as
- * this transport-layer error (the SDK constructs the transport with
- * `onInsufficientScope: "throw"`, so it never attempts a doomed server-side
- * interactive re-authorization). Detection is strictly by
- * `constructor.mcpBrand` / `.name` — an actual `InsufficientScopeError`, never
- * a duck-typed `requiredScope` field (an unrelated error carrying that field
- * must not masquerade as a step-up challenge). The class does not extend
- * `OAuthError`, and its fields (`requiredScope`, `resourceMetadataUrl`)
- * originate from the resource server's header, so treat them as untrusted when
- * rendering. Returning the challenge lets the client drive the union-scope
- * step-up re-authorization.
- */
-export function extractInsufficientScopeChallenge(
-  error: unknown,
-): InsufficientScopeChallenge | undefined {
-  const seen = new Set<unknown>();
-  let current: any = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
-    seen.add(current);
-    // Recognize ONLY an actual `InsufficientScopeError` — by its class brand
-    // (`mcpBrand`, survives minification/cross-realm) or `.name`. Do NOT
-    // duck-type on a `requiredScope` string: an unrelated error that happens
-    // to carry a `requiredScope` field must not be serialized to the client as
-    // an OAuth step-up challenge (it would trigger a spurious re-authorization).
-    const isInsufficientScope =
-      current.constructor?.mcpBrand === "mcp.InsufficientScopeError" ||
-      current.name === "InsufficientScopeError";
-    if (isInsufficientScope) {
-      const requiredScope =
-        typeof current.requiredScope === "string"
-          ? current.requiredScope
-          : undefined;
-      // The upstream `InsufficientScopeError` carries `resourceMetadataUrl` as a
-      // `URL` object at runtime (the transport builds it via `new URL(...)` when
-      // parsing the `WWW-Authenticate` header), even though older callers passed
-      // a string. A bare `typeof === "string"` check would silently DROP the
-      // real production value. Accept a string or a URL(-like) object and
-      // normalize to a string for JSON serialization.
-      const rawResourceMetadataUrl = current.resourceMetadataUrl;
-      const resourceMetadataUrl =
-        typeof rawResourceMetadataUrl === "string"
-          ? rawResourceMetadataUrl
-          : rawResourceMetadataUrl instanceof URL ||
-              (rawResourceMetadataUrl &&
-                typeof rawResourceMetadataUrl === "object" &&
-                typeof rawResourceMetadataUrl.href === "string")
-            ? String(rawResourceMetadataUrl)
-            : undefined;
-      const errorDescription =
-        typeof current.errorDescription === "string"
-          ? current.errorDescription
-          : undefined;
-      // Only surface when at least one challenge field is present — a bare
-      // name match with no fields carries nothing actionable.
-      if (requiredScope || resourceMetadataUrl || errorDescription) {
-        return { requiredScope, resourceMetadataUrl, errorDescription };
-      }
-    }
-    current = current.cause;
-  }
-  return undefined;
-}
 
 export function serializeMcpError(error: unknown) {
   const anyErr = error as any;

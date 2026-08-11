@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
+import { describeError, originOf } from "@mcpjam/sdk/browser";
 import {
   isCredentialBearingPath,
   isErrorCaptureSurface,
@@ -15,6 +16,49 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+}
+
+/**
+ * Report a caught client failure, but only when it might be ours.
+ *
+ * `reportCaught` is unconditional by design — a React error boundary must
+ * always report. These backfilled call sites are different: they sit on paths
+ * that reach a user's own MCP server, where "the tool call failed" usually
+ * means that server failed, and reporting all of them would rebuild on the
+ * client the same noise the server-side origin policy exists to remove.
+ *
+ * So: skip anything the catalog positively attributes to the user's server or
+ * the user's configuration, and skip self-hosted surfaces entirely (the Sentry
+ * leg of `reportCaught` is NOT gated, so it must be gated here). Everything
+ * else is reported with the classification attached, so triage can slice by
+ * slug without re-deriving it.
+ *
+ * Returns whether anything was sent, so callers and tests can assert the gate.
+ */
+export function reportPossiblyOurFailure(
+  error: unknown,
+  options: ReportOptions,
+): boolean {
+  try {
+    if (!isErrorCaptureSurface()) return false;
+
+    const normalized = describeError(error);
+    const origin = originOf(normalized);
+    if (origin === "user_server" || origin === "user_config") return false;
+
+    reportCaught(error, {
+      ...options,
+      extra: {
+        ...(options.extra ?? {}),
+        slug: normalized.slug,
+        origin,
+      },
+    });
+    return true;
+  } catch {
+    // Reporting must never escalate a failure into a second one.
+    return false;
+  }
 }
 
 function toError(error: unknown): Error {
