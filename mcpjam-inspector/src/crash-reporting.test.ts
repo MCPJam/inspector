@@ -35,11 +35,12 @@ describe("childProcessIntegrationOptions", () => {
     expect(events).toContain("oom");
   });
 
-  it("leaves an OS kill as a breadcrumb", () => {
+  it("never captures an OS kill, leaving it a breadcrumb", () => {
     // macOS kills Electron's own utility processes under memory pressure and
     // Electron respawns them; the user sees nothing. Capturing it filed
     // issues about the reporter's machine, not about the app.
-    expect(CAPTURED_EXIT_REASONS).not.toContain("killed");
+    const { events } = childProcessIntegrationOptions();
+    expect(events).not.toContain("killed");
   });
 
   it("keeps the SDK's own defaults", () => {
