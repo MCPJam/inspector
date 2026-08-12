@@ -5,7 +5,6 @@ import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import "../../types/hono";
-import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   GenerateNegativeTestsRequestSchema,
@@ -18,6 +17,7 @@ import {
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const evals = new Hono();
 
@@ -75,7 +75,7 @@ const TraceRepairStopSchema = z.object({
 
 evals.post("/run", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = RunEvalsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -114,14 +114,19 @@ evals.post("/run", async (c) => {
       202,
     );
   } catch (error) {
-    logger.error("[Error running evals]", error);
+    reportRouteFailure("[Error running evals]", error, {
+      // Starting a suite is our orchestration; per-test failures are
+      // reported from inside the run.
+      source: "mcp.evals.run",
+      hop: "mcpjam_internal",
+    });
     return jsonRouteError(c, error);
   }
 });
 
 evals.post("/trace-repair/start", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = TraceRepairStartSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -155,8 +160,12 @@ evals.post("/trace-repair/start", async (c) => {
         jobId: start.jobId,
         modelApiKeys: data.modelApiKeys,
       }).catch((err) => {
-        logger.error("[trace-repair] background job failed", err, {
-          jobId: start.jobId,
+        reportRouteFailure("[trace-repair] background job failed", err, {
+          // A detached background job of ours. Nothing downstream of
+          // this catch reports it, so this is the only chance to see it.
+          source: "mcp.evals.trace-repair.job",
+          hop: "mcpjam_internal",
+          context: { jobId: start.jobId },
         });
       });
     }
@@ -166,14 +175,17 @@ evals.post("/trace-repair/start", async (c) => {
       existing: Boolean(start.existing),
     });
   } catch (error) {
-    logger.error("[Error starting trace repair]", error);
+    reportRouteFailure("[Error starting trace repair]", error, {
+      source: "mcp.evals.trace-repair.start",
+      hop: "mcpjam_internal",
+    });
     return jsonRouteError(c, error);
   }
 });
 
 evals.post("/trace-repair/stop", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = TraceRepairStopSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -190,14 +202,17 @@ evals.post("/trace-repair/stop", async (c) => {
     });
     return c.json({ success: true });
   } catch (error) {
-    logger.error("[Error stopping trace repair]", error);
+    reportRouteFailure("[Error stopping trace repair]", error, {
+      source: "mcp.evals.trace-repair.stop",
+      hop: "mcpjam_internal",
+    });
     return jsonRouteError(c, error);
   }
 });
 
 evals.post("/replay-run", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = ReplayRunRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -234,14 +249,17 @@ evals.post("/replay-run", async (c) => {
       throw err;
     }
   } catch (error) {
-    logger.error("[Error replaying eval run]", error);
+    reportRouteFailure("[Error replaying eval run]", error, {
+      source: "mcp.evals.replay-run",
+      hop: "mcpjam_internal",
+    });
     return jsonRouteError(c, error);
   }
 });
 
 evals.post("/run-test-case", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = RunTestCaseRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -260,14 +278,18 @@ evals.post("/run-test-case", async (c) => {
       ),
     );
   } catch (error) {
-    logger.error("[Error running test case]", error);
+    reportRouteFailure("[Error running test case]", error, {
+      // Drives tools on the user's own server.
+      source: "mcp.evals.run-test-case",
+      hop: "user_server_hop",
+    });
     return jsonRouteError(c, error);
   }
 });
 
 evals.post("/stream-test-case", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = RunTestCaseRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -294,14 +316,18 @@ evals.post("/stream-test-case", async (c) => {
       },
     });
   } catch (error) {
-    logger.error("[Error streaming test case]", error);
+    reportRouteFailure("[Error streaming test case]", error, {
+      // Drives tools on the user's own server.
+      source: "mcp.evals.stream-test-case",
+      hop: "user_server_hop",
+    });
     return jsonRouteError(c, error);
   }
 });
 
 evals.post("/cancel", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const { runId, convexAuthToken } = body;
 
     if (!runId) {
@@ -324,7 +350,10 @@ evals.post("/cancel", async (c) => {
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error("[Error cancelling run]", error);
+    reportRouteFailure("[Error cancelling run]", error, {
+      source: "mcp.evals.cancel",
+      hop: "mcpjam_internal",
+    });
 
     if (errorMessage.includes("Cannot cancel run")) {
       return c.json({ error: errorMessage }, 400);
@@ -339,7 +368,7 @@ evals.post("/cancel", async (c) => {
 
 evals.post("/generate-tests", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = GenerateTestsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -358,14 +387,17 @@ evals.post("/generate-tests", async (c) => {
       ),
     );
   } catch (error) {
-    logger.error("Error in /evals/generate-tests", error);
+    reportRouteFailure("Error in /evals/generate-tests", error, {
+      source: "mcp.evals.generate-tests",
+      hop: "mcpjam_internal",
+    });
     return jsonRouteError(c, error);
   }
 });
 
 evals.post("/generate-negative-tests", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const validationResult = GenerateNegativeTestsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -384,7 +416,10 @@ evals.post("/generate-negative-tests", async (c) => {
       ),
     );
   } catch (error) {
-    logger.error("Error in /evals/generate-negative-tests", error);
+    reportRouteFailure("Error in /evals/generate-negative-tests", error, {
+      source: "mcp.evals.generate-negative-tests",
+      hop: "mcpjam_internal",
+    });
     return jsonRouteError(c, error);
   }
 });

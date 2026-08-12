@@ -144,11 +144,13 @@ export {
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  extractInsufficientScopeChallenge,
   isMCPAuthError,
   unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./errors.js";
+export type { InsufficientScopeChallenge } from "./errors.js";
 
 export type { RetryPolicy } from "../retry.js";
 export {

@@ -20,11 +20,16 @@ import {
   resolveWorkosRedirectUri,
 } from "./lib/electron-hosted-auth";
 import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
-import { getRuntimeConvexUrl } from "./lib/runtime-config";
+import {
+  getRuntimeConvexUrl,
+  getRuntimeWorkosApiHostname,
+  getRuntimeWorkosClientId,
+} from "./lib/runtime-config";
 import {
   isDebugOAuthCallbackPath,
   normalizeInitialLegacyHashBookmark,
 } from "./lib/app-navigation";
+import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import {
   getInitialThemeMode,
@@ -37,7 +42,7 @@ import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 import {
   clearLegacyWorkosRefreshTokenStorage,
   resolveWorkosClientOptions,
-  resolveWorkosDevMode,
+  WORKOS_DEV_MODE,
 } from "./lib/workos-authkit-config";
 
 // Initialize Sentry before React mounts
@@ -115,22 +120,22 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
 //
-// Exception: same-origin self-embed of the public chatbox runtime
-// (`/chatbox/<slug>/<token>`). The Chatboxes tab's Preview pane iframes the
-// publish link to show a live preview inside the app — that's intentional,
-// not a misrouted-pushState misconfiguration, so we let the normal tree
-// mount. Restricted to the chatbox route + same-origin parent so the
-// "user app accidentally serving inspector index.html" guard still fires
-// for every other shape.
+// Exception: same-origin self-embed of the public chatbox runtime (a tester
+// link path — `/user-testing/<slug>/<token>`, or the legacy `/chatbox/…` one).
+// The User Testing tab's Preview pane iframes the publish link to show a live
+// preview inside the app — that's intentional, not a misrouted-pushState
+// misconfiguration, so we let the normal tree mount. Restricted to a tester
+// link route + same-origin parent so the "user app accidentally serving
+// inspector index.html" guard still fires for every other shape.
 const isInIframe = (() => {
   try {
     if (window.self === window.top) return false;
     try {
       const sameOrigin = window.top!.location.origin === window.location.origin;
-      // Match the documented `/chatbox/<slug>/<token>` shape only; a generic
-      // `startsWith("/chatbox/")` would let any unrelated future subpath
-      // slip past the misrouted-pushState guard.
-      const isPublicChatboxRuntimePath = /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(
+      // Match the documented `<segment>/<slug>/<token>` shape only; a generic
+      // prefix test would let any unrelated future subpath slip past the
+      // misrouted-pushState guard. See lib/tester-link-path.ts.
+      const isPublicChatboxRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
         window.location.pathname
       );
       if (sameOrigin && isPublicChatboxRuntimePath) {
@@ -171,8 +176,16 @@ if (isInIframe) {
   const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
   const runtimeConvexUrl = getRuntimeConvexUrl();
   const convexUrl = runtimeConvexUrl || buildConvexUrl || "";
-  const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-  const workosDevMode = resolveWorkosDevMode(import.meta.env);
+  // Runtime config wins over the build-time value for the same reason the
+  // Convex URL above does: the deployed bundle is shared across environments
+  // and only the serving process knows which WorkOS environment it belongs to.
+  const buildWorkosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as
+    | string
+    | undefined;
+  // Coerced to "" rather than typed as `string`: the previous `as string` cast
+  // claimed a value that may not exist, and AuthKit already fails loudly on a
+  // falsy client id. The warning below is the one that should fire first.
+  const workosClientId = getRuntimeWorkosClientId() ?? buildWorkosClientId ?? "";
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {
@@ -230,17 +243,21 @@ if (isInIframe) {
   }
   if (!workosClientId) {
     console.warn(
-      "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work."
+      "[main] WorkOS client id is not set (runtime config or VITE_WORKOS_CLIENT_ID); authentication will not work."
     );
   }
 
-  const workosClientOptions = resolveWorkosClientOptions(
-    import.meta.env,
-    typeof window === "undefined" ? undefined : window.location
-  );
-  if (!workosDevMode) {
-    clearLegacyWorkosRefreshTokenStorage();
-  }
+  // A runtime hostname takes the same precedence an explicit
+  // `VITE_WORKOS_API_HOSTNAME` has inside `resolveWorkosClientOptions`: it
+  // overrides the local-proxy derivation rather than merging with it.
+  const runtimeWorkosApiHostname = getRuntimeWorkosApiHostname();
+  const workosClientOptions = runtimeWorkosApiHostname
+    ? { apiHostname: runtimeWorkosApiHostname }
+    : resolveWorkosClientOptions(
+        import.meta.env,
+        typeof window === "undefined" ? undefined : window.location
+      );
+  clearLegacyWorkosRefreshTokenStorage();
 
   const convex = new ConvexReactClient(convexUrl);
   normalizeInitialLegacyHashBookmark();
@@ -249,11 +266,9 @@ if (isInIframe) {
     <AuthKitProvider
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
-      devMode={workosDevMode}
+      devMode={WORKOS_DEV_MODE}
       onRefresh={() => {
-        if (!workosDevMode) {
-          clearLegacyWorkosRefreshTokenStorage();
-        }
+        clearLegacyWorkosRefreshTokenStorage();
       }}
       {...workosClientOptions}
     >

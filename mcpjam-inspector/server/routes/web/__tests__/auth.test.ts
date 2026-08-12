@@ -263,3 +263,79 @@ describe("toHttpConfig — declared httpVariant mapping", () => {
     expect(config.disableSseFallback).toBeUndefined();
   });
 });
+
+// Hosted stdio: refused unless a live in-computer runtime exists. The presence
+// of that runtime — a recorded `pluginRuntimeSessions` row — is the whole gate,
+// so both directions are asserted here.
+describe("toHttpConfig — plugin stdio in the caller's computer", () => {
+  const STDIO_ROW = {
+    serverConfig: {
+      transportType: "stdio" as const,
+      command: "node",
+      args: ["/home/user/.mcpjam/plugins/p/v/h/server/index.js"],
+      env: { API_KEY: "child-secret" },
+    },
+  };
+
+  it("still refuses a stdio server with no plugin runtime", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    expect(() => toHttpConfig(STDIO_ROW, 1000)).toThrowError(
+      /requires the local runtime/
+    );
+  });
+
+  it("refuses stdio even when an oauth token and pins are present", async () => {
+    // Nothing but the runtime may open this door: a stored credential is not
+    // evidence that anything is listening.
+    const { toHttpConfig } = await import("../auth.js");
+    expect(() =>
+      toHttpConfig(STDIO_ROW, 1000, "stored-oauth-token", undefined, undefined, {
+        supportedProtocolVersions: ["2025-06-18"],
+      })
+    ).toThrowError(/requires the local runtime/);
+  });
+
+  it("points at the shim and presents its bearer when a runtime exists", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      STDIO_ROW,
+      1000,
+      undefined,
+      { roots: {} },
+      undefined,
+      { supportedProtocolVersions: ["2025-06-18"] },
+      { url: "https://41234-sbx.e2b.app/mcp", token: "t".repeat(43) }
+    );
+
+    expect(config.url).toBe("https://41234-sbx.e2b.app/mcp");
+    expect(config.requestInit?.headers).toEqual({
+      Authorization: `Bearer ${"t".repeat(43)}`,
+    });
+    // The shim speaks Streamable HTTP only and answers 405 on GET /mcp.
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
+    expect(config.supportedProtocolVersions).toEqual(["2025-06-18"]);
+    expect(config.capabilities).toEqual({ roots: {} });
+  });
+
+  it("never carries the child's own env or a stored oauth token onto the wire", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      STDIO_ROW,
+      1000,
+      "stored-oauth-token",
+      undefined,
+      undefined,
+      undefined,
+      { url: "https://41234-sbx.e2b.app/mcp", token: "t".repeat(43) }
+    );
+    // The stdio row's `env` is the CHILD's secret material and the stored
+    // token belongs to a different server identity; the shim's bearer is the
+    // only credential this connection may present.
+    expect(config.requestInit?.headers).toEqual({
+      Authorization: `Bearer ${"t".repeat(43)}`,
+    });
+    expect(JSON.stringify(config)).not.toContain("child-secret");
+    expect(JSON.stringify(config)).not.toContain("stored-oauth-token");
+  });
+});

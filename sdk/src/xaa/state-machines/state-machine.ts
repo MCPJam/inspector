@@ -122,6 +122,35 @@ function redactDiagnosticValue(
   return visit(value);
 }
 
+/**
+ * Redact known secrets out of the DIAGNOSTIC slice of a state update.
+ *
+ * This is a redactor applied to data that is written back into live flow
+ * state, which is the exact shape of the #3865 OAuth bug — there, a redacted
+ * `access_token` stayed a non-empty string, sailed past every truthiness
+ * check, and was spent upstream as a credential.
+ *
+ * It is inert HERE, and stays inert only because of two properties:
+ *
+ *   1. `REDACTED_DIAGNOSTIC_KEYS` below contains no field the flow consumes.
+ *      They are display/telemetry surfaces: request and response previews,
+ *      HTTP history, info logs, and the error string.
+ *   2. Exactly one of those is ever read back as behavior —
+ *      `state.lastResponse?.body.status` in `requestAccessTokenProcess` — and
+ *      it reads a NUMBER, which the redactor does not touch.
+ *
+ * Adding a credential-bearing key to that list would turn this into the same
+ * bug. `tests/xaa/diagnostic-redaction-keys.test.ts` pins the list so widening
+ * it is a deliberate, reviewed act rather than a one-word edit.
+ */
+export const REDACTED_DIAGNOSTIC_KEYS = [
+  "lastRequest",
+  "lastResponse",
+  "httpHistory",
+  "infoLogs",
+  "error",
+] as const;
+
 function sanitizeDiagnosticUpdates(
   state: Partial<XAAFlowState>,
   updates: Partial<XAAFlowState>
@@ -138,13 +167,7 @@ function sanitizeDiagnosticUpdates(
   ].filter((value): value is string => typeof value === "string" && !!value);
   const sanitized = { ...updates };
 
-  for (const key of [
-    "lastRequest",
-    "lastResponse",
-    "httpHistory",
-    "infoLogs",
-    "error",
-  ] as const) {
+  for (const key of REDACTED_DIAGNOSTIC_KEYS) {
     if (key in sanitized) {
       (sanitized as Record<string, unknown>)[key] = redactDiagnosticValue(
         sanitized[key],
