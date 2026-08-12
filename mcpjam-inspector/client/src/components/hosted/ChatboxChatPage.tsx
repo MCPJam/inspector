@@ -36,6 +36,7 @@ import {
   syncChatboxSessionHash,
 } from "@/lib/embedded-preview";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/chatbox-server-optional";
+import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
@@ -495,9 +496,43 @@ export function ChatboxChatPage({
     return [...sessionServersRequired, ...optionalActive];
   }, [session, sessionServersRequired, enabledOptionalServerIds]);
 
+  // Does the recipient actually have to authorize anything? The bootstrap
+  // payload only carries `useOAuth`, a compat mirror that is also true for an
+  // `auto` (discover) server — gating on it is what asked recipients to
+  // authorize servers with no authorization server at all. The probe answers
+  // from the canonical `authMethod`.
+  const oauthRequirementByServerId = useHostedOAuthRequirements(
+    sessionServersActive,
+    !!session
+  );
+
   const oauthServers = useMemo(
-    () => sessionServersActive.map(bootstrapServerToHostedOAuthDescriptor),
-    [sessionServersActive]
+    () =>
+      sessionServersActive.map((server) => {
+        const descriptor = bootstrapServerToHostedOAuthDescriptor(server);
+        const requirement = oauthRequirementByServerId[server.serverId];
+        return {
+          ...descriptor,
+          // A server enters the gate only once the probe has answered for it.
+          // The gate seeds its status map the first time it sees a server and
+          // then preserves that status across rebuilds, so admitting a server
+          // while the answer is still "checking" would freeze it as satisfied
+          // and the panel would never appear for a real OAuth server.
+          useOAuth:
+            descriptor.useOAuth &&
+            (requirement === "required" || requirement === "not_required"),
+          // Still in the authorizable set either way: a "no" only means "do not
+          // prompt up front", and a genuine 401 later still routes through
+          // `markOAuthRequired` and gets its Authorize action.
+          authorizationRequiredUpfront: requirement === "required",
+        };
+      }),
+    [sessionServersActive, oauthRequirementByServerId]
+  );
+
+  const requiredOAuthServers = useMemo(
+    () => oauthServers.filter((server) => !server.optional),
+    [oauthServers]
   );
 
   const handleEnableChatboxOptionalServer = useCallback((serverId: string) => {
@@ -914,7 +949,10 @@ export function ChatboxChatPage({
     !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
-    servers: sessionServersRequired,
+    // The probed descriptors, not the raw bootstrap rows: the gate asks "does
+    // this session require authorization", which the payload's `useOAuth`
+    // mirror cannot answer (see `oauthServers` above).
+    servers: requiredOAuthServers,
     oauthPending,
     hasBusyOAuth,
     pendingOAuthServers,
@@ -1022,6 +1060,7 @@ export function ChatboxChatPage({
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
           isFinishingOAuth={isFinishingOAuth}
+          onSkipAuthorization={introGate.dismissAuthPanel}
         />
       </div>
     );
