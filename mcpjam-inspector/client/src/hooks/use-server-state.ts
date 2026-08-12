@@ -73,7 +73,7 @@ import {
   markPendingDirectScopeStepUpReplayReady,
 } from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
-import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
+import { isPrivateNetworkUrl } from "@/shared/private-address";
 import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
@@ -3186,7 +3186,7 @@ export function useServerState({
       const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
       const storedServerUrlBeforeSave = HOSTED_MODE
         ? undefined
-        : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
+        : localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined;
       saveOAuthConfigToLocalStorage(formData);
 
       try {
@@ -3340,48 +3340,49 @@ export function useServerState({
           let oauthOptions: BuiltOAuthRequest;
           try {
             oauthOptions = buildOAuthRequest(
-            {
-              serverName: formData.name,
-              serverUrl: formData.url,
-              scopes: oauthInputs.scopes,
-              // Previously omitted here while every other entry point sent it,
-              // so a server with a configured resource indicator authorized
-              // against a different audience on first connect than on
-              // reconnect. Both candidates are gated on still belonging to
-              // THIS url — editing a server's endpoint must not carry the old
-              // endpoint's audience forward.
-              resourceUrl: selectStoredResourceUrl(formData.url, [
-                {
-                  resourceUrl: existingOAuthProfile?.resourceUrl,
-                  capturedForServerUrl: existingOAuthProfile?.serverUrl,
+              {
+                serverName: formData.name,
+                serverUrl: formData.url,
+                scopes: oauthInputs.scopes,
+                // Previously omitted here while every other entry point sent it,
+                // so a server with a configured resource indicator authorized
+                // against a different audience on first connect than on
+                // reconnect. Both candidates are gated on still belonging to
+                // THIS url — editing a server's endpoint must not carry the old
+                // endpoint's audience forward.
+                resourceUrl: selectStoredResourceUrl(formData.url, [
+                  {
+                    resourceUrl: existingOAuthProfile?.resourceUrl,
+                    capturedForServerUrl: existingOAuthProfile?.serverUrl,
+                  },
+                  {
+                    resourceUrl: storedOAuthConfigBeforeSave.resourceUrl,
+                    capturedForServerUrl: storedServerUrlBeforeSave,
+                  },
+                ]),
+                clientId: oauthInputs.clientId,
+                clientSecret: oauthInputs.clientSecret,
+                hasClientSecret: oauthInputs.hasClientSecret,
+                registryServerId: oauthInputs.registryServerId,
+                useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+                customHeaders: mergeWithProjectHeaders(formData.headers),
+                // Same per-server opt-in the OAuth Debugger honors: Connect runs
+                // the same state machine, so without this a path-scoped
+                // authorization server is rejected here even with the toggle on.
+                allowPathScopedIssuer:
+                  (formData.oauthAllowPathScopedIssuer ??
+                    existingServer?.oauthAllowPathScopedIssuer) === true,
+                protocolMode: protocolSelection.mode,
+                registrationMode,
+                protocolVersion: protocolSelection.protocolVersion,
+                protocolResolutionSource: protocolSelection.source,
+                registrationStrategy:
+                  existingOAuthProfile?.registrationStrategy,
+                onTraceUpdate: (oauthTrace: OAuthTrace) => {
+                  updateServerOAuthTrace(formData.name, oauthTrace);
                 },
-                {
-                  resourceUrl: storedOAuthConfigBeforeSave.resourceUrl,
-                  capturedForServerUrl: storedServerUrlBeforeSave,
-                },
-              ]),
-              clientId: oauthInputs.clientId,
-              clientSecret: oauthInputs.clientSecret,
-              hasClientSecret: oauthInputs.hasClientSecret,
-              registryServerId: oauthInputs.registryServerId,
-              useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-              customHeaders: mergeWithProjectHeaders(formData.headers),
-              // Same per-server opt-in the OAuth Debugger honors: Connect runs
-              // the same state machine, so without this a path-scoped
-              // authorization server is rejected here even with the toggle on.
-              allowPathScopedIssuer:
-                (formData.oauthAllowPathScopedIssuer ??
-                  existingServer?.oauthAllowPathScopedIssuer) === true,
-              protocolMode: protocolSelection.mode,
-              registrationMode,
-              protocolVersion: protocolSelection.protocolVersion,
-              protocolResolutionSource: protocolSelection.source,
-              registrationStrategy: existingOAuthProfile?.registrationStrategy,
-              onTraceUpdate: (oauthTrace: OAuthTrace) => {
-                updateServerOAuthTrace(formData.name, oauthTrace);
               },
-            },
-            { intent: "connect" },
+              { intent: "connect" }
             );
           } catch (error) {
             const errorMessage =
@@ -4618,55 +4619,55 @@ export function useServerState({
         let oauthOptions: BuiltOAuthRequest;
         try {
           oauthOptions = buildOAuthRequest(
-          {
-            serverName,
-            serverUrl,
-            scopes: profileScopes ?? storedOAuthConfig.scopes,
-            // Same staleness gate as the connect path: a stored resource
-            // belongs to the endpoint it was captured for.
-            resourceUrl: selectStoredResourceUrl(serverUrl, [
-              {
-                resourceUrl: server.oauthFlowProfile?.resourceUrl,
-                capturedForServerUrl: server.oauthFlowProfile?.serverUrl,
+            {
+              serverName,
+              serverUrl,
+              scopes: profileScopes ?? storedOAuthConfig.scopes,
+              // Same staleness gate as the connect path: a stored resource
+              // belongs to the endpoint it was captured for.
+              resourceUrl: selectStoredResourceUrl(serverUrl, [
+                {
+                  resourceUrl: server.oauthFlowProfile?.resourceUrl,
+                  capturedForServerUrl: server.oauthFlowProfile?.serverUrl,
+                },
+                {
+                  resourceUrl: storedOAuthConfig.resourceUrl,
+                  capturedForServerUrl:
+                    localStorage.getItem(`mcp-serverUrl-${serverName}`) ??
+                    undefined,
+                },
+              ]),
+              clientId:
+                server.oauthTokens?.client_id ??
+                server.oauthFlowProfile?.clientId ??
+                storedClientCredentials.clientId,
+              clientSecret: undefined,
+              hasClientSecret: Boolean(server.hasClientSecret),
+              customHeaders: mergeWithProjectHeaders(
+                profileHeaders ??
+                  ("requestInit" in server.config
+                    ? extractRequestHeaders(server.config.requestInit)
+                    : undefined) ??
+                  storedOAuthConfig.customHeaders
+              ),
+              registryServerId: storedOAuthConfig.registryServerId,
+              useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+              // See the initial-connect path: the reconnect flow must honor the
+              // same per-server opt-in, or a reconnect fails where connect
+              // worked.
+              allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
+              protocolMode: protocolSelection.mode,
+              registrationMode,
+              protocolVersion: protocolSelection.protocolVersion,
+              protocolResolutionSource: protocolSelection.source,
+              registrationStrategy:
+                server.oauthFlowProfile?.registrationStrategy ??
+                storedOAuthConfig.registrationStrategy,
+              onTraceUpdate: (oauthTrace: OAuthTrace) => {
+                updateServerOAuthTrace(serverName, oauthTrace);
               },
-              {
-                resourceUrl: storedOAuthConfig.resourceUrl,
-                capturedForServerUrl:
-                  localStorage.getItem(`mcp-serverUrl-${serverName}`) ??
-                  undefined,
-              },
-            ]),
-            clientId:
-              server.oauthTokens?.client_id ??
-              server.oauthFlowProfile?.clientId ??
-              storedClientCredentials.clientId,
-            clientSecret: undefined,
-            hasClientSecret: Boolean(server.hasClientSecret),
-            customHeaders: mergeWithProjectHeaders(
-              profileHeaders ??
-                ("requestInit" in server.config
-                  ? extractRequestHeaders(server.config.requestInit)
-                  : undefined) ??
-                storedOAuthConfig.customHeaders
-            ),
-            registryServerId: storedOAuthConfig.registryServerId,
-            useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
-            // See the initial-connect path: the reconnect flow must honor the
-            // same per-server opt-in, or a reconnect fails where connect
-            // worked.
-            allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
-            protocolMode: protocolSelection.mode,
-            registrationMode,
-            protocolVersion: protocolSelection.protocolVersion,
-            protocolResolutionSource: protocolSelection.source,
-            registrationStrategy:
-              server.oauthFlowProfile?.registrationStrategy ??
-              storedOAuthConfig.registrationStrategy,
-            onTraceUpdate: (oauthTrace: OAuthTrace) => {
-              updateServerOAuthTrace(serverName, oauthTrace);
             },
-          },
-          { intent: "reconnect" },
+            { intent: "reconnect" }
           );
         } catch (error) {
           const errorMessage =

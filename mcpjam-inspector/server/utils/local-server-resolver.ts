@@ -19,7 +19,7 @@ import {
 } from "../routes/web/errors.js";
 import {
   buildHostedOAuthUnauthorizedHandler,
-  forceRefreshHostedOAuthAccessToken,
+  refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
@@ -800,6 +800,10 @@ export function toMCPServerConfig(
       projectId: options.refreshContext.projectId,
       serverId: options.refreshContext.serverId,
       serverName: options.refreshContext.serverName,
+      // This is the LOCAL resolver: if the authorization server is on a
+      // private address, this process is the one that can reach it. Covers the
+      // in-flight 401 during a long session, not just the connect.
+      allowPrivateAuthorizationServerFallback: true,
     });
   } else if (
     oauthToken &&
@@ -1021,7 +1025,9 @@ export async function readAuthorizedStdioLaunchSpec(args: {
             chatboxId: args.chatboxId,
             accessVersion: args.accessVersion,
           })
-        ).env ?? config.env ?? {}
+        ).env ??
+        config.env ??
+        {}
       : config.env ?? {};
 
   return {
@@ -1211,12 +1217,13 @@ export async function resolveLocalServerForConnect(
   if (useOAuth && !resolvedOauthAccessToken) {
     const displayName = options?.serverDisplayName ?? serverId;
     try {
-      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
-        bearerToken,
-        projectId,
-        serverId,
-        { serverName: displayName }
-      );
+      resolvedOauthAccessToken =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          serverId,
+          { serverName: displayName }
+        );
     } catch (error) {
       const refreshTokenInvalid =
         error instanceof WebRouteError &&
@@ -1257,12 +1264,13 @@ export async function resolveLocalServerForConnect(
   // needs auth, the connect 401s and the tagged error escalates client-side.
   if (effectiveAuth === "discover" && !resolvedOauthAccessToken) {
     try {
-      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
-        bearerToken,
-        projectId,
-        serverId,
-        { serverName: options?.serverDisplayName ?? serverId }
-      );
+      resolvedOauthAccessToken =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          serverId,
+          { serverName: options?.serverDisplayName ?? serverId }
+        );
     } catch (error) {
       logger.debug(
         "[discover connect] silent token refresh unavailable; attempting unauthenticated connect",

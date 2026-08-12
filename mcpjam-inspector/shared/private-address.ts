@@ -1,8 +1,16 @@
 /**
  * Detects URLs the hosted backend can never reach from its cloud
  * environment: loopback, RFC 1918 private ranges, link-local, and
- * local-only name suffixes. Used to warn that OAuth tokens imported for
- * such an authorization server cannot be auto-refreshed server-side.
+ * local-only name suffixes.
+ *
+ * Two callers, both needing the same answer from different sides:
+ *  - the client warns that tokens imported for such an authorization server
+ *    cannot be auto-refreshed server-side;
+ *  - the local server re-asserts it before refreshing one itself, so a bad
+ *    backend response cannot steer that refresh at a public host.
+ *
+ * Lives in `shared/` for exactly that reason — it was client-only, and a
+ * second copy under `server/` would have been the third hand-mirrored one.
  *
  * Mirrored by hand in the backend repo (convex/lib/privateNetworkUrl.ts);
  * keep the classifications in sync.
