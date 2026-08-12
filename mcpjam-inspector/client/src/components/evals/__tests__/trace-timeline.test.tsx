@@ -125,7 +125,14 @@ describe("harness span metadata", () => {
         ]}
       />,
     );
-    expect(screen.getAllByTestId("trace-row").length).toBeGreaterThan(0);
+    const rows = screen.getAllByTestId("trace-row");
+    expect(rows.length).toBeGreaterThan(0);
+    // Out-of-range indices must not borrow an unrelated user message as the
+    // row's prompt label.
+    expect(rows.some((row) => row.textContent?.includes("User:"))).toBe(false);
+    expect(
+      rows.some((row) => row.textContent?.includes("what's the weather")),
+    ).toBe(false);
   });
 
   it("omits throughput on non-llm rows", () => {

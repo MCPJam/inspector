@@ -79,7 +79,14 @@ describe("TraceTimeline (recorded waterfall)", () => {
         ]}
       />,
     );
-    expect(getAllByTestId("trace-row").length).toBeGreaterThan(0);
+    const rows = getAllByTestId("trace-row");
+    expect(rows.length).toBeGreaterThan(0);
+    // Out-of-range indices must not borrow an unrelated user message as the
+    // row's prompt label.
+    expect(rows.some((row) => row.textContent?.includes("User:"))).toBe(false);
+    expect(
+      rows.some((row) => row.textContent?.includes("what's the weather")),
+    ).toBe(false);
   });
 
   it("shows harness metadata (provider/finish) in the detail pane for llm spans", () => {
