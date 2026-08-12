@@ -1,10 +1,11 @@
+import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "@/lib/tester-link-path";
+
 /**
  * Detect same-origin embed of the public chatbox runtime inside the app
- * (e.g. Chatboxes tab Preview iframe). Mirrors the exception in main.tsx
- * that allows the chatbox tree to mount instead of IframeRouterError.
+ * (e.g. User Testing Preview iframe). Mirrors the exception in main.tsx
+ * that allows the chatbox tree to mount instead of IframeRouterError — both
+ * match the shared tester-link path shape.
  */
-const PUBLIC_CHATBOX_RUNTIME_PATH = /^\/chatbox\/[^/]+\/[^/]+\/?$/;
-
 export function isEmbeddedPreview(): boolean {
   try {
     if (window.self === window.top) {
@@ -14,7 +15,8 @@ export function isEmbeddedPreview(): boolean {
       const sameOrigin =
         window.top!.location.origin === window.location.origin;
       return (
-        sameOrigin && PUBLIC_CHATBOX_RUNTIME_PATH.test(window.location.pathname)
+        sameOrigin &&
+        TESTER_LINK_RUNTIME_PATH_PATTERN.test(window.location.pathname)
       );
     } catch {
       return false;

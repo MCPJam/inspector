@@ -294,6 +294,11 @@ vi.mock("../lib/theme-utils", () => ({
 }));
 
 vi.mock("../lib/oauth/mcp-oauth", () => ({
+  // Literal rather than the real export: the module under mock is the one
+  // being stubbed out. Drift is caught by the ratchet in
+  // lib/oauth/__tests__/oauth-callback-recovery.test.ts, which pins the
+  // constant to this exact value.
+  OAUTH_PENDING_STORAGE_KEY: "mcp-oauth-pending",
   completeHostedOAuthCallback: mockCompleteHostedOAuthCallback,
   hasOAuthConfig: vi.fn(() => false),
   handleOAuthCallback: mockHandleOAuthCallback,
@@ -363,9 +368,6 @@ vi.mock("../components/client-config/ProjectClientConfigSync", () => ({
 }));
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
-}));
-vi.mock("../components/AuthTab", () => ({
-  AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
   OAuthFlowTab: (props: unknown) => {
@@ -2762,18 +2764,44 @@ describe("App hosted OAuth callback handling", () => {
         },
       },
     }));
+    // Convex-shaped ids on purpose: only a real document id is synced and
+    // persisted now, so that a catalog slug in the URL (`/hosts/chatgpt`)
+    // can't be stored as this project's previewed host — see
+    // `HostsRoute.non-id-url.test.tsx`.
+    //
+    // The route only PERSISTS a host id the project's list confirms, so the
+    // list has to actually contain it — the suite default leaves every query
+    // but `getCurrentUser` unresolved, which reads as "still loading" and is
+    // not the state a real direct-URL visit lands in.
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser"
+        ? existingConvexUser
+        : ref === "hosts:listHosts"
+          ? [
+              {
+                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+                name: "Slack",
+                hostConfigId: "host-config-slack",
+                modelId: "claude-sonnet-4",
+                serverCount: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              },
+            ]
+          : undefined
+    );
     localStorage.setItem(
       "mcp-previewed-host-id",
-      JSON.stringify({ project_shared: "host-claude" })
+      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" })
     );
-    window.history.replaceState({}, "", "/hosts/host-slack");
+    window.history.replaceState({}, "", "/hosts/m17b6q9xw2tv4kz8p3r5s0dc");
 
     render(<App />);
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"))
         .toEqual({
-          project_shared: "host-slack",
+          project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
         });
     });
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();

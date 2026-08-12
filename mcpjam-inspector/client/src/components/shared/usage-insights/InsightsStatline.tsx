@@ -14,11 +14,11 @@ import type { UsageBreakdown } from "@/hooks/useUsageInsights";
 import {
   selectionForNode,
   stageValueLabel,
-} from "@/components/chatboxes/insights-sankey";
+} from "@/components/shared/usage-insights/insights-sankey";
 import {
   CriterionScorecard,
   summarizeCriterionFacets,
-} from "@/components/swarms/CriterionScorecard";
+} from "@/components/shared/usage-insights/CriterionScorecard";
 import { cn } from "@/lib/utils";
 
 const CHIP_CLASS =

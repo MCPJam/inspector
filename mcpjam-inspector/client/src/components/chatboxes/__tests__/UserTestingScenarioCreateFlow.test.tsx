@@ -178,6 +178,46 @@ describe("UserTestingScenarioCreateFlow", () => {
     expect(screen.getByTestId("user-testing-create-save")).toBeDisabled();
   });
 
+  /**
+   * The gate above is old; SAYING so is the fix. It was reported as "I can
+   * create a scenario without an environment" precisely because the only sign
+   * was an inert button — so the requirement is stated on the field, and drops
+   * away once the field is satisfied rather than nagging under a valid form.
+   */
+  it("says the environment is required, and stops saying it once one is picked", () => {
+    renderFlow();
+
+    expect(
+      screen.getByTestId("user-testing-create-environment-required"),
+    ).toBeInTheDocument();
+    // Marked on the label too — an asterisk is what a scanning user reads as
+    // "required" before they try Save.
+    expect(screen.getAllByText("(required)").length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+
+    expect(
+      screen.queryByTestId("user-testing-create-environment-required"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-save")).not.toBeDisabled();
+  });
+
+  it("waits for the environment list before claiming anything is missing", () => {
+    // `undefined` is "we haven't looked yet" — the loading line is the honest
+    // answer there, and asserting a missing field would contradict it.
+    environmentsState.value = undefined;
+    renderFlow();
+
+    expect(
+      screen.queryByTestId("user-testing-create-environment-required"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-create-environments-loading"),
+    ).toBeInTheDocument();
+  });
+
   it("names the scenario after the environment until the user types", () => {
     renderFlow();
     const picker = screen.getByTestId("user-testing-create-environment");
