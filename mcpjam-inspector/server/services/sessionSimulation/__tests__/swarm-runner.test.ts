@@ -227,6 +227,28 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
   });
 
+  // A connect-time XAA failure is not a crashed session: the thrown route
+  // error classified itself (`details.reason`), the shared core hands that tag
+  // back, and it must reach the attempt row as the errorCode — otherwise the
+  // run banner can only re-guess it from the sentence it is about to render.
+  it("stores the thrown failure's classified reason as the attempt errorCode", async () => {
+    const message =
+      'Your sign-in no longer proves your identity to "Billing MCP", so its enterprise access token couldn\'t be issued — sign in again, then re-run.';
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "failed",
+      errorMessage: message,
+      errorReason: "xaa_reauth_required",
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal.errorCode).toBe("xaa_reauth_required");
+    expect(terminal.errorMessage).toBe(message);
+  });
+
   it("maps a rate-limited session to a rate_limited terminal", async () => {
     runSyntheticHostSessionMock.mockResolvedValue({
       outcome: "rate_limited",

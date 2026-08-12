@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import "../../types/hono";
-import { logger } from "../../utils/logger";
 import { ingestHostedCatalogIds } from "../../services/hosted-model-catalog.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const models = new Hono();
 
@@ -56,8 +56,11 @@ async function refreshCatalog(): Promise<CatalogResult> {
 
     if (!response.ok) {
       const errorText = await response.text();
-      logger.error("[models] Convex backend error", new Error(errorText), {
-        status: response.status,
+      reportRouteFailure("[models] Convex backend error", new Error(errorText), {
+        // Our own backend answering badly is unambiguously ours.
+        source: "mcp.models.backend",
+        hop: "mcpjam_internal",
+        context: { status: response.status },
       });
       return {
         ok: false,
@@ -72,9 +75,10 @@ async function refreshCatalog(): Promise<CatalogResult> {
     // blank every picker on a backend hiccup (empty pricing table, partial
     // deploy, etc.). The caller serves last-good or 502 instead.
     if (!Array.isArray(page?.items) || page.items.length === 0) {
-      logger.error(
+      reportRouteFailure(
         "[models] Convex returned an empty or malformed catalog",
-        new Error("empty_or_malformed_catalog")
+        new Error("empty_or_malformed_catalog"),
+        { source: "mcp.models.catalog", hop: "mcpjam_internal" }
       );
       return { ok: false, status: 502, error: "Empty or malformed catalog" };
     }
@@ -91,7 +95,10 @@ async function refreshCatalog(): Promise<CatalogResult> {
     catalogCache = { data, fetchedAt: Date.now() };
     return { ok: true, data };
   } catch (error) {
-    logger.error("[models] Error fetching model metadata", error);
+    reportRouteFailure("[models] Error fetching model metadata", error, {
+      source: "mcp.models.fetch",
+      hop: "mcpjam_internal",
+    });
     return {
       ok: false,
       status: 500,

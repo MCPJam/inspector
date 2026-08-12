@@ -21,6 +21,7 @@ vi.mock("../../../config.js", async () => {
 
 import { createComputersRoutes } from "../computers";
 import { isLocalComputerEngineAvailable } from "../../../utils/computers/local-machine";
+import { getLocalTerminalAvailability } from "../../../utils/computers/local-pty";
 import type { BashRunner } from "../../../utils/computers/run-command";
 
 // Route-level tests: GET /config (data-plane discovery) and POST /exec (the
@@ -124,16 +125,21 @@ describe("GET /api/web/computers/config", () => {
   // The local-engine block depends on the host running the tests (bash on
   // PATH); compose the expectation from the same probe the route consults so
   // the suite is honest on a bash-less machine instead of failing on it.
-  function expectedLocalEngineBlock() {
+  async function expectedLocalEngineBlock() {
     const availability = isLocalComputerEngineAvailable();
+    // node-pty is an OPTIONAL native dep, so `terminalAvailable` depends on the
+    // host running the tests just like `available` does — compose it from the
+    // same probe the route consults rather than hard-coding either answer.
+    const terminal = await getLocalTerminalAvailability();
     return availability.available
       ? {
           available: true,
-          terminalAvailable: false,
+          terminalAvailable: terminal.available,
           workspaceDisplayRoot: "~/.mcpjam/computer",
         }
       : {
           available: false,
+          // A machine whose local ENGINE is off never offers a terminal.
           terminalAvailable: false,
           workspaceDisplayRoot: null,
           reason: availability.reason,
@@ -141,7 +147,7 @@ describe("GET /api/web/computers/config", () => {
   }
 
   it("reports an unconfigured server — legacy fields intact, engines added", async () => {
-    const localBlock = expectedLocalEngineBlock();
+    const localBlock = await expectedLocalEngineBlock();
     const response = await createApp().request("/api/web/computers/config");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({

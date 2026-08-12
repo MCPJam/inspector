@@ -51,6 +51,12 @@ export function describePluginReadiness(
         detail: "Authorize this server before its first tool call.",
         tone: "attention",
       };
+    case "needs_setup":
+      return {
+        label: "Needs configuration",
+        detail: "Provide the required environment or header values.",
+        tone: "attention",
+      };
     case "local_runtime_required":
       return {
         label: "Local runtime",
@@ -64,11 +70,12 @@ export function describePluginReadiness(
         tone: "info",
       };
     default:
-      // A readiness value this client does not know yet. Report the raw code
-      // rather than inventing a friendly label that might claim readiness.
+      // A readiness value this client does not know yet. A neutral "setup
+      // required" never claims readiness; the raw code stays visible in the
+      // detail line so the state is still diagnosable.
       return {
-        label: String(readiness),
-        detail: "Unrecognized component state.",
+        label: "Setup required",
+        detail: `Unrecognized component state "${String(readiness)}" — additional setup may be required.`,
         tone: "attention",
       };
   }
@@ -110,6 +117,7 @@ export type PluginHealth =
  */
 const READINESS_SEVERITY: Record<string, number> = {
   needs_auth: 3,
+  needs_setup: 3,
   computer_required: 2,
   local_runtime_required: 2,
   ready: 0,
@@ -141,22 +149,49 @@ export function rollUpPluginHealth(
   return { kind: "needs_attention", readiness: worst };
 }
 
+/**
+ * `detail` accompanies every rollup so a surface that renders only the badge
+ * can still expose WHY (as a title/tooltip). Without it an unrecognized
+ * backend readiness — whose label is the generic "Setup required" — would be
+ * indistinguishable from `needs_setup`, with the raw code nowhere on the card.
+ */
 export function describePluginHealth(health: PluginHealth): {
   label: string;
+  detail: string;
   tone: "ready" | "attention" | "info" | "muted";
 } {
   switch (health.kind) {
     case "disabled":
-      return { label: "Disabled", tone: "muted" };
+      return {
+        label: "Disabled",
+        detail: "This plugin is disabled for the project.",
+        tone: "muted",
+      };
     case "not_activated":
-      return { label: "No active revision", tone: "info" };
+      return {
+        label: "No active revision",
+        detail: "No revision has been activated yet.",
+        tone: "info",
+      };
     case "unknown":
-      return { label: "Checking…", tone: "muted" };
+      return {
+        label: "Checking…",
+        detail: "Component readiness has not loaded yet.",
+        tone: "muted",
+      };
     case "ready":
-      return { label: "Ready", tone: "ready" };
+      return {
+        label: "Ready",
+        detail: "Every component is ready to use.",
+        tone: "ready",
+      };
     case "needs_attention": {
       const described = describePluginReadiness(health.readiness);
-      return { label: described.label, tone: described.tone };
+      return {
+        label: described.label,
+        detail: described.detail,
+        tone: described.tone,
+      };
     }
   }
 }
@@ -237,6 +272,29 @@ export function describeUnsupportedKind(kind: string): string {
       return "Scheduled task template";
     case "unknown_field":
       return "Unrecognized manifest field";
+    default:
+      return kind;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Skipped components (parser failure isolation).
+// ---------------------------------------------------------------------------
+
+/**
+ * Human label for a skipped component's `kind` (sdk `PluginSkippedComponent`),
+ * defaulting to the raw kind. Distinct from "unsupported": an unsupported
+ * component is preserved by design, a skipped one FAILED validation and is
+ * not installed at all — which is why the preview surfaces skips loudly.
+ */
+export function describeSkippedComponentKind(kind: string): string {
+  switch (kind) {
+    case "server":
+      return "MCP server";
+    case "skill":
+      return "Skill";
+    case "mcp-config":
+      return "MCP configuration";
     default:
       return kind;
   }

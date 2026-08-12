@@ -29,6 +29,35 @@ import {
  *  recognizable at a glance. The server confines it under `/home/user`. */
 export const COMPUTER_ATTACHMENTS_DIR = "/home/user/attachments";
 
+/**
+ * Does a composer attachment ALSO get uploaded to the computer on send?
+ *
+ * COMP-14 gate (computers on + signed in + the previewed host actually attaches
+ * a computer) AND the resolved engine is `cloud`. The engine clause is the
+ * local-engine correction: the upload path targets the CLOUD box's upload route,
+ * so on "This machine" it would reserve/wake a cloud sandbox and drop the files
+ * somewhere the local bash tool can never read them. On the local engine
+ * attachments behave exactly as they do on a computer-less host — inline model
+ * parts only, no sandbox note.
+ *
+ * A local-engine computer upload is deliberately NOT reimplemented here: writing
+ * arbitrary composer files onto the user's real filesystem is a separate consent
+ * question from running approved commands, and is out of v1 scope.
+ */
+export function isComputerAttachmentUploadActive(args: {
+  computersEnabled: boolean;
+  isAuthenticated: boolean;
+  hostHasComputer: boolean;
+  engine: "local" | "cloud";
+}): boolean {
+  return (
+    args.computersEnabled &&
+    args.isAuthenticated &&
+    args.hostHasComputer &&
+    args.engine === "cloud"
+  );
+}
+
 export interface ComputerAttachmentNoteEntry {
   /** The user's original filename (what they'll recognize in the transcript). */
   name: string;

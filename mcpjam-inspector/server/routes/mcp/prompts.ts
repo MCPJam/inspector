@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { logger } from "../../utils/logger";
+import {
+  reportRouteFailure,
+  reportRouteFailureForResponse,
+} from "../../utils/route-error-report.js";
 import {
   listPrompts,
   listPromptsMulti,
@@ -42,11 +45,17 @@ prompts.post("/list", async (c) => {
       ...(servedFromCache ? { servedFromCache } : {}),
     });
   } catch (error) {
-    logger.error("Error fetching prompts", error, { serverId: "unknown" });
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "Error fetching prompts",
+      error,
+      { source: "mcp.prompts.list", hop: "user_server_hop" },
+    );
     return c.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
+        normalized,
+        origin,
       },
       500,
     );
@@ -74,10 +83,14 @@ prompts.post("/list-multi", async (c) => {
         result.errors as Record<string, string>,
       )) {
         if (!msg.includes("Unknown MCP server")) {
-          logger.error(
+          reportRouteFailure(
             `Error fetching prompts for server ${serverId}`,
             new Error(msg),
-            { serverId },
+            {
+              source: "mcp.prompts.batch.perServer",
+              hop: "user_server_hop",
+              context: { serverId },
+            },
           );
         }
       }
@@ -85,11 +98,17 @@ prompts.post("/list-multi", async (c) => {
 
     return c.json(result);
   } catch (error) {
-    logger.error("Error fetching batch prompts", error);
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "Error fetching batch prompts",
+      error,
+      { source: "mcp.prompts.batch", hop: "user_server_hop" },
+    );
     return c.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
+        normalized,
+        origin,
       },
       500,
     );
@@ -119,7 +138,11 @@ prompts.post("/get", async (c) => {
       }),
     );
   } catch (error) {
-    logger.error("Error getting prompt", error);
+    // Before `jsonError`, so the envelope sees an already-classified error.
+    reportRouteFailure("Error getting prompt", error, {
+      source: "mcp.prompts.get",
+      hop: "user_server_hop",
+    });
     // SEP-2350: surface a 403 `insufficient_scope` challenge (on
     // `mcpError.insufficientScope`) so the client can drive the union-scope
     // step-up re-authorization; ordinary errors keep the 500 fallback.

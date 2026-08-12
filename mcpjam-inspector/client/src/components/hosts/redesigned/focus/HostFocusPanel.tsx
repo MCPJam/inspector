@@ -46,9 +46,11 @@ interface HostFocusPanelProps {
    */
   focusSubKey?: SandboxConfigSubKey;
   hostDisplayName: string;
+  savedHostDisplayName?: string;
   onHostDisplayNameChange: (value: string) => void;
   themeMode?: ThemeMode;
   draft: HostConfigInputV2;
+  savedDraft?: HostConfigInputV2;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
@@ -67,9 +69,11 @@ export function HostFocusPanel({
   onTabChange,
   focusSubKey,
   hostDisplayName,
+  savedHostDisplayName,
   onHostDisplayNameChange,
   themeMode = "light",
   draft,
+  savedDraft,
   onDraftChange,
   attention,
   onClose,
@@ -97,8 +101,11 @@ export function HostFocusPanel({
         logoSrc={logoSrc}
         action={
           <UpdateHostToLatestButton
+            hostId={hostId}
             draft={draft}
+            savedDraft={savedDraft}
             hostDisplayName={hostDisplayName}
+            savedHostDisplayName={savedHostDisplayName}
             onHostDisplayNameChange={onHostDisplayNameChange}
             themeMode={themeMode}
             onDraftChange={onDraftChange}

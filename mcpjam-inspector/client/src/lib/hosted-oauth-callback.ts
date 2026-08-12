@@ -23,7 +23,6 @@ export interface HostedOAuthPendingMarker {
   sessionId?: string | null;
   accessScope?: "project_member" | "chat_v2";
   chatboxId?: string | null;
-  accessVersion?: number | null;
   returnPath: string | null;
   startedAt: number;
 }
@@ -130,7 +129,6 @@ export function writeHostedOAuthPendingMarker(
         sessionId: marker.sessionId ?? null,
         accessScope: marker.accessScope ?? null,
         chatboxId: marker.chatboxId ?? null,
-        accessVersion: marker.accessVersion ?? null,
         returnPath: normalizeHostedOAuthReturnPath(
           marker.returnPath,
           marker.surface
@@ -184,11 +182,6 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
           ? parsed.accessScope
           : undefined,
       chatboxId: typeof parsed.chatboxId === "string" ? parsed.chatboxId : null,
-      accessVersion:
-        typeof parsed.accessVersion === "number" &&
-        Number.isFinite(parsed.accessVersion)
-          ? parsed.accessVersion
-          : null,
       returnPath: normalizeHostedOAuthReturnPath(
         typeof parsed.returnPath === "string"
           ? parsed.returnPath
@@ -275,7 +268,10 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     return pendingMarker;
   }
 
-  const serverName = localStorage.getItem("mcp-oauth-pending")?.trim() ?? "";
+  const serverName = // Mirrors OAUTH_PENDING_STORAGE_KEY in lib/oauth/mcp-oauth.ts; the
+    // literal avoids a module edge here and is pinned by
+    // lib/oauth/__tests__/oauth-callback-recovery.test.ts.
+    localStorage.getItem("mcp-oauth-pending")?.trim() ?? "";
   if (!serverName) {
     return null;
   }
@@ -300,7 +296,6 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     sessionId: null,
     accessScope: undefined,
     chatboxId: null,
-    accessVersion: null,
     returnPath: normalizeHostedOAuthReturnPath(storedReturnTarget, surface),
     startedAt: Date.now(),
   };
@@ -318,9 +313,11 @@ export function resolveHostedOAuthReturnPath(
 
   if (context.surface === "chatbox") {
     const chatboxSession = readChatboxSession();
+    // No session to return to: land on the User Testing surface rather than a
+    // code name the visitor would read in their address bar.
     return chatboxSession
       ? `/${slugify(chatboxSession.payload.name)}`
-      : "/chatbox";
+      : routePaths.userTesting;
   }
 
   // A score visitor never asked to see the app. If the return path went

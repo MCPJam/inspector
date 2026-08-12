@@ -212,7 +212,11 @@ export function ErrorBox({
               <p className="text-sm leading-6 opacity-90">{message}</p>
             </>
           ) : (
-            <p className="text-sm leading-6">
+            // Bounded and scrollable rather than clamped: the formatter
+            // summarizes opaque payloads before they reach here, but this is
+            // the last line of defense — an unforeseen multi-kilobyte message
+            // must cost a scrollbar, never the whole screen.
+            <p className="text-sm leading-6 max-h-40 overflow-y-auto break-words">
               {isAuthError ? (
                 message
               ) : (
@@ -295,7 +299,11 @@ export function ErrorBox({
               ) : (
                 <pre
                   className={cn(
-                    "text-xs font-mono whitespace-pre-wrap overflow-x-auto",
+                    // Bounded: `errorDetails` carries raw upstream payloads
+                    // (a gateway's HTML error page, for one), and an
+                    // unbounded `<pre>` grows the card until it owns the
+                    // viewport.
+                    "text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto",
                     preClasses
                   )}
                 >
