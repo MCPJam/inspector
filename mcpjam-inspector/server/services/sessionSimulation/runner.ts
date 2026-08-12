@@ -143,12 +143,33 @@ async function withDeadline<T>(
   }
 }
 
+/**
+ * The `details.reason` a route error classified itself with (WebRouteError and
+ * the local-route envelope both use that key). Read structurally rather than by
+ * `instanceof`: the throw can cross a route boundary — a connect failure from
+ * `createAuthorizedManager` arrives as a WebRouteError, but the same shape also
+ * comes back re-thrown from a local route helper.
+ */
+function readErrorReason(error: unknown): string | undefined {
+  const details = (error as { details?: unknown } | null)?.details;
+  if (!details || typeof details !== "object") return undefined;
+  const reason = (details as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason.trim() ? reason : undefined;
+}
+
 // `errorMessage` rides along on failures so the batch loop can persist the
 // first one onto the run record (RunRecord.error) — previously the message
 // only reached server logs and the dialog rendered a bare "Failed".
+//
+// `errorReason` is the STRUCTURED tag a thrown WebRouteError classified itself
+// with (`details.reason`), when it had one. Without it the swarm runner would
+// have to re-derive "is this an authorization handshake that needs re-running?"
+// by pattern-matching the sentence it is about to store — so the tag travels
+// with the failure instead, and becomes the attempt's `errorCode`.
 interface SessionResult {
   outcome: SessionOutcome;
   errorMessage?: string;
+  errorReason?: string;
 }
 
 // --- Shared synthetic host-session core ----------------------------------
@@ -1026,7 +1047,12 @@ export async function runSyntheticHostSession(
       status: "failed",
       errorMessage: message,
     });
-    return { outcome: "failed", errorMessage: message };
+    const errorReason = readErrorReason(error);
+    return {
+      outcome: "failed",
+      errorMessage: message,
+      ...(errorReason ? { errorReason } : {}),
+    };
   } finally {
     // Tear down the browser harness (and its headless Chromium, if launched)
     // before the manager: the harness's widget bridge dispatches tools/call

@@ -91,9 +91,11 @@ describe("ui-actions (local mode)", () => {
 
   it("listUiNavigationTargets includes hosted-blocked tabs locally", () => {
     const targets = listUiNavigationTargets();
-    for (const tab of ["tracing", "skills", "tasks", "auth", "playground"]) {
+    for (const tab of ["tracing", "skills", "tasks", "playground"]) {
       expect(targets).toContain(tab);
     }
+    // The Auth surface is retired; it must not come back as a nav target.
+    expect(targets).not.toContain("auth");
   });
 
   describe("navigateAction", () => {
