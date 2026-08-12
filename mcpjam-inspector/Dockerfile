@@ -41,6 +41,14 @@ ARG VITE_WORKOS_API_HOSTNAME
 ARG VITE_CONVEX_URL
 ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
+# Not a VITE_ var — it is never bundled. `sentryVitePlugin` in
+# client/vite.config.ts reads it at BUILD time to upload source maps for the
+# release, and without it every hosted prod stack trace stays minified
+# (`index-<hash>.js:8:117100`) while Sentry falls back to scraping the asset
+# URL, which the SPA answers with index.html. Absent, the plugin warns and
+# skips the upload, so local and desktop builds are unaffected. Scoped to the
+# build stage: the runtime image below copies artifacts, never this ARG.
+ARG SENTRY_AUTH_TOKEN
 
 COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ./sdk/
 COPY cli/package.json ./cli/package.json
@@ -92,6 +100,7 @@ RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; f
     if [ -n "$VITE_CONVEX_URL" ]; then export VITE_CONVEX_URL; fi; \
     if [ -n "$VITE_WORKOS_CLIENT_ID" ]; then export VITE_WORKOS_CLIENT_ID; fi; \
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
+    if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
     npm run build:client -w @mcpjam/inspector
 
 ################################################################################

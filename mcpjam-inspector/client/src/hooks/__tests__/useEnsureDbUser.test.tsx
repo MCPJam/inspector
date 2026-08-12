@@ -5,7 +5,12 @@ import { useEnsureDbUser } from "../useEnsureDbUser";
 const mockState = vi.hoisted(() => ({
   actorKey: "guest-1" as string | null,
   auth: {
-    user: null as { id: string } | null,
+    user: null as {
+      id: string;
+      email?: string;
+      firstName?: string | null;
+      lastName?: string | null;
+    } | null,
   },
   convexAuth: {
     isAuthenticated: true,
@@ -17,6 +22,7 @@ const mockState = vi.hoisted(() => ({
   getExistingGuestId: vi.fn().mockResolvedValue(null as string | null),
   isGuestActivated: vi.fn().mockReturnValue(false),
   sentrySetUser: vi.fn(),
+  sentrySetTag: vi.fn(),
   posthog: null as {
     get_property?: (key: string) => unknown;
     get_distinct_id?: () => string;
@@ -47,8 +53,12 @@ vi.mock("@/lib/guest-session", () => ({
   isGuestActivated: mockState.isGuestActivated,
 }));
 
+// `@/lib/sentry-identity` is deliberately NOT mocked: it is the module under
+// test as much as the hook is, so these assertions run against the real
+// mapping from actor to Sentry scope rather than a restatement of it.
 vi.mock("@sentry/react", () => ({
   setUser: mockState.sentrySetUser,
+  setTag: mockState.sentrySetTag,
 }));
 
 describe("useEnsureDbUser", () => {
@@ -125,21 +135,90 @@ describe("useEnsureDbUser", () => {
     });
   });
 
-  it("clears Sentry when WorkOS signs out but Convex remains guest-authenticated", async () => {
-    mockState.auth.user = { id: "workos-user-1" };
+  it("identifies a signed-in user by email so Sentry issues name a person", async () => {
+    mockState.auth.user = {
+      id: "workos-user-1",
+      email: "someone@example.com",
+      firstName: "Some",
+      lastName: "One",
+    };
     mockState.actorKey = "workos-user-1";
-    const { rerender } = renderHook(() => useEnsureDbUser());
+    renderHook(() => useEnsureDbUser());
 
     await waitFor(() => {
       expect(mockState.sentrySetUser).toHaveBeenCalledWith({
         id: "workos-user-1",
+        email: "someone@example.com",
+        username: "someone@example.com",
+        name: "Some One",
       });
+    });
+    expect(mockState.sentrySetTag).toHaveBeenCalledWith(
+      "actor_kind",
+      "signedIn"
+    );
+  });
+
+  it("identifies the actor before ensureUser resolves", async () => {
+    // The regression this pins: identity used to be set only after the
+    // ensureUser round-trip, so anything that crashed during boot — or on a
+    // session whose ensureUser never succeeded — reported anonymously.
+    mockState.ensureUser.mockImplementation(() => new Promise<void>(() => {}));
+    mockState.auth.user = { id: "workos-user-1", email: "someone@example.com" };
+    mockState.actorKey = "workos-user-1";
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith(
+        expect.objectContaining({ email: "someone@example.com" })
+      );
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("identifies guests on the same key PostHog uses", async () => {
+    mockState.auth.user = null;
+    mockState.actorKey = "guest-1";
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith({ id: "guest-1" });
+    });
+    expect(mockState.sentrySetTag).toHaveBeenCalledWith("actor_kind", "guest");
+  });
+
+  it("drops the signed-in identity when WorkOS signs out but Convex remains guest-authenticated", async () => {
+    mockState.auth.user = { id: "workos-user-1", email: "someone@example.com" };
+    mockState.actorKey = "workos-user-1";
+    const { rerender } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "workos-user-1" })
+      );
     });
 
     mockState.sentrySetUser.mockClear();
     mockState.auth.user = null;
     mockState.actorKey = "guest-1";
     rerender();
+
+    // The guest is identified rather than blanked, but the previous account's
+    // email must not survive the switch — `setUser` replaces wholesale, and
+    // this asserts the replacement rather than trusting it.
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith({ id: "guest-1" });
+    });
+    expect(mockState.sentrySetUser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ email: "someone@example.com" })
+    );
+  });
+
+  it("clears the scope entirely while the actor is still resolving", async () => {
+    mockState.auth.user = null;
+    mockState.actorKey = null;
+    renderHook(() => useEnsureDbUser());
 
     await waitFor(() => {
       expect(mockState.sentrySetUser).toHaveBeenCalledWith(null);

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
-import * as Sentry from "@sentry/react";
+import { setSentryActor } from "@/lib/sentry-identity";
 import {
   getExistingGuestId,
   getGuestPromotionProof,
@@ -36,6 +36,24 @@ type EnsureUserMutation = (args: EnsureUserArgs) => Promise<unknown>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * "First Last" when AuthKit has both halves, otherwise whichever half it has.
+ * Undefined rather than an empty string when it has neither — a blank `name`
+ * would render as an empty line in Sentry's user block instead of falling back
+ * to the email.
+ */
+function displayName(
+  user: {
+    firstName?: string | null;
+    lastName?: string | null;
+  } | null
+): string | undefined {
+  const parts = [user?.firstName, user?.lastName].filter(
+    (part): part is string => typeof part === "string" && part.trim() !== ""
+  );
+  return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
 function isConvexWriteConflictError(err: unknown): boolean {
@@ -167,13 +185,34 @@ export function useEnsureDbUser() {
     }
   }, [isAuthenticated]);
 
-  // WorkOS signout now falls back to Convex guest auth, so Convex can remain
-  // authenticated while the Sentry user must be cleared.
+  // Identity boundary for Sentry.
+  //
+  // Keyed on the actor, NOT on the ensureUser round-trip below. The previous
+  // placement set the user only after `await ensurePromise` resolved, so a
+  // crash during boot — or any crash on a session whose ensureUser was still
+  // in flight or had failed outright — arrived anonymous. Those are precisely
+  // the events worth attributing.
+  //
+  // WorkOS signout falls back to Convex guest auth, so Convex can stay
+  // authenticated while the actor changes underneath it. `setSentryActor`
+  // replaces the user object wholesale, so the previous account's email cannot
+  // survive that switch.
   useEffect(() => {
-    if (!workosUserId) {
-      Sentry.setUser(null);
+    if (!actorKey) {
+      setSentryActor(null);
+      return;
     }
-  }, [workosUserId]);
+    if (workosUserId) {
+      setSentryActor({
+        kind: "signedIn",
+        id: workosUserId,
+        email: user?.email ?? undefined,
+        name: displayName(user),
+      });
+      return;
+    }
+    setSentryActor({ kind: "guest", id: actorKey });
+  }, [actorKey, workosUserId, user?.email, user?.firstName, user?.lastName]);
 
   useEffect(() => {
     if (isLoading) {
@@ -312,9 +351,6 @@ export function useEnsureDbUser() {
 
       lastEnsuredIdentityRef.current = identityKey;
       setEnsuredIdentityKey(identityKey);
-      if (workosUserId) {
-        Sentry.setUser({ id: workosUserId });
-      }
 
       // If we just authenticated as a WorkOS user and a guest cookie was
       // in play, retire it. Safe to call unconditionally — if no cookie

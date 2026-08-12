@@ -107,6 +107,7 @@ import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
+import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -2687,6 +2688,7 @@ export default function App() {
     organizationId: activeOrganizationId,
   });
   usePostHogOrgContext(activeOrganizationId);
+  useSentryOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
