@@ -268,7 +268,10 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     return pendingMarker;
   }
 
-  const serverName = localStorage.getItem("mcp-oauth-pending")?.trim() ?? "";
+  const serverName = // Mirrors OAUTH_PENDING_STORAGE_KEY in lib/oauth/mcp-oauth.ts; the
+    // literal avoids a module edge here and is pinned by
+    // lib/oauth/__tests__/oauth-callback-recovery.test.ts.
+    localStorage.getItem("mcp-oauth-pending")?.trim() ?? "";
   if (!serverName) {
     return null;
   }
@@ -310,9 +313,11 @@ export function resolveHostedOAuthReturnPath(
 
   if (context.surface === "chatbox") {
     const chatboxSession = readChatboxSession();
+    // No session to return to: land on the User Testing surface rather than a
+    // code name the visitor would read in their address bar.
     return chatboxSession
       ? `/${slugify(chatboxSession.payload.name)}`
-      : "/chatbox";
+      : routePaths.userTesting;
   }
 
   // A score visitor never asked to see the app. If the return path went

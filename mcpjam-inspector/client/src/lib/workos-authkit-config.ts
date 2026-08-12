@@ -1,7 +1,6 @@
 type WorkosAuthkitEnv = {
   DEV?: boolean;
   VITE_WORKOS_API_HOSTNAME?: string;
-  VITE_WORKOS_DEV_MODE?: string;
   VITE_WORKOS_DISABLE_LOCAL_PROXY?: string;
 };
 
@@ -16,15 +15,24 @@ export type WorkosClientOptions = {
 const WORKOS_REFRESH_TOKEN_KEY = "workos:refresh-token";
 const LOCAL_WORKOS_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 
-export function resolveWorkosDevMode(env: WorkosAuthkitEnv): boolean {
-  const explicit = env.VITE_WORKOS_DEV_MODE;
-  if (explicit === "true") return true;
-  if (explicit === "false") return false;
-
-  // Keep local/dev on the same AuthKit cookie-mode path as hosted by default.
-  // `devMode=true` stores the WorkOS refresh token in browser localStorage.
-  return false;
-}
+/**
+ * AuthKit runs in cookie mode on every surface, so `devMode` is always false.
+ *
+ * This is passed explicitly rather than omitted: `@workos-inc/authkit-js`
+ * defaults `devMode` to `location.hostname === "localhost"`, which would put
+ * local dev on a different session-storage path (refresh token in
+ * `localStorage`) than every deployed environment (refresh token in memory,
+ * restored from the AuthKit session cookie). Local dev reaches cookie mode
+ * through the first-party AuthKit proxy this server mounts at
+ * `/user_management` — see `resolveWorkosClientOptions` below and
+ * `server/routes/workos-authkit.ts`.
+ *
+ * There was a `VITE_WORKOS_DEV_MODE` escape hatch here. It was set in no
+ * environment, was absent from the Dockerfile `ARG` allowlist so no deployed
+ * build could set it, and existed only to opt out of the mode the proxy was
+ * added to make universal.
+ */
+export const WORKOS_DEV_MODE = false;
 
 export function resolveWorkosClientOptions(
   env: WorkosAuthkitEnv,

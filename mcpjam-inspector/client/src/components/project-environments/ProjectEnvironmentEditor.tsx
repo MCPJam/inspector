@@ -6,6 +6,7 @@ import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
+import { SandboxImagePicker } from "@/components/computer/SandboxImagePicker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
@@ -234,6 +235,9 @@ export function ProjectEnvironmentEditor({
       }
       if (baseRevision === null) return;
       const updated = await updateEnvironment({
+        // Scopes the admin check and the row lookup on the backend; the update
+        // is not addressable by environment id alone.
+        projectId,
         environmentId: environment.environmentId,
         // The revision captured at draft init — NOT environment.revision,
         // which may have moved under a dirty draft.
@@ -408,67 +412,24 @@ export function ProjectEnvironmentEditor({
             Sandbox image
           </Label>
           <div className="flex items-center gap-2">
-            <select
+            {/* Same picker primitive as the Client and Server group rows above.
+                Personal drafts are listed but not selectable — the backend
+                rejects them (a draft would resolve for every member while being
+                visible/mutable only to its owner) — and the annotated
+                loading/deleted rows live in the shared component. */}
+            <SandboxImagePicker
+              variant="field"
               id="project-environment-sandbox-image"
-              data-testid="project-environment-sandbox-image"
-              value={draft.computerEnvironmentId ?? ""}
+              testId="project-environment-sandbox-image"
+              images={sandboxImages}
+              value={draft.computerEnvironmentId ?? null}
               disabled={readOnly}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  computerEnvironmentId: e.target.value || null,
-                }))
+              onChange={(computerEnvironmentId) =>
+                setDraft((d) => ({ ...d, computerEnvironmentId }))
               }
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
-            >
-              <option value="">None (default image)</option>
-              {(sandboxImages ?? []).map((img) => {
-                const ready = img.currentBuild?.status === "ready";
-                // Personal drafts are listed but not selectable — the backend
-                // rejects them (a draft would resolve for every member while
-                // being visible/mutable only to its owner). Showing them
-                // disabled keeps the promote step discoverable.
-                const isDraft = img.sharing !== "project";
-                return (
-                  <option
-                    key={img.environmentId}
-                    value={img.environmentId}
-                    disabled={isDraft}
-                  >
-                    {img.name}
-                    {isDraft
-                      ? " (draft — promote to project first)"
-                      : ready
-                        ? ""
-                        : " (not built)"}
-                  </option>
-                );
-              })}
-              {/* A pinned id with no matching option would leave the <select>
-                  displaying "None" — a pinned environment reading as unpinned.
-                  Two DIFFERENT causes need two different labels:
-
-                  1. still loading: say so. Labeling it "Unknown image" here
-                     would alarm an admin about a perfectly valid pin on every
-                     mount until the query resolves.
-                  2. resolved and genuinely absent (deleted image): name it, so
-                     the pin stays visible and explicitly clearable instead of
-                     being silently coerced to "None" on the next save. */}
-              {draft.computerEnvironmentId && sandboxImages === undefined ? (
-                <option value={draft.computerEnvironmentId} disabled>
-                  Loading image…
-                </option>
-              ) : null}
-              {sandboxImages !== undefined &&
-              draft.computerEnvironmentId &&
-              !sandboxImages.some(
-                (img) => img.environmentId === draft.computerEnvironmentId
-              ) ? (
-                <option value={draft.computerEnvironmentId} disabled>
-                  Unknown image ({draft.computerEnvironmentId})
-                </option>
-              ) : null}
-            </select>
+              noPinLabel="None (default image)"
+              draftNote=" (draft — promote to project first)"
+            />
             {/* Badge only for a real selection — "None" has no build status
                 (the badge component renders "Not built" for null/undefined). */}
             {draft.computerEnvironmentId ? (

@@ -4,6 +4,7 @@
 
 import type { ResourceIndicatorDecision } from "../resource-policy.js";
 import type { OAuthEmulationConfig } from "../emulation/types.js";
+import type { RequiredMetadataEnforcement } from "./shared/required-metadata.js";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -328,6 +329,22 @@ export interface BaseOAuthStateMachineConfig {
    */
   resourceMetadataUrl?: string;
   authMode?: OAuthAuthMode;
+  /**
+   * What to do when metadata the current MCP profile REQUIRES a client to
+   * verify is missing or unusable — the authorization server's advertised PKCE
+   * methods, and the protected resource's `authorization_servers` list.
+   *
+   * `"reject"` (the default) fails closed before the browser is sent to an
+   * authorization server, which is what every connect-like path needs.
+   * `"observe"` warns and continues so the debugger can show a nonconforming
+   * server's actual behavior; it is a non-connect intent and must be asked for
+   * explicitly. Only eras governed by the current profile (2025-11-25 and
+   * later) consult this — see `shared/required-metadata.ts`.
+   *
+   * Orthogonal to `strictConformance` (registration strictness) and to
+   * `resourceIndicatorEnforcement` (the advertised resource indicator).
+   */
+  requiredMetadataEnforcement?: RequiredMetadataEnforcement;
   strictConformance?: boolean;
   /**
    * Opt-in: accept authorization-server metadata whose advertised `issuer` is
