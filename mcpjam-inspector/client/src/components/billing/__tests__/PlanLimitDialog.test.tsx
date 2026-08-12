@@ -23,7 +23,10 @@ const {
     canManageBilling: true,
   },
   recipientsState: {
-    current: [] as Array<{ email: string; name?: string | null }>,
+    current: {
+      recipients: [] as Array<{ email: string; name?: string | null }>,
+      isLoading: false,
+    },
   },
   billingState: { plan: "free" as string, isLoading: false },
 }));
@@ -100,7 +103,7 @@ beforeEach(() => {
   upgradeState.currentPlan = "free";
   upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
-  recipientsState.current = [];
+  recipientsState.current = { recipients: [], isLoading: false };
   billingState.plan = "free";
   billingState.isLoading = false;
   window.history.replaceState(null, "", "/evals");
@@ -152,6 +155,32 @@ describe("PlanLimitDialog", () => {
     );
   });
 
+  it("waits for owner recipients before reporting a request impression", () => {
+    upgradeState.canManageBilling = false;
+    recipientsState.current = { recipients: [], isLoading: true };
+    openEvalLimit();
+    const view = render(<PlanLimitDialog />);
+
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.anything()
+    );
+
+    recipientsState.current = {
+      recipients: [{ email: "dana@acme.test", name: "Dana Ruiz" }],
+      isLoading: false,
+    };
+    view.rerender(<PlanLimitDialog />);
+
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.objectContaining({
+        primary_action: "request_owner",
+        request_recipient_count: 1,
+      })
+    );
+  });
+
   it("shows both prices at once, no toggle to discover", () => {
     openEvalLimit();
     render(<PlanLimitDialog />);
@@ -198,7 +227,10 @@ describe("PlanLimitDialog", () => {
 
   it("offers an owner email instead of a CTA the server would reject", () => {
     upgradeState.canManageBilling = false;
-    recipientsState.current = [{ email: "dana@acme.test", name: "Dana Ruiz" }];
+    recipientsState.current = {
+      recipients: [{ email: "dana@acme.test", name: "Dana Ruiz" }],
+      isLoading: false,
+    };
     openEvalLimit();
     render(<PlanLimitDialog />);
 
@@ -219,7 +251,7 @@ describe("PlanLimitDialog", () => {
 
   it("hides the owner email when there is no address to write to", () => {
     upgradeState.canManageBilling = false;
-    recipientsState.current = [];
+    recipientsState.current = { recipients: [], isLoading: false };
     openEvalLimit();
     render(<PlanLimitDialog />);
 

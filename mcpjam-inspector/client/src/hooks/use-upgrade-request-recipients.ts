@@ -14,19 +14,17 @@ import type { UpgradeRequestRecipient } from "@/components/billing/RequestUpgrad
  * Pending invites are excluded — `activeMembers` already filters to members
  * with a resolved `userId`.
  */
-export function useUpgradeRequestRecipients(
-  organizationId: string | null,
-): UpgradeRequestRecipient[] {
+export function useUpgradeRequestRecipients(organizationId: string | null): {
+  recipients: UpgradeRequestRecipient[];
+  isLoading: boolean;
+} {
   const { isAuthenticated } = useConvexAuth();
-  const { activeMembers } = useOrganizationMembers({
+  const { activeMembers, isLoading } = useOrganizationMembers({
     isAuthenticated,
     organizationId,
   });
 
-  // `activeMembers` is [] while the query is in flight, which collapses into
-  // the same render as "this org has no reachable owner": nothing. Both are
-  // states where there is no address to write to, so neither earns a button.
-  return useMemo(
+  const recipients = useMemo(
     () =>
       activeMembers
         .filter((member) => resolveOrganizationRole(member) === "owner")
@@ -35,6 +33,8 @@ export function useUpgradeRequestRecipients(
           name: member.user?.name ?? null,
         }))
         .filter((recipient) => Boolean(recipient.email)),
-    [activeMembers],
+    [activeMembers]
   );
+
+  return { recipients, isLoading };
 }

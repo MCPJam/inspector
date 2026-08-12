@@ -67,7 +67,10 @@ export function MCPJamLimitDialog() {
     origin: "credits",
     limitKind: "credits",
   });
-  const requestRecipients = useUpgradeRequestRecipients(billingOrgId);
+  const {
+    recipients: requestRecipients,
+    isLoading: isLoadingRequestRecipients,
+  } = useUpgradeRequestRecipients(billingOrgId);
 
   // Only owners/admins/creators can buy credits (mirrors the backend gate).
   // Members instead see an "ask org admin" hint so they don't dead-end on a
@@ -123,6 +126,7 @@ export function MCPJamLimitDialog() {
     if (
       isLoadingOrganizations ||
       creditsUpgrade.isLoadingBilling ||
+      (isKnownNonManager && isLoadingRequestRecipients) ||
       creditsImpressionTrackedRef.current
     ) {
       return;
@@ -166,6 +170,7 @@ export function MCPJamLimitDialog() {
     creditsUpgrade.monthlySupported,
     isKnownNonManager,
     isLoadingOrganizations,
+    isLoadingRequestRecipients,
     requestRecipients.length,
     showCreditsUpgrade,
     showTopupDialog,

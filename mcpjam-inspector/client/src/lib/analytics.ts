@@ -42,8 +42,11 @@ export function track(
   } = props;
   try {
     posthog.capture(event, { ...rest, ...standardEventProps(location) });
-  } catch {
+  } catch (error) {
     // Product analytics is best-effort. Ad blockers, initialization races, or
     // an SDK failure must never stop the user action that emitted the event.
+    // Keep the failure observable without including event props, which may
+    // contain sensitive product data.
+    console.warn(`[analytics] Failed to capture ${event}`, error);
   }
 }
