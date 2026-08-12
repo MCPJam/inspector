@@ -527,7 +527,7 @@ function EnvironmentDetail({
           // is live for outsiders and starts failing the moment this archives.
           const chatboxPart =
             chatboxCount > 0
-              ? " Its published chatbox link stops working immediately."
+              ? " Its published tester link stops working immediately."
               : "";
           return suiteCount + journeyCount > 0
             ? `${suitePart} and ${journeyPart} reference it (count may be incomplete).${chatboxPart}`

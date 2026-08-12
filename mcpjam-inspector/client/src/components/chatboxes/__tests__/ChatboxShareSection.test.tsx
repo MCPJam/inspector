@@ -68,8 +68,10 @@ describe("ChatboxShareSection", () => {
     // getByLabelText, not getByText: the "Tester link" label has to resolve to
     // a real labelable control, so the link reads as that label's value to
     // assistive tech instead of as unassociated text.
+    // The path says User Testing too — the tester reads this URL, and a code
+    // name in it is what SUTB-8 reported.
     expect(screen.getByLabelText("Tester link")).toHaveTextContent(
-      "/chatbox/my-chatbox/t",
+      "/user-testing/my-chatbox/t",
     );
     expect(screen.getByTestId("chatbox-copy-tester-link")).toBeInTheDocument();
     expect(screen.getByText("Invite with email")).toBeInTheDocument();
