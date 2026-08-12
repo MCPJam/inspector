@@ -715,6 +715,12 @@ interface PendingSessionHydration {
 }
 
 const MAX_LIVE_TRACE_EVENTS = 400;
+// Bounds `turnOrder`/`turns`/`requestPayloadHistory` for long-running agent
+// sessions. Without this, a session left open for many hours accumulates one
+// entry per turn — each carrying a full resolved model request (system
+// prompt + entire message history) — growing roughly quadratically and
+// eventually exhausting the renderer's V8 heap (see INSPECTOR-ELECTRON-VR).
+const MAX_LIVE_TRACE_TURNS = 200;
 
 function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
   return {
@@ -1083,6 +1089,37 @@ function upsertRequestPayloadEntry(
   );
 }
 
+// Drops the oldest turns once `turnOrder` exceeds MAX_LIVE_TRACE_TURNS,
+// keeping `turns` and `requestPayloadHistory` in sync with what's evicted.
+function trimLiveTraceTurns(
+  state: LiveTraceAccumulatorState
+): LiveTraceAccumulatorState {
+  if (state.turnOrder.length <= MAX_LIVE_TRACE_TURNS) {
+    return state;
+  }
+
+  const dropCount = state.turnOrder.length - MAX_LIVE_TRACE_TURNS;
+  const droppedTurnIds = new Set(state.turnOrder.slice(0, dropCount));
+  const turnOrder = state.turnOrder.slice(dropCount);
+
+  const turns: Record<string, LiveTraceTurnState> = {};
+  for (const turnId of turnOrder) {
+    const turn = state.turns[turnId];
+    if (turn) {
+      turns[turnId] = turn;
+    }
+  }
+
+  return {
+    ...state,
+    turnOrder,
+    turns,
+    requestPayloadHistory: state.requestPayloadHistory.filter(
+      (entry) => !droppedTurnIds.has(entry.turnId)
+    ),
+  };
+}
+
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
   event: LiveChatTraceEvent
@@ -1117,7 +1154,7 @@ function applyLiveTraceEvent(
     case "turn_start": {
       const turnExists = baseState.turnOrder.includes(event.turnId);
       const prev = baseState.turns[event.turnId];
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1135,12 +1172,12 @@ function applyLiveTraceEvent(
         },
         activeTurnId: event.turnId,
         activeTurnHasSnapshot: false,
-      };
+      });
     }
     case "request_payload": {
       const turnState = ensureTurnState(event.turnId, event.promptIndex);
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1161,7 +1198,7 @@ function applyLiveTraceEvent(
             payload: event.payload,
           }
         ),
-      };
+      });
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
@@ -1169,7 +1206,7 @@ function applyLiveTraceEvent(
         event.snapshot.promptIndex
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1199,12 +1236,12 @@ function applyLiveTraceEvent(
           baseState.activeTurnId === event.turnId ||
           baseState.activeTurnId === null,
         anySnapshotSeen: true,
-      };
+      });
     }
     case "turn_finish": {
       const turnState = ensureTurnState(event.turnId, event.promptIndex);
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1224,7 +1261,7 @@ function applyLiveTraceEvent(
           baseState.activeTurnId === event.turnId
             ? false
             : baseState.activeTurnHasSnapshot,
-      };
+      });
     }
     default:
       return baseState;

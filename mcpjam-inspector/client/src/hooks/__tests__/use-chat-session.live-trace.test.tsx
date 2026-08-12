@@ -727,4 +727,61 @@ describe("useChatSession live trace state", () => {
     );
     expect(seenHeartbeat).not.toBe(true);
   });
+
+  it("evicts the oldest turns once the live trace turn cap is exceeded", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    // MAX_LIVE_TRACE_TURNS is 200 — push well past it so turn-0 and turn-1
+    // are guaranteed to be evicted, and confirm the most recent turns and
+    // their request payloads survive.
+    const TOTAL_TURNS = 210;
+    act(() => {
+      for (let i = 0; i < TOTAL_TURNS; i += 1) {
+        const turnId = `turn-${i}`;
+        mockState.chatOnData?.(
+          tracePart({
+            type: "turn_start",
+            turnId,
+            promptIndex: i,
+            startedAtMs: i * 1000,
+          }),
+        );
+        mockState.chatOnData?.(
+          tracePart({
+            type: "request_payload",
+            turnId,
+            promptIndex: i,
+            stepIndex: 0,
+            payload: {
+              system: "System",
+              tools: {},
+              messages: [{ role: "user", content: `Prompt ${i}` }],
+            },
+          }),
+        );
+      }
+    });
+
+    await waitFor(() => {
+      expect(result.current.requestPayloadHistory.length).toBeLessThan(
+        TOTAL_TURNS,
+      );
+    });
+
+    const turnIds = result.current.requestPayloadHistory.map(
+      (entry) => entry.turnId,
+    );
+    expect(turnIds).not.toContain("turn-0");
+    expect(turnIds).not.toContain("turn-1");
+    expect(turnIds).toContain(`turn-${TOTAL_TURNS - 1}`);
+  });
 });
