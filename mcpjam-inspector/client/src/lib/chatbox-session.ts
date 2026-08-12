@@ -8,6 +8,10 @@ import type {
   ModelVisibleMcpToolResults,
 } from "@/lib/client-config-v2";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
+import {
+  extractTesterLinkToken,
+  TESTER_LINK_PATH_SEGMENT,
+} from "@/lib/tester-link-path";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -268,14 +272,9 @@ function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
   return "invited_only";
 }
 
+/** Both tester-link path shapes — see `lib/tester-link-path.ts`. */
 export function extractChatboxTokenFromPath(pathname: string): string | null {
-  const match = pathname.match(/^\/chatbox\/[^/?#]+\/([^/?#]+)/);
-  if (!match || !match[1]) return null;
-  try {
-    return decodeURIComponent(match[1]).trim() || null;
-  } catch {
-    return match[1].trim() || null;
-  }
+  return extractTesterLinkToken(pathname);
 }
 
 export function hasActiveChatboxSession(): boolean {
@@ -494,7 +493,7 @@ export function clearChatboxSignInReturnPath(): void {
 
 export function buildChatboxLink(token: string, chatboxName: string): string {
   const origin = getShareableAppOrigin();
-  return `${origin}/chatbox/${slugify(chatboxName)}/${encodeURIComponent(
-    token
-  )}`;
+  return `${origin}/${TESTER_LINK_PATH_SEGMENT}/${slugify(
+    chatboxName
+  )}/${encodeURIComponent(token)}`;
 }

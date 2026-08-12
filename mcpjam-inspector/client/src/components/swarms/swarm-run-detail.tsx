@@ -4,6 +4,11 @@
  * Chrome: identity row (back · title · time · actions) above Insights |
  * Sessions. Insights is the default landing tab: persona chips, wave-scoped
  * session-flow Sankey, then rubric findings.
+ *
+ * This page is also where a live run lives once the create wizard is left: the
+ * wizard's Running step has no URL, so a finding followed out of it lands here,
+ * and the live strip below the header is what says the run is still going —
+ * plus, when a session is focused, the one control back to the whole run.
  */
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
@@ -44,6 +49,7 @@ import {
   resolveSwarmWave,
   swarmWaveRouteId,
   swarmWaveTitle,
+  waveLiveProgress,
   SwarmWaveFindingsList,
   type SwarmWave,
 } from "@/components/swarms/swarm-overview-panel";
@@ -151,6 +157,20 @@ export function SwarmRunDetail({
     [navigate, selParam, swarmId],
   );
 
+  /**
+   * Drop the focused session and show the run itself. Deliberately NOT
+   * `replace`: arriving here from a finding pushed an entry, so a viewer who
+   * came that way keeps a working browser Back too.
+   */
+  const handleBackToRun = useCallback(() => {
+    navigate(
+      buildSwarmPath(swarmId, {
+        tab,
+        sel: selParam ?? undefined,
+      }),
+    );
+  }, [navigate, selParam, swarmId, tab]);
+
   const handleSelectionChange = useCallback(
     (themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null) => {
       navigate(
@@ -227,6 +247,13 @@ export function SwarmRunDetail({
   }
 
   const title = swarmWaveTitle(wave);
+  const live = waveLiveProgress(wave.runs);
+  // 0% until the fan-out is known — a live run with no session total yet is
+  // starting, not complete.
+  const livePercent =
+    live && live.total > 0
+      ? Math.min(100, Math.round((live.done / live.total) * 100))
+      : 0;
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(
     wave.runs.map((r) => [r.runId, r.journeyName])
@@ -297,6 +324,52 @@ export function SwarmRunDetail({
           indicatorId: "swarm-run-detail",
         }}
       />
+
+      {/* Rendered OUTSIDE the tab switch, so a session opened from a finding
+          still has the run's progress on screen above it. */}
+      {live ? (
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/40 bg-primary/[0.04] px-8 py-2"
+          data-testid="swarm-run-detail-live"
+          role="status"
+        >
+          <span className="flex items-center gap-2 text-sm text-foreground">
+            <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+            This swarm is still running
+            {live.total > 0 ? (
+              <span className="text-muted-foreground">
+                {" "}
+                — {live.done} of {live.total} sessions
+              </span>
+            ) : null}
+          </span>
+          <div
+            className="h-1.5 min-w-[6rem] flex-1 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={livePercent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            data-testid="swarm-run-detail-live-progress"
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-500"
+              style={{ width: `${livePercent}%` }}
+            />
+          </div>
+          {sessionParam ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="shrink-0 rounded-lg"
+              onClick={() => handleBackToRun()}
+              data-testid="swarm-run-detail-back-to-run"
+            >
+              Back to the live run
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "insights" ? (

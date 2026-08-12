@@ -22,7 +22,10 @@ import {
   PersonaPixelAvatar,
   mintPersonaAvatarLook,
 } from "@/components/swarms/persona-pixel-avatar";
-import type { SwarmIntensityPreset } from "@/components/swarms/swarm-intensity";
+import {
+  estimateLaunchSessions,
+  type SwarmIntensityPreset,
+} from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
@@ -88,6 +91,11 @@ export type LaunchTarget = {
    * journey must be re-stamped before launching. Absent on created targets —
    * they are born with the selection. */
   environmentIds?: string[] | null;
+  /** Stored sessions-per-target of a REUSED journey (`null` = the row carries
+   * no config). Launch does not rewrite a shared journey's config, so this —
+   * not the intensity preset — is what the run will execute. Absent on created
+   * targets, which are born with the preset's config. */
+  sessionsPerTarget?: number | null;
 };
 
 export type ConfirmLaunchPayload = {
@@ -520,6 +528,7 @@ function ReusedPersonaJourneyLoader({
         rubric?: JourneyCriterion[] | null;
         judgeConfig?: GoalJudgeConfig;
         environmentIds?: string[] | null;
+        config?: { sessionsPerTarget?: number; maxTurns?: number } | null;
       }[]
     | undefined;
 
@@ -539,6 +548,7 @@ function ReusedPersonaJourneyLoader({
         personaName: persona.name,
         personaRole: persona.role,
         environmentIds: journey.environmentIds ?? null,
+        sessionsPerTarget: journey.config?.sessionsPerTarget ?? null,
         ...(persona.avatarShape !== undefined
           ? { avatarShape: persona.avatarShape }
           : {}),
@@ -677,7 +687,12 @@ export function NewSwarmConfirmStep({
             prevTargets.length === nextTargets.length &&
             prevTargets.every(
               (entry, index) =>
-                entry.journeyId === nextTargets[index]?.journeyId
+                entry.journeyId === nextTargets[index]?.journeyId &&
+                // The stored sessions ride the target and drive the estimate,
+                // so an id-only comparison would keep quoting a stale number
+                // after someone edits that goal's sessions mid-flow.
+                entry.sessionsPerTarget ===
+                  nextTargets[index]?.sessionsPerTarget
             ));
         const goalsMatch =
           previous != null &&
@@ -797,9 +812,17 @@ export function NewSwarmConfirmStep({
   const personaCount = proposed.length + reusedPersonas.length;
   const journeyCount = newJourneyCount + activeReusedTargets.length;
   // Every journey this launch fans out, not just the newly authored ones —
-  // a reuse-heavy swarm was under-reporting its own session count.
-  const sessionEstimate =
-    journeyCount * preset.sessionsPerTarget * Math.max(1, environmentCount);
+  // a reuse-heavy swarm was under-reporting its own session count. Reused
+  // journeys are counted at THEIR OWN sessions, which is what launch runs
+  // them at; the preset only sizes the journeys this swarm creates.
+  const sessionEstimate = estimateLaunchSessions({
+    preset,
+    newJourneyCount,
+    reusedSessionsPerTarget: activeReusedTargets.map(
+      (target) => target.sessionsPerTarget ?? null
+    ),
+    environmentCount,
+  });
   /**
    * Rubric budget held back for per-journey suggested checks. Launch stamps
    * the swarm rubric FIRST and appends each journey's own checks after, then

@@ -29,6 +29,7 @@ import {
   isDebugOAuthCallbackPath,
   normalizeInitialLegacyHashBookmark,
 } from "./lib/app-navigation";
+import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import {
   getInitialThemeMode,
@@ -119,22 +120,22 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
 //
-// Exception: same-origin self-embed of the public chatbox runtime
-// (`/chatbox/<slug>/<token>`). The Chatboxes tab's Preview pane iframes the
-// publish link to show a live preview inside the app — that's intentional,
-// not a misrouted-pushState misconfiguration, so we let the normal tree
-// mount. Restricted to the chatbox route + same-origin parent so the
-// "user app accidentally serving inspector index.html" guard still fires
-// for every other shape.
+// Exception: same-origin self-embed of the public chatbox runtime (a tester
+// link path — `/user-testing/<slug>/<token>`, or the legacy `/chatbox/…` one).
+// The User Testing tab's Preview pane iframes the publish link to show a live
+// preview inside the app — that's intentional, not a misrouted-pushState
+// misconfiguration, so we let the normal tree mount. Restricted to a tester
+// link route + same-origin parent so the "user app accidentally serving
+// inspector index.html" guard still fires for every other shape.
 const isInIframe = (() => {
   try {
     if (window.self === window.top) return false;
     try {
       const sameOrigin = window.top!.location.origin === window.location.origin;
-      // Match the documented `/chatbox/<slug>/<token>` shape only; a generic
-      // `startsWith("/chatbox/")` would let any unrelated future subpath
-      // slip past the misrouted-pushState guard.
-      const isPublicChatboxRuntimePath = /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(
+      // Match the documented `<segment>/<slug>/<token>` shape only; a generic
+      // prefix test would let any unrelated future subpath slip past the
+      // misrouted-pushState guard. See lib/tester-link-path.ts.
+      const isPublicChatboxRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
         window.location.pathname
       );
       if (sameOrigin && isPublicChatboxRuntimePath) {

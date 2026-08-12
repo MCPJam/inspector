@@ -139,6 +139,7 @@ import {
   ChatboxChatPage,
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
+import { isEmbeddedPreview } from "./lib/embedded-preview";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
@@ -2747,6 +2748,10 @@ export default function App() {
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     nonProdLockdown: NON_PROD_LOCKDOWN,
+    // Read on every render, like `chatboxPathToken` above: framing is a fact
+    // about this document, fixed for its lifetime, so there is nothing to
+    // memoize and nothing that can change under us.
+    embeddedPreview: isChatboxChatRoute && isEmbeddedPreview(),
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,

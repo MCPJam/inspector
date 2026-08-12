@@ -350,6 +350,9 @@ function fillDescribe(text = "Support agents answering refunds") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The flow now mirrors its resumable state into sessionStorage, so a leftover
+  // draft would otherwise resume the previous case's slate.
+  sessionStorage.clear();
   hostsRef.current = [
     { hostId: "host-1", name: "Claude" },
     { hostId: "host-2", name: "Cursor" },
@@ -630,6 +633,36 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
     expect(
       screen.queryByTestId("new-swarm-reused-personas")
+    ).not.toBeInTheDocument();
+  });
+
+  it("drops a failed launch's error when Back returns to Describe", async () => {
+    // The error belongs to the attempt the user just left. Describe renders
+    // `errorMessage` too, so keeping it makes the step the user landed on look
+    // like it failed — and nothing on Describe can dismiss it.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    launchJourneyRunMock.mockRejectedValue(new Error("Launch was rejected"));
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /no runs were launched/i
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+
+    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no runs were launched/i)
     ).not.toBeInTheDocument();
   });
 
@@ -1360,6 +1393,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a reused journey's own sessions when the intensity changes", async () => {
+    // SUTB-26: a preset may seed a field, never overwrite one the user set.
+    // This journey was saved at 3 sessions and launch does not rewrite a
+    // shared journey's config, so pushing harder must not re-price it.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        config: { sessionsPerTarget: 3, maxTurns: 9 },
+      },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    expect(
+      await screen.findByText(/1 persona · 1 goal · 3 new sessions/i)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^describe$/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /launch gate/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    expect(
+      await screen.findByText(/1 persona · 1 goal · 3 new sessions/i)
+    ).toBeInTheDocument();
+  });
+
   it("merges swarm grading into a reused journey on a reuse-only launch", async () => {
     // No environment selection at all. The Confirm copy promises the merge
     // unconditionally, and shared criterion ids are what put this journey in
@@ -1664,5 +1730,131 @@ describe("SwarmsTab create flow — insight grouping", () => {
         "cluster-tuning-trigger",
       ),
     ).toHaveTextContent("Broad");
+  });
+});
+
+/**
+ * Surviving a remount.
+ *
+ * The flow is remounted for reasons the user never asked for: the Swarms route
+ * re-enters its role-gate spinner whenever the members query re-resolves, which
+ * a Convex websocket reconnect (returning to a backgrounded tab does one) makes
+ * happen. `cleanup()` + a fresh `render` is exactly that — the same URL mounting
+ * a new component tree — and it used to land back on an empty Describe step with
+ * the generated slate gone.
+ */
+describe("SwarmsTab create flow — survives a remount", () => {
+  /** Unmount and mount the same route again, as a route-level gate would. */
+  function remount() {
+    cleanup();
+    render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+  }
+
+  it("comes back on Confirm with the generated personas, not on Describe", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    remount();
+
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(screen.getByText("Refund Chaser")).toBeInTheDocument();
+    expect(screen.getByText("Billing Dev")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-shared-setup")
+    ).not.toBeInTheDocument();
+    // The slate is the restored one — nothing was re-generated behind the user.
+    expect(generateSwarmPersonaBatchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("launches the restored slate without creating the rows twice", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    remount();
+    await screen.findByTestId("new-swarm-proposed-personas");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createPersonaMock).toHaveBeenCalledTimes(2);
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("comes back on the live matrix once runs are launched", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-running-step");
+
+    remount();
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(screen.getByText(/Refund Chaser/)).toBeInTheDocument();
+    // Restoring must not re-launch what is already running.
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("says a generation was interrupted instead of looking untouched", async () => {
+    // A generation in flight at unmount cannot be resumed — its request died
+    // with the component — so the restored step has to explain itself.
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () => new Promise(() => {})
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-generate-progress")).toBeVisible()
+    );
+
+    remount();
+
+    expect(
+      await screen.findByText(/persona generation was interrupted/i)
+    ).toBeVisible();
+    expect(screen.getByLabelText("Describe swarm")).toHaveValue(
+      "Support agents answering refunds"
+    );
+  });
+
+  it("leaving the flow ends it — a later visit starts clean", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    // Back to Describe, then Cancel out of the flow entirely.
+    fireEvent.click(screen.getByRole("button", { name: /^describe$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    remount();
+
+    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-proposed-personas")
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Describe swarm")).toHaveValue("");
+  });
+
+  it("says what stage it is in while generation runs", async () => {
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () => new Promise(() => {})
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    const progress = await screen.findByTestId("new-swarm-generate-progress");
+    // Quick look = 3 personas × 5 goals; the line names the work, not a fake ETA.
+    await waitFor(() =>
+      expect(progress).toHaveTextContent(
+        /writing 3 personas with up to 5 goals each/i
+      )
+    );
   });
 });
