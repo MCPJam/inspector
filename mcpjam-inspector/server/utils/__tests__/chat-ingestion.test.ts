@@ -67,7 +67,6 @@ describe("chat-ingestion", () => {
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
       chatboxId: "cbx_test",
-      accessVersion: 1,
       sourceType: "chatbox",
       origin: "chatbox",
       surface: "share_link",

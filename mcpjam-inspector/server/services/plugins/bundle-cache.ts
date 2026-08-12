@@ -44,6 +44,7 @@ import {
 } from "@mcpjam/sdk/plugin-bundle";
 import { logger } from "../../utils/logger.js";
 import { createDirectoryPluginFileSource } from "./bundle-file-sources.js";
+import { assertSafePathSegments } from "./path-segments.js";
 
 export type PluginBundleCacheErrorCode =
   /** Extracted (or offered) content does not hash to the pinned `bundleHash`. */
@@ -92,17 +93,15 @@ export function defaultPluginCacheRoot(): string {
 
 /**
  * One path segment per identity component, sanitized so a hostile id cannot
- * escape the cache root. Convex ids and hex hashes are already
- * `[A-Za-z0-9_-]`, so this is a no-op for real input and a hard stop for
- * anything else — cheaper and more predictable than a realpath round-trip.
+ * escape the cache root. The rule itself lives in `path-segments.ts` — the same
+ * one the data directory and the in-box layout apply, so the local and remote
+ * paths cannot drift on what "safe" means. Cheaper and more predictable than a
+ * realpath round-trip, and a no-op for real input.
  */
 function safeSegment(value: string, label: string): string {
-  if (!/^[A-Za-z0-9._-]+$/.test(value) || value === "." || value === "..") {
-    throw new PluginBundleCacheError(
-      "invalid_bundle",
-      `Refusing to build a cache path from an unsafe ${label}: "${value}"`
-    );
-  }
+  assertSafePathSegments({ [label]: value }, (message) =>
+    new PluginBundleCacheError("invalid_bundle", message)
+  );
   return value;
 }
 
