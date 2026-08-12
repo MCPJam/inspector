@@ -125,7 +125,7 @@ export function ChatboxShareSection({
   };
 
   const handleInvite = async () => {
-    if (!normalizedEmail || emailValidationError) return;
+    if (!normalizedEmail || emailValidationError || unrunnableReason) return;
 
     setIsInviting(true);
     try {
@@ -180,9 +180,21 @@ export function ChatboxShareSection({
         ? Globe
         : Lock;
 
-  const shareLink = settings.link?.token
-    ? buildChatboxLink(settings.link.token, settings.name)
-    : null;
+  /**
+   * Why this scenario cannot be handed to anyone right now: its environment
+   * doesn't resolve (archived, a pinned plugin disabled, its host gone), so a
+   * tester opening the link would be the one to find out. Read from the
+   * envelope, which every settings-returning mutation carries — and REACTIVE,
+   * so rebinding to a working environment restores the link on the next update.
+   * Nothing is rotated or revoked; the same token is simply withheld while the
+   * scenario can't run.
+   */
+  const unrunnableReason = settings.environmentError?.message ?? null;
+
+  const shareLink =
+    settings.link?.token && !unrunnableReason
+      ? buildChatboxLink(settings.link.token, settings.name)
+      : null;
   const displayLink = shareLink?.replace(/^https?:\/\//, "") ?? null;
 
   const handleCopyLink = async () => {
@@ -215,7 +227,10 @@ export function ChatboxShareSection({
             title={shareLink ?? undefined}
           >
             <span className="truncate text-sm text-muted-foreground">
-              {displayLink ?? "No share link yet."}
+              {displayLink ??
+                (unrunnableReason
+                  ? "Withheld — this scenario can't run."
+                  : "No share link yet.")}
             </span>
           </output>
           <Button
@@ -229,6 +244,15 @@ export function ChatboxShareSection({
             Copy link
           </Button>
         </div>
+        {unrunnableReason ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="chatbox-share-unrunnable"
+          >
+            {unrunnableReason} Point this scenario at a working environment to
+            share it again — its link and its sessions are unchanged.
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-2">
@@ -242,6 +266,10 @@ export function ChatboxShareSection({
               type="email"
               placeholder="Add people, emails..."
               value={email}
+              // Inviting mails the same link out, so it is gated on the same
+              // condition: an invite to a scenario that can't run is a broken
+              // session with someone else's name on it.
+              disabled={Boolean(unrunnableReason)}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -255,7 +283,12 @@ export function ChatboxShareSection({
           </div>
           <Button
             onClick={() => void handleInvite()}
-            disabled={!normalizedEmail || !!emailValidationError || isInviting}
+            disabled={
+              !normalizedEmail ||
+              !!emailValidationError ||
+              isInviting ||
+              Boolean(unrunnableReason)
+            }
           >
             {isInviting ? "..." : "Invite"}
           </Button>

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { ProjectVisibility } from "@/state/app-types";
@@ -331,17 +331,44 @@ export function useViewerProjectRole({
     projectId,
   });
 
+  const email = viewerEmail?.trim().toLowerCase() ?? null;
   const role = useMemo(() => {
-    const email = viewerEmail?.trim().toLowerCase();
     if (!email) return undefined;
     return activeMembers.find((member) => member.email.toLowerCase() === email)
       ?.role;
-  }, [activeMembers, viewerEmail]);
+  }, [activeMembers, email]);
 
-  return {
-    role,
-    isLoading: isViewerRolePending(isLoading, identityLoading, viewerEmail),
-  };
+  /**
+   * The last DECIDED answer for this (project, viewer) pair.
+   *
+   * The members list does not only load once: the Convex client throws its
+   * whole remote query set away on every websocket reconnect (`onOpen` builds a
+   * fresh `RemoteQuerySet`), so `useQuery` returns `undefined` again until the
+   * server's first transition lands. Returning to a tab that was backgrounded
+   * long enough to drop the socket therefore replays "role not decided yet" —
+   * and a caller that renders a spinner (or, worse, an access-denied state) for
+   * that UNMOUNTS its subtree, throwing away whatever the user was in the
+   * middle of. See the Swarms route gate.
+   *
+   * Latching only spans a RE-load: the first resolution still gates normally,
+   * and every later resolution overwrites the latch, so a revoked membership
+   * takes effect as soon as the list says so.
+   */
+  const decidedRef = useRef<{
+    key: string;
+    role: ProjectMembershipRole | undefined;
+  } | null>(null);
+  const decisionKey = `${projectId ?? ""}|${email ?? ""}`;
+  const pending = isViewerRolePending(isLoading, identityLoading, viewerEmail);
+  if (!pending) {
+    decidedRef.current = { key: decisionKey, role };
+  }
+  const decided = decidedRef.current;
+  if (pending && decided?.key === decisionKey) {
+    return { role: decided.role, isLoading: false };
+  }
+
+  return { role, isLoading: pending };
 }
 
 /**

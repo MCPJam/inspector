@@ -191,6 +191,113 @@ describe("OAuthProfileModal", () => {
 
     releaseSave?.();
   });
+
+  it("rejects a pre-registered target saved without a client id", async () => {
+    // Pre-registered skips DCR, so an empty client id only failed later, in the
+    // flow itself ("Pre-registered client ID is required"). No exemption for a
+    // client id stored by an earlier DCR run: the save itself deletes that
+    // record, so the flow would still have nothing to use.
+    const user = userEvent.setup();
+    const { onSave } = renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Client ID is required for pre-registered/i,
+    );
+  });
+
+  it("clears the client-id error once the strategy moves off pre-registered", async () => {
+    // The error names switching to DCR as a remedy, so it must not survive the
+    // user doing exactly that.
+    const user = userEvent.setup();
+    renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/Registration/));
+    await user.click(await screen.findByRole("option", { name: "Dynamic (DCR)" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("leaves an unrelated error standing when the strategy changes", async () => {
+    // Only the client-id message is retracted: the name collision is untouched
+    // by the strategy, so dismissing it would hide a problem that still blocks
+    // the save. No other field clears the banner on edit either.
+    const user = userEvent.setup();
+    renderModal({ existingServerNames: ["staging-mcp"] });
+
+    await user.clear(screen.getByLabelText(/Server Name/));
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.example.com/mcp",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
+
+    await user.click(screen.getByLabelText(/Registration/));
+    await user.click(await screen.findByRole("option", { name: "Pre-registered" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
+  });
+
+  it("reveals the collapsed advanced section when pre-registered is in play", async () => {
+    // The client id input lives behind "Advanced settings (optional)", so a
+    // required field was hidden by a control that calls itself optional.
+    renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    expect(screen.getByPlaceholderText("Client ID")).toBeInTheDocument();
+  });
+
+  it("saves a pre-registered target once a client id is filled in", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal({
+      agentSeed: {
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    await user.type(screen.getByPlaceholderText("Client ID"), "client-abc");
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        formData: expect.objectContaining({ clientId: "client-abc" }),
+        profile: expect.objectContaining({
+          clientId: "client-abc",
+          registrationStrategy: "preregistered",
+        }),
+      }),
+    );
+  });
 });
 
 describe("OAuthProfileModal — agentSeed", () => {
@@ -257,6 +364,114 @@ describe("OAuthProfileModal — agentSeed", () => {
     );
     expect(screen.getByLabelText(/Server Name/)).toHaveValue(
       "oauth-flow-target",
+    );
+  });
+
+  it("collapses the advanced section again on a reopen that does not need it", () => {
+    // The modal is never unmounted, so the accordion state outlives a close —
+    // without a reset the next (DCR) target opens with Advanced expanded.
+    const { rerender } = render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={{
+          serverUrl: "https://agent.example.com/mcp",
+          registrationStrategy: "preregistered",
+        }}
+      />,
+    );
+    expect(screen.getByPlaceholderText("Client ID")).toBeInTheDocument();
+
+    rerender(
+      <OAuthProfileModal
+        open={false}
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={null}
+      />,
+    );
+    rerender(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={null}
+      />,
+    );
+
+    expect(screen.queryByPlaceholderText("Client ID")).not.toBeInTheDocument();
+  });
+
+  it("keeps user edits when the parent refreshes its server record mid-edit", async () => {
+    // `derivedProfile`/`generateDefaultName` change identity whenever the
+    // server row ticks (connection status, tokens) or the name list is rebuilt.
+    // Reseeding on that churn wipes the open dialog's typed values.
+    const user = userEvent.setup();
+    const server = createServer("oauth-flow-target");
+    const { rerender } = render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        server={server}
+        existingServerNames={["oauth-flow-target"]}
+        onSave={vi.fn()}
+      />,
+    );
+
+    await user.clear(screen.getByLabelText(/Server URL/));
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://typed.example.com/mcp",
+    );
+
+    // A status tick replaces the server object and the name array wholesale.
+    rerender(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        server={{ ...server, connectionStatus: "connecting" } as ServerWithName}
+        existingServerNames={["oauth-flow-target"]}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://typed.example.com/mcp",
+    );
+  });
+
+  it("still reseeds when an agent re-targets an already-open modal", () => {
+    // The churn guard above must not swallow a genuine new prefill: the agent
+    // command sets a seed and opens the modal even when it is already open.
+    const { rerender } = render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={{ serverUrl: "https://first.example.com/mcp" }}
+      />,
+    );
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://first.example.com/mcp",
+    );
+
+    rerender(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={{ serverUrl: "https://second.example.com/mcp" }}
+      />,
+    );
+
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://second.example.com/mcp",
     );
   });
 });

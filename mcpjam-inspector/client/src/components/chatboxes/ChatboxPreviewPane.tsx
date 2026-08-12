@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ExternalLink, Inbox } from "lucide-react";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
+import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "@/lib/tester-link-path";
 
 /**
  * The live published chatbox, embedded, so a scenario can be spot-checked
@@ -11,8 +12,9 @@ import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
  * Two things make the embed work at all, and both are easy to break:
  *
  *  - The self-embed is a deliberate exception to the misrouted-pushState
- *    guard in `main.tsx`, which matches on the `/chatbox/<slug>/<token>`
- *    PATHNAME. Query params are fine; a shape change is not.
+ *    guard in `main.tsx`, which matches on the tester-link PATHNAME shape
+ *    (`lib/tester-link-path.ts`). Query params are fine; a shape change is
+ *    not — change it there, where every matcher reads it from.
  *  - `isEmbeddedPreview()` (`lib/embedded-preview.ts`) makes the embedded
  *    runtime skip its sessionStorage writes. Without it the guest session
  *    leaks into the dashboard's own storage and the next reload boots the
@@ -72,7 +74,7 @@ export function ChatboxPreviewPane({
     return (
       <PreviewEmptyState
         title="Preview isn't available here"
-        body="This build serves share links from another origin, so the chatbox can't be embedded. Open it in a new tab instead."
+        body="This build serves share links from another origin, so the scenario can't be embedded. Open it in a new tab instead."
         link={publishLink}
       />
     );
@@ -111,7 +113,7 @@ function PreviewFrame({
   const handleLoad = () => {
     try {
       const path = frameRef.current?.contentWindow?.location.pathname;
-      setNavigatedAway(!path || !PUBLIC_CHATBOX_RUNTIME_PATH.test(path));
+      setNavigatedAway(!path || !TESTER_LINK_RUNTIME_PATH_PATTERN.test(path));
     } catch {
       setNavigatedAway(true);
     }
@@ -121,7 +123,7 @@ function PreviewFrame({
     return (
       <PreviewEmptyState
         title="This flow can't finish inside the preview"
-        body="The scenario navigated away from the chatbox — an OAuth sign-in does this. Open it in a real browser tab to complete the flow."
+        body="The preview navigated away from the scenario — an OAuth sign-in does this. Open it in a real browser tab to complete the flow."
         link={link}
         onRetry={() => setNavigatedAway(false)}
       />
@@ -152,8 +154,6 @@ function PreviewFrame({
     </div>
   );
 }
-
-const PUBLIC_CHATBOX_RUNTIME_PATH = /^\/chatbox\/[^/]+\/[^/]+\/?$/;
 
 /**
  * Tag the embedded run as `preview` traffic. The chatbox runtime reads
