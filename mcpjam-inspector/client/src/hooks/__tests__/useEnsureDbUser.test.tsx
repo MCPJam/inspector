@@ -159,6 +159,47 @@ describe("useEnsureDbUser", () => {
     );
   });
 
+  it.each([
+    ["only a first name", { firstName: "Some", lastName: null }, "Some"],
+    ["only a last name", { firstName: null, lastName: "One" }, "One"],
+    ["a whitespace-only half", { firstName: "Some", lastName: "  " }, "Some"],
+  ])("builds the display name from %s", async (_label, names, expected) => {
+    mockState.auth.user = { id: "workos-user-1", ...names };
+    mockState.actorKey = "workos-user-1";
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith(
+        expect.objectContaining({ name: expected })
+      );
+    });
+  });
+
+  it.each([
+    ["both halves are null", { firstName: null, lastName: null }],
+    ["both halves are empty", { firstName: "", lastName: "" }],
+    ["AuthKit supplies neither", {}],
+  ])("omits the name key entirely when %s", async (_label, names) => {
+    // Omitted rather than empty: Sentry renders a user block from whatever
+    // keys are present, and `name: ""` shows as a blank line where the email
+    // would otherwise be.
+    mockState.auth.user = {
+      id: "workos-user-1",
+      email: "someone@example.com",
+      ...names,
+    };
+    mockState.actorKey = "workos-user-1";
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith({
+        id: "workos-user-1",
+        email: "someone@example.com",
+        username: "someone@example.com",
+      });
+    });
+  });
+
   it("identifies the actor before ensureUser resolves", async () => {
     // The regression this pins: identity used to be set only after the
     // ensureUser round-trip, so anything that crashed during boot — or on a

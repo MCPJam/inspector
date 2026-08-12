@@ -197,11 +197,13 @@ export function useEnsureDbUser() {
   // authenticated while the actor changes underneath it. `setSentryActor`
   // replaces the user object wholesale, so the previous account's email cannot
   // survive that switch.
+  // Signed-in is checked FIRST, and on `workosUserId` rather than on
+  // `actorKey`. `useActorKey` happens to return the WorkOS id ahead of the
+  // guest id, so the two can never disagree for a signed-in render — but
+  // ordering the branches the other way would silently make this identity
+  // depend on that precedence, and a change over there would go quiet here.
+  // Only the guest branch needs the key.
   useEffect(() => {
-    if (!actorKey) {
-      setSentryActor(null);
-      return;
-    }
     if (workosUserId) {
       setSentryActor({
         kind: "signedIn",
@@ -209,6 +211,10 @@ export function useEnsureDbUser() {
         email: user?.email ?? undefined,
         name: displayName(user),
       });
+      return;
+    }
+    if (!actorKey) {
+      setSentryActor(null);
       return;
     }
     setSentryActor({ kind: "guest", id: actorKey });

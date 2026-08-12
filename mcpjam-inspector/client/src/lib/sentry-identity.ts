@@ -70,9 +70,14 @@ export function setSentryActor(actor: SentryActor | null): void {
  * "which account", and only tags are indexed for search, filtering, and alert
  * conditions. Mirrors `usePostHogOrgContext`'s `organization_id` register so
  * the two sinks agree on the name.
+ *
+ * An org id is either a real id or absent, so a blank one clears rather than
+ * tags: `organization_id:""` is a searchable value that matches nothing and
+ * reads, in a filter dropdown, as an org whose name failed to load.
  */
 export function setSentryOrganization(
   organizationId: string | null | undefined
 ): void {
-  Sentry.setTag("organization_id", organizationId ?? undefined);
+  const trimmed = organizationId?.trim();
+  Sentry.setTag("organization_id", trimmed ? trimmed : undefined);
 }

@@ -54,8 +54,13 @@ describe("setSentryOrganization", () => {
     vi.clearAllMocks();
   });
 
-  it("clears the tag when the org goes away", () => {
-    setSentryOrganization(null);
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["the empty string", ""],
+    ["whitespace", "   "],
+  ])("clears the tag for %s", (_label, orgId) => {
+    setSentryOrganization(orgId);
 
     expect(mocks.setTag).toHaveBeenCalledWith("organization_id", undefined);
   });

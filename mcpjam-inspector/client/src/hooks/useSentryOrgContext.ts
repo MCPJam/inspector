@@ -15,5 +15,11 @@ export function useSentryOrgContext(
 ): void {
   useEffect(() => {
     setSentryOrganization(organizationId);
+    // Cleared on unmount, not just replaced on the next org. `sentry-identity`
+    // promises a scope that carries the current attribution or none, and the
+    // scope is global while this hook is not: an error boundary that unmounts
+    // the tree would otherwise leave `organization_id` behind on every event
+    // that followed.
+    return () => setSentryOrganization(null);
   }, [organizationId]);
 }
