@@ -8,8 +8,19 @@
  * The rest covers the attach/clear wire shapes, create-mode inclusion, and the
  * option-list states (not-built suffix, personal drafts disabled, deleted pin
  * kept visible instead of coerced to "None").
+ *
+ * The picker is the app's own `Select` (Radix), not a native `<select>`, so the
+ * option rows only exist in the DOM while the dropdown is open — hence the
+ * open-then-read helpers below.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -131,10 +142,27 @@ function renderEditor(environment: ProjectEnvironmentView | null) {
   );
 }
 
-const select = () =>
-  screen.getByTestId(
-    "project-environment-sandbox-image"
-  ) as HTMLSelectElement;
+const trigger = () => screen.getByTestId("project-environment-sandbox-image");
+
+/** Open the dropdown and pick a row by its visible label. */
+async function pickImage(name: string | RegExp) {
+  await userEvent.click(trigger());
+  await userEvent.click(await screen.findByRole("option", { name }));
+}
+
+/** The option rows, readable only while the dropdown is open. */
+async function openOptions() {
+  await userEvent.click(trigger());
+  const listbox = await screen.findByRole("listbox");
+  return within(listbox)
+    .getAllByRole("option")
+    .map((option) => ({
+      label: option.textContent ?? "",
+      // Radix marks a disabled row with aria-disabled, not the DOM property a
+      // native <option> would carry.
+      disabled: option.getAttribute("aria-disabled") === "true",
+    }));
+}
 
 describe("flag gating + the omission contract", () => {
   it("hides the picker when computers-enabled is off", () => {
@@ -183,7 +211,7 @@ describe("flag flips false AFTER an edit (review regression)", () => {
   it("omits the pin when the flag turns off between editing and saving", async () => {
     const { rerender } = renderEditor(envRow({ computerEnvironmentId: "img-ready" }));
     // Admin clears the pin while the picker is visible…
-    fireEvent.change(select(), { target: { value: "" } });
+    await pickImage("None (default image)");
     // …then PostHog re-evaluates the flag to false and the picker unmounts.
     mockComputersEnabled.value = false;
     rerender(
@@ -217,7 +245,7 @@ describe("flag flips false AFTER an edit (review regression)", () => {
       target: { value: "New env" },
     });
     fireEvent.click(screen.getByRole("button", { name: "pick-host" }));
-    fireEvent.change(select(), { target: { value: "img-ready" } });
+    await pickImage("Node 20");
 
     mockComputersEnabled.value = false;
     rerender(
@@ -237,28 +265,26 @@ describe("flag flips false AFTER an edit (review regression)", () => {
 });
 
 describe("loading state (review regression)", () => {
-  it("does not flash 'Unknown image' while the image list is still loading", () => {
+  it("does not flash 'Unknown image' while the image list is still loading", async () => {
     mockSandboxImages.value = undefined;
     renderEditor(envRow({ computerEnvironmentId: "img-ready" }));
-    expect(
-      Array.from(select().options).some((o) =>
-        o.text.startsWith("Unknown image")
-      )
-    ).toBe(false);
-    // …and the pin still reads as selected rather than collapsing to "None"
-    // (a <select> whose value matches no option renders as the first option,
-    // which would make a pinned environment look unpinned mid-load).
-    expect(select().value).toBe("img-ready");
-    expect(
-      Array.from(select().options).some((o) => o.text === "Loading image…")
-    ).toBe(true);
+    // The pin still reads as selected rather than collapsing to "None" — a
+    // control whose value matches no row would display the first one, which
+    // would make a pinned environment look unpinned mid-load.
+    expect(trigger()).toHaveTextContent("Loading image…");
+    const options = await openOptions();
+    expect(options.some((o) => o.label.startsWith("Unknown image"))).toBe(false);
+    expect(options).toContainEqual({
+      label: "Loading image…",
+      disabled: true,
+    });
   });
 });
 
 describe("wire shapes", () => {
   it("attach sends the id on update", async () => {
     renderEditor(envRow());
-    fireEvent.change(select(), { target: { value: "img-ready" } });
+    await pickImage("Node 20");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(mockUpdateEnvironment).toHaveBeenCalled());
     expect(mockUpdateEnvironment.mock.calls[0]![0]).toMatchObject({
@@ -269,7 +295,7 @@ describe("wire shapes", () => {
 
   it("clear sends null on update", async () => {
     renderEditor(envRow({ computerEnvironmentId: "img-ready" }));
-    fireEvent.change(select(), { target: { value: "" } });
+    await pickImage("None (default image)");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(mockUpdateEnvironment).toHaveBeenCalled());
     expect(
@@ -284,7 +310,7 @@ describe("wire shapes", () => {
       target: { value: "New env" },
     });
     fireEvent.click(screen.getByRole("button", { name: "pick-host" }));
-    fireEvent.change(select(), { target: { value: "img-ready" } });
+    await pickImage("Node 20");
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(mockCreateEnvironment).toHaveBeenCalled());
     expect(mockCreateEnvironment.mock.calls[0]![0]).toMatchObject({
@@ -296,12 +322,9 @@ describe("wire shapes", () => {
 });
 
 describe("option list states", () => {
-  it("suffixes not-built images and disables personal drafts", () => {
+  it("suffixes not-built images and disables personal drafts", async () => {
     renderEditor(envRow());
-    const options = Array.from(select().options).map((o) => ({
-      label: o.text,
-      disabled: o.disabled,
-    }));
+    const options = await openOptions();
     expect(options).toContainEqual({ label: "Node 20", disabled: false });
     expect(options).toContainEqual({
       label: "Py 3.12 (not built)",
@@ -313,14 +336,16 @@ describe("option list states", () => {
     });
   });
 
-  it("keeps a deleted pinned image visible instead of coercing to None", () => {
+  it("keeps a deleted pinned image visible instead of coercing to None", async () => {
     mockSandboxImages.value = [IMAGE_READY];
     renderEditor(envRow({ computerEnvironmentId: "img-gone" }));
-    expect(select().value).toBe("img-gone");
-    const orphan = Array.from(select().options).find((o) =>
-      o.text.startsWith("Unknown image")
+    expect(trigger()).toHaveTextContent("Unknown image (img-gone)");
+    const orphan = (await openOptions()).find((o) =>
+      o.label.startsWith("Unknown image")
     );
-    expect(orphan).toBeDefined();
-    expect(orphan!.disabled).toBe(true);
+    expect(orphan).toEqual({
+      label: "Unknown image (img-gone)",
+      disabled: true,
+    });
   });
 });

@@ -87,6 +87,23 @@ export interface HostedOAuthServerDescriptor {
   registrationMode?: string | null;
   /** When true, server was opted in after session start (copy / UX hints). */
   optional?: boolean;
+  /**
+   * Whether this server must be authorized BEFORE the session can be used.
+   *
+   * `useOAuth` cannot answer that: it is the derived compat mirror of the
+   * canonical `authMethod`, and an `auto` (discover) row carries `useOAuth:
+   * true` while its whole contract is to connect unauthenticated and escalate
+   * only on a real 401. Gating on the mirror is what asked recipients of a
+   * shared scenario to authorize servers that have no authorization server at
+   * all, behind a prompt that could never succeed.
+   *
+   * `false` starts the server satisfied — it never reaches the auth panel or
+   * blocks the composer — while KEEPING it in the authorizable set, so a
+   * genuine 401 at runtime still routes through {@link markOAuthRequired} and
+   * gets its Authorize action. `undefined` keeps the legacy behavior (gate
+   * every `useOAuth` server up front) for callers with no better answer.
+   */
+  authorizationRequiredUpfront?: boolean;
 }
 
 export function resolveHostedOAuthProtocolSelection(
@@ -109,6 +126,12 @@ function buildHostedOAuthStateMap(
   surface: HostedOAuthSurface,
   isVaultBacked: boolean,
   verifyVaultCredentialOnLoad: boolean,
+  /**
+   * Servers the RUNTIME has since proven need authorization (a tagged 401 via
+   * {@link markOAuthRequired}). Rebuilds must not re-satisfy those, or a
+   * descriptor identity change would silently retract a prompt the user needs.
+   */
+  runtimeRequiredServerIds: ReadonlySet<string>,
   previous: Record<string, HostedOAuthState> = {}
 ): Record<string, HostedOAuthState> {
   const resumeMarker = readHostedOAuthResumeMarker(surface);
@@ -145,6 +168,19 @@ function buildHostedOAuthStateMap(
       errorMessage = resumeMarker.errorMessage;
     } else if (matchesResume) {
       status = hasToken || isVaultBacked ? "verifying" : "resuming";
+      errorMessage = null;
+    } else if (
+      server.authorizationRequiredUpfront === false &&
+      !runtimeRequiredServerIds.has(server.serverId)
+    ) {
+      // Satisfied by construction: this row can use OAuth but does not demand
+      // it before the session runs, so there is no credential to wait for and
+      // nothing to verify — a leftover token or vault record from an earlier
+      // connect attempt must not resurrect a prompt the server never needed.
+      // Runtime escalation (a real 401) can still flip it to needs_auth. Only
+      // an in-flight authorization and a returning callback (above) outrank
+      // this, because those are consent the user just gave for THIS server.
+      status = "ready";
       errorMessage = null;
     } else if (hasToken) {
       status = existing?.status === "ready" ? "ready" : "verifying";
@@ -277,6 +313,14 @@ export function useHostedOAuthGate({
   // even though it has neither a signed-in user nor a chatbox.
   const isVaultBacked = isAuthenticated || !!chatboxId || surface === "score";
   const verifyVaultCredentialOnLoad = isAuthenticated;
+  // Servers a runtime 401 has proven need authorization after all. Kept
+  // separately from the status map because the map is REBUILT from the
+  // descriptors on every identity change: without this, a server declared
+  // "not required up front" would swallow its own runtime prompt on the next
+  // rebuild. Ids only — the descriptor stays the source of everything else.
+  const [runtimeRequiredServerIds, setRuntimeRequiredServerIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const [oauthStateByServerId, setOAuthStateByServerId] = useState<
     Record<string, HostedOAuthState>
   >(() =>
@@ -284,7 +328,8 @@ export function useHostedOAuthGate({
       oauthServers,
       surface,
       isVaultBacked,
-      verifyVaultCredentialOnLoad
+      verifyVaultCredentialOnLoad,
+      new Set()
     )
   );
   const oauthStateByServerIdRef = useRef(oauthStateByServerId);
@@ -309,10 +354,17 @@ export function useHostedOAuthGate({
         surface,
         isVaultBacked,
         verifyVaultCredentialOnLoad,
+        runtimeRequiredServerIds,
         previous
       )
     );
-  }, [oauthServers, surface, isVaultBacked, verifyVaultCredentialOnLoad]);
+  }, [
+    oauthServers,
+    surface,
+    isVaultBacked,
+    verifyVaultCredentialOnLoad,
+    runtimeRequiredServerIds,
+  ]);
 
   // `authorizeServer` is declared below and changes identity with its deps.
   // Reaching it through a ref keeps the Reconnect action current without
@@ -688,6 +740,7 @@ export function useHostedOAuthGate({
 
   const markOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {
+      const runtimeRequiredIds: string[] = [];
       setOAuthStateByServerId((previous) => {
         const nextState = { ...previous };
         const matchingServers = oauthServers.filter((server) => {
@@ -717,6 +770,7 @@ export function useHostedOAuthGate({
             : oauthServers;
 
         for (const server of targetServers) {
+          runtimeRequiredIds.push(server.serverId);
           localStorage.removeItem(`mcp-tokens-${server.serverName}`);
           nextState[server.serverId] = {
             status: "needs_auth",
@@ -731,6 +785,13 @@ export function useHostedOAuthGate({
 
         return nextState;
       });
+      // Remember it outside the status map so a later rebuild keeps the prompt.
+      setRuntimeRequiredServerIds((previous) => {
+        if (runtimeRequiredIds.every((id) => previous.has(id))) {
+          return previous;
+        }
+        return new Set([...previous, ...runtimeRequiredIds]);
+      });
     },
     [oauthServers]
   );
@@ -743,13 +804,19 @@ export function useHostedOAuthGate({
           state:
             oauthStateByServerId[server.serverId] ??
             ({
-              status: "needs_auth",
+              // Same default as the state map: a server that does not require
+              // authorization up front is satisfied, not pending.
+              status:
+                server.authorizationRequiredUpfront === false &&
+                !runtimeRequiredServerIds.has(server.serverId)
+                  ? "ready"
+                  : "needs_auth",
               errorMessage: null,
               serverUrl: server.serverUrl,
             } satisfies HostedOAuthState),
         }))
         .filter(({ state }) => state.status !== "ready"),
-    [oauthServers, oauthStateByServerId]
+    [oauthServers, oauthStateByServerId, runtimeRequiredServerIds]
   );
 
   const hasBusyOAuth = pendingOAuthServers.some(({ state }) =>

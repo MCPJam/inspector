@@ -85,7 +85,7 @@ describe("UserTestingCreateFlow", () => {
   it("writes nothing while the user fills the form", () => {
     const { onCreateScenario } = renderFlow();
 
-    fireEvent.change(screen.getByLabelText("Scenario name"), {
+    fireEvent.change(screen.getByLabelText(/Scenario name/), {
       target: { value: "Payments beta" },
     });
     fireEvent.click(screen.getByTestId("user-testing-create-client"));
@@ -98,7 +98,7 @@ describe("UserTestingCreateFlow", () => {
   it("writes nothing when the user backs out", () => {
     const { onCreateScenario, onCancel } = renderFlow();
 
-    fireEvent.change(screen.getByLabelText("Scenario name"), {
+    fireEvent.change(screen.getByLabelText(/Scenario name/), {
       target: { value: "Abandoned" },
     });
     fireEvent.click(screen.getByTestId("user-testing-create-back"));
@@ -110,7 +110,7 @@ describe("UserTestingCreateFlow", () => {
   it("saves the name, the attached server and the access mode in one call", async () => {
     const { onCreateScenario } = renderFlow();
 
-    fireEvent.change(screen.getByLabelText("Scenario name"), {
+    fireEvent.change(screen.getByLabelText(/Scenario name/), {
       target: { value: "Payments beta" },
     });
     fireEvent.click(screen.getByTestId("user-testing-create-save"));
@@ -132,7 +132,7 @@ describe("UserTestingCreateFlow", () => {
     );
     renderFlow(onCreateScenario);
 
-    fireEvent.change(screen.getByLabelText("Scenario name"), {
+    fireEvent.change(screen.getByLabelText(/Scenario name/), {
       target: { value: "Payments beta" },
     });
     const save = screen.getByTestId("user-testing-create-save");
@@ -146,7 +146,7 @@ describe("UserTestingCreateFlow", () => {
   it("cannot save an unnamed scenario", () => {
     const { onCreateScenario } = renderFlow();
 
-    fireEvent.change(screen.getByLabelText("Scenario name"), {
+    fireEvent.change(screen.getByLabelText(/Scenario name/), {
       target: { value: "   " },
     });
     fireEvent.click(screen.getByTestId("user-testing-create-save"));
@@ -158,7 +158,7 @@ describe("UserTestingCreateFlow", () => {
     catalogState.status = "loading";
     const { onCreateScenario } = renderFlow();
 
-    fireEvent.change(screen.getByLabelText("Scenario name"), {
+    fireEvent.change(screen.getByLabelText(/Scenario name/), {
       target: { value: "Payments beta" },
     });
     fireEvent.click(screen.getByTestId("user-testing-create-save"));

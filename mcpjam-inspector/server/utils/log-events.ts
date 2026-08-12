@@ -177,6 +177,10 @@ export type RequestEventMap = {
   // /swarms/* endpoint answered with a server error. The upstream message is
   // deliberately NOT forwarded to the caller (it carries the deployment URL),
   // so this event is the only record of what the backend actually said.
+  // `errorCode` is the backend envelope's own `code` when it sent one
+  // ("mcpjam_config_error", "provider_error", …) and "upstream_server_error"
+  // otherwise. The caller sees the envelope's `requestId` in the masked copy,
+  // so a screenshot of the error resolves to this row.
   "swarm.generation.upstream_failed": {
     statusCode: number;
     errorCode: string;

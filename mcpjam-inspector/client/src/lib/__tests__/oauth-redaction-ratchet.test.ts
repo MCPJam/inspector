@@ -30,7 +30,7 @@ const CLIENT_SRC = resolve(fileURLToPath(import.meta.url), "../../..");
  * apply it somewhere new, which is exactly the review moment worth forcing.
  */
 const REDACTION_IDENTIFIER_PATTERN =
-  /\b(sanitizeOAuth[A-Za-z]*|redactSensitiveValue[A-Za-z]*|redactSensitiveTraceValue|traceOAuth[A-Za-z]*|sanitizeTraceErrorMessage|sanitizeStepError)\b/;
+  /\b(sanitizeOAuth[A-Za-z]*|redactSensitiveValue[A-Za-z]*|redactSensitiveTraceValue|traceOAuth[A-Za-z]*|sanitizeTraceErrorMessage|sanitizeStepError|isCredentialShapedAuthValue)\b/;
 
 const ALLOWED_FILES = new Set([
   // The gate + re-export. The policy itself lives in the SDK.
@@ -44,6 +44,11 @@ const ALLOWED_FILES = new Set([
   "App.tsx",
   // Re-exports `sanitizeStepError` for the debugger's Sentry reporting.
   "lib/oauth/debug-state-machine-adapter.ts",
+  // Copy-to-clipboard redaction for the OAuth debugger's logs. Its own
+  // patterns predate the consolidation; it now borrows the SDK's
+  // credential-vs-vocabulary test (`isCredentialShapedAuthValue`) instead of
+  // guessing, so that one judgement has a single owner.
+  "lib/oauth/log-formatters.ts",
 ]);
 
 function sourceFiles(dir: string): string[] {

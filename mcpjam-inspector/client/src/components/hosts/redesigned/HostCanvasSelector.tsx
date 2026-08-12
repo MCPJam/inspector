@@ -152,7 +152,7 @@ export function HostCanvasSelector({
       const msg = err instanceof Error ? err.message : "Failed to delete host";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent chatboxes/evals first`
+          `${msg} — use force delete or remove dependent user testing scenarios/evals first`
         );
       } else {
         toast.error(msg);

@@ -13,8 +13,10 @@ import {
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 
-const { mockUseChatboxTopicMap } = vi.hoisted(() => ({
+const { mockUseChatboxTopicMap, graphDataFrames } = vi.hoisted(() => ({
   mockUseChatboxTopicMap: vi.fn(),
+  /** Every `graphData` object handed to the force graph, in render order. */
+  graphDataFrames: [] as Array<{ nodes?: Array<{ id: string }> }>,
 }));
 
 /**
@@ -27,6 +29,7 @@ const { mockUseChatboxTopicMap } = vi.hoisted(() => ({
  */
 function makeRecordingCtx() {
   const alphas: number[] = [];
+  const fills: string[] = [];
   const gradientStops: string[] = [];
   const noop = () => {};
   const ctx = {
@@ -51,7 +54,15 @@ function makeRecordingCtx() {
     globalCompositeOperation: "",
     shadowColor: "",
     shadowBlur: 0,
-    fillStyle: "",
+    // Recorded like globalAlpha: the node's paint colour is a canvas concern,
+    // so the only way a test can see which colour a mode painted is to keep
+    // every assignment.
+    set fillStyle(value: string) {
+      fills.push(value);
+    },
+    get fillStyle() {
+      return fills[fills.length - 1] ?? "";
+    },
     strokeStyle: "",
     lineWidth: 0,
     font: "",
@@ -62,7 +73,7 @@ function makeRecordingCtx() {
       return alphas[alphas.length - 1] ?? 1;
     },
   };
-  return { ctx, alphas, gradientStops };
+  return { ctx, alphas, fills, gradientStops };
 }
 
 vi.mock("react-force-graph-2d", async () => {
@@ -85,6 +96,7 @@ vi.mock("react-force-graph-2d", async () => {
       React.useImperativeHandle(ref, () => ({
         zoomToFit: vi.fn(),
       }));
+      if (props.graphData) graphDataFrames.push(props.graphData);
       // Halos are drawn in onRenderFramePre as radial gradients; record their
       // colour stops so "what colour is this cluster's halo" is assertable.
       const frame = makeRecordingCtx();
@@ -109,7 +121,7 @@ vi.mock("react-force-graph-2d", async () => {
             // Run the real draw callback against a recording context so each
             // node's dimmed state becomes assertable from the DOM. The first
             // globalAlpha write is the dim decision.
-            const { ctx, alphas } = makeRecordingCtx();
+            const { ctx, alphas, fills } = makeRecordingCtx();
             try {
               props.nodeCanvasObject?.(node, ctx, 1);
             } catch {
@@ -120,6 +132,7 @@ vi.mock("react-force-graph-2d", async () => {
                 key={node.id}
                 type="button"
                 data-node-alpha={String(alphas[0] ?? 1)}
+                data-node-fills={fills.join("|")}
                 onClick={() => props.onNodeClick?.(node)}
               >
                 Graph node {node.id}
@@ -153,6 +166,19 @@ function rgbTriple(hex: string): string {
   const green = Number.parseInt(value.slice(2, 4), 16);
   const blue = Number.parseInt(value.slice(4, 6), 16);
   return `${red}, ${green}, ${blue}`;
+}
+
+/** Every colour the mock recorded this node being filled with. */
+function nodeFills(sessionId: string): string[] {
+  return (
+    screen
+      .getByRole("button", {
+        name: new RegExp(`graph node ${sessionId}`, "i"),
+      })
+      .getAttribute("data-node-fills") ?? ""
+  )
+    .split("|")
+    .filter(Boolean);
 }
 
 /** True when the mock recorded this node as drawn dimmed. */
@@ -327,6 +353,7 @@ function outcomeAwareHookValue() {
 }
 
 beforeEach(() => {
+  graphDataFrames.length = 0;
   mockUseChatboxTopicMap.mockReset();
   mockUseChatboxTopicMap.mockReturnValue(
     createDefaultChatboxTopicMapHookValue()
@@ -771,6 +798,38 @@ describe("TopicMapPanel color-by mode", () => {
     expect(
       screen.getByText("No mapped session has an inferred outcome yet.")
     ).toBeInTheDocument();
+  });
+
+  it("repaints the same nodes in place instead of restarting the layout", async () => {
+    // The reported "canvas bounce": force-graph owns the node objects and
+    // mutates x/y on them as the simulation settles, so handing it a fresh
+    // array re-seeds every position and reheats. Baking the colour onto the
+    // nodes did exactly that on every mode flip. Asserting node object
+    // IDENTITY across the toggle is what pins the fix — a colour assertion
+    // alone stays green however many times the layout is thrown away.
+    const user = userEvent.setup();
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderPanel();
+
+    const beforeNodes = graphDataFrames[graphDataFrames.length - 1]?.nodes;
+    const beforeFills = nodeFills("session-a");
+
+    await user.click(screen.getByRole("button", { name: "Outcome" }));
+
+    const afterNodes = graphDataFrames[graphDataFrames.length - 1]?.nodes;
+    expect(afterNodes).toBe(beforeNodes);
+    expect(afterNodes?.[0]).toBe(beforeNodes?.[0]);
+    // ...and the repaint still happened: session-a is `completed`, whose
+    // outcome colour differs from its cluster colour.
+    const completed = colorForNode(
+      { clusterId: "cluster-a", outcome: "completed" },
+      "outcome"
+    );
+    expect(completed).not.toBe(
+      colorForNode({ clusterId: "cluster-a" }, "theme", 0)
+    );
+    expect(beforeFills).not.toContain(completed);
+    expect(nodeFills("session-a")).toContain(completed);
   });
 
   it("reverts to theme if the snapshot stops supporting outcomes", async () => {
