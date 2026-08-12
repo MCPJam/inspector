@@ -135,6 +135,39 @@ describe("harness span metadata", () => {
     ).toBe(false);
   });
 
+  // A transcript whose last message is a user message would otherwise be the
+  // one a backward walk lands on, mislabelling the row with an unrelated turn.
+  it("borrows no user label when the transcript ends with a user message", () => {
+    const staleSpans: EvalTraceSpan[] = [
+      {
+        id: "step-0",
+        name: "Step 1",
+        category: "step",
+        startMs: 0,
+        endMs: 500,
+        stepIndex: 0,
+        promptIndex: 0,
+        messageStartIndex: 5,
+        messageEndIndex: 6,
+      },
+    ];
+    render(
+      <TraceTimeline
+        recordedSpans={staleSpans}
+        transcriptMessages={[
+          { role: "user", content: "what's the weather" },
+          { role: "user", content: "still there?" },
+        ]}
+      />,
+    );
+    const rows = screen.getAllByTestId("trace-row");
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((row) => row.textContent?.includes("User:"))).toBe(false);
+    expect(
+      rows.some((row) => row.textContent?.includes("still there?")),
+    ).toBe(false);
+  });
+
   it("omits throughput on non-llm rows", () => {
     const spans: EvalTraceSpan[] = [
       { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
