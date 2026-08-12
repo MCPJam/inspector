@@ -182,7 +182,7 @@ export function ChatboxUsagePanel({
                   threadId={selectedThreadId}
                   sessionLink={`${getShareableAppOrigin()}${buildUserTestingScenarioPath(
                     chatbox.chatboxId,
-                    { session: selectedThreadId },
+                    { tab: "sessions", session: selectedThreadId },
                   )}`}
                   promote={
                     chatbox.projectId

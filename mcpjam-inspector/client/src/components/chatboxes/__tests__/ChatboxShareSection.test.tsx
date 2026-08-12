@@ -127,7 +127,7 @@ describe("ChatboxShareSection", () => {
     render(<ChatboxShareSection chatbox={chatbox} projectName="Acme" />);
 
     expect(screen.getByLabelText("Tester link")).not.toHaveTextContent(
-      "/chatbox/my-chatbox/t",
+      "/user-testing/my-chatbox/t",
     );
     expect(screen.getByTestId("chatbox-copy-tester-link")).toBeDisabled();
     // Inviting mails the same link out, so it is gated too.
@@ -166,7 +166,7 @@ describe("ChatboxShareSection", () => {
 
     expect(screen.getByTestId("chatbox-copy-tester-link")).not.toBeDisabled();
     expect(screen.getByLabelText("Tester link")).toHaveTextContent(
-      "/chatbox/my-chatbox/t",
+      "/user-testing/my-chatbox/t",
     );
     expect(
       screen.queryByTestId("chatbox-share-unrunnable"),
