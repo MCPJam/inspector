@@ -175,7 +175,10 @@ export function PlanLimitDialog() {
     origin: "evals",
     limitKind: limit?.kind ?? "evalIterations",
   });
-  const requestRecipients = useUpgradeRequestRecipients(organizationId);
+  const {
+    recipients: requestRecipients,
+    isLoading: isLoadingRequestRecipients,
+  } = useUpgradeRequestRecipients(organizationId);
 
   useEffect(() => {
     if (!isOpen || !limit) {
@@ -188,6 +191,9 @@ export function PlanLimitDialog() {
     const showUpgrade = isFreePlan && upgrade.canManageBilling;
     const showEnterprise =
       !isFreePlan && upgrade.effectivePlan !== "enterprise";
+    const showRequest = !showUpgrade && !showEnterprise;
+    if (showRequest && isLoadingRequestRecipients) return;
+
     impressionTrackedRef.current = true;
     track("plan_limit_dialog_shown", {
       location: "plan_limit_dialog",
@@ -216,6 +222,7 @@ export function PlanLimitDialog() {
     });
   }, [
     isOpen,
+    isLoadingRequestRecipients,
     limit,
     organizationId,
     requestRecipients.length,

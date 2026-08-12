@@ -7,6 +7,10 @@ import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 const signIn = vi.fn();
 const trackMock = vi.hoisted(() => vi.fn());
+const recipientsState = vi.hoisted(() => ({
+  recipients: [{ email: "dana@acme.test", name: "Dana Ruiz" }],
+  isLoading: false,
+}));
 const authState: { isLoading: boolean; user: { id: string } | null } = {
   isLoading: false,
   user: null,
@@ -53,9 +57,7 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
-  useUpgradeRequestRecipients: () => [
-    { email: "dana@acme.test", name: "Dana Ruiz" },
-  ],
+  useUpgradeRequestRecipients: () => recipientsState,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -96,6 +98,8 @@ beforeEach(() => {
   upgradeState.currentPlan = "free";
   upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
+  recipientsState.recipients = [{ email: "dana@acme.test", name: "Dana Ruiz" }];
+  recipientsState.isLoading = false;
   authState.isLoading = false;
   authState.user = null;
   sortedOrganizationsState.length = 0;
@@ -240,6 +244,35 @@ describe("MCPJamLimitDialog", () => {
     expect(screen.getByTestId("request-upgrade-mail")).toHaveAttribute(
       "href",
       expect.stringContaining("mailto:dana@acme.test")
+    );
+  });
+
+  it("waits for owner recipients before reporting a member impression", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "member" });
+    recipientsState.recipients = [];
+    recipientsState.isLoading = true;
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    const view = render(<MCPJamLimitDialog />);
+
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.anything()
+    );
+
+    recipientsState.recipients = [
+      { email: "dana@acme.test", name: "Dana Ruiz" },
+    ];
+    recipientsState.isLoading = false;
+    view.rerender(<MCPJamLimitDialog />);
+
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.objectContaining({
+        wall_kind: "organization_credits",
+        primary_action: "request_owner",
+        request_recipient_count: 1,
+      })
     );
   });
 
