@@ -41,6 +41,7 @@ import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format"
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
+  RunInsightsBanner,
   RunInsightsProvider,
   RunInsightsRecommendations,
 } from "@/components/shared/usage-insights/run-insights";
@@ -395,6 +396,7 @@ export function SwarmRunDetail({
                     onOpenSessionsTab={() => handleTabChange("sessions")}
                     urlSelection={urlSelection}
                     onSelectionChange={handleSelectionChange}
+                    bannerSlot={<RunInsightsBanner />}
                     recommendationsSlot={<RunInsightsRecommendations />}
                     checksExtras={
                       wave.runs.some((run) => run.findings.length > 0) ? (

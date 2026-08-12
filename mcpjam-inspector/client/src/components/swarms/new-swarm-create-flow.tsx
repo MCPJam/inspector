@@ -570,8 +570,10 @@ export function NewSwarmCreateFlow({
       targetSeededRef.current = true;
       return;
     }
+    // If flag toggles off, don't carry forward stale environments from the prior state.
+    const effectiveEnvList = environmentsEnabled ? envList : [];
     const next = defaultComposerState({
-      environments: envList,
+      environments: effectiveEnvList,
       hosts,
       preferredHostId: previewedHostId,
       preferredEnvironmentId: previewedEnvironmentId,
