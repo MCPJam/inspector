@@ -72,7 +72,10 @@ describe("browser entrypoint", () => {
     expect(browser.MCP_UI_EXTENSION_ID).toBe("io.modelcontextprotocol/ui");
     expect(browser.MCP_UI_RESOURCE_MIME_TYPE).toBe("text/html;profile=mcp-app");
     expect(typeof browser.applyRuntimeClientCapabilities).toBe("function");
-    expect(typeof browser.redactSensitiveValue).toBe("function");
+    expect(typeof browser.redactForTelemetry).toBe("function");
+    // Deprecated compatibility alias: external consumers still import it,
+    // so its deletion must be a decision rather than an accident.
+    expect(browser.redactSensitiveValue).toBe(browser.redactForTelemetry);
     expect(browser.getDefaultClientCapabilities()).toEqual({
       extensions: {
         "io.modelcontextprotocol/ui": {

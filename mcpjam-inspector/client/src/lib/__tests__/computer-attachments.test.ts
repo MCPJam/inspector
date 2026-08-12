@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   COMPUTER_ATTACHMENTS_DIR,
   buildComputerAttachmentNote,
+  isComputerAttachmentUploadActive,
   uploadAttachmentsToComputer,
   zipAttachmentNoteEntries,
 } from "../computer-attachments";
@@ -157,5 +158,46 @@ describe("uploadAttachmentsToComputer", () => {
         { projectId: "p1", files: [makeFile("a.txt")] },
       ),
     ).rejects.toThrow(/storage quota/i);
+  });
+});
+
+describe("isComputerAttachmentUploadActive", () => {
+  const base = {
+    computersEnabled: true,
+    isAuthenticated: true,
+    hostHasComputer: true,
+    engine: "cloud" as const,
+  };
+
+  it("is active for a signed-in user on a computer-attached host, cloud engine", () => {
+    expect(isComputerAttachmentUploadActive(base)).toBe(true);
+  });
+
+  it("is INACTIVE on the local engine — the upload targets the cloud box", () => {
+    expect(
+      isComputerAttachmentUploadActive({ ...base, engine: "local" }),
+    ).toBe(false);
+  });
+
+  it("stays inactive on the local engine when the host has no computer either", () => {
+    expect(
+      isComputerAttachmentUploadActive({
+        ...base,
+        engine: "local",
+        hostHasComputer: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the pre-existing COMP-14 gates", () => {
+    expect(
+      isComputerAttachmentUploadActive({ ...base, computersEnabled: false }),
+    ).toBe(false);
+    expect(
+      isComputerAttachmentUploadActive({ ...base, isAuthenticated: false }),
+    ).toBe(false);
+    expect(
+      isComputerAttachmentUploadActive({ ...base, hostHasComputer: false }),
+    ).toBe(false);
   });
 });

@@ -189,3 +189,153 @@ describe("createManualHostedConnection — xaaPolicy survives schema stripping",
     expect(thrown?.details?.reason).toBe("xaa_policy_invalid");
   });
 });
+
+// Declared plugin transports (`httpVariant` on the authorize serverConfig,
+// once the backend serves it): `sse` skips the Streamable HTTP attempt,
+// `streamable-http` rules out the silent SSE downgrade, absence — every row
+// today — leaves the config byte-identical.
+describe("toHttpConfig — declared httpVariant mapping", () => {
+  it("maps a declared sse transport to preferSSE", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://sse.example.com/mcp",
+          httpVariant: "sse",
+        },
+      },
+      1000
+    );
+    expect(config.preferSSE).toBe(true);
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+
+  it("maps a declared streamable-http transport to disableSseFallback", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://streamable.example.com/mcp",
+          httpVariant: "streamable-http",
+        },
+      },
+      1000
+    );
+    expect(config.disableSseFallback).toBe(true);
+    // Explicitly false, not merely absent — see below.
+    expect(config.preferSSE).toBe(false);
+  });
+
+  it("pins preferSSE false so a /sse URL cannot override the declaration", async () => {
+    // The SDK resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`,
+    // so an undefined preferSSE would let URL shape beat the declaration and
+    // route a declared streamable-http server to SSE without ever attempting
+    // Streamable HTTP.
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://plugin.example.com/sse",
+          httpVariant: "streamable-http",
+        },
+      },
+      1000
+    );
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
+  });
+
+  it("sets neither flag when no transport was declared", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      {
+        serverConfig: {
+          transportType: "http",
+          url: "https://plain.example.com/mcp",
+        },
+      },
+      1000
+    );
+    expect(config.preferSSE).toBeUndefined();
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+});
+
+// Hosted stdio: refused unless a live in-computer runtime exists. The presence
+// of that runtime — a recorded `pluginRuntimeSessions` row — is the whole gate,
+// so both directions are asserted here.
+describe("toHttpConfig — plugin stdio in the caller's computer", () => {
+  const STDIO_ROW = {
+    serverConfig: {
+      transportType: "stdio" as const,
+      command: "node",
+      args: ["/home/user/.mcpjam/plugins/p/v/h/server/index.js"],
+      env: { API_KEY: "child-secret" },
+    },
+  };
+
+  it("still refuses a stdio server with no plugin runtime", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    expect(() => toHttpConfig(STDIO_ROW, 1000)).toThrowError(
+      /requires the local runtime/
+    );
+  });
+
+  it("refuses stdio even when an oauth token and pins are present", async () => {
+    // Nothing but the runtime may open this door: a stored credential is not
+    // evidence that anything is listening.
+    const { toHttpConfig } = await import("../auth.js");
+    expect(() =>
+      toHttpConfig(STDIO_ROW, 1000, "stored-oauth-token", undefined, undefined, {
+        supportedProtocolVersions: ["2025-06-18"],
+      })
+    ).toThrowError(/requires the local runtime/);
+  });
+
+  it("points at the shim and presents its bearer when a runtime exists", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      STDIO_ROW,
+      1000,
+      undefined,
+      { roots: {} },
+      undefined,
+      { supportedProtocolVersions: ["2025-06-18"] },
+      { url: "https://41234-sbx.e2b.app/mcp", token: "t".repeat(43) }
+    );
+
+    expect(config.url).toBe("https://41234-sbx.e2b.app/mcp");
+    expect(config.requestInit?.headers).toEqual({
+      Authorization: `Bearer ${"t".repeat(43)}`,
+    });
+    // The shim speaks Streamable HTTP only and answers 405 on GET /mcp.
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
+    expect(config.supportedProtocolVersions).toEqual(["2025-06-18"]);
+    expect(config.capabilities).toEqual({ roots: {} });
+  });
+
+  it("never carries the child's own env or a stored oauth token onto the wire", async () => {
+    const { toHttpConfig } = await import("../auth.js");
+    const config = toHttpConfig(
+      STDIO_ROW,
+      1000,
+      "stored-oauth-token",
+      undefined,
+      undefined,
+      undefined,
+      { url: "https://41234-sbx.e2b.app/mcp", token: "t".repeat(43) }
+    );
+    // The stdio row's `env` is the CHILD's secret material and the stored
+    // token belongs to a different server identity; the shim's bearer is the
+    // only credential this connection may present.
+    expect(config.requestInit?.headers).toEqual({
+      Authorization: `Bearer ${"t".repeat(43)}`,
+    });
+    expect(JSON.stringify(config)).not.toContain("child-secret");
+    expect(JSON.stringify(config)).not.toContain("stored-oauth-token");
+  });
+});
