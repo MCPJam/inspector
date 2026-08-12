@@ -174,12 +174,12 @@ export function composeAvailableModels(params: {
     customProviders,
     hostedCatalog,
   });
+  const visibleModels = HOSTED_MODE
+    ? localModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
+    : localModels;
   const guestLockedModels = applyGuestModelLocks(
-    withHostedFloor(localModels),
+    withHostedFloor(visibleModels),
     isAuthenticated
   );
-  const visibleModels = HOSTED_MODE
-    ? guestLockedModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
-    : guestLockedModels;
-  return applyOutOfCreditsLocks(visibleModels, outOfCredits);
+  return applyOutOfCreditsLocks(guestLockedModels, outOfCredits);
 }
