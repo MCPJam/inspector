@@ -1317,6 +1317,19 @@ export function NewSwarmCreateFlow({
                 We infer the goals, the clients and a scoring rubric — you
                 confirm all of it next.
               </p>
+              {/* The requirement belongs here, once, above the pair: neither
+                  source is optional on its own — `canContinue` needs one of
+                  them — so labelling each panel "Optional" made the disabled
+                  button read as a bug. */}
+              {personaList.length > 0 ? (
+                <p
+                  className="text-sm font-medium text-foreground"
+                  data-testid="new-swarm-source-requirement"
+                >
+                  Pick at least one: personas you already have, new ones you
+                  describe, or both.
+                </p>
+              ) : null}
             </div>
 
             {/* Sources: choose existing and/or describe new. Shared setup
@@ -1335,7 +1348,7 @@ export function NewSwarmCreateFlow({
                   <div className="shrink-0 space-y-1">
                     <Label>Choose personas</Label>
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                      Optional. They keep their own goals and environments.
+                      They keep their own goals and environments.
                     </p>
                   </div>
                   <div
@@ -1398,9 +1411,7 @@ export function NewSwarmCreateFlow({
                       : "Describe your users"}
                   </Label>
                   <p className="text-sm leading-relaxed text-muted-foreground">
-                    {personaList.length > 0
-                      ? "Optional. We’ll propose personas and goals for you to confirm."
-                      : "We’ll propose personas and goals for you to confirm."}
+                    We’ll propose personas and goals for you to confirm.
                   </p>
                 </div>
                 <McpjamAgentComposer
@@ -1536,6 +1547,12 @@ export function NewSwarmCreateFlow({
                 type="button"
                 disabled={!canContinue}
                 data-testid="new-swarm-continue"
+                // Tie the reason to the control it blocks: a disabled button
+                // is skipped by most screen readers, so the sentence beside
+                // it is the only account of what's missing.
+                aria-describedby={
+                  continueHint ? "new-swarm-continue-hint" : undefined
+                }
                 onClick={handleContinue}
               >
                 {generating || materializing ? (
@@ -1550,7 +1567,17 @@ export function NewSwarmCreateFlow({
                 )}
               </Button>
               {continueHint ? (
-                <p className="text-sm leading-relaxed text-muted-foreground">
+                <p
+                  id="new-swarm-continue-hint"
+                  data-testid="new-swarm-continue-hint"
+                  // One slot, two jobs. As a summary it stays muted; as the
+                  // only on-screen account of why Continue won't move it
+                  // shouldn't read like incidental helper text.
+                  className={cn(
+                    "text-sm leading-relaxed",
+                    canContinue ? "text-muted-foreground" : "text-foreground"
+                  )}
+                >
                   {continueHint}
                 </p>
               ) : null}

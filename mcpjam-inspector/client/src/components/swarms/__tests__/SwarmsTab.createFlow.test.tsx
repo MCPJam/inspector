@@ -473,6 +473,29 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByText(/3 new personas on next step/i)).toBeVisible();
   });
 
+  // The two sources used to be labelled "Optional" each, so a user with an
+  // untouched form faced a disabled Continue with nothing claiming to be
+  // required. The pair is the choice; the button's blocker names itself.
+  it("labels the two persona sources as one required choice, and points Continue at its blocker", () => {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    openDescribe();
+
+    expect(screen.getByTestId("new-swarm-source-requirement")).toBeVisible();
+    expect(screen.queryByText(/optional/i)).not.toBeInTheDocument();
+
+    const submit = screen.getByTestId("new-swarm-continue");
+    const hint = screen.getByTestId("new-swarm-continue-hint");
+    expect(submit).toBeDisabled();
+    expect(hint).toBeVisible();
+    expect(hint).toHaveTextContent(/describe your users, or pick a persona/i);
+    expect(submit).toHaveAttribute(
+      "aria-describedby",
+      "new-swarm-continue-hint"
+    );
+  });
+
   /**
    * SUTB-5. Both reporters wrote personas and goals first and only then met
    * `ENV_NO_SERVERS` from the resolver — one with an empty client, one with a
