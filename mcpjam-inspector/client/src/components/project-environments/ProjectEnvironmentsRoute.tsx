@@ -540,6 +540,7 @@ function EnvironmentDetail({
       // Archive is actioned on the row as currently shown (no draft), so the
       // reactive revision IS the base revision here.
       await archiveEnvironment({
+        projectId,
         environmentId: environment.environmentId,
         expectedRevision: environment.revision,
       });
@@ -556,6 +557,7 @@ function EnvironmentDetail({
     setBusy(true);
     try {
       await restoreEnvironment({
+        projectId,
         environmentId: environment.environmentId,
         expectedRevision: environment.revision,
       });

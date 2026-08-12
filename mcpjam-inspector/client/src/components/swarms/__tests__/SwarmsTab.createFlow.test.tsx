@@ -48,12 +48,32 @@ vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => [],
 }));
 
-vi.mock("@/hooks/useClients", () => ({
-  useHostList: () => ({
-    hosts: [
+/**
+ * Clients and the project server catalog, as refs: the cloud-reachability
+ * preflight reads BOTH (a client's `serverCount`, and what those servers are),
+ * so a case has to be able to re-point them. Defaults deliberately omit
+ * `serverCount` — an older backend does, and "unknown" must not read as zero.
+ */
+const { hostsRef, projectServersRef } = vi.hoisted(() => ({
+  hostsRef: {
+    current: [
       { hostId: "host-1", name: "Claude" },
       { hostId: "host-2", name: "Cursor" },
-    ],
+    ] as Array<{ hostId: string; name: string; serverCount?: number }>,
+  },
+  projectServersRef: {
+    current: [] as Array<{
+      _id: string;
+      name: string;
+      command?: string;
+      url?: string;
+    }>,
+  },
+}));
+
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({
+    hosts: hostsRef.current,
     isLoading: false,
   }),
 }));
@@ -183,7 +203,10 @@ vi.mock("@/hooks/useViews", () => ({
     serverAttachments: [],
     isLoading: false,
   }),
-  useProjectServers: () => ({ servers: [], isLoading: false }),
+  useProjectServers: () => ({
+    servers: projectServersRef.current,
+    isLoading: false,
+  }),
   useDbUserReady: () => true,
 }));
 
@@ -314,6 +337,11 @@ function fillDescribe(text = "Support agents answering refunds") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hostsRef.current = [
+    { hostId: "host-1", name: "Claude" },
+    { hostId: "host-2", name: "Cursor" },
+  ];
+  projectServersRef.current = [];
   existingPersonas = [];
   personaJourneys = [];
   // Ad-hoc rows carry NO name — the shape the flag-on path has to cope with.
@@ -466,6 +494,63 @@ describe("SwarmsTab — New swarm create flow", () => {
       "aria-describedby",
       "new-swarm-continue-hint"
     );
+  });
+
+  /**
+   * SUTB-5. Both reporters wrote personas and goals first and only then met
+   * `ENV_NO_SERVERS` from the resolver — one with an empty client, one with a
+   * local (stdio) server a cloud run can't reach. The flow has to refuse BEFORE
+   * anything is written, and say which of the two it is: "connect a server" and
+   * "make the server you have reachable" are different fixes.
+   */
+  it("refuses to continue when the target has no servers, and names the reason", () => {
+    hostsRef.current = [
+      { hostId: "host-1", name: "Claude", serverCount: 0 },
+      { hostId: "host-2", name: "Cursor", serverCount: 0 },
+    ];
+    openDescribe();
+    fillDescribe();
+
+    expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
+    expect(
+      screen.getByTestId("new-swarm-server-unreachable")
+    ).toHaveTextContent(/prod-like has no servers to run against/i);
+    expect(screen.getByText(/fix where it runs to continue/i)).toBeVisible();
+    expect(createSwarmMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to continue when the target's only server is local-only", () => {
+    hostsRef.current = [
+      { hostId: "host-1", name: "Claude", serverCount: 1 },
+      { hostId: "host-2", name: "Cursor", serverCount: 1 },
+    ];
+    projectServersRef.current = [
+      { _id: "srv-1", name: "Fetch", command: "uvx" },
+    ];
+    openDescribe();
+    fillDescribe();
+
+    expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
+    const notice = screen.getByTestId("new-swarm-server-unreachable");
+    expect(notice).toHaveTextContent(/only has servers this run can't reach/i);
+    expect(notice).toHaveTextContent(/Fetch/);
+  });
+
+  it("continues when the target's server is cloud-reachable", () => {
+    hostsRef.current = [
+      { hostId: "host-1", name: "Claude", serverCount: 1 },
+      { hostId: "host-2", name: "Cursor", serverCount: 1 },
+    ];
+    projectServersRef.current = [
+      { _id: "srv-1", name: "Notion", url: "https://mcp.notion.com/mcp" },
+    ];
+    openDescribe();
+    fillDescribe();
+
+    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+    expect(
+      screen.queryByTestId("new-swarm-server-unreachable")
+    ).not.toBeInTheDocument();
   });
 
   it("lets a returning user continue on personas alone — no description, no environment, no generation", async () => {
