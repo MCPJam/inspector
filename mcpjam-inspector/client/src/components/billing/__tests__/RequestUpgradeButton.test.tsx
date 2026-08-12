@@ -49,6 +49,27 @@ describe("buildUpgradeRequestMail", () => {
     expect(decodeURIComponent(href!)).toContain("run out of credits");
   });
 
+  it("asks a paid organization to buy credits instead of upgrading", () => {
+    const href = buildUpgradeRequestMail({
+      recipients: [OWNER],
+      organizationName: "Acme Robotics",
+      teamName: "Team",
+      origin: "credits",
+      requestAction: "buyCredits",
+    });
+
+    const decoded = decodeURIComponent(href!);
+    expect(decoded).toContain("Credit purchase request for Acme Robotics");
+    expect(decoded).toContain(
+      "Our organization has run out of MCPJam credits."
+    );
+    expect(decoded).toContain(
+      "Could you buy more credits for Acme Robotics?"
+    );
+    expect(decoded).toContain("2. Under Credits, click Buy credits.");
+    expect(decoded).not.toContain("upgrade Acme Robotics to the Team plan");
+  });
+
   it("returns null when there is nobody to address", () => {
     expect(
       buildUpgradeRequestMail({

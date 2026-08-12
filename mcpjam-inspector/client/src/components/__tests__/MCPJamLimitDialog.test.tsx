@@ -219,6 +219,28 @@ describe("MCPJamLimitDialog", () => {
     );
   });
 
+  it("asks paid-org members to request credits instead of a Team upgrade", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "member" });
+    upgradeState.currentPlan = "team";
+    upgradeState.effectivePlan = "team";
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /Ask an organization owner or admin to buy credits\./
+    );
+    const href = decodeURIComponent(
+      screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? ""
+    );
+    expect(href).toContain("Credit purchase request for Acme Robotics");
+    expect(href).toContain(
+      "Our organization has run out of MCPJam credits."
+    );
+    expect(href).toContain("Could you buy more credits for Acme Robotics?");
+    expect(href).not.toContain("upgrade Acme Robotics to the Team plan");
+  });
+
   it("opens the model picker's Your providers tab on BYOK click (no org redirect)", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };

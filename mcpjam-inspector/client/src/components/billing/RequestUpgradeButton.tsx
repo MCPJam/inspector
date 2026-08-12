@@ -7,38 +7,63 @@ export interface UpgradeRequestRecipient {
   name?: string | null;
 }
 
+export type UpgradeRequestAction = "upgrade" | "buyCredits";
+
 /**
- * Builds the owner-facing upgrade request. Exported so a test can assert the
- * body without reading it off a URL-encoded href by eye.
+ * Builds the owner-facing request. Exported so a test can assert the body
+ * without reading it off a URL-encoded href by eye.
  */
 export function buildUpgradeRequestMail(params: {
   recipients: UpgradeRequestRecipient[];
   organizationName: string;
   teamName: string;
   origin: UpgradeOrigin;
+  requestAction?: UpgradeRequestAction;
 }): string | null {
-  const { recipients, organizationName, teamName, origin } = params;
+  const {
+    recipients,
+    organizationName,
+    teamName,
+    origin,
+    requestAction = "upgrade",
+  } = params;
   const to = recipients.map((r) => r.email).filter(Boolean);
   if (to.length === 0) return null;
 
   const firstName = recipients[0]?.name?.trim().split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";
-  const blocked =
-    origin === "credits"
+  const isCreditPurchase = requestAction === "buyCredits";
+  const blocked = isCreditPurchase
+    ? "Our organization has run out of MCPJam credits."
+    : origin === "credits"
       ? "I've run out of credits on MCPJam and can't keep using the models until they reset."
       : "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.";
 
-  const subject = `Upgrade request: MCPJam ${teamName} plan for ${organizationName}`;
+  const subject = isCreditPurchase
+    ? `Credit purchase request for ${organizationName}`
+    : `Upgrade request: MCPJam ${teamName} plan for ${organizationName}`;
+  const request = isCreditPurchase
+    ? `Could you buy more credits for ${organizationName}?`
+    : `Could you upgrade ${organizationName} to the ${teamName} plan?`;
+  const steps = isCreditPurchase
+    ? [
+        "1. Open MCPJam, go to Organizations, then Billing.",
+        "2. Under Credits, click Buy credits.",
+        "3. Choose an amount and finish checkout with Stripe.",
+      ]
+    : [
+        "1. Open MCPJam, go to Organizations, then Billing.",
+        `2. Under the ${teamName} plan, pick Annual or Monthly.`,
+        "3. Click Upgrade and finish checkout with Stripe.",
+      ];
   const body = [
     greeting,
     "",
     blocked,
-    `Could you upgrade ${organizationName} to the ${teamName} plan?`,
+    request,
     "",
     "Here's how:",
-    "1. Open MCPJam, go to Organizations, then Billing.",
-    `2. Under the ${teamName} plan, pick Annual or Monthly.`,
-    "3. Click Upgrade and finish checkout with Stripe.",
+    ...steps,
     "",
     "Thanks",
   ].join("\n");
@@ -54,6 +79,7 @@ interface RequestUpgradeButtonProps {
   teamName: string;
   origin: UpgradeOrigin;
   limitKind: string;
+  requestAction?: UpgradeRequestAction;
 }
 
 /**
@@ -76,12 +102,14 @@ export function RequestUpgradeButton({
   teamName,
   origin,
   limitKind,
+  requestAction = "upgrade",
 }: RequestUpgradeButtonProps) {
   const href = buildUpgradeRequestMail({
     recipients,
     organizationName,
     teamName,
     origin,
+    requestAction,
   });
   if (!href) return null;
 
@@ -112,7 +140,8 @@ export function RequestUpgradeButton({
         {extraCount > 0
           ? ` and ${extraCount} other owner${extraCount === 1 ? "" : "s"}`
           : ""}
-        , with the steps to upgrade.
+        , with the steps to{" "}
+        {requestAction === "buyCredits" ? "buy credits" : "upgrade"}.
       </p>
     </div>
   );
