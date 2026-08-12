@@ -16,7 +16,7 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const SAFE_SEGMENT = /^[A-Za-z0-9_-]+$/;
+import { isSafePathSegment } from "./path-segments.js";
 
 export function defaultPluginDataRoot(): string {
   return join(homedir(), ".mcpjam", "plugin-data");
@@ -33,7 +33,10 @@ export async function ensurePluginDataDir(args: {
   /** Test seam; defaults to `~/.mcpjam/plugin-data`. */
   rootDir?: string;
 }): Promise<string> {
-  if (!SAFE_SEGMENT.test(args.projectId) || !SAFE_SEGMENT.test(args.pluginId)) {
+  if (
+    !isSafePathSegment(args.projectId) ||
+    !isSafePathSegment(args.pluginId)
+  ) {
     throw new Error(
       `plugin data dir refuses unsafe id segments: ${args.projectId}/${args.pluginId}`
     );

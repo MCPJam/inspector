@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildComputerUploadUrl,
   buildTerminalWsUrl,
+  LOCAL_TERMINAL_WS_PATH,
   openTerminalConnection,
   toTerminalWsBase,
   uploadFilesToComputer,
@@ -302,5 +303,71 @@ describe("toTerminalWsBase", () => {
   it("returns undefined for invalid or non-http(s) inputs", () => {
     expect(toTerminalWsBase("not a url")).toBeUndefined();
     expect(toTerminalWsBase("ftp://dp.example.test")).toBeUndefined();
+  });
+});
+
+describe("terminal route selection", () => {
+  it("defaults to the CLOUD terminal route", () => {
+    const url = buildTerminalWsUrl({ cols: 80, rows: 24, baseUrl: "ws://h" });
+    expect(url).toBe("ws://h/api/web/computers/terminal?cols=80&rows=24");
+  });
+
+  it("targets the LOCAL terminal route when asked", () => {
+    const url = buildTerminalWsUrl({
+      cols: 80,
+      rows: 24,
+      baseUrl: "ws://h",
+      path: LOCAL_TERMINAL_WS_PATH,
+    });
+    expect(url).toBe("ws://h/api/web/computers/local-terminal?cols=80&rows=24");
+  });
+
+  it("keeps geometry and cwd query params on the local route", () => {
+    const url = buildTerminalWsUrl({
+      cols: 120,
+      rows: 40,
+      baseUrl: "ws://h",
+      cwd: "/home/me/work",
+      path: LOCAL_TERMINAL_WS_PATH,
+    });
+    expect(url).toContain("/api/web/computers/local-terminal?");
+    expect(url).toContain("cols=120");
+    expect(url).toContain("rows=40");
+    expect(url).toContain("cwd=%2Fhome%2Fme%2Fwork");
+  });
+
+  it("omits cwd entirely when it is empty, keeping the local route", () => {
+    const url = buildTerminalWsUrl({
+      cols: 80,
+      rows: 24,
+      baseUrl: "ws://h",
+      cwd: "",
+      path: LOCAL_TERMINAL_WS_PATH,
+    });
+    expect(url).toBe("ws://h/api/web/computers/local-terminal?cols=80&rows=24");
+    expect(url).not.toContain("cwd");
+  });
+
+  it("openTerminalConnection dials the requested path with the nonce as subprotocol", () => {
+    FakeWebSocket.instances.length = 0;
+    openTerminalConnection({
+      token: "nonce-abc",
+      cols: 80,
+      rows: 24,
+      baseUrl: "ws://h",
+      path: LOCAL_TERMINAL_WS_PATH,
+      onOutput: () => {},
+      onEvent: () => {},
+      onClose: () => {},
+      wsFactory: (url, protocols) =>
+        new FakeWebSocket(url, protocols) as unknown as WebSocket,
+    });
+
+    const socket = FakeWebSocket.instances.at(-1)!;
+    expect(socket.url).toContain("/api/web/computers/local-terminal");
+    // Same transport as the cloud terminal: the credential rides the
+    // subprotocol slot, never the query string.
+    expect(socket.protocols).toEqual(["nonce-abc"]);
+    expect(socket.url).not.toContain("nonce-abc");
   });
 });

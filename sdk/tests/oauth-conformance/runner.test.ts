@@ -1056,7 +1056,7 @@ describe("OAuthConformanceTest", () => {
     expect(failedStep).toMatchObject({
       status: "failed",
       error: {
-        message: expect.stringContaining("advertise S256"),
+        message: expect.stringContaining("without S256"),
       },
     });
   });

@@ -17,6 +17,7 @@ const {
   navigateMock,
   locationState,
   usagePanelMock,
+  workbenchMock,
   deleteChatboxMock,
   previewPaneMock,
   hostState,
@@ -31,6 +32,7 @@ const {
   navigateMock: vi.fn(),
   locationState: { search: "" },
   usagePanelMock: vi.fn(),
+  workbenchMock: vi.fn(),
   deleteChatboxMock: vi.fn().mockResolvedValue(undefined),
   previewPaneMock: vi.fn(),
   hostState: { host: null as unknown, isLoading: false },
@@ -129,8 +131,24 @@ vi.mock("@/components/chatboxes/ChatboxDeleteConfirmDialog", () => ({
 vi.mock("@/components/chatboxes/ChatboxUsagePanel", () => ({
   ChatboxUsagePanel: (props: Record<string, unknown>) => {
     usagePanelMock(props);
-    return <div data-testid={`stub-usage-${props.section}`} />;
+    return <div data-testid="stub-usage-sessions" />;
   },
+}));
+
+// Insights are their own mount now (the shared workbench), not a `section` of
+// the sessions panel. Stubbed for the same reason: these specs are about which
+// tab renders, not what the workbench draws.
+vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
+  InsightsWorkbench: (props: Record<string, unknown>) => {
+    workbenchMock(props);
+    return <div data-testid="stub-usage-insights" />;
+  },
+}));
+
+// Resolves a viewer capability through Convex auth; these specs render outside
+// a provider and never assert on the affordance it gates.
+vi.mock("@/hooks/usePromoteCapability", () => ({
+  usePromoteCapability: () => ({ canPromote: true, isLoading: false }),
 }));
 
 // Stubbed so jsdom never mounts the real iframe — it would try to fetch the
@@ -240,10 +258,10 @@ describe("UserTestingScenarioDetail", () => {
     renderDetail();
 
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
-    expect(usagePanelMock).toHaveBeenCalledWith(
+    expect(workbenchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        section: "insights",
-        chatbox: expect.objectContaining({ chatboxId: "cb-1" }),
+        scope: { kind: "chatbox", chatboxId: "cb-1" },
+        cohortKey: "cb-1",
       }),
     );
   });
@@ -321,10 +339,7 @@ describe("UserTestingScenarioDetail", () => {
     renderDetail();
 
     expect(usagePanelMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        section: "sessions",
-        initialThreadId: "thread-9",
-      }),
+      expect.objectContaining({ initialThreadId: "thread-9" }),
     );
   });
 

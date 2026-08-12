@@ -308,6 +308,18 @@ describe("describeError — redaction", () => {
     expect(out.rawMessage.toLowerCase()).toContain("redacted");
   });
 
+  it("leaves the hosted 401's own copy intact and classifies it", () => {
+    // The reported bug, end to end: `bearer-auth.ts` answers a bearer-less
+    // `/api/web/*` request with "Bearer token required", the swarm create flow
+    // renders that message as a bare string, and the describer used to both
+    // rewrite the sentence ("Bearer [REDACTED] required") and fail to
+    // recognize it ("Unknown error"). One assertion per half, on the one input
+    // the user actually saw.
+    const out = describeError(new Error("Bearer token required"));
+    expect(out.rawMessage).toBe("Bearer token required");
+    expect(out.slug).toBe("auth/missing_bearer");
+  });
+
   it("never throws on truly unusual input", () => {
     expect(() => describeError({ get code() { throw new Error("nope"); } })).not.toThrow();
   });

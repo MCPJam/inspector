@@ -29,6 +29,7 @@ import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
+import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
 
 /** Where a connectable server in the resolved set came from. */
 export type RuntimeServerSource = "host_or_group" | "plugin" | "override";
@@ -212,6 +213,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Where a `local`-placement plugin component would actually execute if this
+ *  deployment admitted one. See the venue note on
+ *  {@link resolveEnvironmentForRuntime}. */
+export type RuntimeVenue = "local" | "computer";
+
+/**
+ * DEPLOYMENT-wide, not per-caller. This resolver runs before any box is
+ * reserved and has no cheap way to ask whether THIS actor could reserve one, so
+ * a caller who cannot (a guest, an unentitled project) still gets the component
+ * admitted and then refused at connect. That refusal is correct and fail-closed
+ * — nothing runs — but it costs a round trip to reach. Narrowing the venue to
+ * the acting caller's own eligibility belongs with the turn-level pre-warm that
+ * resolves the box before the environment does.
+ */
+export function resolveRuntimeVenue(): RuntimeVenue | undefined {
+  if (!HOSTED_MODE) return "local";
+  return canColocatePluginStdio() ? "computer" : undefined;
+}
+
 /**
  * Fail-closed structural validation.
  *
@@ -261,13 +281,24 @@ function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
  * `./plugin-override`, which can only remove versions this environment already
  * resolved for this caller.
  *
- * `runtimeVenue: "local"` is declared — HERE, once, for every caller of this
- * service (chat-v2, the preview route, the connect check) — when this
- * deployment IS the local binary. The backend then admits `local`-placement
- * plugin components, which this process spawns itself through the
- * `createAuthorizedManager` stdio divert. Hosted deployments send NOTHING
- * (not an explicit "hosted"): absent already means hosted fail-closed on the
- * backend, and omitting the field keeps hosted requests byte-identical.
+ * The RUNTIME VENUE is declared — HERE, once, for every caller of this service
+ * (chat-v2, the preview route, the connect check):
+ *
+ *   - `"local"` when this deployment IS the local binary. The backend admits
+ *     `local`-placement plugin components, which this process spawns itself
+ *     through the `createAuthorizedManager` stdio divert.
+ *   - `"computer"` when this deployment can colocate such a component inside
+ *     the caller's own computer sandbox behind the in-VM shim. Same admission,
+ *     different executor.
+ *   - NOTHING otherwise (not an explicit "hosted"): absent already means hosted
+ *     fail-closed on the backend, and omitting the field keeps those requests
+ *     byte-identical.
+ *
+ * `"computer"` rides the SAME predicate the connect seam gates on
+ * ({@link canColocatePluginStdio}), which is what keeps admission and execution
+ * from drifting: declaring a venue this deployment cannot serve would hand back
+ * server ids that fail at connect, and no client can tell that apart from a
+ * broken plugin.
  */
 export async function resolveEnvironmentForRuntime(
   convexClient: ConvexHttpClient,
@@ -278,6 +309,7 @@ export async function resolveEnvironmentForRuntime(
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
+  const runtimeVenue = resolveRuntimeVenue();
   let raw: unknown;
   try {
     raw = await convexClient.query(
@@ -286,7 +318,7 @@ export async function resolveEnvironmentForRuntime(
         projectId: args.projectId,
         environmentId: args.environmentId,
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
-        ...(HOSTED_MODE ? {} : { runtimeVenue: "local" }),
+        ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
       } as any
     );
   } catch (error) {

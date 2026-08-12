@@ -10,6 +10,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
+import { RequiredMark } from "@/components/shared/required-mark";
 import { useProjectServers } from "@/hooks/useViews";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
@@ -198,9 +199,17 @@ export function UserTestingCreateFlow({
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-8">
         <div className="mx-auto flex max-w-xl flex-col gap-6">
           <div className="space-y-2">
-            <Label htmlFor="scenario-name">Scenario name</Label>
+            {/* Marked because Save is gated on them — the name and the client
+                are what this flow cannot mint a scenario without. The server is
+                deliberately unmarked: it is optional here, and pretending
+                otherwise would mark a field the button doesn't wait for. */}
+            <Label htmlFor="scenario-name">
+              Scenario name
+              <RequiredMark />
+            </Label>
             <Input
               id="scenario-name"
+              aria-required
               value={name}
               onChange={(e) => {
                 userEditedNameRef.current = e.target.value.trim().length > 0;
@@ -254,7 +263,10 @@ export function UserTestingCreateFlow({
           </div>
 
           <div className="space-y-2">
-            <Label>Client the tester will see</Label>
+            <Label>
+              Client the tester will see
+              <RequiredMark />
+            </Label>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button

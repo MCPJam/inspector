@@ -34,6 +34,9 @@ export default defineConfig({
     "src/host-compat/index.ts",
     // Pure OpenAI plugin bundle parser shared with the backend importer.
     "src/plugin-bundle/index.ts",
+    // Node-only SSRF-hardened OAuth networking (classifier + DNS-pinned
+    // transport) for backend actions that must not load the whole SDK graph.
+    "src/oauth/node.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],
