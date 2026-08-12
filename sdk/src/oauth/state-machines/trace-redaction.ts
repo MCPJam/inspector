@@ -240,6 +240,43 @@ const CREDENTIAL_ASSIGNMENT_RE = new RegExp(
 );
 
 /**
+ * Is `value` — the token after a `Bearer`/`Basic` scheme word — a credential,
+ * or is it part of the sentence the scheme word happens to start?
+ *
+ * The judgement, not just the rule: `\b(bearer|basic)\s+\w+` turns the very
+ * common "Bearer token is expired" into "Bearer [redacted] is expired",
+ * destroying the diagnostic word the redactors promise to keep — and it turns
+ * the hosted 401's own copy, "Bearer token required", into nonsense the user
+ * cannot act on. Keying on punctuation-or-length gets prose right but misses
+ * short opaque credentials — `Basic dXNlcjpwYXNz` is a valid header value with
+ * neither. So invert the test and ask whether the value could be a WORD
+ * instead: anything carrying mixed case, a digit, or base64url punctuation is
+ * credential-shaped, and a plain lowercase run is vocabulary.
+ *
+ * Exported because the display redactor below is not the only place that has
+ * to make this call — telemetry redaction over-redacts by design and stays
+ * separate, but "is this a credential or a noun" is one question with one
+ * answer, and the copies of it had already drifted.
+ */
+export function isCredentialShapedAuthValue(value: string): boolean {
+  // Trailing sentence punctuation belongs to the prose, not the value.
+  const core = value.replace(/[.,;:!?)\]}]+$/, "");
+  return !/^[a-z]{1,20}$/.test(core);
+}
+
+/** Replacer for a bare `Bearer`/`Basic <value>` with no header context. */
+function redactBareSchemeMatch(
+  match: string,
+  scheme: string,
+  gap: string,
+  value: string
+): string {
+  return isCredentialShapedAuthValue(value)
+    ? `${scheme}${gap}[redacted]`
+    : match;
+}
+
+/**
  * Redact credential-shaped substrings from a free-form error message.
  *
  * Error strings interpolate whatever the server put in `error` /
@@ -309,20 +346,8 @@ export function sanitizeTraceErrorMessage(
       "$1$2 [redacted]",
     )
     // 3b. A bare `Bearer <value>` with no header context. This one must not
-    // fire on prose: `\b(bearer|basic)\s+\w+` turns the very common "Bearer
-    // token is expired" into "Bearer [redacted] is expired", destroying the
-    // diagnostic word this function promises to keep.
-    //
-    // Keying on punctuation-or-length gets that right but misses short opaque
-    // credentials — `Basic dXNlcjpwYXNz` is a valid header value with neither.
-    // So invert the test and ask whether the value could be a WORD instead:
-    // anything carrying mixed case, a digit, or base64url punctuation is
-    // credential-shaped, and a plain lowercase run is vocabulary.
-    .replace(/\b(bearer|basic)(\s+)(\S+)/gi, (match, scheme, gap, value) => {
-      // Trailing sentence punctuation belongs to the prose, not the value.
-      const core = (value as string).replace(/[.,;:!?)\]}]+$/, "");
-      return /^[a-z]{1,20}$/.test(core) ? match : `${scheme}${gap}[redacted]`;
-    })
+    // fire on prose — see `isCredentialShapedAuthValue`, which owns that call.
+    .replace(/\b(bearer|basic)(\s+)(\S+)/gi, redactBareSchemeMatch)
     // 4. "client_secret": "…" — `(?:\\.|[^"\\])*` rather than `[^"]*`, or an
     // escaped quote inside the value ends the match early and leaves the
     // secret's tail in the report.
