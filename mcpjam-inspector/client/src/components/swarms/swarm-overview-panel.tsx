@@ -251,6 +251,34 @@ export function swarmWaveTitle(wave: SwarmWave): string {
   return `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
 }
 
+/**
+ * Progress of a wave that is STILL GOING, or `null` once every member reached a
+ * terminal.
+ *
+ * `done` counts every terminal attempt — succeeded, failed and rate-limited —
+ * because this answers "how far along is the run", which is a different
+ * question from {@link waveSessionTotals}' "how much of it worked". A wave whose
+ * runs are all terminal returns `null` rather than a full bar: there is no live
+ * run to point at, and a 100% progress bar on a finished swarm is noise.
+ */
+export function waveLiveProgress(runs: readonly SwarmOverviewRun[]): {
+  done: number;
+  total: number;
+  liveRuns: number;
+} | null {
+  let done = 0;
+  let total = 0;
+  let liveRuns = 0;
+  for (const run of runs) {
+    if (run.status === "running" || run.status === "pending") liveRuns += 1;
+    done +=
+      run.summary.succeeded + run.summary.failed + run.summary.rateLimited;
+    total += run.summary.total;
+  }
+  if (liveRuns === 0) return null;
+  return { done, total, liveRuns };
+}
+
 export function waveSessionTotals(runs: readonly SwarmOverviewRun[]): {
   succeeded: number;
   total: number;

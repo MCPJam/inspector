@@ -113,6 +113,14 @@ type SessionSlot = {
 
 type FirstFinding = {
   text: string;
+  /**
+   * The session that produced it — `chatSessions._id`, the SAME id the Insights
+   * workbench and the Overview findings list already open sessions with
+   * (`buildSwarmPath({ tab: "sessions", session })`). A finding nobody can
+   * trace back to a session is a claim, so a row without one is skipped rather
+   * than surfaced as an unfollowable line.
+   */
+  sessionId: string;
 };
 
 function shortRole(role: string): string {
@@ -506,10 +514,11 @@ function findFirstFinding(
       }
       const failed = criteria.results.filter((result) => !result.passed);
       if (failed.length === 0) continue;
+      if (!session.id) continue;
       const reason =
         session.goalScore?.reason?.trim() ||
         `failed ${failed.length} ${failed.length === 1 ? "check" : "checks"}`;
-      return { text: `First finding: ${reason}` };
+      return { text: `First finding: ${reason}`, sessionId: session.id };
     }
   }
   return null;
@@ -521,6 +530,7 @@ export function NewSwarmRunningStep({
   fallbackColumns,
   environments = [],
   onLeave,
+  onOpenSession,
 }: {
   projectId: string;
   runs: SwarmLaunchedRun[];
@@ -529,6 +539,13 @@ export function NewSwarmRunningStep({
   /** Used to label columns by client (host) instead of env nickname. */
   environments?: ProjectEnvironmentView[];
   onLeave: () => void;
+  /**
+   * Follow one session's evidence out of the wizard. The caller lands on this
+   * swarm's OWN page, deep-linked to that session — both where the transcript
+   * is and the run's durable home, so following a finding stays reversible
+   * while the run keeps going.
+   */
+  onOpenSession: (sessionId: string) => void;
 }) {
   const hosts = useQuery(
     SWARM_QUERIES.listHosts as any,
@@ -1056,7 +1073,9 @@ export function NewSwarmRunningStep({
             <button
               type="button"
               className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
-              onClick={onLeave}
+              data-testid="new-swarm-running-finding-open"
+              aria-label="Open the session behind this finding"
+              onClick={() => onOpenSession(finding.sessionId)}
             >
               Look now
             </button>
@@ -1065,7 +1084,9 @@ export function NewSwarmRunningStep({
 
         <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-2.5 text-sm leading-relaxed text-muted-foreground">
           Click a session to watch it stream on the right. Leaving goes back to
-          Overview — the run keeps going and finishes on its own.
+          Overview — the run keeps going and finishes on its own. A finding
+          opens this swarm's own page on the session that produced it, and the
+          run is still there when you come back.
         </div>
       </div>
 
@@ -1079,7 +1100,11 @@ export function NewSwarmRunningStep({
           convexSession={selectedConvex}
           fallbackTrace={fallbackTrace}
           runStatus={selectedRunStatus}
-          onOpenCompleted={onLeave}
+          // The session, not just "somewhere else". This used to hand the pane
+          // `onLeave`, which threw away the session it was called with and left
+          // the viewer on the flat Sessions list hunting for the transcript
+          // they had been watching a moment earlier.
+          onOpenCompleted={(session) => onOpenSession(session.id)}
           fillHeight
         />
       </aside>

@@ -240,6 +240,7 @@ export function NewSwarmCreateFlow({
   launchJourney,
   onCancel,
   onDone,
+  onOpenSession,
   onEditExistingPersona,
   onSetInsightsTuning,
 }: {
@@ -280,6 +281,18 @@ export function NewSwarmCreateFlow({
   /** Hands back a label per launched run so the sessions view can name the
    * groups after the persona and journey instead of a run id. */
   onDone: (runLabels: Map<string, string>) => void;
+  /**
+   * Follow a live finding to its evidence. `swarmRunGroupId` is this launch's
+   * wave id, so the caller can send the user to the swarm's OWN page (the run's
+   * durable home) rather than the flat Sessions list — the wizard's Running
+   * step has no URL of its own, so that page is what makes leaving reversible.
+   * `null` only when nothing has launched yet.
+   */
+  onOpenSession: (target: {
+    sessionId: string;
+    swarmRunGroupId: string | null;
+    runLabels: Map<string, string>;
+  }) => void;
   /** Leave create flow and open Personas for an existing persona. */
   onEditExistingPersona: (personaRefId: string) => void;
   /**
@@ -1144,6 +1157,19 @@ export function NewSwarmCreateFlow({
     onDone(launchedRunLabelsRef.current);
   }, [onDone]);
 
+  // Labels ride along exactly as they do on `leaveRunning`: this is a leave
+  // too, so the Sessions grouping must still be able to name the runs.
+  const openRunningSession = useCallback(
+    (sessionId: string) => {
+      onOpenSession({
+        sessionId,
+        swarmRunGroupId: persistedRunGroupIdRef.current,
+        runLabels: launchedRunLabelsRef.current,
+      });
+    },
+    [onOpenSession]
+  );
+
   const activeStepIndex =
     step === "describe" ? 0 : step === "confirm" ? 1 : 2;
 
@@ -1267,6 +1293,7 @@ export function NewSwarmCreateFlow({
             fallbackColumns={runningFallbackColumns}
             environments={envList}
             onLeave={leaveRunning}
+            onOpenSession={openRunningSession}
           />
         ) : step === "confirm" ? (
           <NewSwarmConfirmStep

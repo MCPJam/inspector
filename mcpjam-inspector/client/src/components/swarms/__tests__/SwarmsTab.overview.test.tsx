@@ -14,6 +14,7 @@ import type {
 import {
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
+  waveLiveProgress,
 } from "../swarm-overview-panel";
 
 /**
@@ -375,6 +376,41 @@ describe("Overview — wire contract", () => {
   });
 });
 
+describe("waveLiveProgress", () => {
+  it("counts every terminal attempt while at least one run is live", () => {
+    const [newest, second] = overview.runs;
+    expect(
+      waveLiveProgress([
+        {
+          ...newest!,
+          status: "running",
+          summary: { total: 5, succeeded: 1, failed: 0, rateLimited: 0 },
+        },
+        {
+          ...second!,
+          status: "completed",
+          summary: { total: 5, succeeded: 2, failed: 1, rateLimited: 1 },
+        },
+      ])
+    ).toEqual({ done: 5, total: 10, liveRuns: 1 });
+  });
+
+  it("returns null when every run is terminal, and 0-total live runs stay live", () => {
+    const [newest] = overview.runs;
+    expect(waveLiveProgress([newest!])).toBeNull();
+    // A run that has not published its fan-out yet is starting, not finished.
+    expect(
+      waveLiveProgress([
+        {
+          ...newest!,
+          status: "pending",
+          summary: { total: 0, succeeded: 0, failed: 0, rateLimited: 0 },
+        },
+      ])
+    ).toEqual({ done: 0, total: 0, liveRuns: 1 });
+  });
+});
+
 describe("groupRunsIntoSwarmWaves", () => {
   // Legacy rows carry no wave id, so the time heuristic still has to work.
   it("clusters co-launched journey-runs and keeps distant ones separate", () => {
@@ -658,6 +694,60 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     renderTab("does-not-exist");
     expect(await screen.findByTestId("swarm-run-detail-missing")).toBeTruthy();
     expect(screen.getByText(/Swarm run not found/)).toBeTruthy();
+  });
+
+  /**
+   * A finding followed out of the create wizard lands here, and the wizard's
+   * Running step has no URL to go back to — so this page is the ONLY thing that
+   * can say the run is still going and offer the way back to it. Asserted on the
+   * deep-linked shape (`?tab=sessions&session=`) because that is what the
+   * "Look now" link mints.
+   */
+  it("shows live progress and a way back to the run while the wave is running", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        {
+          ...newest!,
+          status: "running",
+          summary: { total: 5, succeeded: 1, failed: 0, rateLimited: 0 },
+        },
+        {
+          ...second!,
+          status: "running",
+          summary: { total: 15, succeeded: 3, failed: 1, rateLimited: 0 },
+        },
+        ...rest,
+      ],
+    };
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail"
+    );
+    renderTab("run-2b");
+
+    const live = await screen.findByTestId("swarm-run-detail-live");
+    expect(live.textContent).toMatch(/still running/i);
+    // Terminal attempts, not just successes: 1 + 3 + 1 of 20.
+    expect(live.textContent).toMatch(/5 of 20 sessions/);
+    expect(
+      screen
+        .getByTestId("swarm-run-detail-live-progress")
+        .getAttribute("aria-valuenow")
+    ).toBe("25");
+
+    fireEvent.click(screen.getByTestId("swarm-run-detail-back-to-run"));
+    // Same tab, minus the focused session: back to the whole run.
+    expect(window.location.pathname).toBe("/swarms/run-2b");
+    expect(window.location.search).toBe("?tab=sessions");
+  });
+
+  it("shows no live strip once every run in the wave is terminal", async () => {
+    renderTab("run-2b");
+    await screen.findByTestId("swarm-run-detail");
+    expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 
   it("expands finding sessions on the Insights tab", async () => {
