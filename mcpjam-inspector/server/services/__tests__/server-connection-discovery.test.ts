@@ -21,11 +21,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProbeMcpServerResult } from "@mcpjam/sdk";
 import {
-  BlockedEgressTargetError,
+  createGuardedFetch,
   EgressResolutionError,
 } from "../../utils/hosted-egress-guard.js";
 import {
   classifyDiscoveryResult,
+  DISCOVERY_TIMEOUT_MS,
+  MAX_DISCOVERY_TIMEOUT_MS,
   runDiscoveryPreflight,
 } from "../server-connection-discovery.js";
 
@@ -87,9 +89,10 @@ describe("classifyDiscoveryResult", () => {
     expect(outcome).toMatchObject({ kind: "discovered", authMethod: "oauth" });
   });
 
-  it("accepts a challenge that resolved registration strategies but no metadata URL", () => {
-    // Either half is sufficient — a resolved strategy list means discovery got
-    // far enough to know how a client would be identified.
+  it("reports unsupported when strategies resolved but no authorization server did", () => {
+    // A strategy list is NOT a substitute for an authorization server: the
+    // prober fills it in with a default on the discovery-failed path, so
+    // trusting it routes a server with nowhere to send anyone into consent.
     const outcome = classifyDiscoveryResult(
       probe({
         status: "oauth_required",
@@ -101,7 +104,10 @@ describe("classifyDiscoveryResult", () => {
       }),
     );
 
-    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "oauth" });
+    expect(outcome).toMatchObject({
+      kind: "discovered",
+      authMethod: "unsupported",
+    });
   });
 
   it("reports unsupported for a non-Bearer challenge", () => {
@@ -126,8 +132,14 @@ describe("classifyDiscoveryResult", () => {
   });
 
   it("reports unsupported for a manual bearer server", () => {
-    // Challenges with Bearer, publishes no authorization server metadata:
-    // the token is meant to be pasted in by a human.
+    // THE SHAPE THE PROBER ACTUALLY RETURNS, and a regression test for a real
+    // bug. When metadata discovery throws — which is exactly what happens for a
+    // manual-bearer server — `server-probe.ts` returns
+    // `registrationStrategies: ["preregistered"]` with NO
+    // `authorizationServerMetadataUrl`. An earlier revision treated a non-empty
+    // strategy list as sufficient, so this case classified as `oauth` and the
+    // `unsupported` branch was unreachable. The fixture deliberately carries
+    // the non-empty list to keep that from coming back.
     const outcome = classifyDiscoveryResult(
       probe({
         status: "oauth_required",
@@ -135,7 +147,7 @@ describe("classifyDiscoveryResult", () => {
           required: true,
           optional: false,
           wwwAuthenticate: "Bearer",
-          registrationStrategies: [],
+          registrationStrategies: ["preregistered"],
           discoveryError: "No authorization server metadata found",
         },
       }),
@@ -145,6 +157,48 @@ describe("classifyDiscoveryResult", () => {
       kind: "discovered",
       authMethod: "unsupported",
     });
+  });
+
+  it("reports unsupported for a non-Bearer challenge that still resolved metadata", () => {
+    // Basic has no authorization-code flow to run even if something
+    // OAuth-shaped sits at the well-known URL, so the scheme decides.
+    const outcome = classifyDiscoveryResult(
+      probe({
+        status: "oauth_required",
+        oauth: {
+          required: true,
+          optional: false,
+          wwwAuthenticate: 'Basic realm="mcp"',
+          authorizationServerMetadataUrl:
+            "https://auth.example.com/.well-known/oauth-authorization-server",
+          registrationStrategies: ["dcr"],
+        },
+      }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "discovered",
+      authMethod: "unsupported",
+    });
+  });
+
+  it("accepts Bearer offered alongside another scheme", () => {
+    const outcome = classifyDiscoveryResult(
+      probe({
+        status: "oauth_required",
+        oauth: {
+          required: true,
+          optional: false,
+          wwwAuthenticate:
+            'Basic realm="mcp", Bearer resource_metadata="https://example.com/.well-known"',
+          authorizationServerMetadataUrl:
+            "https://auth.example.com/.well-known/oauth-authorization-server",
+          registrationStrategies: ["dcr"],
+        },
+      }),
+    );
+
+    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "oauth" });
   });
 
   it("treats a non-MCP response as terminal, not retryable", () => {
@@ -260,6 +314,64 @@ describe("runDiscoveryPreflight", () => {
     expect(probeServer).not.toHaveBeenCalled();
   });
 
+  it("refuses a plaintext probe to a public host", async () => {
+    const probeServer = vi.fn();
+
+    // The RFC 6890 classifier judges addresses, not transport, and accepts
+    // http:. Hosted targets are HTTPS-only, so this has to be enforced here.
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "http://example.com/mcp" },
+      { probeServer: probeServer as never },
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "terminal",
+      errorCode: "URL_NOT_ALLOWED",
+    });
+    expect(probeServer).not.toHaveBeenCalled();
+  });
+
+  it("still allows plaintext loopback under the opt-in", async () => {
+    // `http://127.0.0.1:3000/mcp` IS the local-development product; the
+    // HTTPS rule must not take that away.
+    const probeServer = ready();
+
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "http://127.0.0.1:3000/mcp", allowLoopback: true },
+      { probeServer },
+    );
+
+    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "none" });
+  });
+
+  it("caps a caller-supplied timeout", async () => {
+    const probeServer = ready();
+
+    await runDiscoveryPreflight(
+      { serverUrl: "https://example.com/mcp", timeoutMs: 10 * 60_000 },
+      { probeServer },
+    );
+
+    // timeoutMs bounds ONE request and the probe makes several, so an uncapped
+    // value multiplies into the wall time one preflight can occupy a worker.
+    const config = (probeServer as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0][0] as { timeoutMs: number };
+    expect(config.timeoutMs).toBe(MAX_DISCOVERY_TIMEOUT_MS);
+  });
+
+  it("falls back to the default for a nonsense timeout", async () => {
+    const probeServer = ready();
+
+    await runDiscoveryPreflight(
+      { serverUrl: "https://example.com/mcp", timeoutMs: Number.NaN },
+      { probeServer },
+    );
+
+    const config = (probeServer as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0][0] as { timeoutMs: number };
+    expect(config.timeoutMs).toBe(DISCOVERY_TIMEOUT_MS);
+  });
+
   it("rejects an empty URL without probing", async () => {
     const probeServer = vi.fn();
 
@@ -312,19 +424,22 @@ describe("runDiscoveryPreflight", () => {
   });
 
   it("refuses a public hostname whose DNS answer is private", async () => {
-    // The whole point of the second layer. `evil.example` passes the pure
-    // hostname classifier — nothing about the STRING is private — and only
-    // turns dangerous once resolved. A guard that stopped at the classifier
-    // would have dialled it.
+    // Driven through the REAL guard, not a mock that throws on cue: the point
+    // is that `evil.example` passes the pure hostname classifier — nothing
+    // about the STRING is private — and is caught only once resolved.
+    const baseFetch = vi.fn();
     const outcome = await runDiscoveryPreflight(
       { serverUrl: "https://evil.example/mcp" },
       {
         probeServer: probeThroughFetch(),
-        fetchFn: async () => {
-          throw new BlockedEgressTargetError(
-            'Request URL hostname "evil.example" resolves to 169.254.169.254',
-          );
-        },
+        fetchFn: createGuardedFetch({
+          hosted: true,
+          resolver: async (hostname) =>
+            hostname === "evil.example"
+              ? ["169.254.169.254"]
+              : ["93.184.216.34"],
+          baseFetch: baseFetch as unknown as typeof fetch,
+        }),
       },
     );
 
@@ -335,20 +450,32 @@ describe("runDiscoveryPreflight", () => {
       kind: "terminal",
       errorCode: "URL_NOT_ALLOWED",
     });
+    // Nothing was dialled at all — the refusal happened before any socket.
+    expect(baseFetch).not.toHaveBeenCalled();
   });
 
   it("refuses a target that only turns private on a redirect", async () => {
     // A caller need not name the address they want reached: they can name a
     // host they control and have it answer 302 Location: 169.254.169.254.
+    // This drives the guard's PER-HOP re-check, which is a different code path
+    // from the DNS case above — the first hop is legitimately public.
+    const baseFetch = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data/" },
+        }),
+    );
+
     const outcome = await runDiscoveryPreflight(
       { serverUrl: "https://redirector.example/mcp" },
       {
         probeServer: probeThroughFetch(),
-        fetchFn: async () => {
-          throw new BlockedEgressTargetError(
-            'Request URL points at a private or internal address ("169.254.169.254")',
-          );
-        },
+        fetchFn: createGuardedFetch({
+          hosted: true,
+          resolver: async () => ["93.184.216.34"],
+          baseFetch: baseFetch as unknown as typeof fetch,
+        }),
       },
     );
 
@@ -356,6 +483,39 @@ describe("runDiscoveryPreflight", () => {
       kind: "terminal",
       errorCode: "URL_NOT_ALLOWED",
     });
+    // Exactly one request: the public first hop was dialled, the private
+    // redirect target never was. A guard that only checked the first URL would
+    // show two calls here.
+    expect(baseFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows a redirect that stays public", async () => {
+    // The redirect check must refuse private hops without refusing redirects
+    // as such, or every legitimately-redirecting server becomes unreachable.
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://elsewhere.example/mcp" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "https://redirector.example/mcp" },
+      {
+        probeServer: probeThroughFetch(),
+        fetchFn: createGuardedFetch({
+          hosted: true,
+          resolver: async () => ["93.184.216.34"],
+          baseFetch: baseFetch as unknown as typeof fetch,
+        }),
+      },
+    );
+
+    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "none" });
+    expect(baseFetch).toHaveBeenCalledTimes(2);
   });
 
   it("treats a resolver outage as retryable, not as a refusal", async () => {

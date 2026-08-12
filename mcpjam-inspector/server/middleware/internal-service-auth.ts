@@ -24,9 +24,31 @@ import type { Context, MiddlewareHandler } from "hono";
 
 export const INSPECTOR_SERVICE_TOKEN_HEADER = "x-inspector-service-token";
 
+/**
+ * The configured token, trimmed, or null when unset or whitespace-only.
+ *
+ * The trim is not cosmetic. The presented header is trimmed before comparison,
+ * so leaving the configured value untrimmed makes the two sides asymmetric: a
+ * deployment whose `INSPECTOR_SERVICE_TOKEN` picked up a trailing newline —
+ * ordinary when a secret is pasted into a dashboard or read from a file —
+ * rejects every correctly presented token. The failure is safe (it fails
+ * closed) but total, and it looks like a credential mismatch rather than a
+ * stray byte of whitespace.
+ *
+ * Whitespace-only counts as unset for the same reason: it cannot be the token
+ * anyone meant to configure, and treating it as a real value would compare
+ * against something no caller can present.
+ *
+ * NOTE FOR THE MIRROR: the backend's `convex/lib/serviceToken.ts` has the same
+ * asymmetry today (untrimmed config, trimmed header) and should get the same
+ * treatment. It is not fixed from here — that file is this module's upstream,
+ * and a silent one-sided change is exactly the drift the mirror exists to
+ * prevent. Fixing it there only makes both sides more forgiving of a
+ * misconfiguration; it never widens who is authorized.
+ */
 export function getConfiguredInspectorServiceToken(): string | null {
-  const token = process.env.INSPECTOR_SERVICE_TOKEN;
-  return typeof token === "string" && token.length > 0 ? token : null;
+  const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  return token ? token : null;
 }
 
 /**

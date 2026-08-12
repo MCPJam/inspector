@@ -104,6 +104,33 @@ describe("internalServiceAuthMiddleware", () => {
     expect(response.status).toBe(200);
   });
 
+  it("admits the token when the configured value carries stray whitespace", async () => {
+    // A secret pasted into a dashboard or read from a file routinely picks up
+    // a trailing newline. The presented header is trimmed, so leaving the
+    // configured value untrimmed made the two sides asymmetric and rejected
+    // every correctly presented token — a total, fail-closed outage that reads
+    // as a credential mismatch rather than a stray byte.
+    process.env.INSPECTOR_SERVICE_TOKEN = `  ${TOKEN}\n`;
+
+    const response = await createApp().request("/guarded", {
+      headers: { "x-inspector-service-token": TOKEN },
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("treats a whitespace-only configured token as unset", async () => {
+    process.env.INSPECTOR_SERVICE_TOKEN = "   ";
+
+    // It cannot be the token anyone meant to configure, and comparing against
+    // it would mean comparing against something no caller can present.
+    const response = await createApp().request("/guarded", {
+      headers: { "x-inspector-service-token": "   " },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
   it("does not disclose why authorization failed", async () => {
     const missing = await createApp().request("/guarded");
     const wrong = await createApp().request("/guarded", {

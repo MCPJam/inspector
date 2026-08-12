@@ -31,6 +31,7 @@
  */
 import {
   assertOutboundOAuthUrlAllowed,
+  isLoopbackOAuthUrl,
   OAuthOutboundUrlBlockedError,
 } from "@mcpjam/sdk/oauth/node";
 import { probeMcpServer } from "@mcpjam/sdk";
@@ -63,7 +64,35 @@ export type DiscoveryOutcome =
   | { kind: "retryable"; detail: string }
   | { kind: "terminal"; errorCode: string; detail: string };
 
+/** Per-request timeout handed to the prober. */
 export const DISCOVERY_TIMEOUT_MS = 15_000;
+
+/**
+ * Ceiling on a caller-supplied per-request timeout.
+ *
+ * `timeoutMs` bounds ONE request, and a probe makes several (initialize, an
+ * SSE fallback, resource metadata, authorization server metadata), each of
+ * which may be retried. An uncapped value therefore multiplies into the wall
+ * time a single preflight can occupy a worker.
+ */
+export const MAX_DISCOVERY_TIMEOUT_MS = 30_000;
+
+/**
+ * Absolute ceiling on one preflight, whatever the per-request timeout allows.
+ *
+ * This is the bound that actually makes the step "bounded": without it a
+ * deliberately slow target holds a work lease for the sum of every request the
+ * probe chooses to make, and the lease — not the timeout — becomes what limits
+ * throughput.
+ */
+export const DISCOVERY_DEADLINE_MS = 60_000;
+
+function clampTimeout(timeoutMs: number | undefined): number {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)) {
+    return DISCOVERY_TIMEOUT_MS;
+  }
+  return Math.min(Math.max(timeoutMs, 1), MAX_DISCOVERY_TIMEOUT_MS);
+}
 
 /**
  * Whether a 401 is an MCP OAuth challenge we can actually act on.
@@ -89,20 +118,58 @@ export const DISCOVERY_TIMEOUT_MS = 15_000;
  * metadata, and which marker that should be is not settled — see
  * NOTES-item-2.md. Deliberately left misclassified rather than guessed at: a
  * wrong detector would refuse servers that do work.
+ *
+ * DO NOT ADD `registrationStrategies.length > 0` BACK AS AN ALTERNATIVE. An
+ * earlier revision accepted it as a second sufficient condition, which
+ * inverted the whole test: `server-probe.ts` returns
+ * `registrationStrategies: ["preregistered"]` from the branch it takes when
+ * metadata discovery THREW — so that list is non-empty in precisely the
+ * manual-bearer and unknown-scheme cases this function exists to reject, and
+ * `unsupported` became unreachable.
  */
 function isActionableOAuthChallenge(probe: ProbeMcpServerResult): boolean {
   const { oauth } = probe;
   if (!oauth.required) {
     return false;
   }
-  // Either half is enough. `authorizationServerMetadataUrl` is the direct
-  // answer; a non-empty strategy list means the discovery already resolved far
-  // enough to know how a client would be identified, which it cannot do
-  // without having found the server.
-  return (
-    typeof oauth.authorizationServerMetadataUrl === "string" ||
-    oauth.registrationStrategies.length > 0
-  );
+  // The ONLY sufficient signal: somewhere to send the user. Without an
+  // authorization server we cannot start a flow, and reporting `oauth` would
+  // park the request in `awaiting_authorization` with no consent screen to
+  // open.
+  if (
+    typeof oauth.authorizationServerMetadataUrl !== "string" ||
+    oauth.authorizationServerMetadataUrl.length === 0
+  ) {
+    return false;
+  }
+  return challengeOffersBearer(oauth.wwwAuthenticate);
+}
+
+/**
+ * Does the challenge offer a Bearer scheme?
+ *
+ * MCP OAuth challenges with `Bearer`. A server answering `Basic` has no
+ * authorization-code flow to run even if something OAuth-shaped happens to sit
+ * at its well-known URL, so the scheme is checked rather than inferred from the
+ * metadata alone.
+ *
+ * A missing header is treated as permissive: some servers 401 with no
+ * challenge at all while still publishing usable metadata, and the metadata
+ * requirement above already carries the decision in that case.
+ *
+ * `WWW-Authenticate` may carry several challenges, comma-separated
+ * (`Basic realm="x", Bearer resource_metadata="…"`), so a scheme is matched at
+ * the start of the header or just after a comma rather than anywhere in the
+ * string — otherwise a realm containing the word "bearer" would qualify. A
+ * quoted parameter containing a comma could still fool this; it would need to
+ * coincide with genuinely discovered authorization server metadata to change
+ * any outcome, which is not a combination worth a full RFC 9110 parser here.
+ */
+function challengeOffersBearer(wwwAuthenticate: string | undefined): boolean {
+  if (wwwAuthenticate === undefined || wwwAuthenticate.trim() === "") {
+    return true;
+  }
+  return /(?:^|,)\s*bearer(?:\s|,|$)/i.test(wwwAuthenticate);
 }
 
 /**
@@ -223,9 +290,24 @@ export async function runDiscoveryPreflight(
   const probeServer = dependencies.probeServer ?? probeMcpServer;
 
   try {
-    assertOutboundOAuthUrlAllowed(input.serverUrl, {
+    const url = assertOutboundOAuthUrlAllowed(input.serverUrl, {
       allowLoopback: input.allowLoopback === true,
     });
+    // The classifier accepts http AND https — it judges addresses, not
+    // transport. Hosted targets are HTTPS-only, so that has to be enforced
+    // here rather than assumed: a plaintext probe to a public host puts the
+    // request on the wire for anyone on the path, and the 401 challenge we
+    // classify on is exactly the thing worth tampering with.
+    //
+    // Loopback keeps its plaintext exception, and only when the caller opted
+    // in: `http://127.0.0.1:3000/mcp` IS the local-development product.
+    if (url.protocol !== "https:" && !isLoopbackOAuthUrl(input.serverUrl)) {
+      return {
+        kind: "terminal",
+        errorCode: "URL_NOT_ALLOWED",
+        detail: `Refusing a plaintext discovery probe to public host "${url.hostname}"; MCP servers must be reachable over HTTPS.`,
+      };
+    }
   } catch (error) {
     if (error instanceof OAuthOutboundUrlBlockedError) {
       return {
@@ -260,13 +342,40 @@ export async function runDiscoveryPreflight(
     }
   };
 
+  // `timeoutMs` bounds ONE request and the probe makes several, so the clamp
+  // alone does not bound the step — the deadline below does. A target that
+  // stalls every request would otherwise hold a work lease for the sum of them.
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"deadline">((resolve) => {
+    deadlineTimer = setTimeout(
+      () => resolve("deadline"),
+      DISCOVERY_DEADLINE_MS,
+    );
+  });
+
   let probe: ProbeMcpServerResult;
   try {
-    probe = await probeServer({
-      url: input.serverUrl,
-      timeoutMs: input.timeoutMs ?? DISCOVERY_TIMEOUT_MS,
-      fetchFn,
-    });
+    const raced = await Promise.race([
+      probeServer({
+        url: input.serverUrl,
+        timeoutMs: clampTimeout(input.timeoutMs),
+        fetchFn,
+      }),
+      deadline,
+    ]);
+
+    if (raced === "deadline") {
+      // The probe keeps running to completion — the SDK takes no abort signal,
+      // so there is nothing to cancel. It holds only a socket and its own
+      // timeout, and its result is dropped. Reporting `retryable` is right on
+      // the merits anyway: a target too slow to answer inside the deadline has
+      // told us nothing about its auth method.
+      return {
+        kind: "retryable",
+        detail: `Discovery did not finish within ${DISCOVERY_DEADLINE_MS}ms`,
+      };
+    }
+    probe = raced;
   } catch (error) {
     if (error instanceof BlockedEgressTargetError) {
       return {
@@ -284,6 +393,10 @@ export async function runDiscoveryPreflight(
       kind: "retryable",
       detail: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    // Otherwise the pending timer keeps the event loop alive for the full
+    // deadline after an answer has already been returned.
+    clearTimeout(deadlineTimer);
   }
 
   if (refusal.blocked !== null) {

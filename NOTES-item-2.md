@@ -57,8 +57,14 @@ before (every existing use sends the header outbound). A deliberate mirror of th
   must not adopt — so it cannot be reached for by accident.
 - 401 body is identical for absent, malformed, and wrong tokens, and never reveals whether a named
   request id exists.
+- The configured token is **trimmed**, and whitespace-only counts as unset. The presented header was
+  already trimmed, so leaving the configured value untrimmed made the two sides asymmetric: a
+  deployment whose secret picked up a trailing newline rejected every correctly presented token —
+  fail-closed, but a total outage that reads as a credential mismatch. **The backend's
+  `convex/lib/serviceToken.ts` has the same asymmetry and should get the same treatment**; not
+  changed from here, because a silent one-sided edit is the drift the mirror exists to prevent.
 
-9 tests.
+11 tests.
 
 ### `server/services/server-connection-discovery.ts`
 
@@ -111,8 +117,40 @@ The `error` → `retryable` arm is the one that matters most and has an explicit
 `unsupported` for a server that was down for a minute would permanently mislabel a server that
 works.
 
-20 tests, including a public hostname whose DNS answer is private, a target that only turns private
-on a redirect, a resolver outage staying retryable, and empty/null URLs.
+### The `oauth` vs `unsupported` test, and a bug that made it a no-op
+
+An earlier revision accepted **either** a discovered `authorizationServerMetadataUrl` **or** a
+non-empty `registrationStrategies` list as proof of an actionable challenge. That inverted the whole
+test. `sdk/src/server-probe.ts` returns `registrationStrategies: ["preregistered"]` from the branch
+it takes when metadata discovery **threw** — which is exactly the manual-bearer and unknown-scheme
+case — so the list was non-empty precisely when discovery had failed, and `unsupported` became
+unreachable. A manual-bearer server would have been routed into `awaiting_authorization` with no
+consent screen to open.
+
+Now the only sufficient signal is a non-empty `authorizationServerMetadataUrl` — somewhere to
+actually send the user — plus a `Bearer` scheme in the challenge when one is present. The
+manual-bearer test carries the real `["preregistered"]` shape so the disjunct cannot come back.
+
+Worth recording why the original tests did not catch it: they asserted against a hand-written
+fixture (`registrationStrategies: []`) that the real prober never produces for that case. The
+fixture agreed with the code and both were wrong about the world.
+
+### Transport and bounds
+
+- **HTTPS-only for public targets.** `assertOutboundOAuthUrlAllowed` judges addresses, not
+  transport, and accepts `http:`. Plaintext to a public host is refused here; loopback keeps its
+  plaintext exception under the explicit opt-in, because `http://127.0.0.1:3000/mcp` is the
+  local-development product.
+- **Bounded for real.** `timeoutMs` bounds ONE request and the probe makes several, so a caller
+  value is clamped to `MAX_DISCOVERY_TIMEOUT_MS` and the whole step races an absolute
+  `DISCOVERY_DEADLINE_MS`. Without the deadline a deliberately slow target holds a work lease for
+  the sum of every request the probe chooses to make.
+
+27 tests. The two SSRF cases run through the **real** `createGuardedFetch` with an injected resolver
+and base fetch, not a mock that throws on cue — the DNS case asserts nothing was dialled at all, and
+the redirect case asserts exactly one request, so the private hop provably was never reached. A
+third case checks a public-to-public redirect still succeeds, since refusing redirects wholesale
+would be its own bug.
 
 ## Open question a human needs to settle: XAA
 
