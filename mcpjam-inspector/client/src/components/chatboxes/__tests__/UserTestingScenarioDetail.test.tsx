@@ -17,7 +17,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 
@@ -164,13 +164,9 @@ vi.mock("@/components/chatboxes/ChatboxUsagePanel", () => ({
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
-    // Empty Insights is the default stub: surface the empty panel and tell
-    // the page the cohort is empty so the header share strip stays hidden.
-    useEffect(() => {
-      if (typeof props.onEmptyChange === "function") {
-        (props.onEmptyChange as (empty: boolean) => void)(true);
-      }
-    }, [props.onEmptyChange]);
+    // Default stub leaves empty-state reporting to the page's initial
+    // `insightsEmpty=true`. Specs that need the filled-cohort branch call
+    // `onEmptyChange(false)` themselves.
     return (
       <div data-testid="stub-usage-insights">
         {props.emptyState as never}
@@ -293,6 +289,21 @@ describe("UserTestingScenarioDetail", () => {
     // Edit is a header action + route, not a view-mode tab.
     const tabNav = screen.getByRole("navigation", { name: "Scenario view" });
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
+  });
+
+  it("shows the header share strip once Insights reports a filled cohort", async () => {
+    renderDetail();
+    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
+
+    const onEmptyChange = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
+      | ((empty: boolean) => void)
+      | undefined;
+    expect(onEmptyChange).toBeTypeOf("function");
+    await act(async () => {
+      onEmptyChange?.(false);
+    });
+
+    expect(screen.getByTestId("stub-share-banner")).toBeInTheDocument();
   });
 
   it("shows setup and share controls on the Edit route", () => {

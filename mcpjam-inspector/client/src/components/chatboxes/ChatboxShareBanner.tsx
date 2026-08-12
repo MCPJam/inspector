@@ -52,7 +52,7 @@ function useChatboxShareInvite(chatbox: ChatboxSettings) {
   };
 
   const handleInvite = async () => {
-    if (!normalizedEmail || emailInvalid) return;
+    if (!normalizedEmail || emailInvalid || isInviting) return;
     setIsInviting(true);
     try {
       await upsertChatboxMember({
@@ -138,6 +138,7 @@ function InviteByEmailControl({
               }
             }}
             aria-invalid={emailInvalid || undefined}
+            aria-describedby={emailInvalid ? `${id}-email-error` : undefined}
             className="h-8"
           />
           <Button
@@ -150,7 +151,13 @@ function InviteByEmailControl({
           </Button>
         </div>
         {emailInvalid ? (
-          <p className="text-xs text-destructive">Enter a valid email address.</p>
+          <p
+            id={`${id}-email-error`}
+            role="alert"
+            className="text-xs text-destructive"
+          >
+            Enter a valid email address.
+          </p>
         ) : null}
       </PopoverContent>
     </Popover>

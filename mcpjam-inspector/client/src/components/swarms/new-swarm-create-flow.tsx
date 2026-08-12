@@ -93,9 +93,11 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useHostList } from "@/hooks/useClients";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
 import { useProjectServerAttachments } from "@/hooks/useViews";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
@@ -301,6 +303,11 @@ export function NewSwarmCreateFlow({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const resolveComposerTargets = useComposerResolver(projectId);
   const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  const hostsQueryEnabled =
+    isAuthenticated && shouldQueryProjectId(projectId);
+  const attachmentsQueryEnabled =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const { hosts, isLoading: hostsLoading } = useHostList({
     isAuthenticated,
     projectId,
@@ -419,12 +426,31 @@ export function NewSwarmCreateFlow({
 
   useEffect(() => {
     if (targetSeededRef.current) return;
-    // Wait until the queries that feed the seed have settled.
+    // Wait until the queries that feed the seed have settled — but only when
+    // those queries are actually enabled. A skipped host/attachment query
+    // reports loading forever (`undefined`), which used to block seeding for
+    // unauthenticated or transient-project opens.
     if (environmentsEnabled && environments === undefined) return;
-    if (hostsLoading || attachmentsLoading) return;
+    if (hostsQueryEnabled && hostsLoading) return;
+    if (attachmentsQueryEnabled && attachmentsLoading) return;
+    // Auth settled but DB user not ready yet — attachments are still skipped.
+    // Seeding now would permanently miss the default server group.
     if (
+      isAuthenticated &&
+      shouldQueryProjectId(projectId) &&
+      !isUserReady
+    ) {
+      return;
+    }
+    // Any non-empty stack or customized flag means the user already touched
+    // the composer; do not overwrite a slot-only edit that landed before seed.
+    if (
+      targetState.customized ||
       targetState.environmentIds.length > 0 ||
-      targetState.stack.hostIds.length > 0
+      targetState.stack.hostIds.length > 0 ||
+      targetState.stack.serverAttachmentId != null ||
+      targetState.stack.skillSelection != null ||
+      targetState.stack.computerEnvironmentId != null
     ) {
       targetSeededRef.current = true;
       return;
@@ -441,16 +467,25 @@ export function NewSwarmCreateFlow({
     if (next) setTargetState(next);
   }, [
     attachmentsLoading,
+    attachmentsQueryEnabled,
     envList,
     environments,
     environmentsEnabled,
     hosts,
     hostsLoading,
+    hostsQueryEnabled,
+    isAuthenticated,
+    isUserReady,
     previewedEnvironmentId,
     previewedHostId,
+    projectId,
     serverAttachments,
+    targetState.customized,
     targetState.environmentIds.length,
+    targetState.stack.computerEnvironmentId,
     targetState.stack.hostIds.length,
+    targetState.stack.serverAttachmentId,
+    targetState.stack.skillSelection,
   ]);
 
   const composeMode = isComposeMode(targetState);

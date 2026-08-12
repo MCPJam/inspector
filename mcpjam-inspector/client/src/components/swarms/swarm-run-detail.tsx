@@ -77,11 +77,19 @@ export function SwarmRunDetail({
 }: SwarmRunDetailProps) {
   const navigate = useAppNavigate();
   const tabParam = useCurrentSearchParam("tab");
-  const tab: SwarmDetailTab = parseSwarmDetailTab(
-    tabParam ? `?tab=${encodeURIComponent(tabParam)}` : "",
-  );
   const sessionParam = useCurrentSearchParam("session");
   const selParam = useCurrentSearchParam("sel");
+  // Pass both tab and session: a `?session=` deep-link without `tab` must open
+  // Sessions. Building `?tab=` alone used to strip session and land on Insights.
+  const tab: SwarmDetailTab = parseSwarmDetailTab(
+    (() => {
+      const search = new URLSearchParams();
+      if (tabParam) search.set("tab", tabParam);
+      if (sessionParam) search.set("session", sessionParam);
+      const query = search.toString();
+      return query ? `?${query}` : "";
+    })(),
+  );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null

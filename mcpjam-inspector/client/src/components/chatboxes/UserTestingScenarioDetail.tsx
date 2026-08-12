@@ -344,7 +344,13 @@ export function UserTestingScenarioDetail({
   // Prefer hiding the header strip until Insights reports a filled cohort —
   // the empty panel already carries share, and a flash of both reads as a
   // duplicate. Sessions always shows the strip (see render below).
+  // Reset when the scenario changes so a filled cohort's "not empty" state
+  // cannot leak onto the next (possibly empty) scenario before the workbench
+  // reports.
   const [insightsEmpty, setInsightsEmpty] = useState(true);
+  useEffect(() => {
+    setInsightsEmpty(true);
+  }, [chatbox.chatboxId]);
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;

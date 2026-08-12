@@ -3,14 +3,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildOrganizationPath,
   buildSwarmPath,
+  buildUserTestingScenarioEditPath,
+  buildUserTestingScenarioPath,
   captureCurrentReturnPath,
   isDebugOAuthCallbackPath,
+  isLegacyUserTestingEditTab,
   legacyCiEvalsPathToRunsPath,
   legacyHashBookmarkToPath,
   navigationTargetToPath,
   normalizeInitialLegacyHashBookmark,
   normalizeReturnTargetPath,
   parseSwarmDetailTab,
+  parseUserTestingDetailTab,
   pathnameToActiveTab,
   shouldSnapToServersOnActiveProjectChange,
   useActiveTab,
@@ -67,6 +71,27 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
     expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
+  });
+});
+
+describe("User Testing detail / edit navigation", () => {
+  it("defaults to Insights and opens Sessions for a session deep-link", () => {
+    expect(parseUserTestingDetailTab("")).toBe("insights");
+    expect(parseUserTestingDetailTab("?tab=insights")).toBe("insights");
+    expect(parseUserTestingDetailTab("?tab=sessions")).toBe("sessions");
+    expect(parseUserTestingDetailTab("?session=thread-1")).toBe("sessions");
+    expect(parseUserTestingDetailTab("?tab=clusters")).toBe("insights");
+  });
+
+  it("builds the edit path and recognizes legacy edit/share/preview tabs", () => {
+    expect(buildUserTestingScenarioEditPath("cb-1")).toBe(
+      "/user-testing/cb-1/edit",
+    );
+    expect(buildUserTestingScenarioPath("cb-1")).toBe("/user-testing/cb-1");
+    expect(isLegacyUserTestingEditTab("?tab=edit")).toBe(true);
+    expect(isLegacyUserTestingEditTab("?tab=share")).toBe(true);
+    expect(isLegacyUserTestingEditTab("?tab=preview")).toBe(true);
+    expect(isLegacyUserTestingEditTab("?tab=insights")).toBe(false);
   });
 });
 

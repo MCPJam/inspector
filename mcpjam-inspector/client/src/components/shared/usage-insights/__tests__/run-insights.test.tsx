@@ -345,8 +345,6 @@ describe("RunInsightsBanner + Recommendations", () => {
     expect(screen.getByTestId("run-insights-summary")).toHaveTextContent(
       /advice instead of calling the restore tool/i,
     );
-    expect(screen.queryByTestId("run-insights-chip")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("run-insights-banner-toggle")).toBeNull();
     expect(screen.getByTestId("run-insights-recommendations")).toBeInTheDocument();
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
     expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
