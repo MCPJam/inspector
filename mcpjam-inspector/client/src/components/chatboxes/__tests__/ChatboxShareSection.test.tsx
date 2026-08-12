@@ -106,6 +106,71 @@ describe("ChatboxShareSection", () => {
     expect(screen.getByText(creditNotice)).toBeInTheDocument();
   });
 
+  /**
+   * The other end of "a scenario that cannot run must not be shareable": the
+   * create flow refuses to publish without an environment, and a scenario whose
+   * environment stops resolving stops issuing its link. Without this the amber
+   * banner on the detail page sat next to a live Copy link button, so the only
+   * person who found out was the tester who opened it.
+   */
+  it("withholds the tester link while the environment can't resolve", () => {
+    const chatbox = createChatbox({
+      environmentId: "env-1",
+      environmentError: {
+        code: "ENV_ARCHIVED",
+        message: "This scenario's environment was archived.",
+      },
+    });
+
+    render(<ChatboxShareSection chatbox={chatbox} projectName="Acme" />);
+
+    expect(screen.getByLabelText("Tester link")).not.toHaveTextContent(
+      "/chatbox/my-chatbox/t",
+    );
+    expect(screen.getByTestId("chatbox-copy-tester-link")).toBeDisabled();
+    // Inviting mails the same link out, so it is gated too.
+    expect(
+      screen.getByRole("button", { name: "Invite", exact: true }),
+    ).toBeDisabled();
+    // The backend's own reason, verbatim: "archived" and "its host is gone" send
+    // the owner to different places.
+    expect(screen.getByTestId("chatbox-share-unrunnable")).toHaveTextContent(
+      "This scenario's environment was archived.",
+    );
+  });
+
+  // A rebind is a legitimate way out of that state, so the gate has to be
+  // derived from the live envelope rather than latched: the same token comes
+  // back the moment the scenario points at an environment that resolves.
+  it("issues the link again once the environment resolves", () => {
+    const { rerender } = render(
+      <ChatboxShareSection
+        chatbox={createChatbox({
+          environmentId: "env-1",
+          environmentError: { code: "ENV_ARCHIVED", message: "Archived." },
+        })}
+      />,
+    );
+    expect(screen.getByTestId("chatbox-copy-tester-link")).toBeDisabled();
+
+    rerender(
+      <ChatboxShareSection
+        chatbox={createChatbox({
+          environmentId: "env-2",
+          environmentError: null,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("chatbox-copy-tester-link")).not.toBeDisabled();
+    expect(screen.getByLabelText("Tester link")).toHaveTextContent(
+      "/chatbox/my-chatbox/t",
+    );
+    expect(
+      screen.queryByTestId("chatbox-share-unrunnable"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows an Invited section when there are pending members", () => {
     const chatbox = createChatbox({
       members: [
