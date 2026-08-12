@@ -8,6 +8,22 @@ const generateSwarmPersonaMock = vi.fn();
 const generateSwarmPersonaBatchMock = vi.fn();
 const generateSwarmJourneysMock = vi.fn();
 
+// The masked-5xx assertions below are about the LOG row, which is the only
+// record of the upstream failure — spy on the sink the request logger writes
+// to rather than on the request logger itself, so the emitted envelope (and
+// its `requestId`) is what gets asserted.
+const loggerEventMock = vi.fn();
+vi.mock("../../../utils/logger.js", () => ({
+  logger: {
+    event: (...args: unknown[]) => loggerEventMock(...args),
+    systemEvent: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
 vi.mock("../../../services/swarm-generate.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../services/swarm-generate.js")
@@ -31,6 +47,7 @@ describe("web routes — swarm generation proxy", () => {
     generateSwarmPersonaMock.mockReset();
     generateSwarmPersonaBatchMock.mockReset();
     generateSwarmJourneysMock.mockReset();
+    loggerEventMock.mockReset();
   });
 
   afterEach(() => {
@@ -327,6 +344,89 @@ describe("web routes — swarm generation proxy", () => {
     expect(JSON.stringify(data)).not.toContain(
       "swarm-generate upstream failed"
     );
+  });
+
+  /**
+   * The mask is deliberate, so the diagnosability it removes has to come back
+   * some other way: the correlation id in the message is the ONLY thing a user
+   * can hand over (a screenshot of the error card) that resolves to the log
+   * row carrying the upstream code. Assert the two ids are the same string —
+   * asserting each side alone would pass while they drifted apart, which is
+   * exactly the failure this guards.
+   */
+  it("correlates the masked 5xx message with its log row, still redacting the upstream detail", async () => {
+    generateSwarmJourneysMock.mockRejectedValue(
+      new SwarmAgentError(
+        500,
+        JSON.stringify({
+          ok: false,
+          code: "mcpjam_config_error",
+          error: "MCPJam configuration error.",
+          details:
+            "Neither AI_GATEWAY_API_KEY (for an eligible model) nor OPENROUTER_API_KEY is set.",
+        }),
+        "MCPJam configuration error."
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        serverAttachmentId: "att-1",
+        persona: { name: "P", role: "R" },
+      },
+      token
+    );
+    const requestId = response.headers.get("x-request-id");
+    const { status, data } = await expectJson<{
+      message?: string;
+      details?: { requestId?: string };
+    }>(response);
+
+    expect(status).toBe(500);
+    expect(requestId).toBeTruthy();
+    expect(data.message).toContain(`(reference: ${requestId})`);
+    expect(data.details?.requestId).toBe(requestId);
+    // The redaction is not relaxed to make room for the reference.
+    expect(JSON.stringify(data)).not.toContain("OPENROUTER_API_KEY");
+
+    const upstreamEvent = loggerEventMock.mock.calls.find(
+      (call) => call[0] === "swarm.generation.upstream_failed"
+    );
+    expect(upstreamEvent).toBeDefined();
+    expect(upstreamEvent![1]).toMatchObject({ requestId });
+    expect(upstreamEvent![2]).toMatchObject({
+      statusCode: 500,
+      // The backend's own code, not the old constant: it is what separates a
+      // misconfigured deployment from a provider outage.
+      errorCode: "mcpjam_config_error",
+    });
+  });
+
+  it("falls back to the generic error code when the upstream body is not the backend envelope", async () => {
+    generateSwarmJourneysMock.mockRejectedValue(
+      new SwarmAgentError(502, "<html>Bad Gateway</html>", "upstream failed")
+    );
+
+    await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        serverAttachmentId: "att-1",
+        persona: { name: "P", role: "R" },
+      },
+      token
+    );
+
+    const upstreamEvent = loggerEventMock.mock.calls.find(
+      (call) => call[0] === "swarm.generation.upstream_failed"
+    );
+    expect(upstreamEvent![2]).toMatchObject({
+      errorCode: "upstream_server_error",
+    });
   });
 
   it("requires a bearer token", async () => {

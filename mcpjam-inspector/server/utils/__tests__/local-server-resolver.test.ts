@@ -246,6 +246,53 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
   });
 });
 
+describe("toMCPServerConfig — declared httpVariant mapping", () => {
+  it("maps a declared sse transport to preferSSE", () => {
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: { ...httpHeaderOnlyAuth.serverConfig, httpVariant: "sse" },
+    });
+    expect(config.preferSSE).toBe(true);
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+
+  it("maps a declared streamable-http transport to disableSseFallback", () => {
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: {
+        ...httpHeaderOnlyAuth.serverConfig,
+        httpVariant: "streamable-http" as const,
+      },
+    });
+    expect(config.disableSseFallback).toBe(true);
+    // Explicitly false, not merely absent — see below.
+    expect(config.preferSSE).toBe(false);
+  });
+
+  it("pins preferSSE false so a /sse URL cannot override the declaration", () => {
+    // The SDK resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`.
+    // Leaving preferSSE undefined here would hand a DECLARED streamable-http
+    // server straight to SSE on URL shape alone, and `disableSseFallback`
+    // could not save it — it only guards the post-attempt fallback.
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: {
+        ...httpHeaderOnlyAuth.serverConfig,
+        url: "https://plugin.example.com/sse",
+        httpVariant: "streamable-http" as const,
+      },
+    });
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
+  });
+
+  it("sets neither flag when no transport was declared", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth);
+    expect(config.preferSSE).toBeUndefined();
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+});
+
 describe("resolveLocalServerForConnect — refresh on missing access token", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
@@ -916,7 +963,15 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
-      message: identityError,
+      // Framed for the surface that is connecting: names the server, keeps the
+      // backend's actionable sentence as the reason clause, and carries the
+      // classified reason so a swarm banner can pick its tone.
+      message: expect.stringContaining(identityError),
+      details: expect.objectContaining({
+        reason: "xaa_configuration_invalid",
+        serverId: "srv-xaa",
+        serverName: "Legacy XAA server",
+      }),
     });
 
     // Exactly one outbound call — the authorize batch. No secret reveal, no

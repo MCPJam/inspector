@@ -11,12 +11,14 @@ import {
   getEvalIterationTraceOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getPluginVersionOperation,
   getServerPromptOperation,
   listChatboxesOperation,
   listChatSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
   listServerPromptsOperation,
@@ -190,6 +192,50 @@ const ENVIRONMENTS = [
   },
 ];
 
+const PLUGINS = [
+  {
+    id: "plugin-1",
+    projectId: "project-new",
+    name: "linear-tools",
+    displayName: "Linear Tools",
+    enabled: true,
+    activeVersionId: "pv-1",
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
+const PLUGIN_VERSION = {
+  id: "pv-1",
+  pluginId: "plugin-1",
+  declaredVersion: "1.2.0",
+  bundleHash: "hash-abc",
+  manifestHash: "hash-manifest",
+  status: "ready",
+  componentCounts: { skills: 1, servers: 1, apps: 0, assets: 0, unsupported: 0 },
+  servers: [
+    {
+      componentId: "psc-1",
+      componentKey: "server:linear",
+      declaredName: "linear",
+      placement: "remote",
+      authenticationPolicy: "on_use",
+      materializedServerId: "server-1",
+    },
+  ],
+  skills: [
+    {
+      componentId: "pskc-1",
+      componentKey: "skill:triage",
+      declaredName: "triage",
+      modelRef: "linear-tools/triage",
+      materializedSkillId: "skill-1",
+    },
+  ],
+  createdAt: 1,
+  readyAt: 2,
+};
+
 const CHATBOXES = [
   {
     id: "box-1",
@@ -288,6 +334,12 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/environments$/.test(path)) {
       return Response.json({ items: ENVIRONMENTS });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/plugins$/.test(path)) {
+      return Response.json({ items: PLUGINS });
+    }
+    if (/^\/api\/v1\/plugin-versions\/[^/]+$/.test(path)) {
+      return Response.json(PLUGIN_VERSION);
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-runs$/.test(path)) {
       expect(init?.method).toBe("POST");
@@ -1110,6 +1162,35 @@ describe("chatbox operations", () => {
   });
 });
 
+describe("plugin operations", () => {
+  it("lists the project's live plugins with the project resolved by selector", async () => {
+    const { client } = makeClient();
+
+    const result = await listProjectPluginsOperation.execute(
+      { project: "new" },
+      { client }
+    );
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.items).toEqual(PLUGINS);
+  });
+
+  it("fetches a plugin version by raw id, no project resolution round-trip", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getPluginVersionOperation.execute(
+      { pluginVersionId: "pv-1" },
+      { client }
+    );
+
+    expect(result).toEqual(PLUGIN_VERSION);
+    const paths = fetchMock.mock.calls.map((call) =>
+      new URL(String(call[0])).pathname
+    );
+    expect(paths).toEqual(["/api/v1/plugin-versions/pv-1"]);
+  });
+});
+
 describe("listChatSessionsOperation", () => {
   it("lists sessions unfiltered when no project is given", async () => {
     const { client, fetchMock } = makeClient();
@@ -1309,6 +1390,8 @@ describe("operation catalog consistency", () => {
     update_host: { host: "h", name: "renamed" },
     delete_host: { host: "h" },
     list_project_environments: {},
+    list_project_plugins: {},
+    get_plugin_version: { pluginVersionId: "pv" },
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },

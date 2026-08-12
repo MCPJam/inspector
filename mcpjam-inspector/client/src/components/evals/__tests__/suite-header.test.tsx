@@ -426,7 +426,59 @@ describe("SuiteHeader", () => {
     expect(onRerun).not.toHaveBeenCalled();
   });
 
-  it("keeps overview toolbar controls in one horizontal row", () => {
+  it("keeps overview actions shrink-wrapped on the right with Run all last", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        onOpenExportSuite={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />
+    );
+
+    const header = screen.getByTestId("suite-overview-header");
+    expect(header).toHaveClass("flex");
+    expect(header).toHaveClass("flex-wrap");
+    expect(header).toHaveClass("min-w-0");
+
+    const leftCluster = header.children[0] as HTMLElement;
+    expect(leftCluster).toHaveClass("min-w-0");
+    expect(
+      Array.from(leftCluster.querySelectorAll<HTMLElement>("*")).some((el) =>
+        el.className.includes("max-w-[20rem]")
+      )
+    ).toBe(true);
+
+    const actions = screen.getByTestId("suite-overview-actions");
+    expect(actions).toHaveClass("ml-auto");
+    expect(actions).toHaveClass("shrink-0");
+    expect(actions).toHaveClass("flex-nowrap");
+
+    const setupSdk = screen.getByRole("button", { name: /Setup SDK/i });
+    const generate = screen.getByRole("button", { name: /^Generate$/i });
+    const newCase = screen.getByRole("button", { name: /New case/i });
+    const runAll = screen.getByRole("button", {
+      name: /Run all cases in this suite/i,
+    });
+    expect(setupSdk.compareDocumentPosition(generate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(generate.compareDocumentPosition(newCase) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(newCase.compareDocumentPosition(runAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("does not show Compare clients in the suite overview header", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
@@ -438,12 +490,27 @@ describe("SuiteHeader", () => {
         onCreateTestCase={vi.fn()}
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
+        suite={{
+          ...baseSuite,
+          hostAttachments: [
+            {
+              namedHostId: "cursor",
+              hostName: "Cursor",
+              resolvedServerNames: ["asana"],
+            },
+            {
+              namedHostId: "claude",
+              hostName: "Claude",
+              resolvedServerNames: ["asana"],
+            },
+          ],
+        }}
       />
     );
 
-    const header = screen.getByTestId("suite-overview-header");
-    expect(header).toHaveClass("flex");
-    expect(header.querySelector(".flex-nowrap")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /Compare attached clients/i })
+    ).toBeNull();
   });
 
   it("forwards iterationOverride on Run all even without a match-options override", async () => {

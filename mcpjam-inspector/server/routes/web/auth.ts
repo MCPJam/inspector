@@ -36,6 +36,11 @@ import {
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
+import {
+  resolvePluginStdioHttpTarget,
+  type PluginStdioHttpTarget,
+} from "../../services/plugins/hosted-stdio-connect.js";
+import type { ExecutionScope } from "../../utils/execution-scope.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -47,6 +52,7 @@ import {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
@@ -63,6 +69,7 @@ import {
   resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
+import { toXaaConnectFailure } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
@@ -352,6 +359,11 @@ export type ConvexAuthorizeResponse = {
   serverConfig: {
     transportType: "stdio" | "http";
     url?: string;
+    // Declared wire transport from a plugin manifest (parser `httpVariant`),
+    // once the backend persists + serves it. Absent on every ordinary row
+    // and on older backends — absence means "no declaration", never a
+    // default.
+    httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
     useOAuth?: boolean;
@@ -797,15 +809,64 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
-  }
+  },
+  /**
+   * A plugin stdio component that IS reachable: a live shim, recorded in
+   * `pluginRuntimeSessions`, running the child inside the caller's own
+   * computer. Present only when the session row exists, so it — not this
+   * function — is the reachability gate.
+   */
+  pluginRuntime?: PluginStdioHttpTarget
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
+    if (pluginRuntime) {
+      // Built from the runtime alone, never merged with the stdio row: that row
+      // carries `env` (a child's secrets) and no headers, and the only
+      // credential this connection may present is the shim's own bearer.
+      return {
+        url: pluginRuntime.url,
+        capabilities: clientCapabilities,
+        clientCapabilities: clientCapabilities,
+        requestInit: {
+          headers: { Authorization: `Bearer ${pluginRuntime.token}` },
+        },
+        timeout: timeoutMs,
+        // The shim answers `405` on `GET /mcp` and speaks Streamable HTTP only.
+        // Pinning both rules out the SDK's `/sse` URL-path heuristic and the
+        // silent SSE downgrade, neither of which this endpoint implements.
+        preferSSE: false,
+        disableSseFallback: true,
+        ...(initializePins?.clientInfo
+          ? { clientInfo: initializePins.clientInfo }
+          : {}),
+        ...(initializePins?.supportedProtocolVersions &&
+        initializePins.supportedProtocolVersions.length > 0
+          ? {
+              supportedProtocolVersions:
+                initializePins.supportedProtocolVersions,
+            }
+          : {}),
+        ...(initializePins?.mcpProtocolVersion
+          ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
+          : {}),
+        ...(initializePins?.mirrorToolParamHeaders === false
+          ? { mirrorToolParamHeaders: false }
+          : {}),
+        ...(initializePins?.firstPageOnly === true
+          ? { firstPageOnly: true }
+          : {}),
+        ...(initializePins?.supportsMrtr === false
+          ? { supportsMrtr: false }
+          : {}),
+      };
+    }
     // Hosted web has no local process to spawn into, so a stdio server — an
-    // ordinary one or a plugin's local component — is reported with the
-    // backend's own readiness vocabulary (`getPluginSetupStatus` marks
-    // `placement: "local"` components `local_runtime_required`) rather than
-    // attempted. Same word on both surfaces means a client can render one
-    // "open the desktop app" affordance without guessing from prose.
+    // ordinary one, or a plugin component with no live in-computer runtime —
+    // is reported with the backend's own readiness vocabulary
+    // (`getPluginSetupStatus` marks `placement: "local"` components
+    // `local_runtime_required`) rather than attempted. Same word on both
+    // surfaces means a client can render one "open the desktop app" affordance
+    // without guessing from prose.
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
@@ -839,6 +900,21 @@ export function toHttpConfig(
     },
     timeout: timeoutMs,
     ...(onUnauthorized ? { onUnauthorized } : {}),
+    // Plugin-declared transports are authoritative: `sse` skips the
+    // Streamable HTTP attempt, `streamable-http` rules out the silent SSE
+    // downgrade. Rows without a declaration keep the SDK's URL-heuristic +
+    // fallback behavior.
+    //
+    // `preferSSE: false` is load-bearing on the streamable-http branch — see
+    // the same mapping in `local-server-resolver.ts::toMCPServerConfig`: the
+    // SDK falls back to a `/sse` URL-path heuristic when `preferSSE` is
+    // undefined, which would bypass the Streamable HTTP attempt entirely.
+    ...(authResponse.serverConfig.httpVariant === "sse"
+      ? { preferSSE: true }
+      : {}),
+    ...(authResponse.serverConfig.httpVariant === "streamable-http"
+      ? { preferSSE: false, disableSseFallback: true }
+      : {}),
     // mcpProfile.initialize.* pins, forwarded to the SDK's
     // `BaseServerConfig.clientInfo` / `.supportedProtocolVersions` per
     // `sdk/src/mcp-client-manager/types.ts`. Undefined → SDK defaults.
@@ -1067,6 +1143,14 @@ export async function createAuthorizedManager(
     mrtrInputCollectorForServer?: (
       serverId: string,
     ) => MrtrInputCollector | undefined;
+    /**
+     * The turn's execution scope, forwarded to the computer reservation that
+     * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
+     * meaningful on hosted deployments that can colocate; absent falls back to
+     * the legacy project-only reserve, which on a host-funded swarm or guest
+     * turn would resolve a DIFFERENT machine than the one the turn is using.
+     */
+    executionScope?: ExecutionScope;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -1167,16 +1251,29 @@ export async function createAuthorizedManager(
     // would mask this actionable 400 behind the caller-contract 500. Gated on
     // the same XAA selection the mint pass uses. No silent fallback to the
     // demo identity, no silent XAA→OAuth fallback.
+    //
+    // Framed like every other connect-time XAA failure: the backend's sentence
+    // is written for the server's auth form, and on its own ("Complete or
+    // clear the server identity override") it names neither the server nor the
+    // surface. It is kept verbatim as the reason clause.
     if (
       isHttp &&
       effectiveAuth === "xaa" &&
       auth.serverConfig.xaaIdentityError
     ) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        auth.serverConfig.xaaIdentityError,
-        { serverId, serverName: displayServerName }
+      throw toXaaConnectFailure(
+        new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          auth.serverConfig.xaaIdentityError
+        ),
+        {
+          serverId,
+          serverName: displayServerName,
+          ...(auth.serverConfig.url
+            ? { serverUrl: auth.serverConfig.url }
+            : {}),
+        }
       );
     }
 
@@ -1337,6 +1434,46 @@ export async function createAuthorizedManager(
         return [serverId, config] as const;
       }
 
+      // HOSTED stdio divert. There is still no process here to spawn into, so
+      // a plugin's local component runs inside the caller's OWN computer behind
+      // the in-VM shim and this connection reaches it as an ordinary remote
+      // Streamable-HTTP server. `null` covers every reason that cannot happen
+      // (not a data plane, no box, an ordinary non-plugin stdio row, a bundle
+      // that will not verify, a session record that did not land) and leaves
+      // the `toHttpConfig` refusal below exactly as it was.
+      let pluginRuntime: PluginStdioHttpTarget | undefined;
+      if (auth.serverConfig.transportType !== "http") {
+        pluginRuntime =
+          (await resolvePluginStdioHttpTarget({
+            bearerToken,
+            projectId,
+            serverId,
+            serverDisplayName: displayServerName,
+            accessScope: options?.accessScope,
+            chatboxId: options?.chatboxId,
+            accessVersion: options?.accessVersion,
+            // From THIS batch's own authorize response, not from the request:
+            // it is what decides whether the caller has a membership the spec
+            // reread can run under.
+            isAnonymous: batch.isAnonymous,
+            // The turn's scope, so the computer reservation resolves the SAME
+            // box the rest of the turn runs on. Without it a host-funded swarm
+            // or guest turn would fall back to a project-only reserve and could
+            // wake a second, unrelated machine purely because a plugin was
+            // pinned.
+            executionScope: options?.executionScope,
+            workosApiKeyActingAs:
+              caller.authMethod === "workos_api_key" &&
+              caller.workosUserId &&
+              caller.mcpjamOrganizationId
+                ? {
+                    workosUserId: caller.workosUserId,
+                    mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                  }
+                : undefined,
+          })) ?? undefined;
+      }
+
       const usesOAuthFlow = effectiveAuth === "oauth";
       // "discover" (non-XAA auto) rides the OAuth rails only when a stored
       // token exists; tokenless discover connects unauthenticated instead of
@@ -1433,6 +1570,13 @@ export async function createAuthorizedManager(
           isAnonymous: batch.isAnonymous,
           confidentialCimdProvider,
         });
+        const xaaFailureTarget = {
+          serverId,
+          serverName: displayServerName,
+          ...(auth.serverConfig.url
+            ? { serverUrl: auth.serverConfig.url }
+            : {}),
+        };
         try {
           connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
         } catch (error) {
@@ -1443,7 +1587,10 @@ export async function createAuthorizedManager(
               resource: auth.serverConfig.url,
             });
           }
-          throw error;
+          // Re-framed AFTER the log above, so the debugger-worded original is
+          // what reaches Sentry/Axiom (as `cause`) while the caller gets the
+          // connect-context sentence.
+          throw toXaaConnectFailure(error, xaaFailureTarget);
         }
         // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
         // second 401 surfaces rather than looping mint→401→mint.
@@ -1457,9 +1604,13 @@ export async function createAuthorizedManager(
             );
           }
           reMinted = true;
-          return {
-            accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
-          };
+          try {
+            return {
+              accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
+            };
+          } catch (error) {
+            throw toXaaConnectFailure(error, xaaFailureTarget);
+          }
         };
       }
 
@@ -1544,7 +1695,8 @@ export async function createAuthorizedManager(
           connectToken,
           perServerCapabilities,
           connectOnUnauthorized,
-          effectiveInitializePins
+          effectiveInitializePins,
+          pluginRuntime
         ),
       ] as const;
     })
@@ -1631,13 +1783,7 @@ export async function handleRoute<T>(
     return c.json(result, successStatus);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
-      c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details
-    );
+    return webErrorFromRoute(c, routeError);
   }
 }
 
@@ -2063,12 +2209,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      routeError,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
@@ -2081,6 +2224,7 @@ export {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
