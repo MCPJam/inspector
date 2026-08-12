@@ -337,6 +337,21 @@ You authenticated successfully but lack permission for the operation.
 - Re-run OAuth and request the additional scopes if the server allows.
 - Ask the server admin to grant the necessary permissions.
 
+### Upstream auth failed
+
+`UPSTREAM_AUTH_FAILED`
+
+The target MCP server refused the credentials MCPJam presented. This is a problem with the upstream server's credentials, not with your MCPJam account — re-authenticating with MCPJam will not fix it.
+
+**Likely causes**
+- The bearer token or OAuth access token stored for this server has expired or been revoked.
+- The server's required scopes changed after the token was issued.
+- The server returned a 400, 401, or 403 auth rejection during the connection attempt.
+
+**Next steps**
+- Open the server card and click **Reconnect** to run a fresh OAuth flow and obtain new credentials.
+- If using a bearer token, update it in the server's authentication settings.
+
 ### OAuth refresh failed
 
 `auth/oauth_refresh_failed`
