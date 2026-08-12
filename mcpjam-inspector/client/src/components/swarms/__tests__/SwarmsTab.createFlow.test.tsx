@@ -505,6 +505,36 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("drops a failed launch's error when Back returns to Describe", async () => {
+    // The error belongs to the attempt the user just left. Describe renders
+    // `errorMessage` too, so keeping it makes the step the user landed on look
+    // like it failed — and nothing on Describe can dismiss it.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    launchJourneyRunMock.mockRejectedValue(new Error("Launch was rejected"));
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /no runs were launched/i
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+
+    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no runs were launched/i)
+    ).not.toBeInTheDocument();
+  });
+
   it("opens persona detail in the side panel from a compact card", async () => {
     existingPersonas = [
       {
