@@ -190,7 +190,7 @@ describe("PlanLimitDialog", () => {
     expect(href).toContain("Acme Robotics");
     expect(href).toContain("Organizations, then Billing");
     // Says what it does. It opens a draft; it does not send anything.
-    expect(mail).toHaveTextContent(/Email your owner/);
+    expect(mail).toHaveTextContent(/Email your plan's owner/);
     expect(screen.getByText(/Opens a draft to Dana Ruiz/)).toBeInTheDocument();
   });
 

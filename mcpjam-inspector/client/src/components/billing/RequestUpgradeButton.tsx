@@ -132,7 +132,7 @@ export function RequestUpgradeButton({
             });
           }}
         >
-          Email your owner
+          Email your plan's owner
         </a>
       </Button>
       <p className="text-xs text-muted-foreground">
