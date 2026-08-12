@@ -119,7 +119,7 @@ function validateInput<TInput>(
 async function assertModelOverridesSupported(
   options: PlatformOptions,
   timeoutMs: number,
-  args: { supplied: boolean }
+  args: { supplied: boolean; project?: string }
 ): Promise<void> {
   if (!args.supplied) return;
   let supported = false;
@@ -128,7 +128,16 @@ async function assertModelOverridesSupported(
       options,
       timeoutMs,
       ({ client, signal }) =>
-        getEnvironmentCapabilitiesOperation.execute({}, { client, signal })
+        // The TARGET project, not the default. `getEnvironmentCapabilities` is
+        // project-scoped, so probing with `{}` resolves the caller's default
+        // project and would answer for a project the write is not going to
+        // touch — blocking a valid `--model` write, or passing one that the
+        // target rejects with exactly the opaque error this preflight exists
+        // to prevent.
+        getEnvironmentCapabilitiesOperation.execute(
+          args.project !== undefined ? { project: args.project } : {},
+          { client, signal }
+        )
     );
     supported = result.capabilities.modelOverrides;
   } catch {
@@ -139,6 +148,22 @@ async function assertModelOverridesSupported(
       'This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --model / --clear-model / "modelId".'
     );
   }
+}
+
+/**
+ * The project the command will actually write to, in the SAME precedence the
+ * write itself uses: the explicit `--project` flag over the JSON body's
+ * `project`. Absent when neither names one, which is the only case where
+ * resolving the caller's default project is correct.
+ */
+function projectSelector(
+  options: { project?: string },
+  body: Record<string, unknown>
+): { project?: string } {
+  if (options.project !== undefined) return { project: options.project };
+  return typeof body.project === "string" && body.project.trim()
+    ? { project: body.project }
+    : {};
 }
 
 /** Read a JSON object from --file (literal path or `-` for stdin) / --json. */
@@ -341,6 +366,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       // no reason to pay for a round-trip.
       await assertModelOverridesSupported(options, globalOptions.timeout, {
         supplied: options.model !== undefined || "modelId" in body,
+        ...projectSelector(options, body),
       });
       const input = validateInput(createEnvironmentOperation, {
         ...body,
@@ -429,6 +455,7 @@ export function registerEnvironmentsCommands(program: Command): void {
           options.model !== undefined ||
           options.clearModel === true ||
           "modelId" in body,
+        ...projectSelector(options, body),
       });
       const input = validateInput(updateEnvironmentOperation, {
         ...body,

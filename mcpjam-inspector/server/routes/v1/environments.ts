@@ -205,6 +205,27 @@ type ConvexErrorData = {
   details?: Record<string, string>;
 };
 
+/**
+ * True when a Convex call failed because the DEPLOYMENT does not export the
+ * function — the one failure the capability probe is allowed to read as
+ * "unsupported".
+ *
+ * Matched on the message because Convex surfaces this as a plain client error
+ * with no structured code: there is nothing more precise to key on. Kept
+ * deliberately narrow so an authorization or transport failure cannot be
+ * mistaken for deploy skew.
+ */
+function isMissingConvexFunctionError(error: unknown): boolean {
+  const message = String(
+    (error as { message?: unknown } | null)?.message ?? error ?? ""
+  ).toLowerCase();
+  return (
+    message.includes("could not find public function") ||
+    message.includes("could not find function") ||
+    message.includes("function not found")
+  );
+}
+
 function convexErrorData(error: unknown): ConvexErrorData | null {
   const data = (error as { data?: unknown } | null)?.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -457,9 +478,22 @@ environments.get(
           "projectEnvironments:getCapabilities" as any,
           { projectId } as any
         )) as typeof capabilities | null) ?? {};
-    } catch {
-      // Old backend (no such function), or the caller cannot read this
-      // project. Either way the honest answer is "assume not supported".
+    } catch (error) {
+      // ONLY deploy skew is swallowed. An older backend does not export this
+      // function, so the call fails with a "could not find function" error and
+      // `false` is the correct answer.
+      //
+      // Everything else must surface. Collapsing an authorization failure, a
+      // missing project, or an upstream outage into a cheerful 200 with both
+      // capabilities false tells the caller "this platform is too old" — which
+      // is not merely unhelpful but wrong, and sends them to upgrade something
+      // that is already current instead of fixing their access.
+      if (!isMissingConvexFunctionError(error)) {
+        throw translateConvexError(
+          error,
+          "Environment capabilities could not be read"
+        );
+      }
       capabilities = {};
     }
     return v1Resource(c, {

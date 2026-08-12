@@ -216,6 +216,24 @@ function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
   return typeof config.modelId === "string" && config.modelId.trim().length > 0;
 }
 
+/**
+ * Return `config` with `modelId` TRIMMED.
+ *
+ * The rest of the config is passed through opaquely, but the model cannot be:
+ * it is stored verbatim and compared verbatim downstream, so a padded
+ * `" anthropic/claude-sonnet-4-5 "` would be persisted as a distinct — and
+ * unrecognized — model id. Trimming matches the environment contract's
+ * `normalizeModelId`, which is the other write boundary this value reaches.
+ * Only ever a trim; the id itself is never rewritten.
+ */
+function withTrimmedModelId(
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  return typeof config.modelId === "string"
+    ? { ...config, modelId: config.modelId.trim() }
+    : config;
+}
+
 const createHostSchema = z
   .object({
     name: z.string().trim().min(1),
@@ -304,7 +322,7 @@ hosts.post("/projects/:projectId/hosts", async (c) => {
 
   const input = body.template
     ? await resolveHostTemplateInput(body.template, body.theme)
-    : body.config;
+    : withTrimmedModelId(body.config!);
 
   let created: { hostId: string };
   try {

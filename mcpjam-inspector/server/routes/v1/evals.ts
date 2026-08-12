@@ -394,7 +394,11 @@ function normalizeCreateTestsToRunTests(
     const model = test.model ?? suite.model;
     let provider = test.provider ?? suite.provider;
     if (!provider) {
-      provider = model.includes("/") ? model.split("/")[0] : undefined;
+      // The CANONICAL resolver, not a prefix split. Splitting derived
+      // "meta-llama" and "mistralai" as providers (they are aliases for `meta`
+      // and `mistral`) and refused every `custom:<slug>:<model>` id outright,
+      // because it has no slash.
+      provider = providerForModelId(model);
     }
     if (!provider) {
       throw new WebRouteError(
@@ -1309,13 +1313,18 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
  * `undefined` only for a blank id.
  */
 function providerForModelId(modelId: string): string | undefined {
-  if (!modelId.includes("/")) {
+  // Trim FIRST, exactly as `classifyModelIdProvider` does. Without it a padded
+  // bare catalog id misses the lookup and falls through to the classifier's
+  // bare-id catch-all, so `" claude-sonnet-4-5 "` would be attributed to
+  // Ollama rather than to its real vendor.
+  const id = modelId.trim();
+  if (!id.includes("/")) {
     const match = MODEL_LOOKUP.find(
-      (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
+      (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`)
     );
     if (match) return String(match.provider);
   }
-  return classifyModelIdProvider(modelId)?.provider;
+  return classifyModelIdProvider(id)?.provider;
 }
 
 function deriveProvider(model: string, explicit: string | undefined): string {

@@ -184,6 +184,25 @@ describe("launchJourneyRun", () => {
     ["an HTML error page", "<html><body>502 Bad Gateway</body></html>"],
     ["a multi-line stack trace", "Error: boom\n  at thing (file.js:1:1)"],
     ["an oversized blob", "x".repeat(1000)],
+    ["an empty body", ""],
+    // A leading brace that does not parse is a BROKEN ENVELOPE, not a
+    // sentence — echoing the fragment would show braces.
+    ["a truncated JSON body", "{"],
+    ["a JSON body with no message", '{"code":"NOPE"}'],
+    // The structured branch is held to the SAME policy as the plain one: an
+    // envelope is no more trustworthy about what it carries.
+    [
+      "an oversized structured message",
+      JSON.stringify({ error: { message: "x".repeat(1000) } }),
+    ],
+    [
+      "a markup-bearing structured message",
+      JSON.stringify({ message: "<script>alert(1)</script>" }),
+    ],
+    [
+      "a multi-line structured message",
+      JSON.stringify({ error: { message: "boom\n  at thing" } }),
+    ],
   ])("never shows %s", async (_label, body) => {
     createRunMock.mockRejectedValue(new SwarmAgentError(402, body, "nope"));
     await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({

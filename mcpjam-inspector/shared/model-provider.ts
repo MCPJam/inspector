@@ -120,8 +120,16 @@ export function classifyModelIdProvider(
 
   const slashIdx = id.indexOf("/");
   if (slashIdx > 0) {
-    const provider = MODEL_ID_PREFIX_TO_PROVIDER[id.slice(0, slashIdx)];
-    if (provider) return { provider };
+    // `hasOwnProperty`, not a bare index. `MODEL_ID_PREFIX_TO_PROVIDER` is an
+    // ordinary object, so `"constructor/x"` or `"toString/x"` would otherwise
+    // read a FUNCTION off `Object.prototype` and — being truthy — return it as
+    // the provider, which then flows into provider dispatch as a non-string.
+    const prefix = id.slice(0, slashIdx);
+    if (
+      Object.prototype.hasOwnProperty.call(MODEL_ID_PREFIX_TO_PROVIDER, prefix)
+    ) {
+      return { provider: MODEL_ID_PREFIX_TO_PROVIDER[prefix]! };
+    }
   }
 
   if (isBedrockModelId(id)) return { provider: "bedrock" };

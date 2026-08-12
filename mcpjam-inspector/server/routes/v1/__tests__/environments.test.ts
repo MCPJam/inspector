@@ -537,6 +537,29 @@ describe("v1 project environment routes", () => {
       });
     });
 
+    it("carries a HOST-derived effective model with no stored override", async () => {
+      mockQuery({
+        "projectEnvironments:resolveEnvironmentForLaunch": {
+          ...RESOLVED_ROW,
+          effectiveModelId: "anthropic/claude-sonnet-4-5",
+          modelSource: "host",
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/env1/resolve"
+      );
+      const body = (await res.json()) as {
+        modelId?: string;
+        effectiveModelId?: string;
+        modelSource?: string;
+      };
+      // Inheriting must stay distinguishable from pinning: no stored override.
+      expect(body.modelId).toBeUndefined();
+      expect(body.effectiveModelId).toBe("anthropic/claude-sonnet-4-5");
+      expect(body.modelSource).toBe("host");
+    });
+
     it("maps ENV_MODEL_REQUIRED to 409 with a branchable reason", async () => {
       // The one resolution failure a caller is expected to ACT on rather than
       // display: pick a model on the environment or on its client.
@@ -584,10 +607,14 @@ describe("v1 project environment routes", () => {
       });
     });
 
-    it("answers false — not an error — when the backend cannot answer", async () => {
+    it("answers false — not an error — when the deployment is too OLD", async () => {
       // ABSENCE IS THE SIGNAL. An older deployment does not export the query;
       // a 500 here would break clients that are perfectly able to fall back.
-      convexQueryMock.mockRejectedValue(new Error("Could not find function"));
+      convexQueryMock.mockRejectedValue(
+        new Error(
+          "Could not find public function for 'projectEnvironments:getCapabilities'"
+        )
+      );
       const res = await request(
         "GET",
         "/api/v1/projects/p1/environments/capabilities"
@@ -597,6 +624,32 @@ describe("v1 project environment routes", () => {
         modelOverrides: false,
         modelMatrix: false,
       });
+    });
+
+    it("does NOT disguise an access failure as an old deployment", async () => {
+      // The dangerous version of the fallback above: collapsing every error
+      // into a cheerful 200 tells the caller "upgrade your platform" when the
+      // real problem is that they cannot read this project.
+      convexQueryMock.mockRejectedValue(
+        convexError("FORBIDDEN", "Not authorized for this project")
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities"
+      );
+      expect(res.status).not.toBe(200);
+      expect(((await res.json()) as { code?: string }).code).not.toBe(
+        "VALIDATION_ERROR"
+      );
+    });
+
+    it("does NOT disguise an upstream outage as an old deployment", async () => {
+      convexQueryMock.mockRejectedValue(new Error("fetch failed: ECONNRESET"));
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities"
+      );
+      expect(res.status).not.toBe(200);
     });
 
     it("is not mistaken for an environment id", async () => {

@@ -8886,6 +8886,7 @@
           "modelId": {
             "type": "string",
             "minLength": 1,
+            "pattern": ".*\\S.*",
             "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim — no alias canonicalization — so pass exactly the id the provider request should carry."
           },
           "skillSelection": {
@@ -8939,6 +8940,7 @@
           "modelId": {
             "type": "string",
             "minLength": 1,
+            "pattern": ".*\\S.*",
             "nullable": true,
             "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
           },

@@ -503,11 +503,20 @@ export function aggregateSuite(
       // environment-backed run executes the environment's model instead, and a
       // later edit to either can move the authored list. Labelling history
       // from the live case therefore relabels finished runs with a model they
-      // never used — which matters most exactly where this is read, comparing
-      // two runs of one suite on two models.
+      // never used.
       //
       // The fallback is for pre-snapshot rows only: those predate environment
       // overrides, so their case's current model is the best available answer.
+      //
+      // SCOPE, unchanged by this: `byCase` is ONE ROW PER CASE, folding every
+      // iteration handed to `aggregateSuite` — which, when the caller passes
+      // iterations from more than one run, can span two models. The label then
+      // comes from whichever iteration was seen first while the counts cover
+      // all of them. That is a pre-existing property of the aggregation shape,
+      // not something the snapshot introduces (the live case's `models[0]` was
+      // equally single-valued), and narrowing it means giving `byCase` a
+      // run/model key — a change to the type every caller renders. Callers that
+      // need per-model rows should aggregate one run at a time.
       const snapshot = it.testCaseSnapshot;
       byCaseMap.set(id, {
         testCaseId: id,

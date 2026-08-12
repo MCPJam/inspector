@@ -96,6 +96,13 @@ export const MODEL_PROVIDER_FIXTURES: ProviderFixture[] = [
   // An UNRECOGNIZED prefix is not a provider — the whole id is treated as bare.
   { id: "acme-corp/some-model", provider: "ollama" },
   { id: "huggingface/some-model", provider: "ollama" },
+  // Prefixes that name an `Object.prototype` member. A bare index into the
+  // prefix map returns a FUNCTION for these, and a truthiness check would hand
+  // it back as the provider.
+  { id: "constructor/some-model", provider: "ollama" },
+  { id: "toString/some-model", provider: "ollama" },
+  { id: "__proto__/some-model", provider: "ollama" },
+  { id: "hasOwnProperty/some-model", provider: "ollama" },
   // A leading slash has no prefix segment (indexOf("/") === 0), so it is bare.
   { id: "/leading-slash", provider: "ollama" },
   // Surrounding whitespace is trimmed before classification.

@@ -381,6 +381,84 @@ describe("v1 host routes", () => {
       );
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
+
+    // ── FORWARD-CLIENT INVARIANT ─────────────────────────────────────────
+    // A client with no model cannot back a headless environment: resolution
+    // falls through to `ENV_MODEL_REQUIRED` at LAUNCH, long after creation.
+    // These hold the failure at the moment the choice is made.
+    describe("the model invariant", () => {
+      it.each([
+        ["missing", {}],
+        ["null", { modelId: null }],
+        ["empty", { modelId: "" }],
+        ["whitespace-only", { modelId: "   " }],
+        ["a non-string", { modelId: 42 }],
+      ])(
+        "rejects a config whose modelId is %s (400)",
+        async (_label, extra) => {
+          const res = await request("POST", "/api/v1/projects/p1/hosts", {
+            body: { name: "Alpha", config: { systemPrompt: "hi", ...extra } },
+          });
+          expect(res.status).toBe(400);
+          expect(((await res.json()) as { code?: string }).code).toBe(
+            "VALIDATION_ERROR"
+          );
+          expect(convexMutationMock).not.toHaveBeenCalled();
+        }
+      );
+
+      it("reports the XOR problem — not the model — for an empty config", async () => {
+        // `{}` picked neither branch. Naming the model would send the caller
+        // to add one field when they need to choose a shape.
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", config: {} },
+        });
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(await res.json())).toMatch(
+          /exactly one of .template. or a non-empty .config./i
+        );
+      });
+
+      it("TRIMS a padded model rather than persisting it verbatim", async () => {
+        // The id is stored and compared verbatim downstream, so a padded value
+        // would be persisted as a distinct — and unrecognized — model.
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", config: { modelId: "  openai/gpt-5  " } },
+        });
+        expect(createdHostInput()).toMatchObject({
+          modelId: "openai/gpt-5",
+        });
+      });
+
+      it("refuses a template that resolves without a model", async () => {
+        // A guard, never a substitution: templates carry their OWN model, and
+        // one that lost it is a catalog bug.
+        const catalog = clone(bundledHostCompatCatalog());
+        catalog.hostsById.claude = {
+          ...catalog.hostsById.claude,
+          modelId: "",
+        };
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            new Response(JSON.stringify(catalogEnvelope(catalog)), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+          )
+        );
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", template: "claude" },
+        });
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(await res.json())).toMatch(
+          /does not pin a model/i
+        );
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe("PATCH update", () => {

@@ -235,6 +235,8 @@ export {
   type UpdateHostInput,
   type ListEnvironmentsInput,
   type ListEnvironmentsResult,
+  type EnvironmentCapabilitiesInput,
+  type EnvironmentCapabilitiesResult,
   type ListProjectPluginsInput,
   type ListProjectPluginsResult,
   type GetPluginVersionInput,

@@ -98,8 +98,10 @@ export interface LaunchJourneyRunResult {
  *     Convex `ConvexError` data (`{"code":…,"message":…}`). Unwrap it; the raw
  *     form renders as a wall of braces in a toast.
  *   - a PLAIN SENTENCE the backend wrote for a human ("journey exceeds the
- *     maximum host count"). This is the useful case and it survives — bounded,
- *     because a "sentence" that is 8 KB or full of markup is not one.
+ *     maximum host count"). This is the useful case and it survives — bounded
+ *     by {@link showableReason}, because a "sentence" that is 8 KB or full of
+ *     markup is not one. The SAME bound applies to a message unwrapped from a
+ *     structured body.
  *   - anything else — an HTML error page from a proxy, a stack trace, an empty
  *     body. Replaced by a sentence of our own.
  *
@@ -123,25 +125,44 @@ export function launchFailureMessage(err: SwarmAgentError): string {
       // v1 envelope: { error: { code, message } }
       const envelope = parsed.error;
       if (envelope && typeof envelope === "object") {
-        const message = (envelope as { message?: unknown }).message;
-        if (typeof message === "string" && message.trim())
-          return message.trim();
+        const unwrapped = showableReason(
+          (envelope as { message?: unknown }).message
+        );
+        if (unwrapped) return unwrapped;
       }
       // Convex structured ConvexError data: { code, message, details? }
-      const message = parsed.message;
-      if (typeof message === "string" && message.trim()) return message.trim();
+      const unwrapped = showableReason(parsed.message);
+      if (unwrapped) return unwrapped;
     } catch {
-      // Not JSON after all — fall through to the plain-sentence test.
+      // Not valid JSON despite the leading brace. Deliberately NOT re-tested as
+      // prose: a truncated or malformed JSON body is a broken envelope, not a
+      // sentence somebody wrote, and echoing its fragment would show braces.
     }
     return fallback;
   }
 
-  // A plain sentence: short, single-line, and not markup.
-  const looksLikeProse =
-    raw.length <= MAX_PASSTHROUGH_REASON_LENGTH &&
-    !raw.includes("\n") &&
-    !raw.includes("<");
-  return looksLikeProse ? raw : fallback;
+  return showableReason(raw) ?? fallback;
+}
+
+/**
+ * `value` if it is a string fit to put in front of a user, else `null`.
+ *
+ * The SAME policy for a structured `message` and for a plain body: a backend
+ * envelope is no more trustworthy than a bare one — it can just as easily carry
+ * a stack trace, an HTML fragment, or an unbounded diagnostic — and applying
+ * the bound to only one of the two would leave the "never passed through
+ * unexamined" promise true of the less likely case and false of the more
+ * likely one.
+ */
+function showableReason(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  const showable =
+    text.length <= MAX_PASSTHROUGH_REASON_LENGTH &&
+    !text.includes("\n") &&
+    !text.includes("<");
+  return showable ? text : null;
 }
 
 function requireConvexHttpUrl(): string {
