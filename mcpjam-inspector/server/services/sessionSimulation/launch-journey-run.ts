@@ -111,6 +111,20 @@ export interface LaunchJourneyRunResult {
  */
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
 
+function safeLaunchReason(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const reason = value.trim();
+  if (
+    reason.length === 0 ||
+    reason.length > MAX_PASSTHROUGH_REASON_LENGTH ||
+    reason.includes("\n") ||
+    reason.includes("<")
+  ) {
+    return undefined;
+  }
+  return reason;
+}
+
 export function launchFailureMessage(err: SwarmAgentError): string {
   const fallback =
     err.status === 402
@@ -163,6 +177,28 @@ function showableReason(value: unknown): string | null {
     !text.includes("\n") &&
     !text.includes("<");
   return showable ? text : null;
+}
+
+/** Preserve structured billing/environment metadata across the WebRouteError boundary. */
+function launchFailureDetails(
+  err: SwarmAgentError
+): Record<string, unknown> | undefined {
+  const raw = err.bodyText?.trim();
+  if (!raw?.startsWith("{")) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const envelope = parsed.error;
+    const source =
+      envelope && typeof envelope === "object"
+        ? (envelope as Record<string, unknown>)
+        : parsed;
+    const details = source.details;
+    return details && typeof details === "object"
+      ? { ...(details as Record<string, unknown>) }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function requireConvexHttpUrl(): string {
@@ -368,7 +404,12 @@ export async function launchJourneyRun(
         429: ErrorCode.RATE_LIMITED,
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
-      throw new WebRouteError(err.status, code, launchFailureMessage(err));
+      throw new WebRouteError(
+        err.status,
+        code,
+        launchFailureMessage(err),
+        launchFailureDetails(err)
+      );
     }
     throw err;
   }

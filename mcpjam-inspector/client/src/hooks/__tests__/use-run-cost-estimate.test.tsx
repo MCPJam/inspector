@@ -451,14 +451,17 @@ describe("formatRunCostEstimate — copy matrix", () => {
 function SuiteProbe({
   planCount,
   iterationOverride,
+  environmentIds,
 }: {
   planCount: number;
   iterationOverride?: number;
+  environmentIds?: string[];
 }) {
   const state = useSuiteRunCostEstimate({
     enabled: true,
     suiteId: "suite-1",
     planCount,
+    ...(environmentIds ? { environmentIds } : {}),
     ...(iterationOverride !== undefined ? { iterationOverride } : {}),
   });
   useEffect(() => {
@@ -485,6 +488,16 @@ describe("surface-specific query dispatch", () => {
     await waitFor(() => expect(queryCalls).toHaveLength(1));
     expect(queryCalls[0].name).toBe(RUN_COST_ESTIMATE_QUERIES.suite);
     expect(queryCalls[0].args).toEqual({ suiteId: "suite-1", planCount: 3 });
+  });
+
+  it("sends environment identities so each target model is priced", async () => {
+    render(<SuiteProbe planCount={2} environmentIds={["env-a", "env-b"]} />);
+    await waitFor(() => expect(queryCalls).toHaveLength(1));
+    expect(queryCalls[0].args).toEqual({
+      suiteId: "suite-1",
+      planCount: 2,
+      environmentIds: ["env-a", "env-b"],
+    });
   });
 
   it("forwards the iteration override so the estimate matches the launch", async () => {

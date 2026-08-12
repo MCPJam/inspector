@@ -65,10 +65,12 @@ const MODEL_ID_PREFIX_IDENTITY = [
  * Every recognized `<prefix>/` → provider mapping, aliases included. Exported
  * because the backend mirror's parity test asserts key-for-key equality.
  */
-export const MODEL_ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
-  ...Object.fromEntries(MODEL_ID_PREFIX_IDENTITY.map((p) => [p, p])),
-  ...MODEL_ID_PREFIX_ALIASES,
-};
+export const MODEL_ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> =
+  Object.assign(
+    Object.create(null) as Record<string, ModelProvider>,
+    Object.fromEntries(MODEL_ID_PREFIX_IDENTITY.map((p) => [p, p])),
+    MODEL_ID_PREFIX_ALIASES
+  );
 
 export type ModelProviderClassification = {
   provider: ModelProvider;

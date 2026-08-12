@@ -110,11 +110,9 @@ function validateInput<TInput>(
  * slower for everyone in order to guard a field most calls never send would be
  * a bad trade.
  *
- * A preflight that itself fails is treated as UNSUPPORTED, not as unknown: the
- * capability route answers `false` rather than erroring when the backend is
- * old, so a genuine failure here is a connectivity or auth problem that the
- * subsequent write would hit anyway — better to stop before sending a field
- * that might be rejected.
+ * A preflight that itself fails remains an operational error. The capability
+ * route answers `false` for an old backend, so collapsing auth/network failures
+ * into "unsupported" would hide the real problem from the caller.
  */
 async function assertModelOverridesSupported(
   options: PlatformOptions,
@@ -122,27 +120,16 @@ async function assertModelOverridesSupported(
   args: { supplied: boolean; project?: string }
 ): Promise<void> {
   if (!args.supplied) return;
-  let supported = false;
-  try {
-    const result = await runPlatformCommand(
-      options,
-      timeoutMs,
-      ({ client, signal }) =>
-        // The TARGET project, not the default. `getEnvironmentCapabilities` is
-        // project-scoped, so probing with `{}` resolves the caller's default
-        // project and would answer for a project the write is not going to
-        // touch — blocking a valid `--model` write, or passing one that the
-        // target rejects with exactly the opaque error this preflight exists
-        // to prevent.
-        getEnvironmentCapabilitiesOperation.execute(
-          args.project !== undefined ? { project: args.project } : {},
-          { client, signal }
-        )
-    );
-    supported = result.capabilities.modelOverrides;
-  } catch {
-    supported = false;
-  }
+  const result = await runPlatformCommand(
+    options,
+    timeoutMs,
+    ({ client, signal }) =>
+      getEnvironmentCapabilitiesOperation.execute(
+        { project: args.project },
+        { client, signal }
+      )
+  );
+  const supported = result.capabilities.modelOverrides;
   if (!supported) {
     throw usageError(
       'This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --model / --clear-model / "modelId".'

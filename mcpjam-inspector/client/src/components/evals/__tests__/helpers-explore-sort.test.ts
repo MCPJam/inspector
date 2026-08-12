@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { computeIterationSummary, sortExploreCasesBySignal } from "../helpers";
-import type { EvalCase, EvalIteration, SuiteAggregate } from "../types";
+import {
+  aggregateSuite,
+  computeIterationSummary,
+  sortExploreCasesBySignal,
+} from "../helpers";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  SuiteAggregate,
+} from "../types";
 
 function makeCase(id: string, title: string, isNegative = false): EvalCase {
   return {
@@ -138,6 +147,49 @@ describe("sortExploreCasesBySignal", () => {
       iterations,
     );
     expect(sorted.map((c) => c._id)).toEqual(["w", "p"]);
+  });
+});
+
+describe("aggregateSuite model labels", () => {
+  it("marks mixed model snapshots instead of using the first one", () => {
+    const testCase = makeCase("case-1", "Matrix case");
+    const iterations = [
+      makeIter("case-1", {
+        testCaseSnapshot: {
+          title: "Matrix case",
+          query: "q",
+          provider: "openai",
+          model: "gpt-5",
+          expectedToolCalls: [],
+        },
+        result: "passed",
+        status: "completed",
+        resultSource: "reported",
+      }),
+      makeIter("case-1", {
+        testCaseSnapshot: {
+          title: "Matrix case",
+          query: "q",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+          expectedToolCalls: [],
+        },
+        result: "failed",
+        status: "completed",
+        resultSource: "reported",
+      }),
+    ];
+    const aggregate = aggregateSuite(
+      { _id: "suite" } as EvalSuite,
+      [testCase],
+      iterations,
+    );
+    expect(aggregate.byCase[0]).toMatchObject({
+      provider: "multiple",
+      model: "multiple",
+      passed: 1,
+      failed: 1,
+    });
   });
 });
 

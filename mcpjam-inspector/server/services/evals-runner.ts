@@ -2919,6 +2919,7 @@ const runLocalIteration = async ({
       evaluation,
       usage: usageFinal,
       messages: acc.conversationMessages,
+      modelId: test.model,
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
@@ -3086,6 +3087,7 @@ const runLocalIteration = async ({
         totalTokens: acc.accumulatedUsage.totalTokens,
       },
       messages: failMessages,
+      modelId: test.model,
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
@@ -3716,6 +3718,7 @@ const runHostedIterationWithBrowser = async (
     evaluation,
     usage: accumulatedUsage,
     messages: messageHistory,
+    modelId: test.model,
     ...(backendEnhancedSystemPromptForPersist
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),

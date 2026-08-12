@@ -494,10 +494,23 @@ export function aggregateSuite(
     if (!id) continue;
     if (!byCaseMap.has(id)) {
       const c = cases.find((x) => x._id === id);
-      // Count total iterations for this test case
-      const totalRuns = iterations.filter(
+      const caseIterations = iterations.filter(
         (iter) => iter.testCaseId === id
-      ).length;
+      );
+      const snapshots = caseIterations
+        .map((iter) => iter.testCaseSnapshot)
+        .filter((snapshot): snapshot is NonNullable<typeof snapshot> =>
+          Boolean(snapshot?.model || snapshot?.provider)
+        );
+      const snapshotKeys = new Set(
+        snapshots.map((snapshot) =>
+          JSON.stringify([snapshot.provider ?? "", snapshot.model ?? ""])
+        )
+      );
+      const representativeSnapshot = snapshots[snapshots.length - 1];
+      const hasMixedModels = snapshotKeys.size > 1;
+      // Count total iterations for this test case
+      const totalRuns = caseIterations.length;
       // THE ITERATION'S OWN SNAPSHOT WINS over the case's current definition.
       // A case's authored `models[0]` is what it would run TODAY; an
       // environment-backed run executes the environment's model instead, and a
@@ -521,8 +534,16 @@ export function aggregateSuite(
       byCaseMap.set(id, {
         testCaseId: id,
         title: snapshot?.title || c?.title || "Untitled",
-        provider: snapshot?.provider || c?.models?.[0]?.provider || "",
-        model: snapshot?.model || c?.models?.[0]?.model || "",
+        // A suite can legitimately contain the same case under multiple
+        // environment models. Never label the combined counters with whichever
+        // snapshot happened to be visited first; surface an explicit mixed
+        // marker until the UI has a per-model aggregate view.
+        provider: hasMixedModels
+          ? "multiple"
+          : representativeSnapshot?.provider || c?.models?.[0]?.provider || "",
+        model: hasMixedModels
+          ? "multiple"
+          : representativeSnapshot?.model || c?.models?.[0]?.model || "",
         runs: totalRuns,
         passed: 0,
         failed: 0,

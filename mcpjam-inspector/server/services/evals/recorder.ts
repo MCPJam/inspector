@@ -104,6 +104,8 @@ export type SuiteRunRecorder = {
     }>;
     usage: UsageTotals;
     messages: ModelMessage[];
+    /** Effective model used by the iteration; persisted on the eval session. */
+    modelId?: string;
     spans?: EvalTraceSpan[];
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];

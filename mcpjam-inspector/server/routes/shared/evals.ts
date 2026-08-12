@@ -548,7 +548,8 @@ export function buildCapEntriesFromPersistedCases(
     advancedConfig?: unknown;
     caseType?: TestCaseType;
     probeConfig?: ProbeConfig;
-  }>
+  }>,
+  options?: { environmentBacked?: boolean }
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
   for (const testCase of cases ?? []) {
@@ -571,7 +572,10 @@ export function buildCapEntriesFromPersistedCases(
     // case contributes 0 LLM calls regardless of fanout — the entry carries
     // `steps` so the reducer sees the real count.
     const modelFree = isModelFree(steps ?? []);
-    const fanout = modelFree ? 1 : Math.max(testCase.models?.length ?? 0, 1);
+    const fanout =
+      modelFree || options?.environmentBacked
+        ? 1
+        : Math.max(testCase.models?.length ?? 0, 1);
     for (let i = 0; i < fanout; i++) {
       entries.push({
         title: testCase.title ?? "",
@@ -1620,7 +1624,9 @@ export async function prepareEvalRun(
     }
     assertSuiteRunWithinCap({
       ...request,
-      tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),
+      tests: buildCapEntriesFromPersistedCases(persistedCases ?? [], {
+        environmentBacked: Boolean(environmentId),
+      }),
     });
   } else {
     assertSuiteRunWithinCap(request);

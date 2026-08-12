@@ -180,6 +180,43 @@ describe("launchJourneyRun", () => {
     }
   );
 
+  it("preserves structured backend details without trusting them as the message", async () => {
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        402,
+        JSON.stringify({
+          error: {
+            code: "BILLING_LIMIT_REACHED",
+            message: "Monthly credit limit reached.",
+            details: { plan: "free", resetsAt: "2026-09-01T00:00:00Z" },
+          },
+        }),
+        "nope"
+      )
+    );
+
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      code: "BILLING_LIMIT_REACHED",
+      message: "Monthly credit limit reached.",
+      details: { plan: "free", resetsAt: "2026-09-01T00:00:00Z" },
+    });
+  });
+
+  it("falls back when a structured message is unsafe or oversized", async () => {
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        402,
+        JSON.stringify({ error: { message: "x".repeat(1000) } }),
+        "nope"
+      )
+    );
+
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      status: 402,
+      message: "This launch would exceed your organization's credit limit.",
+    });
+  });
+
   it.each([
     ["an HTML error page", "<html><body>502 Bad Gateway</body></html>"],
     ["a multi-line stack trace", "Error: boom\n  at thing (file.js:1:1)"],
