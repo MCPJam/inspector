@@ -502,13 +502,25 @@ export function aggregateSuite(
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> =>
           Boolean(snapshot?.model || snapshot?.provider)
         );
-      const snapshotKeys = new Set(
-        snapshots.map((snapshot) =>
-          JSON.stringify([snapshot.provider ?? "", snapshot.model ?? ""])
-        )
-      );
       const representativeSnapshot = snapshots[snapshots.length - 1];
-      const hasMixedModels = snapshotKeys.size > 1;
+      // Key EVERY iteration, not only the snapshot-bearing ones. A case whose
+      // iterations mix snapshot rows with pre-snapshot rows is still a mix: the
+      // legacy rows are labelled from the case's CURRENT model, so keying only
+      // the snapshots collapses `snapshotKeys` to one entry and stamps the whole
+      // row with the snapshot's model while the counters below fold in
+      // iterations that ran a different one. Each legacy row keys under the
+      // fallback the label would use for it, so the two agree by construction.
+      const modelKeys = new Set(
+        caseIterations.map((iter) => {
+          const snapshot = iter.testCaseSnapshot;
+          return JSON.stringify(
+            snapshot?.model || snapshot?.provider
+              ? [snapshot.provider ?? "", snapshot.model ?? ""]
+              : [c?.models?.[0]?.provider ?? "", c?.models?.[0]?.model ?? ""]
+          );
+        })
+      );
+      const hasMixedModels = modelKeys.size > 1;
       // Count total iterations for this test case
       const totalRuns = caseIterations.length;
       // THE ITERATION'S OWN SNAPSHOT WINS over the case's current definition.

@@ -202,6 +202,33 @@ describe("launchJourneyRun", () => {
     });
   });
 
+  it("drops an ARRAY-shaped details rather than spreading it into index keys", async () => {
+    // `typeof [] === "object"`, and spreading an array yields `{"0": …}` —
+    // index keys masquerading as structured metadata on the way to a client
+    // that branches on `details.plan`. A list is not a details bag.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        402,
+        JSON.stringify({
+          error: {
+            code: "BILLING_LIMIT_REACHED",
+            message: "Monthly credit limit reached.",
+            details: ["free", "2026-09-01T00:00:00Z"],
+          },
+        }),
+        "nope"
+      )
+    );
+
+    const err = (await launchJourneyRun(DEPS, INPUT).catch((e) => e)) as {
+      details?: unknown;
+      message: string;
+    };
+    expect(err.details).toBeUndefined();
+    // The message still survives — a bad `details` invalidates only itself.
+    expect(err.message).toBe("Monthly credit limit reached.");
+  });
+
   it("falls back when a structured message is unsafe or oversized", async () => {
     createRunMock.mockRejectedValue(
       new SwarmAgentError(
@@ -239,6 +266,16 @@ describe("launchJourneyRun", () => {
     [
       "a multi-line structured message",
       JSON.stringify({ error: { message: "boom\n  at thing" } }),
+    ],
+    // `\n` is not the only character a renderer breaks a line on, and `trim`
+    // only strips these at the ends. A body carrying one in the MIDDLE renders
+    // as several lines in a toast, so it fails the single-sentence shape too.
+    ["a carriage-return body", "Error: boom\r  at thing (file.js:1:1)"],
+    ["a U+2028 line-separator body", "Error: boom\u2028  at thing"],
+    ["a U+2029 paragraph-separator body", "Error: boom\u2029  at thing"],
+    [
+      "a U+2028 structured message",
+      JSON.stringify({ error: { message: "boom\u2028  at thing" } }),
     ],
   ])("never shows %s", async (_label, body) => {
     createRunMock.mockRejectedValue(new SwarmAgentError(402, body, "nope"));

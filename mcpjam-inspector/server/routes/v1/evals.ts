@@ -391,7 +391,9 @@ function normalizeCreateTestsToRunTests(
 ): RunEvalsRequest["tests"] {
   return tests.map((test) => {
     const runs = test.runs ?? 1;
-    const model = test.model ?? suite.model;
+    // Trimmed for the same reason as `toPersistedModelEntry`: this id is what
+    // gets stored on the case and handed to the provider.
+    const model = (test.model ?? suite.model).trim();
     let provider = test.provider ?? suite.provider;
     if (!provider) {
       // The CANONICAL resolver, not a prefix split. Splitting derived
@@ -1327,6 +1329,26 @@ function providerForModelId(modelId: string): string | undefined {
   return classifyModelIdProvider(id)?.provider;
 }
 
+/**
+ * A persisted `{ model, provider }` entry from an authored one.
+ *
+ * The id is TRIMMED for the value we STORE, not merely for the provider lookup.
+ * It is persisted verbatim, sent to the provider verbatim, and compared
+ * verbatim against environment and host model ids downstream, so keeping
+ * `" gpt-4o "` would mint a model that resolves to the right provider and then
+ * matches nothing. Same normalization as `withTrimmedModelId` on the host write
+ * boundary and the backend's `normalizeModelId`; only ever a trim.
+ */
+function toPersistedModelEntry(entry: { model: string; provider?: string }): {
+  model: string;
+  provider: string;
+} {
+  return {
+    model: entry.model.trim(),
+    provider: deriveProvider(entry.model, entry.provider),
+  };
+}
+
 function deriveProvider(model: string, explicit: string | undefined): string {
   if (explicit) return explicit;
   const provider = providerForModelId(model);
@@ -1547,10 +1569,7 @@ function buildCaseMutationArgs(
   }
 
   if (body.models !== undefined) {
-    args.models = body.models.map((m) => ({
-      model: m.model,
-      provider: deriveProvider(m.model, m.provider),
-    }));
+    args.models = body.models.map(toPersistedModelEntry);
   } else if (opts.forCreate) {
     args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
   }
@@ -2309,7 +2328,7 @@ async function defaultCaseModels(
       // Suite configs store bare ids (e.g. "claude-sonnet-4-5"); resolve the
       // provider via the catalog so the new case isn't persisted model-less.
       const provider = providerForModelId(modelId);
-      if (provider) return [{ model: modelId, provider }];
+      if (provider) return [{ model: modelId.trim(), provider }];
     }
   } catch {
     // No resolvable suite model — the case inherits the suite default at run.
@@ -2934,10 +2953,8 @@ evals.post(
     }
 
     const caseModels =
-      body.caseModels?.map((m) => ({
-        model: m.model,
-        provider: deriveProvider(m.model, m.provider),
-      })) ?? (await defaultCaseModels(readClient, suiteId));
+      body.caseModels?.map(toPersistedModelEntry) ??
+      (await defaultCaseModels(readClient, suiteId));
 
     // A caseMix only counts when it requests at least one case (a bucket > 0).
     // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated

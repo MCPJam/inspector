@@ -82,7 +82,7 @@ describe("QuickCaseRunCostEstimateHint — flag gate", () => {
         suiteId="suite-1"
         caseId="case-1"
         models={MODELS}
-      />,
+      />
     );
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
     // Give any stray effect a chance to fire before asserting the absence.
@@ -97,7 +97,7 @@ describe("QuickCaseRunCostEstimateHint — flag gate", () => {
         suiteId="suite-1"
         caseId="case-1"
         models={MODELS}
-      />,
+      />
     );
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
     await Promise.resolve();
@@ -113,7 +113,7 @@ describe("QuickCaseRunCostEstimateHint — flag gate", () => {
         caseId="case-1"
         models={[]}
         suppressed
-      />,
+      />
     );
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
     await Promise.resolve();
@@ -126,7 +126,7 @@ describe("QuickCaseRunCostEstimateHint — flag gate", () => {
         suiteId="suite-1"
         caseId="case-1"
         models={MODELS}
-      />,
+      />
     );
     expect(screen.getByTestId("run-cost-estimate-hint")).toBeInTheDocument();
     await Promise.resolve();
@@ -142,7 +142,9 @@ describe("suite + journey wrappers — flag gate", () => {
   const cases = [
     {
       name: "SuiteRunCostEstimateHint",
-      render: () => <SuiteRunCostEstimateHint suiteId="suite-1" planCount={2} />,
+      render: () => (
+        <SuiteRunCostEstimateHint suiteId="suite-1" planCount={2} />
+      ),
     },
     {
       name: "JourneyRunCostEstimateHint",
@@ -177,7 +179,7 @@ describe("suite + journey wrappers — flag gate", () => {
 
   it("suppresses the suite hint when Run all cannot launch", async () => {
     render(
-      <SuiteRunCostEstimateHint suiteId="suite-1" planCount={2} suppressed />,
+      <SuiteRunCostEstimateHint suiteId="suite-1" planCount={2} suppressed />
     );
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
     await Promise.resolve();
@@ -227,7 +229,7 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
       models: MODELS,
     });
     await waitFor(() =>
-      expect(screen.getByTestId("status").textContent).toBe("ready"),
+      expect(screen.getByTestId("status").textContent).toBe("ready")
     );
   });
 
@@ -239,11 +241,11 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
       <EstimateProbe
         models={[...MODELS, { model: "gpt-5", provider: "openai" }]}
         open
-      />,
+      />
     );
     await waitFor(() => expect(queryCalls).toHaveLength(2));
     expect((queryCalls[1].args as { models: unknown[] }).models).toHaveLength(
-      2,
+      2
     );
   });
 
@@ -252,7 +254,7 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
     // `provider/model` join would render both of these as "a/b,c/d" — leaving
     // the tooltip on the previous estimate after a real model change.
     const { rerender } = render(
-      <EstimateProbe models={[{ provider: "a", model: "b,c/d" }]} open />,
+      <EstimateProbe models={[{ provider: "a", model: "b,c/d" }]} open />
     );
     await waitFor(() => expect(queryCalls).toHaveLength(1));
 
@@ -263,10 +265,12 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
           { provider: "c", model: "d" },
         ]}
         open
-      />,
+      />
     );
     await waitFor(() => expect(queryCalls).toHaveLength(2));
-    expect((queryCalls[1].args as { models: unknown[] }).models).toHaveLength(2);
+    expect((queryCalls[1].args as { models: unknown[] }).models).toHaveLength(
+      2
+    );
   });
 
   it("discards a stale response when the args changed mid-flight", async () => {
@@ -282,14 +286,14 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
     await waitFor(() => expect(resolvers).toHaveLength(1));
 
     rerender(
-      <EstimateProbe models={[{ model: "gpt-5", provider: "openai" }]} open />,
+      <EstimateProbe models={[{ model: "gpt-5", provider: "openai" }]} open />
     );
     await waitFor(() => expect(resolvers).toHaveLength(2));
 
     // Newer request answers first, then the stale one.
     resolvers[1](estimate({ credits: 7, lowerBoundCredits: 7 }));
     await waitFor(() =>
-      expect(screen.getByTestId("credits").textContent).toBe("7"),
+      expect(screen.getByTestId("credits").textContent).toBe("7")
     );
     resolvers[0](estimate({ credits: 999, lowerBoundCredits: 999 }));
     // Flush to the end of the macrotask queue, not just one microtask: if the
@@ -305,11 +309,11 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
   it("clears the painted estimate when the tooltip closes", async () => {
     const { rerender } = render(<EstimateProbe models={MODELS} open />);
     await waitFor(() =>
-      expect(screen.getByTestId("status").textContent).toBe("ready"),
+      expect(screen.getByTestId("status").textContent).toBe("ready")
     );
     rerender(<EstimateProbe models={MODELS} open={false} />);
     await waitFor(() =>
-      expect(screen.getByTestId("status").textContent).toBe("idle"),
+      expect(screen.getByTestId("status").textContent).toBe("idle")
     );
     expect(screen.getByTestId("credits").textContent).toBe("");
   });
@@ -317,14 +321,14 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
   it("surfaces a rejected query as an error state", async () => {
     queryImpl = async () => {
       throw new Error(
-        'ConvexError: {"code":"TOO_MANY_MODELS","message":"Cost estimation supports at most 10 distinct models (received 11)."}',
+        'ConvexError: {"code":"TOO_MANY_MODELS","message":"Cost estimation supports at most 10 distinct models (received 11)."}'
       );
     };
     render(<EstimateProbe models={MODELS} open />);
     await waitFor(() =>
       expect(screen.getByTestId("copy").textContent).toBe(
-        "Estimate unavailable",
-      ),
+        "Estimate unavailable"
+      )
     );
   });
 });
@@ -336,7 +340,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
         status: "ready",
         error: null,
         estimate: estimate({ confidence: "historical" }),
-      }),
+      })
     ).toBe("Estimated: ~42 credits — based on your recent runs");
   });
 
@@ -346,7 +350,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
         status: "ready",
         error: null,
         estimate: estimate({ confidence: "partial" }),
-      }),
+      })
     ).toBe("Estimated: ~42 credits — partly based on recent runs");
   });
 
@@ -356,7 +360,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
         status: "ready",
         error: null,
         estimate: estimate({ confidence: "heuristic" }),
-      }),
+      })
     ).toBe("Rough estimate: ~42 credits — improves after first run");
   });
 
@@ -373,7 +377,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
             usd: null,
             lowerBoundCredits: 30,
           }),
-        }),
+        })
       ).toBe("At least ~30 credits — part of this run is unpriced");
     }
   });
@@ -390,7 +394,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
           usd: null,
           lowerBoundCredits: 0,
         }),
-      }),
+      })
     ).toBe("Estimate unavailable for these models");
   });
 
@@ -399,7 +403,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
     // committing `loading`. It must not flash "Estimate unavailable" and then
     // retract it.
     expect(
-      formatRunCostEstimate({ status: "idle", error: null, estimate: null }),
+      formatRunCostEstimate({ status: "idle", error: null, estimate: null })
     ).toBe("Estimating…");
   });
 
@@ -409,14 +413,14 @@ describe("formatRunCostEstimate — copy matrix", () => {
         status: "loading",
         error: null,
         estimate: null,
-      }),
+      })
     ).toBe("Estimating…");
     expect(
       formatRunCostEstimate({
         status: "error",
         error: "boom",
         estimate: null,
-      }),
+      })
     ).toBe("Estimate unavailable");
   });
 
@@ -441,7 +445,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
           credits: 12_345,
           lowerBoundCredits: 12_345,
         }),
-      }),
+      })
     ).toBe("Estimated: ~12,345 credits — based on your recent runs");
   });
 });
@@ -500,6 +504,45 @@ describe("surface-specific query dispatch", () => {
     });
   });
 
+  it("OMITS environmentIds entirely when the list is empty", async () => {
+    // An empty array is not "price nothing" — it is "no environment fan-out".
+    // Sending `environmentIds: []` would ask the backend to price zero targets,
+    // so the key must drop out of the args rather than go over as an empty list.
+    render(<SuiteProbe planCount={2} environmentIds={[]} />);
+    await waitFor(() => expect(queryCalls).toHaveLength(1));
+    expect(queryCalls[0].args).toEqual({ suiteId: "suite-1", planCount: 2 });
+  });
+
+  it("re-fetches when environmentIds appears, changes, and is emptied", async () => {
+    // `environmentIdsKey` is the only thing that can invalidate an open tooltip
+    // when the selected cells change — the args object identity churns every
+    // render, so a stale key would leave the previous estimate painted.
+    const { rerender } = render(<SuiteProbe planCount={1} />);
+    await waitFor(() => expect(queryCalls).toHaveLength(1));
+
+    rerender(<SuiteProbe planCount={1} environmentIds={["env-a"]} />);
+    await waitFor(() => expect(queryCalls).toHaveLength(2));
+    expect(queryCalls[1].args).toEqual({
+      suiteId: "suite-1",
+      planCount: 1,
+      environmentIds: ["env-a"],
+    });
+
+    rerender(<SuiteProbe planCount={1} environmentIds={["env-b"]} />);
+    await waitFor(() => expect(queryCalls).toHaveLength(3));
+    expect(queryCalls[2].args).toEqual({
+      suiteId: "suite-1",
+      planCount: 1,
+      environmentIds: ["env-b"],
+    });
+
+    // Back to none: the estimate must return to the un-scoped suite price
+    // rather than keep pricing the environment that is no longer selected.
+    rerender(<SuiteProbe planCount={1} environmentIds={[]} />);
+    await waitFor(() => expect(queryCalls).toHaveLength(4));
+    expect(queryCalls[3].args).toEqual({ suiteId: "suite-1", planCount: 1 });
+  });
+
   it("forwards the iteration override so the estimate matches the launch", async () => {
     render(<SuiteProbe planCount={1} iterationOverride={5} />);
     await waitFor(() => expect(queryCalls).toHaveLength(1));
@@ -545,7 +588,7 @@ describe("surface-specific query dispatch", () => {
     await waitFor(() => expect(queryCalls).toHaveLength(1));
     expect(queryCalls[0].name).toBe("journeyRuns:estimateJourneyRunCredits");
     expect(RUN_COST_ESTIMATE_QUERIES.journey).toBe(
-      "journeyRuns:estimateJourneyRunCredits",
+      "journeyRuns:estimateJourneyRunCredits"
     );
     expect(queryCalls[0].args).toEqual({ journeyId: "journey-1" });
   });

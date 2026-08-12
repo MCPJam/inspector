@@ -320,9 +320,15 @@ hosts.post("/projects/:projectId/hosts", async (c) => {
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
 
-  const input = body.template
-    ? await resolveHostTemplateInput(body.template, body.theme)
-    : withTrimmedModelId(body.config!);
+  // Trim on BOTH branches: the normalization belongs to the write boundary, not
+  // to one of the two ways of reaching it. A template is authored data too, and
+  // one carrying a padded `modelId` would otherwise persist an id that no
+  // downstream verbatim comparison recognizes.
+  const input = withTrimmedModelId(
+    body.template
+      ? await resolveHostTemplateInput(body.template, body.theme)
+      : body.config!
+  );
 
   let created: { hostId: string };
   try {

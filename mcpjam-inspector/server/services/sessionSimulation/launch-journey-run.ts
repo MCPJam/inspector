@@ -111,19 +111,13 @@ export interface LaunchJourneyRunResult {
  */
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
 
-function safeLaunchReason(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const reason = value.trim();
-  if (
-    reason.length === 0 ||
-    reason.length > MAX_PASSTHROUGH_REASON_LENGTH ||
-    reason.includes("\n") ||
-    reason.includes("<")
-  ) {
-    return undefined;
-  }
-  return reason;
-}
+/**
+ * Every character a renderer may break a line on — not just `\n`. `String.trim`
+ * strips these at the ends but not in the middle, so a body carrying `\r` or a
+ * Unicode separator would otherwise pass as a "single sentence" and then render
+ * as multiple lines in a toast.
+ */
+const LINE_BREAK = /[\r\n\u2028\u2029]/;
 
 export function launchFailureMessage(err: SwarmAgentError): string {
   const fallback =
@@ -174,7 +168,7 @@ function showableReason(value: unknown): string | null {
   if (!text) return null;
   const showable =
     text.length <= MAX_PASSTHROUGH_REASON_LENGTH &&
-    !text.includes("\n") &&
+    !LINE_BREAK.test(text) &&
     !text.includes("<");
   return showable ? text : null;
 }
@@ -193,7 +187,9 @@ function launchFailureDetails(
         ? (envelope as Record<string, unknown>)
         : parsed;
     const details = source.details;
-    return details && typeof details === "object"
+    // `typeof [] === "object"`, and spreading an array yields `{0: …}` — index
+    // keys masquerading as structured metadata. A list is not a details bag.
+    return details && typeof details === "object" && !Array.isArray(details)
       ? { ...(details as Record<string, unknown>) }
       : undefined;
   } catch {

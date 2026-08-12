@@ -424,11 +424,46 @@ describe("v1 host routes", () => {
         // would be persisted as a distinct — and unrecognized — model.
         convexMutationMock.mockResolvedValue({ hostId: "h1" });
         mockQuery({ "hosts:getHost": DETAIL_ROW });
-        await request("POST", "/api/v1/projects/p1/hosts", {
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
           body: { name: "Alpha", config: { modelId: "  openai/gpt-5  " } },
         });
+        // Assert the create SUCCEEDED before reading the mutation args: a
+        // rejected request never calls the mutation, and `createdHostInput()`
+        // would then throw on a missing call — a confusing failure for what is
+        // really "the route 400'd".
+        expect(res.status).toBe(201);
         expect(createdHostInput()).toMatchObject({
           modelId: "openai/gpt-5",
+        });
+      });
+
+      it("TRIMS a padded model on the TEMPLATE branch too", async () => {
+        // The trim belongs to the write boundary, not to one of the two ways of
+        // reaching it. A catalog entry is authored data as much as a posted
+        // config, and a padded id from either side persists a model that no
+        // downstream verbatim comparison recognizes.
+        const catalog = clone(bundledHostCompatCatalog());
+        catalog.hostsById.claude = {
+          ...catalog.hostsById.claude,
+          modelId: "  anthropic/claude-sonnet-4-5  ",
+        };
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            new Response(JSON.stringify(catalogEnvelope(catalog)), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+          )
+        );
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", template: "claude" },
+        });
+        expect(res.status).toBe(201);
+        expect(createdHostInput()).toMatchObject({
+          modelId: "anthropic/claude-sonnet-4-5",
         });
       });
 

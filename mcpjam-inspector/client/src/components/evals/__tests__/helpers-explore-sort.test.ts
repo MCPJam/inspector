@@ -27,7 +27,7 @@ function makeCase(id: string, title: string, isNegative = false): EvalCase {
 
 function makeIter(
   testCaseId: string,
-  overrides: Partial<EvalIteration> & Pick<EvalIteration, "result" | "status">,
+  overrides: Partial<EvalIteration> & Pick<EvalIteration, "result" | "status">
 ): EvalIteration {
   return {
     _id: `iter-${testCaseId}-${Math.random()}`,
@@ -144,7 +144,7 @@ describe("sortExploreCasesBySignal", () => {
     const sorted = sortExploreCasesBySignal(
       [pend, pass],
       aggregate,
-      iterations,
+      iterations
     );
     expect(sorted.map((c) => c._id)).toEqual(["w", "p"]);
   });
@@ -182,13 +182,91 @@ describe("aggregateSuite model labels", () => {
     const aggregate = aggregateSuite(
       { _id: "suite" } as EvalSuite,
       [testCase],
-      iterations,
+      iterations
     );
     expect(aggregate.byCase[0]).toMatchObject({
       provider: "multiple",
       model: "multiple",
       passed: 1,
       failed: 1,
+    });
+  });
+
+  it("marks a snapshot row mixed with a PRE-SNAPSHOT row as mixed", () => {
+    // The legacy iteration carries no snapshot, so it is labelled from the
+    // case's current model — a different model from the snapshot's. Keying only
+    // the snapshot-bearing rows would see one key and stamp the whole case
+    // "gpt-5" while the counters fold in an iteration that ran claude.
+    const testCase = {
+      ...makeCase("case-1", "Matrix case"),
+      models: [{ provider: "anthropic", model: "claude-sonnet-4-5" }],
+    } as EvalCase;
+    const aggregate = aggregateSuite(
+      { _id: "suite" } as EvalSuite,
+      [testCase],
+      [
+        makeIter("case-1", {
+          testCaseSnapshot: {
+            title: "Matrix case",
+            query: "q",
+            provider: "openai",
+            model: "gpt-5",
+            expectedToolCalls: [],
+          },
+          result: "passed",
+          status: "completed",
+          resultSource: "reported",
+        }),
+        makeIter("case-1", {
+          result: "failed",
+          status: "completed",
+          resultSource: "reported",
+        }),
+      ]
+    );
+    expect(aggregate.byCase[0]).toMatchObject({
+      provider: "multiple",
+      model: "multiple",
+      passed: 1,
+      failed: 1,
+    });
+  });
+
+  it("stays single-model when a pre-snapshot row agrees with the snapshot", () => {
+    // Same fallback, same key: a legacy row whose case model matches the
+    // snapshot is not a mix, and must keep its real label rather than
+    // degrading to "multiple" just for lacking a snapshot.
+    const testCase = {
+      ...makeCase("case-1", "Matrix case"),
+      models: [{ provider: "openai", model: "gpt-5" }],
+    } as EvalCase;
+    const aggregate = aggregateSuite(
+      { _id: "suite" } as EvalSuite,
+      [testCase],
+      [
+        makeIter("case-1", {
+          testCaseSnapshot: {
+            title: "Matrix case",
+            query: "q",
+            provider: "openai",
+            model: "gpt-5",
+            expectedToolCalls: [],
+          },
+          result: "passed",
+          status: "completed",
+          resultSource: "reported",
+        }),
+        makeIter("case-1", {
+          result: "passed",
+          status: "completed",
+          resultSource: "reported",
+        }),
+      ]
+    );
+    expect(aggregate.byCase[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-5",
+      passed: 2,
     });
   });
 });
