@@ -1729,9 +1729,17 @@ export function useServerState({
       // that this is a new server. When no row is visible after the query, the
       // no-secret write path still uses the backend create-if-missing mutation
       // so the final decision is atomic.
+      //
+      // `owned` is a row this project may write. `workspaceTwin` is a live row
+      // with the same name owned by ANOTHER project in the same workspace:
+      // `servers:getProjectServers` returns those (the list is workspace-wide,
+      // by design) but `remoteServerBelongsToProject` reads them as absent, so
+      // without this the save falls through to a create — and server names are
+      // unique per WORKSPACE, so that create can only ever resolve back to the
+      // very row we just decided to ignore.
       const resolveExistingServer = async (
         snapshot: RemoteServer[] | undefined
-      ): Promise<RemoteServer | undefined> => {
+      ): Promise<{ owned?: RemoteServer; workspaceTwin?: RemoteServer }> => {
         // A pinned serverId is authoritative: the row was created before the
         // OAuth redirect and the hosted session validated it. Match by id
         // first; fall back to name-within-pinned-project in case the row was
@@ -1741,24 +1749,36 @@ export function useServerState({
             ? s._id === target.serverId
             : s.name === serverName &&
               remoteServerBelongsToProject(s, latestProjectId);
+        // A pinned id names one exact row, so "some other project has this
+        // name" says nothing about it.
+        const findWorkspaceTwin = (rows: RemoteServer[] | undefined) =>
+          target?.serverId
+            ? undefined
+            : rows?.find(
+                (s) =>
+                  s.name === serverName &&
+                  !remoteServerBelongsToProject(s, latestProjectId)
+              );
         const local = snapshot?.find(matches);
-        if (local) return local;
+        if (local) return { owned: local };
         if (!isUserReadyRef.current) {
-          return undefined;
+          return { workspaceTwin: findWorkspaceTwin(snapshot) };
         }
         try {
           const fresh = (await convex.query(
             "servers:getProjectServers" as any,
             { projectId: latestProjectId } as any
           )) as RemoteServer[] | undefined;
-          return (
+          const owned =
             fresh?.find(matches) ??
             (target?.serverId
               ? fresh?.find((s) => s.name === serverName)
-              : undefined)
-          );
+              : undefined);
+          return owned
+            ? { owned }
+            : { workspaceTwin: findWorkspaceTwin(fresh) };
         } catch {
-          return undefined;
+          return { workspaceTwin: findWorkspaceTwin(snapshot) };
         }
       };
 
@@ -1768,9 +1788,10 @@ export function useServerState({
       // wrong server.
       const exactServerId =
         target?.exactServerId && target.serverId ? target.serverId : undefined;
-      const existingServer = exactServerId
-        ? undefined
+      const existing = exactServerId
+        ? {}
         : await resolveExistingServer(flatSnapshot);
+      const existingServer = existing.owned;
 
       const transportType = config?.command ? "stdio" : "http";
       const url =
@@ -1880,6 +1901,22 @@ export function useServerState({
           return serverIdToUpdate;
         }
 
+        // The name is taken by another project in this workspace. Creating
+        // would hand back that same row without applying this payload, so
+        // report which row the save resolved to instead of writing.
+        if (existing.workspaceTwin) {
+          logger.warn(
+            "Server name already belongs to another project in this workspace",
+            {
+              serverName,
+              projectId: latestProjectId,
+              existingServerId: existing.workspaceTwin._id,
+              existingProjectId: existing.workspaceTwin.projectId,
+            }
+          );
+          return existing.workspaceTwin._id;
+        }
+
         const createPayload = {
           projectId: latestProjectId,
           ...payload,
@@ -1922,7 +1959,7 @@ export function useServerState({
           }
           const flatRetry =
             activeProjectServersFlatRef.current ?? activeProjectServersFlat;
-          const retryExisting = await resolveExistingServer(flatRetry);
+          const retryExisting = (await resolveExistingServer(flatRetry)).owned;
           if (retryExisting) {
             const updatePayload = {
               serverId: retryExisting._id,

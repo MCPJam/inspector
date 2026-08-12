@@ -597,6 +597,76 @@ describe("useServerState CLI config import", () => {
       })
     );
   });
+
+  // `servers:getProjectServers` is workspace-wide, so a row owned by a sibling
+  // project comes back in this project's list. It is not ours to write, but
+  // names are unique per workspace, so creating over it can only resolve back
+  // to it — which is how one CLI re-import re-attempted the same doomed create
+  // on every launch (Sentry CONVEX-1R / CONVEX-1NG).
+  it("reuses a same-name server owned by a sibling project instead of re-creating it", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          servers: [
+            {
+              name: "cli-http",
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: { Authorization: "Bearer secret" },
+            },
+          ],
+        },
+      }),
+    } as Response);
+    const siblingRow = {
+      _id: "srv_sibling",
+      projectId: "proj_sibling",
+      name: "cli-http",
+      enabled: true,
+      transportType: "http" as const,
+      url: "https://example.com/mcp",
+    };
+    mockConvexQuery.mockResolvedValue([siblingRow]);
+    const appState = createCloudCliAppState();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [siblingRow],
+        logger,
+      })
+    );
+
+    await waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Server name already belongs to another project in this workspace",
+        expect.objectContaining({
+          serverName: "cli-http",
+          existingServerId: "srv_sibling",
+          existingProjectId: "proj_sibling",
+        })
+      );
+    });
+    expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+  });
 });
 
 describe("useServerState effective server projection", () => {
