@@ -72,8 +72,15 @@ describe("effective origin propagation", () => {
     );
     routeError.origin = origin;
 
+    // Route it back through mapRuntimeError before serializing, which is what
+    // a throw/catch path actually does. That call passes no boundary, so its
+    // own decision can only reproduce the declared `ambiguous`; remapping must
+    // preserve the promotion rather than reset it.
+    const mapped = mapRuntimeError(routeError);
+    expect(mapped.origin).toBe("mcpjam");
+
     const c = fakeContext();
-    webErrorFromRoute(c as never, routeError);
+    webErrorFromRoute(c as never, mapped);
 
     expect((c.vars.webErrorMeta as { origin?: string }).origin).toBe("mcpjam");
   });

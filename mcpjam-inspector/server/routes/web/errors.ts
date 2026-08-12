@@ -314,7 +314,13 @@ export function mapRuntimeError(error: unknown): WebRouteError {
       source: "web.mapRuntimeError",
       extra: { status: error.status, code: error.code },
     });
-    error.origin = decision.origin;
+    // Never downgrade an origin that is already set. This call passes no
+    // `boundary`, so its decision can only ever reproduce the DECLARED catalog
+    // value — remapping an error whose origin was already promoted at an
+    // `mcpjam_internal` hop would otherwise reset `mcpjam` back to `ambiguous`,
+    // undoing the promotion on the way to the serializer. The caller that
+    // declared the boundary knew the hop; this one does not.
+    error.origin = error.origin ?? decision.origin;
     return error;
   }
 
