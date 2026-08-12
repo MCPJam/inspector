@@ -961,6 +961,25 @@ export function SwarmsTab({
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
+          onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
+            setSwarmRunLabels(runLabels);
+            if (swarmRunGroupId) {
+              // The wave's own page, on the session that produced the finding.
+              // It is a real URL, so this leave is reversible — and the run
+              // keeps streaming into that page while the user reads.
+              navigate(
+                buildSwarmPath(swarmRunGroupId, {
+                  tab: "sessions",
+                  session: sessionId,
+                })
+              );
+              return;
+            }
+            // No wave id means nothing launched under one, so there is no run
+            // page to open — fall back to the handoff `onDone` already makes.
+            setViewMode("sessions");
+            navigate(`${routePaths.swarms}?view=sessions`);
+          }}
           onEditExistingPersona={(personaRefId) => {
             setSelectedPersonaId(personaRefId);
             setViewMode("journeys");

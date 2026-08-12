@@ -85,6 +85,10 @@ vi.mock("../logger", () => ({
     // a mock-shape side effect instead of the real behavior).
     warn: vi.fn(),
   },
+  // `error-origin-capture` routes its Sentry capture through the logger
+  // module, so this mock has to carry it or the backend-failure paths below
+  // die inside the capture instead of reaching their assertions.
+  captureOriginErrorToSentry: vi.fn(),
 }));
 
 describe("mcpjam-stream-handler", () => {

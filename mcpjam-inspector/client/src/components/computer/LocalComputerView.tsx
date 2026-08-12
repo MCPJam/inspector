@@ -1,7 +1,13 @@
+import { useCallback, useEffect, useRef } from "react";
 import { Laptop, FolderTree } from "lucide-react";
+import { track } from "@/lib/analytics";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import type { ComputerEngineState } from "@/hooks/useComputerEngine";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
+import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
+import { ComputerTerminal } from "./ComputerTerminal";
 import { LocalComputerConsentGate } from "./LocalComputerConsentGate";
 import { PaneMessage } from "./PaneMessage";
 
@@ -11,9 +17,12 @@ import { PaneMessage } from "./PaneMessage";
  * ready — no sleep/wake/image/billing. Shown only for a signed-in member on a
  * non-hosted inspector when the local engine is SELECTED (see `ComputerTabView`).
  *
- * The interactive terminal lands in a later PR (node-pty); until
- * `engine.localTerminalAvailable` flips true this shows a terminal-unavailable
- * note — bash from chat already works.
+ * The interactive terminal is a real PTY on this machine (node-pty), reached
+ * over `/api/web/computers/local-terminal` with a single-use nonce minted
+ * against the consent capability. When node-pty isn't installable (no build
+ * toolchain, or the packaged Electron app, which carries no node_modules)
+ * `engine.localTerminalAvailable` stays false and this degrades to a note —
+ * bash from chat still works.
  */
 export function LocalComputerView({
   projectId,
@@ -45,6 +54,52 @@ export function LocalComputerView({
       workspaceDir,
     }),
   });
+
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+
+  // A fresh nonce per (re)connect — it is single-use by construction, so the
+  // reconnect button in `ComputerTerminal` must mint again rather than replay.
+  const consentToken = consent.token;
+  const mintToken = useCallback(
+    () => mintLocalTerminalNonce({ projectId, consentToken }),
+    [projectId, consentToken],
+  );
+
+  // One `computer_terminal_opened` per opened SESSION (not per reconnect), and
+  // one `local_terminal_unavailable` per entry into the degraded state.
+  //
+  // The dedupe key is the CURRENT state, and `null` ("no pane") is tracked as a
+  // state like any other. That matters: leaving and re-entering a state is a
+  // genuinely new event, so "Forget & re-authorize" (which drops to `null` and
+  // back to `open` in the same project) reports the new shell instead of being
+  // swallowed as a repeat.
+  //
+  // Only the `open` key carries `projectId`: the pane is keyed by project, so a
+  // switch remounts `ComputerTerminal` and starts a REAL new shell that must be
+  // counted even though this component didn't remount. Degradation, by contrast,
+  // is a property of the MACHINE (node-pty is missing) — re-reporting it per
+  // project would inflate the count with events that reflect no change at all.
+  const showTerminal = consent.granted && localTerminalAvailable;
+  const showDegraded = consent.granted && !localTerminalAvailable;
+  const lastReportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = showTerminal
+      ? `open:${projectId}`
+      : showDegraded
+        ? "degraded"
+        : null;
+    if (lastReportedRef.current === key) return;
+    // Record every transition, including into `null`, so the next entry into a
+    // reportable state is not mistaken for a repeat of the last one.
+    lastReportedRef.current = key;
+    if (key === null) return;
+    if (showTerminal) {
+      track("computer_terminal_opened", { location: "computer_tab_local" });
+    } else {
+      track("local_terminal_unavailable", { reason: "terminal_unavailable" });
+    }
+    // `projectId` is deliberately a dependency — see the key above.
+  }, [showTerminal, showDegraded, projectId]);
 
   const onAllow = async (): Promise<boolean> => {
     const ok = await consent.grant();
@@ -92,9 +147,24 @@ export function LocalComputerView({
               : {})}
           />
         ) : localTerminalAvailable ? (
-          // The node-pty terminal PR wires the real pane here; until then this
-          // branch is unreachable (terminalAvailable is false).
-          <PaneMessage>Terminal ready.</PaneMessage>
+          // `uploadEnabled={false}`: the pane's drag-and-drop upload posts to
+          // the CLOUD box's upload route, which would burn this pane's
+          // single-use nonce against the wrong endpoint and toast a failure.
+          // Writing dropped files onto the user's real filesystem is a separate
+          // consent question, deliberately out of scope here.
+          <ComputerTerminal
+            // Keyed by project: `ComputerTerminal` connects from a MOUNT-ONLY
+            // effect, so switching projects while staying on the Computer tab
+            // would otherwise leave the live PTY in the previous project's
+            // workspace (and journaled under it) while this view showed the new
+            // one. Remounting closes that session and opens one in the right dir.
+            key={projectId}
+            mintToken={mintToken}
+            themeMode={themeMode === "dark" ? "dark" : "light"}
+            wsPath={LOCAL_TERMINAL_WS_PATH}
+            uploadEnabled={false}
+            className="h-full"
+          />
         ) : (
           <PaneMessage dashed>
             The terminal for this machine isn&apos;t available yet. Agents can
@@ -115,7 +185,12 @@ export function LocalComputerView({
             type="button"
             data-testid="local-computer-reauthorize"
             className="font-medium text-primary hover:underline"
-            onClick={() => void consent.revoke()}
+            onClick={() => {
+              track("local_computer_consent_reauthorized", {
+                location: "computer_tab_local",
+              });
+              void consent.revoke();
+            }}
           >
             Forget &amp; re-authorize
           </button>

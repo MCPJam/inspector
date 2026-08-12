@@ -9,7 +9,9 @@ import type {
   OAuthStateMachine,
   OAuthProtocolVersion,
   BaseOAuthStateMachineConfig,
+  OAuthHttpRequest,
   OAuthRequestExecutor,
+  OAuthRequestResult,
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
@@ -37,6 +39,100 @@ import {
   createDebugOAuthStateMachine as create2026_07_28,
   type DebugOAuthStateMachineConfig as Config2026_07_28,
 } from "./debug-oauth-2026-07-28.js";
+import { protocolVersionLabel } from "../../mcp-client-manager/mcp-protocol-version.js";
+
+/**
+ * A redaction sentinel reached the state machine as a live credential.
+ *
+ * Distinct error type so a caller can tell "MCPJam redacted its own live data"
+ * apart from an authorization-server failure — the two look identical from the
+ * outside (both end in `401 invalid_token`) and that is precisely what made
+ * #3865 expensive to diagnose.
+ */
+export class OAuthRedactedCredentialError extends Error {
+  readonly field: string;
+
+  constructor(field: string, target: string) {
+    super(
+      `OAuth response from ${target} carried a redacted \`${field}\`. ` +
+        "Trace redaction was applied to data the OAuth flow consumes; a " +
+        "redaction sentinel is a non-empty string, so it would be sent " +
+        "upstream as a credential and rejected as invalid. Redaction belongs " +
+        "to the trace projection layer only.",
+    );
+    this.name = "OAuthRedactedCredentialError";
+    this.field = field;
+  }
+}
+
+/**
+ * Top-level credential fields the flow consumes verbatim. A sentinel in any of
+ * these is used as a credential rather than merely displayed.
+ */
+const CONSUMED_CREDENTIAL_FIELDS = [
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+] as const;
+
+/**
+ * The sentinel shapes this codebase's redactors emit: the bare marker, and the
+ * `redactSensitiveTraceValue` truncation form `abcd...[redacted]...yz`.
+ *
+ * Deliberately narrow. An opaque token is an arbitrary string, so a loose match
+ * would fail real logins — the guard must only fire on values that are
+ * unambiguously our own output.
+ */
+const REDACTION_SENTINELS = [
+  /^\[redacted\]$/,
+  // `[\s\S]` rather than `.`: a value whose first four or last two characters
+  // include a line terminator still produces the sentinel, and `.` would not
+  // match it — leaving the one shape the guard exists for undetected.
+  /^[\s\S]{4}\.\.\.\[redacted\]\.\.\.[\s\S]{2}$/,
+];
+
+/** Strip query and fragment: the target is for diagnosis, not for echoing
+ * request parameters (which can themselves carry credentials) into an error. */
+function describeRequestTarget(request: Pick<OAuthHttpRequest, "url">): string {
+  try {
+    const url = new URL(request.url);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "the authorization server";
+  }
+}
+
+/**
+ * Throw if an executor result carries a redaction sentinel where the flow
+ * expects a credential; otherwise return the result unchanged (by identity).
+ *
+ * Inspects `result.body`, which is where the real executor puts response
+ * fields — a check against `result.access_token` would look reasonable and
+ * never fire.
+ */
+export function assertOAuthResultCredentialsUnredacted(
+  result: OAuthRequestResult,
+  request: Pick<OAuthHttpRequest, "url">,
+): OAuthRequestResult {
+  const body: unknown = result?.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return result;
+  }
+
+  const record = body as Record<string, unknown>;
+  for (const field of CONSUMED_CREDENTIAL_FIELDS) {
+    const value = record[field];
+    if (
+      typeof value === "string" &&
+      REDACTION_SENTINELS.some((pattern) => pattern.test(value))
+    ) {
+      throw new OAuthRedactedCredentialError(field, describeRequestTarget(request));
+    }
+  }
+
+  return result;
+}
 
 /**
  * Configuration for creating an OAuth state machine with protocol version selection
@@ -107,7 +203,10 @@ export function createOAuthStateMachine(
     // redirects (see the client executor / DNS-pinning proxy) — a URL-string
     // check here cannot catch a 3xx or DNS-rebind to a private host.
     assertOutboundOAuthUrlAllowed(request.url, { allowLoopback });
-    return rest.requestExecutor(request);
+    const result = await rest.requestExecutor(request);
+    // Second cross-cutting guard at the same seam: catch a trace redactor that
+    // was applied to live data before the sentinel is spent as a credential.
+    return assertOAuthResultCredentialsUnredacted(result, request);
   };
   const baseConfig = {
     ...rest,
@@ -195,11 +294,13 @@ export function getSupportedRegistrationStrategies(
 }
 
 /**
- * Protocol version metadata for UI display
+ * Protocol version metadata for UI display. Labels come from
+ * `protocolVersionLabel` so a consumer rendering this record cannot disagree
+ * with the inspector's dropdowns about which revision is Latest.
  */
 export const PROTOCOL_VERSION_INFO = {
   "2025-03-26": {
-    label: "2025-03-26 (Legacy)",
+    label: protocolVersionLabel("2025-03-26"),
     description: "Original MCP OAuth specification with direct discovery",
     features: [
       "Dynamic Client Registration (DCR) SHOULD be supported",
@@ -210,8 +311,8 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2025-06-18": {
-    label: "2025-06-18",
-    description: "Current MCP OAuth specification with resource metadata",
+    label: protocolVersionLabel("2025-06-18"),
+    description: "MCP OAuth specification with resource metadata",
     features: [
       "Dynamic Client Registration (DCR) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",
@@ -220,8 +321,8 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2025-11-25": {
-    label: "2025-11-25 (Latest)",
-    description: "Proposed MCP OAuth specification with CIMD support",
+    label: protocolVersionLabel("2025-11-25"),
+    description: "MCP OAuth specification with CIMD support",
     features: [
       "Client ID Metadata Documents (CIMD) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",
@@ -231,9 +332,9 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2026-07-28": {
-    label: "2026-07-28 (Draft)",
+    label: protocolVersionLabel("2026-07-28"),
     description:
-      "Draft MCP OAuth specification: 2025-11-25 discovery plus OIDC application_type",
+      "Newest MCP OAuth specification: 2025-11-25 discovery plus OIDC application_type",
     features: [
       "Client ID Metadata Documents (CIMD) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",

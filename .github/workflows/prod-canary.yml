@@ -1,0 +1,238 @@
+name: Prod canary
+
+# Edge 502s are queryable NOWHERE. Cloudflare fronts Railway which fronts
+# Node; Axiom logging is in-process, so a request that dies at the edge or
+# before the app leaves no row anywhere — a user reporting "the hosted tool
+# call 502s" cannot be confirmed, reproduced, or timed from any data we hold.
+# This probes from outside that stack every 15 minutes.
+#
+# The point is not just "is it up". It is telling apart failures that look
+# identical to a user:
+#
+#   both probes fail          -> independent targets failing together; look
+#                                for a shared dependency before assuming two
+#                                separate incidents
+#   app 5xx WITH a cf-ray on   -> the reported 502 shape. Cloudflare handled
+#     that same request           the response; whether the EDGE or the ORIGIN
+#                                 produced the 5xx still needs the status and
+#                                 body, since Cloudflare's own 520-524 pages
+#                                 carry a cf-ray too
+#   app fails, no such pair    -> report the statuses; a non-2xx with no
+#                                cf-ray may never have reached Cloudflare
+#   only the MCP target fails  -> the canary's target, app probes passed
+#
+# cf-ray is recorded only from a FAILING 5xx request: a cf-ray from a healthy
+# path says nothing about a different path, and a 4xx behind Cloudflare is a
+# routing or auth answer, not an outage. The canary narrows the question; it
+# does not pretend to have origin telemetry it cannot see from outside.
+#
+# Anti-false-alarm rules, in priority order over reporting anything at all:
+#
+#   1. A control probe against a third party runs FIRST. If GitHub's own API
+#      is unreachable from the runner, the runner's network is broken and
+#      every conclusion below is worthless — exit 0, say nothing. A canary
+#      that cries wolf gets muted, and a muted canary is worse than none.
+#   2. An `npx` install failure is INCONCLUSIVE, never "MCP worker down". An
+#      npm registry outage must not post an outage claim about our service.
+#   3. Probes retry in-run before failing, so a single dropped packet is not
+#      an incident.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "App base URL to probe (defaults to the production app)"
+        required: false
+        type: string
+      mcp_target_url:
+        description: "MCP server URL to probe"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never let a slow run stack on the next scheduled tick.
+  group: prod-canary
+  cancel-in-progress: false
+
+env:
+  BASE_URL: ${{ inputs.base_url || vars.PRODUCTION_APP_URL || 'https://app.mcpjam.com' }}
+  # No MCP target is hardcoded: the intended host appears nowhere in this
+  # repository, so guessing one would produce confident alerts about a URL
+  # nobody verified. Set `vars.CANARY_MCP_TARGET_URL` to enable step 3; until
+  # then it is skipped and the app probe still runs.
+  MCP_TARGET_URL: ${{ inputs.mcp_target_url || vars.CANARY_MCP_TARGET_URL }}
+  # Pinned. `@latest` would make an upstream publish able to break the canary,
+  # and a broken canary reads as a healthy service.
+  CLI_VERSION: "3.20.0"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Control probe (is this runner's network sane?)
+        id: control
+        run: |
+          if curl -sS --max-time 15 --retry 2 --retry-delay 3 \
+              -o /dev/null -w '%{http_code}' https://api.github.com/ | grep -q '^2'; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Control probe failed — runner network is unreliable. Reporting nothing."
+          fi
+
+      - name: Probe the app through the edge
+        id: app
+        if: steps.control.outputs.ok == 'true'
+        run: |
+          set -uo pipefail
+          failures=""
+          details=""
+          # cf-ray is recorded ONLY from a request that actually failed with a
+          # 5xx, and only that combination supports the origin conclusion
+          # below. A cf-ray from a HEALTHY path proves nothing about a
+          # different path, and a 4xx behind Cloudflare is a routing or auth
+          # answer, not an origin outage.
+          origin_5xx_ray=""
+          # Strip trailing slashes before appending. A repo variable set to
+          # `https://app.mcpjam.com/` would otherwise build `//health`, which
+          # Hono does not route — a healthy deployment answering 404 and a
+          # Slack outage alert for nothing, which is how a canary gets muted.
+          base="${BASE_URL%"${BASE_URL##*[!/]}"}"
+          for path in /health /api/mcp/health /api/apps/health; do
+            url="${base}${path}"
+            # -D dumps headers so cf-ray survives; the body is capped because a
+            # gateway error page can be arbitrarily large.
+            code=$(curl -sS --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors \
+              -D /tmp/headers.txt -o /tmp/body.txt -w '%{http_code}' "$url" || echo "000")
+            # `tail -n 1`: `-D` APPENDS the headers of every retry to the same
+            # file, so a sustained 5xx leaves several cf-ray lines here. Writing
+            # a multi-line value with `echo name=value` into $GITHUB_OUTPUT is
+            # invalid and fails the step — which would silence the canary
+            # precisely during the outage it exists to report. Take the last
+            # attempt's ray, which is the one the reported status belongs to.
+            ray=$(grep -i '^cf-ray:' /tmp/headers.txt | tr -d '\r' | cut -d' ' -f2- | tail -n 1 || true)
+            if [ "${code:0:1}" != "2" ]; then
+              failures="${failures}${path} "
+              if [ "${code:0:1}" = "5" ] && [ -n "$ray" ]; then
+                origin_5xx_ray="$ray"
+              fi
+              snippet=$(head -c 300 /tmp/body.txt | tr -d '\r' | tr '\n' ' ')
+              details="${details}- \`${path}\` -> HTTP ${code}${ray:+ (cf-ray ${ray})}: ${snippet}"$'\n'
+            fi
+          done
+          {
+            echo "failures=${failures}"
+            echo "origin_5xx_ray=${origin_5xx_ray}"
+            echo "details<<EOF"
+            echo "${details}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        if: steps.control.outputs.ok == 'true' && env.MCP_TARGET_URL != ''
+        with:
+          node-version: "22"
+
+      - name: Probe the MCP target
+        id: mcp
+        if: steps.control.outputs.ok == 'true' && env.MCP_TARGET_URL != ''
+        run: |
+          set -uo pipefail
+          # Install and run are SEPARATE steps on purpose. A failed install is
+          # an npm problem and must not be reported as our target being down.
+          if ! npm exec --yes --package "@mcpjam/cli@${CLI_VERSION}" -- mcpjam --version >/dev/null 2>&1; then
+            echo "status=inconclusive" >> "$GITHUB_OUTPUT"
+            echo "::notice::Could not install @mcpjam/cli@${CLI_VERSION}; skipping the MCP probe."
+            exit 0
+          fi
+          if npm exec --yes --package "@mcpjam/cli@${CLI_VERSION}" -- \
+              mcpjam server probe --url "${MCP_TARGET_URL}" > /tmp/probe.json 2>&1; then
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            {
+              echo "detail<<EOF"
+              head -c 500 /tmp/probe.json
+              echo
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post the diagnosis
+        if: >-
+          steps.control.outputs.ok == 'true' &&
+          (steps.app.outputs.failures != '' || steps.mcp.outputs.status == 'failed')
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
+          APP_FAILURES: ${{ steps.app.outputs.failures }}
+          APP_DETAILS: ${{ steps.app.outputs.details }}
+          ORIGIN_5XX_RAY: ${{ steps.app.outputs.origin_5xx_ray }}
+          MCP_STATUS: ${{ steps.mcp.outputs.status }}
+          MCP_DETAIL: ${{ steps.mcp.outputs.detail }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          app_down=false
+          [ -n "${APP_FAILURES// /}" ] && app_down=true
+          mcp_down=false
+          [ "${MCP_STATUS}" = "failed" ] && mcp_down=true
+
+          # The disambiguation matrix, resolved here so the message states a
+          # conclusion rather than making whoever is on call re-derive it.
+          #
+          # Each branch states what was OBSERVED and, at most, what it is
+          # consistent with. The two probes are independent targets, so
+          # simultaneous failure is a correlation worth flagging, not a proven
+          # common cause — and only a 5xx WITH a cf-ray, on the failing request
+          # itself, is evidence that Cloudflare answered for an origin that
+          # did not.
+          if [ "$app_down" = true ] && [ "$mcp_down" = true ]; then
+            headline=":rotating_light: Prod canary: the app and the MCP target are BOTH failing. Independent targets, so check for a shared dependency (edge, DNS, network) before assuming two incidents."
+          elif [ "$app_down" = true ] && [ -n "${ORIGIN_5XX_RAY}" ]; then
+            headline=":rotating_light: Prod canary: the app returned 5xx and Cloudflare handled the response (cf-ray ${ORIGIN_5XX_RAY}). This is the hosted-502 shape, but cf-ray alone does NOT separate a Cloudflare-generated 5xx (520-524) from our origin failing — check the status and body below, then the origin logs."
+          elif [ "$app_down" = true ]; then
+            headline=":rotating_light: Prod canary: the app probe failed with no 5xx-plus-cf-ray. Check the statuses below — a non-2xx without a cf-ray may mean the request never reached Cloudflare."
+          else
+            headline=":warning: Prod canary: the MCP target probe is failing; the app probes passed."
+          fi
+
+          # Assembled line by line so every line stays inside this YAML block
+          # scalar; a bare multi-line shell string would break out of it.
+          {
+            printf '%s\n\n' "$headline"
+            printf '*Base URL:* %s\n' "$BASE_URL"
+            if [ -n "${APP_DETAILS:-}" ]; then
+              printf '\n*App probe failures:*\n%s\n' "$APP_DETAILS"
+            fi
+            if [ -n "${MCP_DETAIL:-}" ]; then
+              printf '\n*MCP probe:*\n```\n%s\n```\n' "$MCP_DETAIL"
+            fi
+            printf '\n<%s|Canary run>\n' "$RUN_URL"
+          } > /tmp/message.txt
+          body=$(cat /tmp/message.txt)
+
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            # Fail loudly in the run rather than silently swallowing an alert:
+            # a canary whose delivery is misconfigured must not look healthy.
+            echo "::error::Canary detected a failure but SLACK_ALERTS_WEBHOOK_URL is not set."
+            echo "$body"
+            exit 1
+          fi
+
+          # `-f` matters: without it curl exits 0 on a 4xx/5xx from Slack, and
+          # the run would claim it posted an alert that was never delivered.
+          if ! jq -n --arg text "$body" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"; then
+            echo "::error::Canary detected a failure AND could not deliver the Slack alert."
+            echo "$body"
+            exit 1
+          fi
+
+          echo "::error::Canary detected a failure — see the Slack post."
+          exit 1
