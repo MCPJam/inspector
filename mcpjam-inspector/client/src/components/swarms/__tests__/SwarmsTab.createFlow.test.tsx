@@ -58,6 +58,14 @@ vi.mock("@/hooks/useClients", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-previewed-client-id", () => ({
+  usePreviewedHostId: () => [null, vi.fn()] as const,
+}));
+
+vi.mock("@/hooks/use-previewed-environment-id", () => ({
+  usePreviewedEnvironmentId: () => [null, vi.fn()] as const,
+}));
+
 vi.mock("@/components/hosts/ServerGroupPicker", () => ({
   ServerGroupPicker: () => <div data-testid="server-group-picker" />,
 }));
@@ -309,7 +317,12 @@ function fillDescribe(text = "Support agents answering refunds") {
   fireEvent.change(screen.getByLabelText("Describe swarm"), {
     target: { value: text },
   });
-  fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+  // Auto-seed usually already picked the first named environment; only click
+  // when the picker is still empty (e.g. compose-only fixtures).
+  const picker = screen.getByTestId("new-swarm-environments-picker");
+  if (picker.textContent === "pick env") {
+    fireEvent.click(picker);
+  }
 }
 
 beforeEach(() => {
@@ -430,19 +443,26 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(submit).toBeDisabled();
     expect(screen.getByText(/describe your users to continue/i)).toBeVisible();
 
-    // A description asks for a generation, which needs somewhere to ground on.
+    // Targets are auto-seeded; a description is the remaining gate for generate.
     fireEvent.change(screen.getByLabelText("Describe swarm"), {
       target: { value: "Support agents answering refunds" },
     });
-    expect(submit).toBeDisabled();
-    expect(
-      screen.getByText(/pick an environment or clients to generate against/i)
-    ).toBeVisible();
-
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     expect(submit).not.toBeDisabled();
     expect(submit).toHaveTextContent("Continue");
     expect(screen.getByText(/3 new personas on next step/i)).toBeVisible();
+  });
+
+  it("auto-seeds the first named environment on open", () => {
+    openDescribe();
+    expect(
+      screen.getByTestId("new-swarm-environments-picker")
+    ).toHaveTextContent("1 env");
+    expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
+      /claude/i
+    );
+    expect(
+      screen.getByText(/grounded on 7 tools from prod-like/i)
+    ).toBeVisible();
   });
 
   it("lets a returning user continue on personas alone — no description, no environment, no generation", async () => {
@@ -505,7 +525,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens persona detail in the side panel from a compact card", async () => {
+  it("expands persona detail inline from a compact card", async () => {
     existingPersonas = [
       {
         _id: "p-1",
@@ -586,21 +606,22 @@ describe("SwarmsTab — New swarm create flow", () => {
   it("scales the session estimate with the number of environments", () => {
     openDescribe();
     const quick = screen.getByRole("radio", { name: /quick look/i });
-    // 3 personas × 5 journeys × 1 session, before any environment is picked.
-    expect(quick).toHaveTextContent("15 sessions");
-
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    // Auto-seed picks one env: 3 personas × 5 journeys × 1 session.
     expect(quick).toHaveTextContent("15 sessions");
     expect(
       screen.getByRole("radio", { name: /launch gate/i })
     ).toHaveTextContent("120 sessions");
+
+    // Second env doubles the fan-out.
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    expect(quick).toHaveTextContent("30 sessions");
+    expect(
+      screen.getByRole("radio", { name: /launch gate/i })
+    ).toHaveTextContent("240 sessions");
   });
 
-  it("shows the grounding hint once an environment is picked", () => {
+  it("shows the grounding hint for the auto-seeded environment", () => {
     openDescribe();
-    expect(screen.queryByText(/grounded on/i)).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     expect(
       screen.getByText(/grounded on 7 tools from prod-like/i)
     ).toBeVisible();
@@ -991,8 +1012,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     ];
     openDescribe();
     fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
-    // Picker cycles [] → [env-1] → [env-1, env-2].
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    // Auto-seed has [env-1]; one click adds env-2.
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
@@ -1030,7 +1050,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     ];
     openDescribe();
     fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    // Auto-seed already matches the journey's env-1 — no picker click needed.
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
@@ -1060,7 +1080,6 @@ describe("SwarmsTab — New swarm create flow", () => {
     ];
     openDescribe();
     fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
@@ -1302,7 +1321,6 @@ describe("SwarmsTab — New swarm create flow", () => {
     ];
     openDescribe();
     fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
-    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
@@ -1346,7 +1364,7 @@ describe("SwarmsTab — New swarm create flow", () => {
   it("stamps every selected environment onto created journeys", async () => {
     openDescribe();
     fillDescribe();
-    // fillDescribe picks env-1; one more click adds env-2.
+    // Auto-seed has env-1; one more click adds env-2.
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     expect(screen.getByTestId("new-swarm-environments-picker")).toHaveTextContent(
       "2 env"
@@ -1407,8 +1425,8 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.change(screen.getByLabelText("Describe swarm"), {
       target: { value: "Support agents answering refunds" },
     });
+    // No named envs → auto-seed picks Claude; add Cursor for a two-client fan-out.
     fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
-    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
 
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
@@ -1449,8 +1467,8 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.change(screen.getByLabelText("Describe swarm"), {
       target: { value: "Support agents answering refunds" },
     });
+    // Auto-seed already has Claude; add Cursor.
     fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
-    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
 
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
