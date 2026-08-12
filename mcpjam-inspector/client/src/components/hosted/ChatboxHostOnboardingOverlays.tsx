@@ -15,6 +15,7 @@ export function ChatboxHostOnboardingOverlays({
   pendingOAuthServers,
   authorizeServer,
   isFinishingOAuth,
+  onSkipAuthorization,
 }: {
   showWelcome: boolean;
   onGetStarted: () => void;
@@ -26,6 +27,12 @@ export function ChatboxHostOnboardingOverlays({
   }>;
   authorizeServer: (server: HostedOAuthServerDescriptor) => Promise<void>;
   isFinishingOAuth: boolean;
+  /**
+   * Releases the composer without authorizing. Offered once an authorization
+   * has actually failed, so "Authorize again" is never the only way out of a
+   * disabled composer.
+   */
+  onSkipAuthorization?: () => void;
 }) {
   const [finishingTimedOut, setFinishingTimedOut] = useState(false);
 
@@ -64,6 +71,10 @@ export function ChatboxHostOnboardingOverlays({
   const authSubtitle = onlyOptionalOAuthPending
     ? "Authorize below to connect optional servers to this chat."
     : "Authorize the required servers to continue.";
+
+  const hasFailedAuthorization = pendingOAuthServers.some(
+    ({ state }) => state.status === "error"
+  );
 
   return (
     <>
@@ -165,6 +176,21 @@ export function ChatboxHostOnboardingOverlays({
                 );
               })}
             </div>
+            {hasFailedAuthorization && onSkipAuthorization ? (
+              <div className="mt-5 flex flex-col items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onSkipAuthorization}
+                >
+                  Continue without authorizing
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Some tools may be unavailable.
+                </p>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
