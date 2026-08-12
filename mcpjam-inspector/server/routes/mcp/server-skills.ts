@@ -14,7 +14,6 @@
 
 import { Hono } from "hono";
 import "../../types/hono";
-import { logger } from "../../utils/logger";
 import {
   EXTENSION_INACTIVE_REFUSAL,
   getVerifiedServerSkill,
@@ -22,6 +21,7 @@ import {
   listServerSkillCatalog,
   readVerifiedServerSkillFile,
 } from "../../utils/server-skills.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const serverSkills = new Hono();
 
@@ -41,7 +41,10 @@ serverSkills.post("/support", async (c) => {
       support: c.mcpClientManager.getSkillsSupport(body.serverId),
     });
   } catch (error) {
-    logger.error("Error reading skills support", error);
+    reportRouteFailure("Error reading skills support", error, {
+      source: "mcp.server-skills.support",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -78,7 +81,11 @@ serverSkills.post("/list", async (c) => {
     const listing = await listServerSkillCatalog(c.mcpClientManager, serverId);
     return c.json({ success: true, support, ...listing });
   } catch (error) {
-    logger.error("Error listing server skills", error, { serverId });
+    reportRouteFailure("Error listing server skills", error, {
+      source: "mcp.server-skills.list",
+      hop: "user_server_hop",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -134,7 +141,11 @@ serverSkills.post("/get", async (c) => {
       // rather than being flattened into a 500.
       return c.json({ success: false, refusal: error.refusal });
     }
-    logger.error("Error loading server skill", error, { serverId });
+    reportRouteFailure("Error loading server skill", error, {
+      source: "mcp.server-skills.load",
+      hop: "user_server_hop",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -186,7 +197,10 @@ serverSkills.post("/read-file", async (c) => {
     if (isServerSkillRefusalError(error)) {
       return c.json({ success: false, refusal: error.refusal });
     }
-    logger.error("Error reading server skill file", error);
+    reportRouteFailure("Error reading server skill file", error, {
+      source: "mcp.server-skills.file",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,

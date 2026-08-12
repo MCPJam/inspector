@@ -762,7 +762,7 @@ describe("ChatTabV2 history sync", () => {
       errorToastMessage(
         "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 

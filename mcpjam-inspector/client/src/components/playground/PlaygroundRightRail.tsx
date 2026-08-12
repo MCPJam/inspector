@@ -1,7 +1,9 @@
 import { useCallback, useState } from "react";
 import {
+  Cloud,
   FileText,
   FolderTree,
+  Laptop,
   Loader2,
   PanelRightClose,
   TerminalSquare,
@@ -12,8 +14,13 @@ import { cn } from "@/lib/utils";
 import { LoggerView } from "@/components/logger-view";
 import { ComputerStatusChip } from "@/components/computer/ComputerStatusChip";
 import { ComputerTerminalPane } from "@/components/computer/ComputerTerminalPane";
+import { PaneMessage } from "@/components/computer/PaneMessage";
 import { useComputerTerminal } from "@/components/computer/useComputerTerminal";
 import { useComputersEnabledState } from "@/hooks/useComputersEnabled";
+import {
+  useComputerEngine,
+  type ComputerEngineState,
+} from "@/hooks/useComputerEngine";
 import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
@@ -73,33 +80,19 @@ function RightRailTabbed({
   hostId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
-  // Bumped to remount (and thus reconnect) the terminal into the latest harness
-  // workdir on demand — cwd only applies at connect time.
-  const [reloadKey, setReloadKey] = useState(0);
-  // One controller for the rail so the terminal session survives Logs ⇄ Shell
-  // toggles (both bodies stay mounted; we only show/hide).
-  const ct = useComputerTerminal({ projectId, isAuthenticated });
-  // Open the terminal in the harness session workdir — but only for harness
-  // hosts (plain computer hosts have no such dir → home).
-  const isHarnessHost = !!hostConfig?.harness;
-  // Read with the SAME key the chat stream writes (previewedHostId), not
-  // hostConfig.id — those are different identifiers and would never match.
-  const streamedWorkdir = useHarnessWorkdir(projectId, hostId);
-  // COMP-16: open the terminal in the configured working directory. For a
-  // harness host use the streamed per-session dir; for a plain computer host
-  // fall back to the host-configured `computer.workdir` (the same dir the bash
-  // tool runs in) so the Shell opens where the model works.
-  const harnessCwd = isHarnessHost
-    ? streamedWorkdir
-    : hostConfig?.computer?.workdir;
-  // Only offer "Open terminal" once the data-plane config has resolved to a
-  // usable plane — opening while it's still loading mounts the terminal at the
-  // page origin; opening with no plane reserves a computer it can't reach.
-  const canOpenTerminal =
-    ct.dataPlaneResolved &&
-    !ct.dataPlaneUnavailable &&
-    isAuthenticated &&
-    !!projectId;
+  // Which engine serves this project's computer work. The rail is an INDICATOR
+  // only — switching lives on the Computer tab, which owns the consent gate.
+  //
+  // NOTE: `projectId` here is `sharedProjectId ?? activeProjectId`, while
+  // PlaygroundMain's engine reads `sharedProjectId` only. The divergence is
+  // harmless (the engine hooks no-op without a shared project) and deliberate.
+  const engine = useComputerEngine(projectId);
+  // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
+  // tab's face choice: someone who picked "This machine" but hasn't authorized
+  // it yet must see the local body's pointer, not a cloud terminal they didn't
+  // ask for. The CHIP follows the resolved `engine`, so it can never claim
+  // "This machine" while commands actually run in the cloud.
+  const isLocalShell = engine.selectedEngine === "local";
 
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
@@ -154,50 +147,175 @@ function RightRailTabbed({
           activeTab === "shell" ? "flex" : "hidden",
         )}
       >
-        <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+        {/* The local body deliberately does NOT mount the cloud terminal
+            controller: `useComputerTerminal` reserves (and wakes) a cloud box
+            on open, which would be a real machine started behind the user's
+            back while their chat bash runs on this laptop. Swapping bodies
+            mid-session drops a live cloud socket — the reserved box stays up
+            until the idle sweep, and switching back reconnects with a fresh
+            token mint. */}
+        {isLocalShell ? (
+          <LocalShellBody engine={engine} />
+        ) : (
+          <CloudShellBody
+            engine={engine}
+            projectId={projectId}
+            isAuthenticated={isAuthenticated}
+            hostConfig={hostConfig}
+            hostId={hostId}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Which machine this project's computer work runs on. Indicator only. */
+function RailEngineChip({ engine }: { engine: "local" | "cloud" }) {
+  const isLocal = engine === "local";
+  const Icon = isLocal ? Laptop : Cloud;
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+      data-testid="rail-engine-chip"
+      title="Switch engines from the Computer tab"
+    >
+      <Icon className="size-3" aria-hidden />
+      {isLocal ? "This machine" : "Cloud computer"}
+    </span>
+  );
+}
+
+/** The Shell body for the local engine: no cloud controller, no reserve. */
+function LocalShellBody({ engine }: { engine: ComputerEngineState }) {
+  const { consent, localTerminalAvailable } = engine;
+  return (
+    <>
+      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+        {/* Same `toggleVisible` gate as the cloud body: with only one engine
+            available there is no choice to indicate, and the body copy below
+            already names the machine. */}
+        {engine.toggleVisible ? <RailEngineChip engine={engine.engine} /> : null}
+      </div>
+      <div className="min-h-0 flex-1 px-3 pb-3">
+        {!consent.granted ? (
+          // A pointer, NOT a second consent gate: the Computer tab owns the
+          // grant (and the blunt copy that goes with it).
+          <PaneMessage dashed>
+            <span data-testid="rail-local-unconsented">
+              This machine isn&apos;t authorized yet. Open the Computer tab to
+              allow agent commands here.
+            </span>
+          </PaneMessage>
+        ) : localTerminalAvailable ? (
+          <PaneMessage dashed>
+            <span data-testid="rail-local-terminal-pointer">
+              Open the terminal for this machine from the Computer tab.
+            </span>
+          </PaneMessage>
+        ) : (
+          <PaneMessage dashed>
+            <span data-testid="rail-local-terminal-unavailable">
+              The terminal for this machine isn&apos;t available. Agents can
+              still run bash commands here from chat.
+            </span>
+          </PaneMessage>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** The Shell body for the cloud engine — unchanged behavior. */
+function CloudShellBody({
+  engine,
+  projectId,
+  isAuthenticated,
+  hostConfig,
+  hostId,
+}: {
+  engine: ComputerEngineState;
+  projectId: string | null;
+  isAuthenticated: boolean;
+  hostConfig: HostConfigDtoV2 | null;
+  hostId: string | null;
+}) {
+  // Bumped to remount (and thus reconnect) the terminal into the latest harness
+  // workdir on demand — cwd only applies at connect time.
+  const [reloadKey, setReloadKey] = useState(0);
+  // One controller for the rail so the terminal session survives Logs ⇄ Shell
+  // toggles (both bodies stay mounted; we only show/hide).
+  const ct = useComputerTerminal({ projectId, isAuthenticated });
+  // Open the terminal in the harness session workdir — but only for harness
+  // hosts (plain computer hosts have no such dir → home).
+  const isHarnessHost = !!hostConfig?.harness;
+  // Read with the SAME key the chat stream writes (previewedHostId), not
+  // hostConfig.id — those are different identifiers and would never match.
+  const streamedWorkdir = useHarnessWorkdir(projectId, hostId);
+  // COMP-16: open the terminal in the configured working directory. For a
+  // harness host use the streamed per-session dir; for a plain computer host
+  // fall back to the host-configured `computer.workdir` (the same dir the bash
+  // tool runs in) so the Shell opens where the model works.
+  const harnessCwd = isHarnessHost
+    ? streamedWorkdir
+    : hostConfig?.computer?.workdir;
+  // Only offer "Open terminal" once the data-plane config has resolved to a
+  // usable plane — opening while it's still loading mounts the terminal at the
+  // page origin; opening with no plane reserves a computer it can't reach.
+  const canOpenTerminal =
+    ct.dataPlaneResolved &&
+    !ct.dataPlaneUnavailable &&
+    isAuthenticated &&
+    !!projectId;
+
+  return (
+    <>
+      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
           <ComputerStatusChip
             status={ct.liveStatus}
             hibernatedReason={ct.status?.hibernatedReason}
           />
-          {!ct.terminalOpen && canOpenTerminal ? (
-            <Button
-              size="sm"
-              onClick={() => void ct.openTerminal()}
-              disabled={ct.starting}
-            >
-              {ct.starting ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <TerminalSquare className="mr-1.5 h-3.5 w-3.5" />
-              )}
-              Open terminal
-            </Button>
-          ) : ct.terminalOpen && harnessCwd ? (
-            // cwd is applied at connect time; remount to reconnect into the
-            // latest harness workdir (e.g. after a new turn ran).
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setReloadKey((k) => k + 1)}
-              title={`Reconnect in ${harnessCwd}`}
-            >
-              <FolderTree className="mr-1.5 h-3.5 w-3.5" />
-              Reload in harness dir
-            </Button>
-          ) : null}
+          {engine.toggleVisible ? <RailEngineChip engine="cloud" /> : null}
         </div>
-        {/* Key on reloadKey ONLY (explicit reconnect) — NOT on cwd, so a newer
-            harness workdir streaming in mid-session doesn't yank the user's open
-            terminal. Reopening the terminal already picks up the latest cwd
-            (ComputerTerminal remounts when terminalOpen flips). */}
-        <ComputerTerminalPane
-          key={reloadKey}
-          controller={ct}
-          className="px-3 pb-3"
-          {...(harnessCwd ? { cwd: harnessCwd } : {})}
-        />
+        {!ct.terminalOpen && canOpenTerminal ? (
+          <Button
+            size="sm"
+            onClick={() => void ct.openTerminal()}
+            disabled={ct.starting}
+          >
+            {ct.starting ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <TerminalSquare className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Open terminal
+          </Button>
+        ) : ct.terminalOpen && harnessCwd ? (
+          // cwd is applied at connect time; remount to reconnect into the
+          // latest harness workdir (e.g. after a new turn ran).
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setReloadKey((k) => k + 1)}
+            title={`Reconnect in ${harnessCwd}`}
+          >
+            <FolderTree className="mr-1.5 h-3.5 w-3.5" />
+            Reload in harness dir
+          </Button>
+        ) : null}
       </div>
-    </div>
+      {/* Key on reloadKey ONLY (explicit reconnect) — NOT on cwd, so a newer
+          harness workdir streaming in mid-session doesn't yank the user's open
+          terminal. Reopening the terminal already picks up the latest cwd
+          (ComputerTerminal remounts when terminalOpen flips). */}
+      <ComputerTerminalPane
+        key={reloadKey}
+        controller={ct}
+        className="px-3 pb-3"
+        {...(harnessCwd ? { cwd: harnessCwd } : {})}
+      />
+    </>
   );
 }
 

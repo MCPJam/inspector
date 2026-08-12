@@ -57,6 +57,15 @@ function classifyInsightError(err: unknown): {
   // hides the surface entirely (SuiteInsightsCollapsible returns null on
   // unavailable). These are *rejections*, not unavailability — the
   // feature works, the user is rate-limited / quota-bound.
+  // DEAD as written: the backend raises `billing_limit_reached` /
+  // `Limit "insightsPerDay"` from the entitlement helper, never this string,
+  // so an eval-surface cap currently falls through to the generic branch
+  // below and hides the band instead of explaining itself. Left in place
+  // rather than fixed here — this hook is document-keyed (it reads lifecycle
+  // off the `EvalSuiteRun` row with no subscription of its own) and pinned by
+  // its own suite, so it is deliberately NOT merged into `use-run-insights`.
+  // `classifyRunInsightError` there matches the strings the backend really
+  // emits, and is the reference when this one is repaired.
   if (raw.includes("insights_daily_limit_reached")) {
     return {
       unavailable: false,
