@@ -5,6 +5,7 @@ import {
   toServedFromCache,
   withCacheEventCapture,
 } from "../../utils/cache-events.js";
+import { reportRouteFailureForResponse } from "../../utils/route-error-report.js";
 
 const listTools = new Hono();
 
@@ -112,10 +113,20 @@ listTools.post("/", async (c) => {
       ...(servedFromCache ? { servedFromCache } : {}),
     });
   } catch (error) {
-    logger.error("Error in /list-tools", error);
+    // No boundary declaration: this batch endpoint fans out to the user's own
+    // MCP servers, so a failure here is far more often their server being down
+    // than our code being wrong. Letting the catalog decide is the whole point
+    // — a dead user server must stop paging the team.
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "Error in /list-tools",
+      error,
+      { source: "mcp.list-tools", hop: "user_server_hop" },
+    );
     return c.json(
       {
         error: error instanceof Error ? error.message : "Unknown error",
+        normalized,
+        origin,
       },
       500,
     );

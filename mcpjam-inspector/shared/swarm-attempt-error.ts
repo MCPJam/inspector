@@ -23,6 +23,11 @@
  *
  * Idempotent by construction: an already-clean string parses to itself.
  */
+import {
+  isRerunnableXaaFailure,
+  isXaaConnectFailureReason,
+  XaaConnectFailureReason,
+} from "./xaa-connect-failure.js";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
 const AGENT_ERROR_ENVELOPE = /^swarm-agent\s+\S+\s+failed\s+\((\d{3})\):\s*/i;
@@ -35,6 +40,12 @@ export const MAX_ATTEMPT_ERROR_CHARS = 500;
 export type SwarmAttemptErrorInfo = {
   /** Clean, user-facing sentence. Always non-empty. */
   message: string;
+  /**
+   * The failure is a handshake to re-run, not a breakage to investigate (an
+   * expired sign-in in front of an XAA-protected server). Surfaces use it to
+   * pick a calm treatment: red is for what the user must go and fix.
+   */
+  rerunnable?: boolean;
   /** Machine tag from the provider envelope, when it carried one. */
   code?: string;
   /** Milliseconds until the limit resets, when known. */
@@ -104,6 +115,30 @@ const SANDBOX_ERROR_CODE_MESSAGES: Record<string, string> = {
 };
 
 /**
+ * Connect-time XAA failure reasons (`journeyRunAttempts.errorCode`, written by
+ * the runner from the thrown route error's `details.reason`) → the sentence to
+ * show if the row somehow carries no message. The server already writes a
+ * server-named, one-action sentence for these, so the stored message WINS —
+ * these are the floor, not a replacement, and they exist because "The session
+ * failed for an unknown reason" is the one thing a swarm must never say about
+ * an authorization handshake it can name.
+ */
+const XAA_REASON_FALLBACK_MESSAGES: Record<XaaConnectFailureReason, string> = {
+  [XaaConnectFailureReason.REAUTH_REQUIRED]:
+    "Your sign-in expired before this server's enterprise access token could be issued — sign in again, then re-run.",
+  [XaaConnectFailureReason.AUTHORIZATION_SERVER_UNKNOWN]:
+    "MCPJam couldn't find the authorization server protecting this server — set its issuer in the server's auth settings.",
+  [XaaConnectFailureReason.NOT_SUPPORTED_HERE]:
+    "This server's enterprise authorization mode can't run on this deployment — use pre-registered credentials in the server's auth settings.",
+  [XaaConnectFailureReason.AUTHORIZATION_REJECTED]:
+    "The authorization server rejected MCPJam's access request — check the server's XAA client credentials and issuer in its auth settings.",
+  [XaaConnectFailureReason.CONFIGURATION_INVALID]:
+    "This server isn't fully configured for enterprise-managed authorization — finish its XAA settings, or set an explicit auth method.",
+  [XaaConnectFailureReason.HANDSHAKE_FAILED]:
+    "This server couldn't complete its enterprise authorization handshake — try again, and check its auth settings if it keeps failing.",
+};
+
+/**
  * Extract a clean message + structured hints from whatever the runner caught.
  *
  * Never throws and never returns an empty message — an unparseable input is
@@ -126,6 +161,16 @@ export function humanizeSwarmAttemptError(
     return { message: sandboxMessage, code: errorCode };
   }
   const input = (raw ?? "").trim();
+  if (isXaaConnectFailureReason(errorCode)) {
+    return {
+      message: (scrub(input) || XAA_REASON_FALLBACK_MESSAGES[errorCode]).slice(
+        0,
+        MAX_ATTEMPT_ERROR_CHARS
+      ),
+      code: errorCode,
+      ...(isRerunnableXaaFailure(errorCode) ? { rerunnable: true } : {}),
+    };
+  }
   if (!input) return { message: "The session failed for an unknown reason." };
 
   let body = input;

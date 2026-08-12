@@ -717,7 +717,9 @@ export type ServerFormOAuthProtocolMode =
 
 /**
  * The default concrete era used when nothing is stored and "auto" cannot be
- * biased by a wire pin (the current "Latest" release).
+ * biased by a wire pin. Deliberately not the newest era: an unpinned server
+ * gets the widely-deployed November flow, not the one servers are still
+ * catching up to.
  */
 export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcreteMode =
   "2025-11-25";

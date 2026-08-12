@@ -162,6 +162,11 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
         statusCode: effectiveStatus,
         errorCode,
         ...(errorMessage ? { errorMessage } : {}),
+        // Present only for routes that produced a normalized error. This is
+        // where `ambiguous`-bucket volume becomes measurable without paging on
+        // it — see the field docs in `log-events.ts`.
+        ...(webErrorMeta?.origin ? { origin: webErrorMeta.origin } : {}),
+        ...(webErrorMeta?.slug ? { slug: webErrorMeta.slug } : {}),
       },
       { error: thrown instanceof Error ? thrown : undefined },
     );

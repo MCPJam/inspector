@@ -7,7 +7,7 @@ import {
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { normalizeCliError, usageError } from "./output.js";
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./redaction.js";
 import { summarizeServerDoctorTarget } from "./server-doctor.js";
 import { listToolsWithMetadata } from "./server-ops.js";
 
@@ -653,7 +653,7 @@ export function createMcpJamMcpServer(
           target: summarizeServerDoctorTarget(target, config),
           timeout: input.timeoutMs ?? defaultTimeoutMs,
         });
-        return redactSensitiveValue(result);
+        return redactForTelemetry(result);
       }),
   );
 
@@ -691,7 +691,7 @@ export function createMcpJamMcpServer(
           headers,
           timeoutMs: timeoutMs ?? defaultTimeoutMs,
         });
-        return redactSensitiveValue(result);
+        return redactForTelemetry(result);
       }),
   );
 
