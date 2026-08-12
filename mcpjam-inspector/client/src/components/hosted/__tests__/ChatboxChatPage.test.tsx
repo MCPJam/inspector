@@ -952,6 +952,17 @@ describe("ChatboxChatPage", () => {
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
 
+    // Settle the gate before reporting the 401. A server joins the authorizable
+    // set only once the requirement probe has answered for it, and it verifies
+    // its stored credential after that — so clicking earlier races both, and
+    // the resulting state depends on which promise won. An unblocked composer
+    // is the observable "everything has settled" signal.
+    await waitFor(() =>
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ chatboxComposerBlocked: false })
+      )
+    );
+
     await userEvent.click(
       screen.getByRole("button", { name: "Trigger OAuth" })
     );
@@ -1018,6 +1029,13 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage />);
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+
+    // See above: let the probe answer and the credentials verify before the 401.
+    await waitFor(() =>
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ chatboxComposerBlocked: false })
+      )
+    );
 
     await userEvent.click(
       screen.getByRole("button", { name: "Trigger targeted OAuth" })
