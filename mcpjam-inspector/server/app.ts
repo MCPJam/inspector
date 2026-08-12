@@ -82,6 +82,7 @@ import {
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
+import { buildHealthMeta } from "./utils/health-payload.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -373,6 +374,7 @@ export async function createHonoApp() {
       timestamp: new Date().toISOString(),
       hasActiveClient: inspectorCommandBus.hasActiveClient(),
       frontend: frontendUrl,
+      ...buildHealthMeta(),
     });
   });
 

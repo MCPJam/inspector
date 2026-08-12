@@ -202,6 +202,15 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_tour_launch_skipped: { source: "client" },
   mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
+  /**
+   * A callback arrived with a pending server name but no stored flow session,
+   * so it could not be completed and the user was asked to reauthorize.
+   *
+   * Expected to be rare and to spike briefly around a deploy that changes the
+   * stored session shape. A sustained rate means something is clearing flow
+   * state that should not be.
+   */
+  oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
   oauth_flow_tab_viewed: { source: "client" },
@@ -225,6 +234,7 @@ export const ANALYTICS_EVENTS = {
   // display names OUT of these payloads: counts, closed enums, stable codes,
   // and a bundle-hash prefix only.
   add_plugin_button_clicked: { source: "client" },
+  plugin_component_configured: { source: "client" },
   plugin_disabled: { source: "client" },
   plugin_import_completed: { source: "client" },
   plugin_import_failed: { source: "client" },

@@ -157,6 +157,8 @@ describe("v1 live-op routes", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       useOAuth: true,
+      requiresAuthorization: true,
+      effectiveAuthMethod: "oauth",
       serverUrl: "https://server.example.com/mcp",
     });
   });

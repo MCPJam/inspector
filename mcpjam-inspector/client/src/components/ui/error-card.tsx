@@ -13,6 +13,7 @@ import {
 import {
   describeError,
   isNormalizedError,
+  originOf,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { cn } from "@/lib/utils";
@@ -105,6 +106,57 @@ function severityStyles(severity: NormalizedError["severity"]) {
   }
 }
 
+/**
+ * The one thing a user staring at a red box most wants to know: is this my
+ * problem or theirs?
+ *
+ * Deliberately narrow. The BADGE comes from `origin`; the explanation of what
+ * to actually do does NOT — it stays in the catalog's own `oneLine` /
+ * `likelyCauses` / `nextSteps`, which are written per slug and already state
+ * the ambiguity a slug carries. Writing per-origin prose here would flatten
+ * that: `transport/econnrefused` is `user_config`, but whether the server is
+ * down or the port is wrong is exactly what its catalog entry spells out and
+ * a generic "check your configuration" would erase.
+ *
+ * `user_server` and `user_config` share one badge on purpose. The distinction
+ * matters to capture policy, not to the person reading the card — both mean
+ * "waiting on MCPJam will not fix this".
+ *
+ * Returns `null` — no badge at all — for two distinct cases that both mean
+ * "no claim to make": an `ambiguous` origin, and an origin that is missing
+ * entirely (a normalized payload from an older server, which crosses the wire
+ * without the field). Guessing in either case is worse than staying quiet.
+ */
+function originBadge(
+  normalized: NormalizedError,
+): { label: string; className: string; note?: string } | null {
+  if (normalized.origin === undefined) return null;
+  // Read through `originOf` rather than the raw field: the value crossed a
+  // wire and an unrecognized string must degrade to "no claim", not render.
+  switch (originOf(normalized)) {
+    case "user_server":
+    case "user_config":
+      return {
+        label: "Not an MCPJam outage",
+        className:
+          "border-foreground/20 bg-foreground/5 text-foreground/70",
+      };
+    case "mcpjam":
+      return {
+        label: "MCPJam issue",
+        className:
+          "border-destructive/30 bg-destructive/10 text-destructive",
+        // Says only what the origin establishes. An earlier draft claimed the
+        // error "has been reported", which this component cannot know: it
+        // renders whatever `NormalizedError` it is handed and reports nothing
+        // itself, and callers pass errors here from paths with no capture.
+        note: "This one is on us — the failure is inside MCPJam, not your server or your configuration.",
+      };
+    default:
+      return null;
+  }
+}
+
 export function ErrorCard({
   error,
   onRetry,
@@ -131,6 +183,7 @@ export function ErrorCard({
   };
   const styles = severityStyles(normalized.severity);
   const Icon = styles.icon;
+  const badge = originBadge(normalized);
 
   const docsHref = normalized.docsAnchor.startsWith("/")
     ? `${DOCS_BASE_URL}${normalized.docsAnchor}`
@@ -150,7 +203,22 @@ export function ErrorCard({
         <Icon className={cn("mt-0.5 h-4 w-4 flex-shrink-0", styles.iconClass)} />
         <div className="flex-1 min-w-0 space-y-1">
           <div className="flex items-start justify-between gap-2">
-            <div className="font-medium leading-tight">{normalized.title}</div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-medium leading-tight">
+                {normalized.title}
+              </span>
+              {badge ? (
+                <span
+                  data-testid="error-card-origin-badge"
+                  className={cn(
+                    "rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                    badge.className,
+                  )}
+                >
+                  {badge.label}
+                </span>
+              ) : null}
+            </div>
             {onDismiss ? (
               <button
                 type="button"
@@ -165,6 +233,9 @@ export function ErrorCard({
           <div className="text-foreground/80 leading-snug">
             {normalized.oneLine}
           </div>
+          {badge?.note ? (
+            <div className="text-foreground/70 leading-snug">{badge.note}</div>
+          ) : null}
           <div className="flex items-center gap-3 pt-1">
             <button
               type="button"

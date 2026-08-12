@@ -360,7 +360,7 @@ describe("useAutoConnectProjectServers", () => {
     );
     expect(mocks.toastError).toHaveBeenCalledWith(
       errorToastMessage("Failed to reconnect 1 server."),
-      { duration: Infinity, id: "reconnect-toast" }
+      { duration: 8000, id: "reconnect-toast" }
     );
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });
