@@ -52,6 +52,7 @@ import {
   isAdhocUnavailable,
 } from "@/components/environment-composer/resolve-stacks";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useCloudServerReadiness } from "@/components/environment-composer/use-cloud-server-readiness";
 import { MAX_PERSONAS_PER_PROJECT } from "@/components/swarms/GenerateSwarmDialog";
 import {
   PersonaPixelAvatar,
@@ -95,6 +96,7 @@ import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
 import { environmentLabel } from "@/lib/environment-label";
 import { ErrorCard } from "@/components/ui/error-card";
 import { cn } from "@/lib/utils";
@@ -474,6 +476,21 @@ export function NewSwarmCreateFlow({
     (!composeMode && targetState.environmentIds.length > 0) ||
     (composeMode && targetState.stack.hostIds.length > 0);
 
+  /**
+   * Swarm sessions run in MCPJam's cloud, so a target whose servers are absent
+   * or unreachable from there cannot produce a run — the resolver rejects it
+   * with `ENV_NO_SERVERS`, and only AFTER this flow has written personas, goals
+   * and (in compose mode) an ad-hoc environment row. Blocking here keeps that
+   * failure in front of the pickers that fix it. `null` = nothing measurable is
+   * wrong; the resolver stays the backstop for what we cannot see.
+   */
+  const serverReadiness = useCloudServerReadiness({
+    projectId,
+    state: targetState,
+    environments: envList,
+  });
+  const serverBlock = describeCloudServerBlock(serverReadiness);
+
   // Generating and reusing are two independent doors into Confirm, and they
   // compose. Writing anything in the box asks for a generation (which needs
   // targets to ground on); selecting personas alone is a complete swarm on
@@ -483,7 +500,7 @@ export function NewSwarmCreateFlow({
   const canGenerate =
     wantsGenerate && hasGenerateTargets && !generating && !materializing;
   const canContinue =
-    generating || materializing
+    generating || materializing || serverBlock !== null
       ? false
       : wantsGenerate
         ? canGenerate
@@ -493,6 +510,9 @@ export function NewSwarmCreateFlow({
   const continueHint = (() => {
     if (generating || materializing) return null;
     if (!canContinue) {
+      // The notice above carries the finding and the fix; repeating it here
+      // would put the same two sentences on screen twice.
+      if (serverBlock) return "Fix where it runs to continue.";
       if (wantsGenerate) {
         return environmentsEnabled
           ? "Pick an environment or clients to generate against."
@@ -1422,6 +1442,7 @@ export function NewSwarmCreateFlow({
                   onChange={setTargetState}
                   draftNameHint={draft.trim() || undefined}
                   disabled={generating || materializing}
+                  serverBlock={serverBlock}
                 />
                 {groundingEnvironmentId ? (
                   <ErrorBoundary fallback={null}>

@@ -102,16 +102,26 @@ const ENV_COPY: Record<
   string,
   Pick<NormalizedError, "title" | "likelyCauses" | "nextSteps" | "severity">
 > = {
+  // Two genuinely different situations arrive under this one code, and the
+  // second one is invisible from the sentence: an environment whose servers are
+  // all LOCAL (stdio, or an http url on localhost / a private address) resolves
+  // fine for a local run and is unusable for a cloud one, so a hosted surface
+  // reads "no servers" while the client's Servers tab plainly shows one. Naming
+  // the reachability reading here is the difference between "connect a server"
+  // and "make the server you already have reachable" — different fixes, and the
+  // user has no way to guess which applies.
   ENV_NO_SERVERS: {
-    title: "This environment has no servers",
+    title: "This environment has no servers to run against",
     severity: "warning",
     likelyCauses: [
       "The client this environment points at has no servers connected",
       "The attached server group is empty",
       "Every server contributed by a pinned plugin has been removed",
+      "The only servers are local — stdio, or a localhost/private-address url — and a cloud run can't reach them",
     ],
     nextSteps: [
       "Connect a server to the client, or attach a server group",
+      "For a local server, expose it over HTTPS (Create tunnel on its card) and point the client at that url — or run this from a local surface instead",
       "Check the environment's pinned plugins if it relied on one for servers",
     ],
   },
