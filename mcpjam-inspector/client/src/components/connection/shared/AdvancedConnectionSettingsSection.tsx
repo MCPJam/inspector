@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { protocolVersionLabel } from "@mcpjam/sdk/browser";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 
 /**
@@ -30,8 +31,8 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "inherit", label: "Client default" },
-  { value: "latest", label: "Latest (2026-07-28)" },
-  { value: "november", label: "November (2025-11-25)" },
+  { value: "latest", label: protocolVersionLabel("2026-07-28") },
+  { value: "november", label: protocolVersionLabel("2025-11-25") },
 ];
 
 interface HeaderEntry {
