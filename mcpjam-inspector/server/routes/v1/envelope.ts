@@ -7,8 +7,9 @@
  * public code union, upgrading MCP auth failures to OAUTH_REQUIRED.
  */
 import type { Context } from "hono";
-import { isMCPAuthError } from "@mcpjam/sdk";
+import { describeError, isMCPAuthError } from "@mcpjam/sdk";
 import { ErrorCode, mapRuntimeError } from "../web/errors.js";
+import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
 import {
   v1ErrorBody,
   v1Page,
@@ -60,12 +61,25 @@ export function mapErrorToV1(error: unknown): {
   message: string;
   details?: Record<string, unknown>;
 } {
+  // The two branches below return BEFORE `mapRuntimeError`, which is where the
+  // v1 chain would otherwise make its capture decision. Classify them here so
+  // no path out of this function escapes unclassified — both are non-MCPJam in
+  // practice (an upstream server demanding a grant, or not implementing a
+  // primitive), so in practice this records the verdict and pages on nothing.
   if (safeIsMcpAuthError(error)) {
     const message = error instanceof Error ? error.message : String(error);
+    maybeCaptureOriginError(error, describeError(error), {
+      source: "v1.mapErrorToV1",
+      extra: { code: "OAUTH_REQUIRED" },
+    });
     return { code: "OAUTH_REQUIRED", message };
   }
   if (isMcpMethodNotFound(error)) {
     const message = error instanceof Error ? error.message : String(error);
+    maybeCaptureOriginError(error, describeError(error), {
+      source: "v1.mapErrorToV1",
+      extra: { code: "FEATURE_NOT_SUPPORTED" },
+    });
     return { code: "FEATURE_NOT_SUPPORTED", message };
   }
   const routeError = mapRuntimeError(error);
