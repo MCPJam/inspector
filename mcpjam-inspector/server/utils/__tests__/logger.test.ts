@@ -114,7 +114,7 @@ describe("logger", () => {
           {
             level: "error",
             message: "fail",
-            environment: "unknown",
+            environment: "prod",
             requestId: "abc",
             error: "something broke",
           },
@@ -140,7 +140,7 @@ describe("logger", () => {
           {
             level: "warn",
             message: "watch out",
-            environment: "unknown",
+            environment: "prod",
             userId: "123",
           },
         ]);
@@ -185,6 +185,50 @@ describe("logger", () => {
         );
       });
 
+      it("skips Sentry for an error an origin capture point already ruled on", async () => {
+        // Routes commonly log an error and then serialize the SAME object into
+        // an envelope. The envelope's origin policy may have deliberately
+        // declined to page (a user's dead MCP server); without this skip,
+        // `logger.error` would re-capture it here and the noise the policy
+        // exists to remove would come straight back through the side door.
+        const Sentry = await import("@sentry/node");
+        const { markOriginCaptureHandled } = await import(
+          "../error-origin-capture.js"
+        );
+        const error = new Error("their server refused the connection");
+        markOriginCaptureHandled(error);
+
+        logger.error("connect failed", error);
+
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+        // Axiom still gets it — the row stays queryable, only the page is gone.
+        expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+          expect.objectContaining({
+            level: "error",
+            message: "connect failed",
+            error: "their server refused the connection",
+          }),
+        ]);
+      });
+
+      it("tags free-form logs with the same canonical environment as typed events", async () => {
+        // These two used to disagree. `logger.event` resolved the environment
+        // through the allowlist; the free-form path read `ENVIRONMENT` raw. A
+        // deploy setting `ENVIRONMENT=production` therefore split Axiom in
+        // half — typed rows `"prod"`, free-form rows `"production"` — and a
+        // query filtered on either one silently missed the other.
+        vi.stubEnv("ENVIRONMENT", "production");
+        vi.resetModules();
+        const { logger: freshLogger } = await import("../logger.js");
+        mockIngest.mockClear();
+
+        freshLogger.info("started");
+
+        expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+          expect.objectContaining({ environment: "prod" }),
+        ]);
+      });
+
       it("ingests info logs to Axiom", () => {
         logger.info("started", { port: 3000 });
 
@@ -192,7 +236,7 @@ describe("logger", () => {
           {
             level: "info",
             message: "started",
-            environment: "unknown",
+            environment: "prod",
             port: 3000,
           },
         ]);
@@ -205,7 +249,7 @@ describe("logger", () => {
           {
             level: "debug",
             message: "trace",
-            environment: "unknown",
+            environment: "prod",
             args: ["arg1", "arg2"],
           },
         ]);

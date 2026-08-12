@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { protocolVersionLabel } from "@mcpjam/sdk/browser";
 import { AuthenticationSection } from "../shared/AuthenticationSection";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
@@ -803,7 +804,7 @@ describe("AuthenticationSection", () => {
         screen.getByRole("button", { name: /advanced settings/i })
       );
 
-    it("offers the 2026-07-28 (Draft) option in the Protocol dropdown", () => {
+    it("offers the 2026-07-28 option in the Protocol dropdown", () => {
       render(
         <AuthenticationSection
           {...protocolBaseProps}
@@ -812,8 +813,10 @@ describe("AuthenticationSection", () => {
       );
       openAdvanced();
       // Radix Select renders the selected item's label in the trigger; the
-      // 2026 draft option resolving to a label proves it is in PROTOCOL_OPTIONS.
-      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      // 2026 option resolving to a label proves it is in PROTOCOL_OPTIONS.
+      expect(
+        screen.getByText(protocolVersionLabel("2026-07-28"))
+      ).toBeInTheDocument();
     });
 
     it("keeps Auto visible when the wire pin is 2026-07-28", () => {
@@ -827,7 +830,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
-        screen.queryByText("2026-07-28 (Draft)")
+        screen.queryByText(protocolVersionLabel("2026-07-28"))
       ).not.toBeInTheDocument();
     });
 
@@ -842,7 +845,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
-        screen.queryByText("2026-07-28 (Draft)")
+        screen.queryByText(protocolVersionLabel("2026-07-28"))
       ).not.toBeInTheDocument();
     });
 
@@ -861,7 +864,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
-        screen.queryByText("2025-11-25 (Latest)")
+        screen.queryByText(protocolVersionLabel("2025-11-25"))
       ).not.toBeInTheDocument();
     });
 
@@ -890,7 +893,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("2025-06-18")).toBeInTheDocument();
       expect(
-        screen.queryByText("2026-07-28 (Draft)")
+        screen.queryByText(protocolVersionLabel("2026-07-28"))
       ).not.toBeInTheDocument();
     });
   });

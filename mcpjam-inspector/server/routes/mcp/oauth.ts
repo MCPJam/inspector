@@ -1,6 +1,6 @@
 import { Hono } from "hono";
+import { describeError, originOf } from "@mcpjam/sdk";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
 import { classifyError } from "../../utils/error-classify";
 import {
@@ -9,6 +9,20 @@ import {
   fetchOAuthMetadata,
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
+import { reportRouteFailureForResponse } from "../../utils/route-error-report.js";
+
+/**
+ * `normalized` + `origin` for an OAuth proxy error body.
+ *
+ * These routes reach the USER's authorization server, so their failures are
+ * overwhelmingly configuration (wrong issuer, unreachable `.well-known`,
+ * refused connection) rather than an MCPJam outage. Serializing the classified
+ * block lets the OAuth debugger say which, instead of showing a bare string.
+ */
+function describeForBody(error: unknown) {
+  const normalized = describeError(error);
+  return { normalized, origin: originOf(normalized) };
+}
 
 const oauth = new Hono();
 const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
@@ -56,7 +70,12 @@ oauth.post("/debug/proxy", async (c) => {
         statusCode: error.status,
       });
       return c.json(
-        { error: error.message },
+        {
+          error: error.message,
+          // Additive, same reason as the 500 paths below: the debugger
+          // gets the classified block, existing readers keep `error`.
+          ...describeForBody(error),
+        },
         error.status as ContentfulStatusCode,
       );
     }
@@ -65,11 +84,27 @@ oauth.post("/debug/proxy", async (c) => {
       oauthPhase: "proxy",
       errorCode: classifyError(error),
     });
-    logger.error("[OAuth Debug Proxy] Error", error);
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "[OAuth Debug Proxy] Error",
+      error,
+      {
+        // These proxies exist to reach the USER's authorization server.
+        // A refused connection, a bad issuer, or an unreachable
+        // .well-known is their configuration, not our outage.
+        source: "mcp.oauth.debug-proxy",
+        hop: "user_server_hop",
+        context: { targetUrlHost },
+      },
+    );
     return c.json(
       {
+        // `error` stays a plain string — the OAuth debugger reads it
+        // directly. `normalized`/`origin` are additive so the debugger
+        // can render the same attribution the rest of the app shows.
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
+        normalized,
+        origin,
       },
       500,
     );
@@ -101,7 +136,12 @@ oauth.post("/proxy", async (c) => {
         statusCode: error.status,
       });
       return c.json(
-        { error: error.message },
+        {
+          error: error.message,
+          // Additive, same reason as the 500 paths below: the debugger
+          // gets the classified block, existing readers keep `error`.
+          ...describeForBody(error),
+        },
         error.status as ContentfulStatusCode,
       );
     }
@@ -110,11 +150,27 @@ oauth.post("/proxy", async (c) => {
       oauthPhase: "proxy",
       errorCode: classifyError(error),
     });
-    logger.error("OAuth proxy error", error);
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "OAuth proxy error",
+      error,
+      {
+        // These proxies exist to reach the USER's authorization server.
+        // A refused connection, a bad issuer, or an unreachable
+        // .well-known is their configuration, not our outage.
+        source: "mcp.oauth.proxy",
+        hop: "user_server_hop",
+        context: { targetUrlHost },
+      },
+    );
     return c.json(
       {
+        // `error` stays a plain string — the OAuth debugger reads it
+        // directly. `normalized`/`origin` are additive so the debugger
+        // can render the same attribution the rest of the app shows.
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
+        normalized,
+        origin,
       },
       500,
     );
@@ -154,7 +210,12 @@ oauth.get("/metadata", async (c) => {
         statusCode: error.status,
       });
       return c.json(
-        { error: error.message },
+        {
+          error: error.message,
+          // Additive, same reason as the 500 paths below: the debugger
+          // gets the classified block, existing readers keep `error`.
+          ...describeForBody(error),
+        },
         error.status as ContentfulStatusCode,
       );
     }
@@ -163,11 +224,27 @@ oauth.get("/metadata", async (c) => {
       oauthPhase: "metadata",
       errorCode: classifyError(error),
     });
-    logger.error("OAuth metadata proxy error", error);
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "OAuth metadata proxy error",
+      error,
+      {
+        // These proxies exist to reach the USER's authorization server.
+        // A refused connection, a bad issuer, or an unreachable
+        // .well-known is their configuration, not our outage.
+        source: "mcp.oauth.metadata",
+        hop: "user_server_hop",
+        context: { targetUrlHost },
+      },
+    );
     return c.json(
       {
+        // `error` stays a plain string — the OAuth debugger reads it
+        // directly. `normalized`/`origin` are additive so the debugger
+        // can render the same attribution the rest of the app shows.
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
+        normalized,
+        origin,
       },
       500,
     );

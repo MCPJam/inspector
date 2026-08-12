@@ -267,7 +267,8 @@ export function McpjamAgentThread({
   } else if (session.messages.length === 0) {
     body = (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-        Ask anything to start the conversation.
+        Ask a question, or give a task — add a server, run an eval, inspect a
+        trace.
       </div>
     );
   } else if (!session.model) {
