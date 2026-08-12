@@ -248,6 +248,13 @@ export interface RunDiscoveryPreflightDependencies {
   probeServer?: typeof probeMcpServer;
   /** Overridable so tests can drive the guard's verdicts without DNS. */
   fetchFn?: typeof fetch;
+  /**
+   * Test seam only. The deadline is a product decision, not a caller knob —
+   * it lives here rather than on the input so no route can quietly extend the
+   * bound this step exists to enforce. Tests override it to exercise the
+   * deadline path without waiting a real minute.
+   */
+  deadlineMs?: number;
 }
 
 /**
@@ -342,15 +349,34 @@ export async function runDiscoveryPreflight(
     }
   };
 
+  /**
+   * A recorded refusal OUTRANKS every retryable outcome, so this runs before
+   * each of them rather than only on the happy path.
+   *
+   * The ordering is the whole security property. The prober swallows the
+   * guard's throw and carries on to another endpoint; if that one then stalls
+   * or fails, the natural answer is `retryable` — and returning it would put a
+   * target we already refused back on a retry schedule, which is exactly what
+   * the bookkeeping exists to prevent. An earlier revision checked this only
+   * after the race, so the deadline and the generic catch could both mask a
+   * refusal.
+   */
+  const refusalOutcome = (): DiscoveryOutcome | null =>
+    refusal.blocked === null
+      ? null
+      : {
+          kind: "terminal",
+          errorCode: "URL_NOT_ALLOWED",
+          detail: refusal.blocked.message,
+        };
+
   // `timeoutMs` bounds ONE request and the probe makes several, so the clamp
   // alone does not bound the step — the deadline below does. A target that
   // stalls every request would otherwise hold a work lease for the sum of them.
+  const deadlineMs = dependencies.deadlineMs ?? DISCOVERY_DEADLINE_MS;
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<"deadline">((resolve) => {
-    deadlineTimer = setTimeout(
-      () => resolve("deadline"),
-      DISCOVERY_DEADLINE_MS,
-    );
+    deadlineTimer = setTimeout(() => resolve("deadline"), deadlineMs);
   });
 
   let probe: ProbeMcpServerResult;
@@ -365,15 +391,23 @@ export async function runDiscoveryPreflight(
     ]);
 
     if (raced === "deadline") {
-      // The probe keeps running to completion — the SDK takes no abort signal,
-      // so there is nothing to cancel. It holds only a socket and its own
-      // timeout, and its result is dropped. Reporting `retryable` is right on
-      // the merits anyway: a target too slow to answer inside the deadline has
-      // told us nothing about its auth method.
-      return {
-        kind: "retryable",
-        detail: `Discovery did not finish within ${DISCOVERY_DEADLINE_MS}ms`,
-      };
+      // The probe keeps running to completion — the SDK's config takes no
+      // abort signal, so there is nothing to cancel from here. It holds a
+      // socket and its own per-request timeout, and its result is dropped;
+      // propagating a real deadline would need `ProbeMcpServerConfig` to accept
+      // one, which is an SDK change and not this PR's to make.
+      //
+      // A refusal recorded BEFORE the stall still decides the outcome. One
+      // arriving after this point is lost, and that is a cost rather than a
+      // hole: the guard refused the hop either way, so nothing was reached —
+      // the only consequence is that we may retry work that will be refused
+      // again.
+      return (
+        refusalOutcome() ?? {
+          kind: "retryable",
+          detail: `Discovery did not finish within ${deadlineMs}ms`,
+        }
+      );
     }
     probe = raced;
   } catch (error) {
@@ -385,26 +419,26 @@ export async function runDiscoveryPreflight(
       };
     }
     if (error instanceof EgressResolutionError) {
-      return { kind: "retryable", detail: error.message };
+      return refusalOutcome() ?? { kind: "retryable", detail: error.message };
     }
     // An unexpected throw means we learned nothing about the target, which is
-    // the definition of retryable here — never a discovery result.
-    return {
-      kind: "retryable",
-      detail: error instanceof Error ? error.message : String(error),
-    };
+    // the definition of retryable here — never a discovery result. A refusal
+    // already on record still outranks it.
+    return (
+      refusalOutcome() ?? {
+        kind: "retryable",
+        detail: error instanceof Error ? error.message : String(error),
+      }
+    );
   } finally {
     // Otherwise the pending timer keeps the event loop alive for the full
     // deadline after an answer has already been returned.
     clearTimeout(deadlineTimer);
   }
 
-  if (refusal.blocked !== null) {
-    return {
-      kind: "terminal",
-      errorCode: "URL_NOT_ALLOWED",
-      detail: refusal.blocked.message,
-    };
+  const recorded = refusalOutcome();
+  if (recorded !== null) {
+    return recorded;
   }
 
   return classifyDiscoveryResult(probe);

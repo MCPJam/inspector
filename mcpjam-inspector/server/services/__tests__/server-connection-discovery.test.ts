@@ -21,6 +21,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProbeMcpServerResult } from "@mcpjam/sdk";
 import {
+  BlockedEgressTargetError,
   createGuardedFetch,
   EgressResolutionError,
 } from "../../utils/hosted-egress-guard.js";
@@ -108,6 +109,43 @@ describe("classifyDiscoveryResult", () => {
       kind: "discovered",
       authMethod: "unsupported",
     });
+  });
+
+  it("accepts metadata with no challenge header at all", () => {
+    // Some servers 401 with no WWW-Authenticate while still publishing usable
+    // metadata; the scheme check must not turn that into `unsupported`.
+    const outcome = classifyDiscoveryResult(
+      probe({
+        status: "oauth_required",
+        oauth: {
+          required: true,
+          optional: false,
+          authorizationServerMetadataUrl:
+            "https://auth.example.com/.well-known/oauth-authorization-server",
+          registrationStrategies: ["dcr"],
+        },
+      }),
+    );
+
+    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "oauth" });
+  });
+
+  it("accepts metadata with a blank challenge header", () => {
+    const outcome = classifyDiscoveryResult(
+      probe({
+        status: "oauth_required",
+        oauth: {
+          required: true,
+          optional: false,
+          wwwAuthenticate: "   ",
+          authorizationServerMetadataUrl:
+            "https://auth.example.com/.well-known/oauth-authorization-server",
+          registrationStrategies: ["dcr"],
+        },
+      }),
+    );
+
+    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "oauth" });
   });
 
   it("reports unsupported for a non-Bearer challenge", () => {
@@ -516,6 +554,70 @@ describe("runDiscoveryPreflight", () => {
 
     expect(outcome).toMatchObject({ kind: "discovered", authMethod: "none" });
     expect(baseFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a recorded refusal from being masked by a later stall", async () => {
+    // The sequence that makes this a security bug and not a nicety: the guard
+    // refuses a hop, the prober SWALLOWS that throw and moves on to another
+    // endpoint, and that endpoint hangs. The deadline then wins the race. If
+    // the deadline branch answered `retryable` without consulting the recorded
+    // refusal, the target we just refused would be put back on a retry
+    // schedule.
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "https://evil.example/mcp", timeoutMs: 5 },
+      {
+        deadlineMs: 25,
+        fetchFn: async () => {
+          throw new BlockedEgressTargetError(
+            'Request URL hostname "evil.example" resolves to 169.254.169.254',
+          );
+        },
+        probeServer: (async (config: {
+          url: string;
+          fetchFn?: typeof fetch;
+        }) => {
+          // Refused hop, swallowed exactly as the real prober does...
+          await config
+            .fetchFn?.(config.url, { method: "POST" })
+            .catch(() => {});
+          // ...then a stall long enough for the deadline to win.
+          await new Promise(() => {});
+          return probe({});
+        }) as never,
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "terminal",
+      errorCode: "URL_NOT_ALLOWED",
+    });
+  });
+
+  it("keeps a recorded refusal from being masked by an unexpected throw", async () => {
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "https://evil.example/mcp" },
+      {
+        fetchFn: async () => {
+          throw new BlockedEgressTargetError(
+            'Request URL hostname "evil.example" resolves to 169.254.169.254',
+          );
+        },
+        probeServer: (async (config: {
+          url: string;
+          fetchFn?: typeof fetch;
+        }) => {
+          await config
+            .fetchFn?.(config.url, { method: "POST" })
+            .catch(() => {});
+          throw new Error("some later, unrelated failure");
+        }) as never,
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "terminal",
+      errorCode: "URL_NOT_ALLOWED",
+    });
   });
 
   it("treats a resolver outage as retryable, not as a refusal", async () => {

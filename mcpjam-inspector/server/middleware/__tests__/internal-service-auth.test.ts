@@ -122,8 +122,20 @@ describe("internalServiceAuthMiddleware", () => {
   it("treats a whitespace-only configured token as unset", async () => {
     process.env.INSPECTOR_SERVICE_TOKEN = "   ";
 
-    // It cannot be the token anyone meant to configure, and comparing against
-    // it would mean comparing against something no caller can present.
+    // A GENUINE token is presented on purpose: if the header were also
+    // whitespace, the presented-token guard would reject it too and the test
+    // would still pass with the whitespace-only configuration check deleted —
+    // which is the fail-open regression it exists to catch. This way the 401
+    // can only come from the configuration side.
+    const response = await createApp().request("/guarded", {
+      headers: { "x-inspector-service-token": TOKEN },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects a whitespace-only presented token against a real config", async () => {
+    // The other guard, exercised on its own.
     const response = await createApp().request("/guarded", {
       headers: { "x-inspector-service-token": "   " },
     });
