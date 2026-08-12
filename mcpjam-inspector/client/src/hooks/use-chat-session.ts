@@ -721,6 +721,11 @@ const MAX_LIVE_TRACE_EVENTS = 400;
 // prompt + entire message history) — growing roughly quadratically and
 // eventually exhausting the renderer's V8 heap (see INSPECTOR-ELECTRON-VR).
 const MAX_LIVE_TRACE_TURNS = 200;
+// Backstop for `requestPayloadHistory` independent of the turn cap above: a
+// single turn can carry many steps (agent tool-call loops), each appending
+// its own full request payload keyed by turnId+stepIndex, so bounding by
+// turn count alone doesn't bound this array for a pathologically long turn.
+const MAX_LIVE_TRACE_REQUEST_PAYLOADS = 2 * MAX_LIVE_TRACE_TURNS;
 
 function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
   return {
@@ -784,8 +789,18 @@ async function resolveHydratedTurnTraces(
   if (raw.length === 0) {
     return [];
   }
+  // Rehydrating a session with more persisted turns than the live cap would
+  // otherwise recreate the same unbounded growth this cap prevents
+  // (INSPECTOR-ELECTRON-VR) — keep only the most recent turns, and skip
+  // fetching span blobs for the ones we're about to discard.
+  const boundedRaw =
+    raw.length > MAX_LIVE_TRACE_TURNS
+      ? [...raw]
+          .sort((left, right) => left.promptIndex - right.promptIndex)
+          .slice(-MAX_LIVE_TRACE_TURNS)
+      : raw;
   const results = await Promise.all(
-    raw.map(async (trace) => {
+    boundedRaw.map(async (trace) => {
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {
         try {
@@ -1091,32 +1106,52 @@ function upsertRequestPayloadEntry(
 
 // Drops the oldest turns once `turnOrder` exceeds MAX_LIVE_TRACE_TURNS,
 // keeping `turns` and `requestPayloadHistory` in sync with what's evicted.
+// Also applies a flat backstop cap to `requestPayloadHistory` in case a
+// single turn (still within the turn cap) accumulates many step entries.
 function trimLiveTraceTurns(
   state: LiveTraceAccumulatorState
 ): LiveTraceAccumulatorState {
-  if (state.turnOrder.length <= MAX_LIVE_TRACE_TURNS) {
-    return state;
+  let turnOrder = state.turnOrder;
+  let turns = state.turns;
+  let requestPayloadHistory = state.requestPayloadHistory;
+
+  if (turnOrder.length > MAX_LIVE_TRACE_TURNS) {
+    const dropCount = turnOrder.length - MAX_LIVE_TRACE_TURNS;
+    const droppedTurnIds = new Set(turnOrder.slice(0, dropCount));
+    turnOrder = turnOrder.slice(dropCount);
+
+    const nextTurns: Record<string, LiveTraceTurnState> = {};
+    for (const turnId of turnOrder) {
+      const turn = turns[turnId];
+      if (turn) {
+        nextTurns[turnId] = turn;
+      }
+    }
+    turns = nextTurns;
+
+    requestPayloadHistory = requestPayloadHistory.filter(
+      (entry) => !droppedTurnIds.has(entry.turnId)
+    );
   }
 
-  const dropCount = state.turnOrder.length - MAX_LIVE_TRACE_TURNS;
-  const droppedTurnIds = new Set(state.turnOrder.slice(0, dropCount));
-  const turnOrder = state.turnOrder.slice(dropCount);
+  if (requestPayloadHistory.length > MAX_LIVE_TRACE_REQUEST_PAYLOADS) {
+    requestPayloadHistory = requestPayloadHistory.slice(
+      -MAX_LIVE_TRACE_REQUEST_PAYLOADS
+    );
+  }
 
-  const turns: Record<string, LiveTraceTurnState> = {};
-  for (const turnId of turnOrder) {
-    const turn = state.turns[turnId];
-    if (turn) {
-      turns[turnId] = turn;
-    }
+  if (
+    turnOrder === state.turnOrder &&
+    requestPayloadHistory === state.requestPayloadHistory
+  ) {
+    return state;
   }
 
   return {
     ...state,
     turnOrder,
     turns,
-    requestPayloadHistory: state.requestPayloadHistory.filter(
-      (entry) => !droppedTurnIds.has(entry.turnId)
-    ),
+    requestPayloadHistory,
   };
 }
 
