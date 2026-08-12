@@ -25,6 +25,7 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
     planCatalog: billingState.planCatalog,
     startPlanChange,
     isStartingPlanChange: false,
+    isLoadingBilling: false,
   }),
 }));
 
@@ -114,6 +115,38 @@ describe("useUpgradeCheckout", () => {
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith(
       "Checkout is not available for this plan right now."
+    );
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_upgrade_failed",
+      expect.objectContaining({ error_kind: "no_supported_interval" })
+    );
+  });
+
+  it("reports only explicit interval choices, not the automatic fallback", async () => {
+    billingState.planCatalog = planCatalog(["monthly"]);
+    const view = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "evals",
+        limitKind: "evalIterations",
+      })
+    );
+
+    await waitFor(() => {
+      expect(view.result.current.interval).toBe("monthly");
+    });
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_interval_selected",
+      expect.anything()
+    );
+
+    act(() => view.result.current.setInterval("monthly"));
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_interval_selected",
+      expect.objectContaining({
+        billing_interval: "monthly",
+        organization_id: "org-1",
+      })
     );
   });
 });

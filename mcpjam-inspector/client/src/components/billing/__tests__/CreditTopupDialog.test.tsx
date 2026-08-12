@@ -1,10 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CreditTopupDialog } from "../CreditTopupDialog";
 
 const startCheckoutMock = vi.fn();
+const trackMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 let presetsState:
   | Array<{
@@ -55,6 +58,7 @@ const DEFAULT_PRESETS = [
 describe("CreditTopupDialog", () => {
   beforeEach(() => {
     startCheckoutMock.mockReset();
+    trackMock.mockReset();
     presetsState = DEFAULT_PRESETS;
     presetsLoadingState = false;
     isStartingCheckoutState = false;
@@ -83,6 +87,85 @@ describe("CreditTopupDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("reports one rich impression across rerenders", async () => {
+    const view = render(
+      <CreditTopupDialog
+        open
+        onOpenChange={vi.fn()}
+        chatSessionId="chat-1"
+        lastUserMessage="hello"
+        organizationId="org-1"
+        source="chat_banner"
+      />
+    );
+
+    view.rerender(
+      <CreditTopupDialog
+        open
+        onOpenChange={vi.fn()}
+        chatSessionId="chat-1"
+        lastUserMessage="hello"
+        organizationId="org-1"
+        source="chat_banner"
+      />
+    );
+
+    await waitFor(() => {
+      const impressions = trackMock.mock.calls.filter(
+        ([event]) => event === "credit_topup_dialog_shown"
+      );
+      expect(impressions).toHaveLength(1);
+      expect(impressions[0]?.[1]).toEqual(
+        expect.objectContaining({
+          organization_id: "org-1",
+          source: "chat_banner",
+          package_count: 3,
+          default_package_id: "credits_500",
+          has_resume_context: true,
+        })
+      );
+    });
+  });
+
+  it("reports explicit package selection and dismissal once", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <CreditTopupDialog
+        open
+        onOpenChange={onOpenChange}
+        chatSessionId="chat-1"
+        lastUserMessage="hello"
+        organizationId="org-1"
+        source="limit_modal"
+      />
+    );
+
+    await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(trackMock).toHaveBeenCalledWith(
+      "credit_topup_package_selected",
+      expect.objectContaining({
+        package_id: "credits_1000",
+        price_cents: 1000,
+        package_index: 1,
+      })
+    );
+    expect(trackMock).toHaveBeenCalledWith(
+      "credit_topup_dialog_dismissed",
+      expect.objectContaining({
+        dismissal_method: "cancel",
+        selected_package_id: "credits_1000",
+      })
+    );
+    expect(
+      trackMock.mock.calls.filter(
+        ([event]) => event === "credit_topup_dialog_dismissed"
+      )
+    ).toHaveLength(1);
+  });
+
   it("auto-selects the first preset without surfacing fee or credited dollar amounts", () => {
     render(
       <CreditTopupDialog
@@ -99,7 +182,9 @@ describe("CreditTopupDialog", () => {
       screen.getByRole("radio", { name: /500\s*credits/ })
     ).toHaveAttribute("aria-checked", "true");
     expect(
-      screen.getByText(/Credits cover model usage in chat, playground, and agents/)
+      screen.getByText(
+        /Credits cover model usage in chat, playground, and agents/
+      )
     ).toBeInTheDocument();
     // Names the boundary explicitly so nobody buys credits expecting a higher
     // eval-iteration cap.
@@ -132,9 +217,7 @@ describe("CreditTopupDialog", () => {
       />
     );
 
-    await user.click(
-      screen.getByRole("radio", { name: /1,000\s*credits/ })
-    );
+    await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
     await user.click(
       screen.getByRole("button", { name: /Continue with \$10/ })
     );
@@ -165,9 +248,7 @@ describe("CreditTopupDialog", () => {
       />
     );
 
-    await user.click(
-      screen.getByRole("radio", { name: /1,000\s*credits/ })
-    );
+    await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
     await user.click(
       screen.getByRole("button", { name: /Continue with \$10/ })
     );

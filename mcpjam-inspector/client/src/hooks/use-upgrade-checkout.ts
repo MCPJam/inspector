@@ -79,8 +79,13 @@ export function useUpgradeCheckout({
   origin,
   limitKind,
 }: UseUpgradeCheckoutParams) {
-  const { billingStatus, planCatalog, startPlanChange, isStartingPlanChange } =
-    useOrganizationBilling(organizationId);
+  const {
+    billingStatus,
+    planCatalog,
+    startPlanChange,
+    isStartingPlanChange,
+    isLoadingBilling,
+  } = useOrganizationBilling(organizationId);
 
   const teamEntry = planCatalog?.plans.team;
   const supportedIntervals = teamEntry?.checkout?.supportedIntervals ?? [
@@ -118,6 +123,42 @@ export function useUpgradeCheckout({
     "monthly"
   );
 
+  const currentPlan = billingStatus?.plan ?? "free";
+  const effectivePlan = billingStatus?.effectivePlan ?? currentPlan;
+  const canManageBilling = billingStatus?.canManageBilling ?? false;
+
+  const selectInterval = useCallback(
+    (nextInterval: BillingInterval) => {
+      // The product choice happens first; telemetry is best-effort and cannot
+      // prevent the selection even if the analytics SDK is unavailable.
+      setInterval(nextInterval);
+      track("plan_limit_interval_selected", {
+        location: "plan_limit_dialog",
+        organization_id: organizationId,
+        limit_kind: limitKind,
+        origin,
+        billing_interval: nextInterval,
+        price_cents: teamEntry?.prices[nextInterval] ?? null,
+        current_plan: currentPlan,
+        effective_plan: effectivePlan,
+        can_manage_billing: canManageBilling,
+        annual_supported: annualSupported,
+        monthly_supported: monthlySupported,
+      });
+    },
+    [
+      annualSupported,
+      canManageBilling,
+      currentPlan,
+      effectivePlan,
+      limitKind,
+      monthlySupported,
+      organizationId,
+      origin,
+      teamEntry?.prices,
+    ]
+  );
+
   const start = useCallback(async () => {
     if (!organizationId) return;
     const checkoutInterval = resolveUpgradeInterval(
@@ -127,15 +168,20 @@ export function useUpgradeCheckout({
     );
     if (!checkoutInterval) {
       toast.error("Checkout is not available for this plan right now.");
+      track("plan_limit_upgrade_failed", {
+        location: "plan_limit_dialog",
+        organization_id: organizationId,
+        limit_kind: limitKind,
+        origin,
+        error_kind: "no_supported_interval",
+        current_plan: currentPlan,
+        effective_plan: effectivePlan,
+        can_manage_billing: canManageBilling,
+        annual_supported: annualSupported,
+        monthly_supported: monthlySupported,
+      });
       return { redirected: false as const };
     }
-
-    track("plan_limit_upgrade_clicked", {
-      location: "plan_limit_dialog",
-      limit_kind: limitKind,
-      origin,
-      billing_interval: checkoutInterval,
-    });
 
     const url = new URL(window.location.href);
     url.searchParams.set(UPGRADE_RETURN_PARAM, "return");
@@ -143,7 +189,9 @@ export function useUpgradeCheckout({
     url.searchParams.set(UPGRADE_RETURN_ORIGIN_PARAM, origin);
 
     try {
-      const result = await startPlanChange(
+      // Start the real checkout work before emitting analytics. We never await
+      // analytics, and track() is failure-isolated.
+      const resultPromise = startPlanChange(
         url.toString(),
         "team",
         checkoutInterval,
@@ -151,6 +199,20 @@ export function useUpgradeCheckout({
           confirmPaidPlanChange: false,
         }
       );
+      track("plan_limit_upgrade_clicked", {
+        location: "plan_limit_dialog",
+        organization_id: organizationId,
+        limit_kind: limitKind,
+        origin,
+        billing_interval: checkoutInterval,
+        price_cents: teamEntry?.prices[checkoutInterval] ?? null,
+        current_plan: currentPlan,
+        effective_plan: effectivePlan,
+        can_manage_billing: canManageBilling,
+        annual_supported: annualSupported,
+        monthly_supported: monthlySupported,
+      });
+      const result = await resultPromise;
       const nextUrl =
         result.kind === "checkout"
           ? result.checkoutUrl
@@ -169,21 +231,37 @@ export function useUpgradeCheckout({
           ? error.message
           : "Couldn't start checkout. Please try again."
       );
+      track("plan_limit_upgrade_failed", {
+        location: "plan_limit_dialog",
+        organization_id: organizationId,
+        limit_kind: limitKind,
+        origin,
+        error_kind: "start_plan_change_failed",
+        error_name: error instanceof Error ? error.name : "unknown",
+        billing_interval: checkoutInterval,
+        current_plan: currentPlan,
+        effective_plan: effectivePlan,
+        can_manage_billing: canManageBilling,
+      });
       return { redirected: false as const };
     }
   }, [
     annualSupported,
+    canManageBilling,
+    currentPlan,
+    effectivePlan,
     interval,
     limitKind,
     monthlySupported,
     organizationId,
     origin,
     startPlanChange,
+    teamEntry?.prices,
   ]);
 
   return {
     interval,
-    setInterval,
+    setInterval: selectInterval,
     annualPriceLabel,
     monthlyPriceLabel,
     annualDiscountPct: getAnnualDiscountPercent(planCatalog),
@@ -197,12 +275,12 @@ export function useUpgradeCheckout({
     // Limit-wall copy and destinations follow the plan whose limits the user
     // is actually receiving. During a Team trial the persisted billing plan is
     // still Free, while the effective plan (and its limits) is Team.
-    effectivePlan:
-      billingStatus?.effectivePlan ?? billingStatus?.plan ?? "free",
+    effectivePlan,
     // Keep the persisted plan separate for real billing/checkout decisions.
-    currentPlan: billingStatus?.plan ?? "free",
+    currentPlan,
     organizationName: billingStatus?.organizationName ?? "your organization",
-    canManageBilling: billingStatus?.canManageBilling ?? false,
+    canManageBilling,
+    isLoadingBilling,
     isStarting: isStartingPlanChange,
     start,
   };

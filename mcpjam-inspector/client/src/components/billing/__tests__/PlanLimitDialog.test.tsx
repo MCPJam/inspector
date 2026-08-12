@@ -54,6 +54,7 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
       effectivePlan: upgradeState.effectivePlan,
       organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
+      isLoadingBilling: false,
       isStarting: false,
       start: startMock,
     }),
@@ -126,6 +127,28 @@ describe("PlanLimitDialog", () => {
     // enforces rather than a hardcoded marketing string.
     expect(description).toHaveTextContent(
       /Our Team plan includes 5,000 a month/
+    );
+  });
+
+  it("reports one rich impression, even when the dialog rerenders", () => {
+    openEvalLimit();
+    const view = render(<PlanLimitDialog />);
+
+    view.rerender(<PlanLimitDialog />);
+
+    const impressions = trackMock.mock.calls.filter(
+      ([event]) => event === "plan_limit_dialog_shown"
+    );
+    expect(impressions).toHaveLength(1);
+    expect(impressions[0]?.[1]).toEqual(
+      expect.objectContaining({
+        wall_kind: "eval_iterations",
+        organization_id: "org-1",
+        current_plan: "free",
+        effective_plan: "free",
+        can_manage_billing: true,
+        primary_action: "upgrade",
+      })
     );
   });
 

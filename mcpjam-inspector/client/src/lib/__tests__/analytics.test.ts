@@ -37,6 +37,16 @@ describe("track()", () => {
     expect(props.location).toBe("skills_tab");
   });
 
+  it("never lets a capture failure break the product action", () => {
+    captureMock.mockImplementationOnce(() => {
+      throw new Error("analytics unavailable");
+    });
+
+    expect(() =>
+      track("skill_viewed", { location: "skills_tab", skill_name: "x" })
+    ).not.toThrow();
+  });
+
   it("strips a caller-supplied environment so it can't survive when standardEventProps omits it", async () => {
     // Regression for the self-hosted/dev case: standardEventProps() omits
     // `environment` when VITE_ENVIRONMENT is unset, so a caller-supplied

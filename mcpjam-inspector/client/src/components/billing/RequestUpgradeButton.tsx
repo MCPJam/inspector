@@ -36,8 +36,8 @@ export function buildUpgradeRequestMail(params: {
   const blocked = isCreditPurchase
     ? "Our organization has run out of MCPJam credits."
     : origin === "credits"
-      ? "I've run out of credits on MCPJam and can't keep using the models until they reset."
-      : "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.";
+    ? "I've run out of credits on MCPJam and can't keep using the models until they reset."
+    : "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.";
 
   const subject = isCreditPurchase
     ? `Credit purchase request for ${organizationName}`
@@ -69,7 +69,7 @@ export function buildUpgradeRequestMail(params: {
   ].join("\n");
 
   return `mailto:${to.join(",")}?subject=${encodeURIComponent(
-    subject,
+    subject
   )}&body=${encodeURIComponent(body)}`;
 }
 
@@ -80,6 +80,7 @@ interface RequestUpgradeButtonProps {
   origin: UpgradeOrigin;
   limitKind: string;
   requestAction?: UpgradeRequestAction;
+  organizationId?: string | null;
 }
 
 /**
@@ -103,6 +104,7 @@ export function RequestUpgradeButton({
   origin,
   limitKind,
   requestAction = "upgrade",
+  organizationId,
 }: RequestUpgradeButtonProps) {
   const href = buildUpgradeRequestMail({
     recipients,
@@ -124,11 +126,18 @@ export function RequestUpgradeButton({
           href={href}
           data-testid="request-upgrade-mail"
           onClick={() => {
+            // This is synchronous and failure-isolated, so the browser never
+            // waits for analytics before opening the mail client.
             track("plan_limit_upgrade_requested", {
               location: "plan_limit_dialog",
               limit_kind: limitKind,
               origin,
+              organization_id: organizationId,
               recipient_count: recipients.length,
+              has_named_recipient: recipients.some((recipient) =>
+                Boolean(recipient.name?.trim())
+              ),
+              request_action: requestAction,
             });
           }}
         >
