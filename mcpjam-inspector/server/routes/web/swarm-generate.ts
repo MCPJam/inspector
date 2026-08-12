@@ -115,6 +115,33 @@ const FORWARDED_ERROR_CODES: Record<
   429: ErrorCode.RATE_LIMITED,
 };
 
+/** Redacted copy for a masked 5xx. Carries no transport detail; the
+ * correlation id appended below is what makes it actionable. */
+const MASKED_UPSTREAM_MESSAGE =
+  "Generation is temporarily unavailable. Please try again.";
+
+/**
+ * The backend's own error `code` off its JSON envelope
+ * (`mcpjam_config_error`, `provider_error`, …), which says WHICH 5xx happened
+ * without carrying any of the detail the mask exists to withhold. Shape-gated:
+ * a body that is not that envelope (WAF interstitial, proxy error page) yields
+ * nothing rather than putting an arbitrary upstream string into a log
+ * dimension.
+ */
+const UPSTREAM_ERROR_CODE_PATTERN = /^[a-z0-9_]{1,64}$/;
+
+function upstreamErrorCode(bodyText: string): string | undefined {
+  try {
+    const parsed = JSON.parse(bodyText) as { code?: unknown };
+    return typeof parsed.code === "string" &&
+      UPSTREAM_ERROR_CODE_PATTERN.test(parsed.code)
+      ? parsed.code
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Backend 4xx → WebRouteError preserving the status (429 quota included) so
  * the backend's user-facing `error` copy reaches the dialog verbatim.
@@ -122,6 +149,14 @@ const FORWARDED_ERROR_CODES: Record<
  * A backend 5xx is NOT user-facing: its message carries the Convex deployment
  * URL and upstream status, which the default error mapper would echo into the
  * response body. Log it and return a generic 500 instead.
+ *
+ * The redaction stays, but it no longer discards diagnosability: the request
+ * id `requestLogContextMiddleware` already minted (and reflects as
+ * `x-request-id`) is appended to the user-facing copy and repeated in
+ * `details.requestId`, so a SCREENSHOT of the error is enough to find the
+ * `swarm.generation.upstream_failed` row for it — that event's envelope
+ * carries the same `requestId`. Absent only when the middleware did not run,
+ * in which case there is nothing to correlate and the copy stays bare.
  */
 function rethrowAsRouteError(c: Context, err: unknown): never {
   if (err instanceof SwarmAgentError && err.status >= 400 && err.status < 500) {
@@ -132,14 +167,25 @@ function rethrowAsRouteError(c: Context, err: unknown): never {
     );
   }
   if (err instanceof SwarmAgentError) {
+    const requestId = c.var.requestLogContext?.requestId;
     getRequestLogger(c, "routes.web.swarm-generate").event(
       "swarm.generation.upstream_failed",
-      { statusCode: err.status, errorCode: "upstream_server_error" }
+      {
+        statusCode: err.status,
+        // The upstream code when the backend sent one: a masked failure whose
+        // log row only ever said "upstream_server_error" still needed the
+        // deployment's own logs to tell a provider outage from a
+        // misconfigured deployment.
+        errorCode: upstreamErrorCode(err.bodyText) ?? "upstream_server_error",
+      }
     );
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Generation is temporarily unavailable. Please try again."
+      requestId
+        ? `${MASKED_UPSTREAM_MESSAGE} (reference: ${requestId})`
+        : MASKED_UPSTREAM_MESSAGE,
+      requestId ? { requestId } : undefined
     );
   }
   throw err;

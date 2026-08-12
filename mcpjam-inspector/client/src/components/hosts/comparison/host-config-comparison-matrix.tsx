@@ -172,12 +172,14 @@ export function HostConfigComparisonMatrix({
         mobileOptimized && "min-w-0 max-w-full"
       )}
     >
-      {/* Only the table scrolls horizontally; field column stays sticky. */}
+      {/* Bounded height so this div is a *real* scroll container (not just
+          page flow) — `sticky top-0`/`sticky left-0` on the header only take
+          effect when their nearest scrolling ancestor actually scrolls. */}
       <div
         className={
           mobileOptimized
-            ? "max-w-full overflow-x-auto overflow-y-visible [-webkit-overflow-scrolling:touch]"
-            : "overflow-auto"
+            ? "max-h-[70vh] max-w-full overflow-auto [-webkit-overflow-scrolling:touch]"
+            : "max-h-[70vh] overflow-auto"
         }
       >
         <table

@@ -291,7 +291,6 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         sourceType: "chatbox",
         chatboxId: "cbx_1",
-        accessVersion: 1,
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
@@ -502,6 +501,97 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(body.code).toBe("INTERNAL_ERROR");
     expect(body.message).toContain("Couldn't load this chatbox's settings");
     expect(body.message).toContain("backend unreachable");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("tags a 403 chatbox runtime-config refusal as CHATBOX_ACCESS_DENIED", async () => {
+    const { app, token } = createWebTestApp();
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: "Chatbox not found or access denied",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-denied",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // 403 is an ACCESS verdict, not an internal fault. The dedicated code is
+    // what lets the browser tell "re-redeem and retry" from "the server
+    // broke" instead of classifying off message substrings.
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+    };
+    expect(body.code).toBe("CHATBOX_ACCESS_DENIED");
+    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards the body's accessVersion so the backend can enforce it", async () => {
+    const { app, token } = createWebTestApp();
+
+    await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 7,
+        chatSessionId: "chat-cb-version",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    expect(fetchChatboxRuntimeConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ chatboxId: "cbx_1", accessVersion: 7 })
+    );
+  });
+
+  it("surfaces a stale-version refusal as 409 CHATBOX_ACCESS_STALE", async () => {
+    const { app, token } = createWebTestApp();
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      code: "CHATBOX_ACCESS_STALE",
+      error: "Chatbox access version is stale; re-redeem.",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-stale",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // Recoverable, and distinct from a denial: the client re-redeems and
+    // replays the turn without the tester seeing anything.
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { code?: string };
+    expect(body.code).toBe("CHATBOX_ACCESS_STALE");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 

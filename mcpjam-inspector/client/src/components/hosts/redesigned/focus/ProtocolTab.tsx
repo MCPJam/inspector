@@ -19,6 +19,7 @@ import {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
+  protocolVersionLabel,
   readTasksPolicy,
   readXaaEnterprisePolicy,
   setTasksPolicy,
@@ -92,24 +93,11 @@ const TASKS_POLICY_VALUE: Partial<Record<TasksPolicy, TasksPolicyChoice>> = {
 };
 
 /**
- * Decorate the two newest revisions with their product labels:
- *
- * - **Latest** = newest known revision. Derived from
- *   `MCP_PROTOCOL_VERSIONS` so the marker walks forward automatically.
- * - **November** = the 2025-11-25 revision.
- *
  * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
- * newest-first.
+ * newest-first. Labels come from the SDK's `protocolVersionLabel` so this
+ * picker, the Connect page, and the OAuth debugger agree on which revision
+ * is Latest.
  */
-const LATEST_PROTOCOL_VERSION: McpProtocolVersion | undefined =
-  MCP_PROTOCOL_VERSIONS[MCP_PROTOCOL_VERSIONS.length - 1];
-
-function protocolVersionLabel(version: McpProtocolVersion): string {
-  if (version === LATEST_PROTOCOL_VERSION) return `Latest (${version})`;
-  if (version === "2025-11-25") return `November (${version})`;
-  return version;
-}
-
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;

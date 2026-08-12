@@ -52,6 +52,7 @@ import {
   isAdhocUnavailable,
 } from "@/components/environment-composer/resolve-stacks";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useCloudServerReadiness } from "@/components/environment-composer/use-cloud-server-readiness";
 import { MAX_PERSONAS_PER_PROJECT } from "@/components/swarms/GenerateSwarmDialog";
 import {
   PersonaPixelAvatar,
@@ -68,6 +69,11 @@ import {
   NewSwarmRunningStep,
   type SwarmLaunchedRun,
 } from "@/components/swarms/new-swarm-running-step";
+import {
+  clearNewSwarmFlowDraft,
+  readNewSwarmFlowDraft,
+  saveNewSwarmFlowDraft,
+} from "@/components/swarms/new-swarm-flow-draft";
 import {
   DEFAULT_SWARM_INTENSITY,
   SWARM_INTENSITY_ORDER,
@@ -95,6 +101,7 @@ import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
 import { environmentLabel } from "@/lib/environment-label";
 import { ErrorCard } from "@/components/ui/error-card";
 import { cn } from "@/lib/utils";
@@ -114,6 +121,65 @@ const DESCRIBE_PLACEHOLDER =
 /** Concurrent launches. Bounded so a 60-journey launch doesn't open 60
  * simultaneous requests, while still finishing in seconds. */
 const LAUNCH_CONCURRENCY = 4;
+
+/** Below this, an elapsed counter is noise rather than reassurance. */
+const ELAPSED_VISIBLE_AFTER_SECONDS = 3;
+/** Past this, the wait is worth explaining rather than just counting. */
+const SLOW_GENERATION_SECONDS = 30;
+
+/**
+ * What the Describe step says while it waits.
+ *
+ * A spinner alone is what made a slow generation read as a hang: the reporter's
+ * "buffered for a while" was a working request with nothing to show for itself.
+ * So the line names the STAGE (targets are resolved before the model is called,
+ * and that stage can itself create environments), counts real elapsed seconds
+ * rather than faking a progress bar, and after a while says the thing the user
+ * actually needs to decide with — that leaving costs nothing, because the flow
+ * writes no rows until Launch.
+ *
+ * No ETA is quoted: generation is one model call whose latency scales with the
+ * environment's tool inventory, and a number we'd have to invent would be worse
+ * than none.
+ */
+export function generationProgressLine(args: {
+  stage: "targets" | "personas";
+  elapsedSeconds: number;
+  personaCount: number;
+  journeyCount: number;
+}): string {
+  const { stage, elapsedSeconds, personaCount, journeyCount } = args;
+  const what =
+    stage === "targets"
+      ? "Preparing targets: resolving the environments to generate against"
+      : `Writing ${personaCount} ${
+          personaCount === 1 ? "persona" : "personas"
+        } with up to ${journeyCount} ${
+          journeyCount === 1 ? "goal" : "goals"
+        } each, grounded on the target's tools`;
+  const elapsed =
+    elapsedSeconds >= ELAPSED_VISIBLE_AFTER_SECONDS
+      ? ` · ${elapsedSeconds}s elapsed`
+      : "";
+  const patience =
+    elapsedSeconds >= SLOW_GENERATION_SECONDS
+      ? " Still waiting on the generator — nothing is saved until you launch, so leaving and coming back costs nothing."
+      : "";
+  return `${what}${elapsed}.${patience}`;
+}
+
+/** Whole seconds since `since`, ticking while it is set. */
+function useElapsedSeconds(since: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (since === null) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+  if (since === null) return 0;
+  return Math.max(0, Math.floor((now - since) / 1000));
+}
 
 export type CreateSwarmDraft = {
   name: string;
@@ -240,6 +306,7 @@ export function NewSwarmCreateFlow({
   launchJourney,
   onCancel,
   onDone,
+  onOpenSession,
   onEditExistingPersona,
   onSetInsightsTuning,
 }: {
@@ -280,6 +347,18 @@ export function NewSwarmCreateFlow({
   /** Hands back a label per launched run so the sessions view can name the
    * groups after the persona and journey instead of a run id. */
   onDone: (runLabels: Map<string, string>) => void;
+  /**
+   * Follow a live finding to its evidence. `swarmRunGroupId` is this launch's
+   * wave id, so the caller can send the user to the swarm's OWN page (the run's
+   * durable home) rather than the flat Sessions list — the wizard's Running
+   * step has no URL of its own, so that page is what makes leaving reversible.
+   * `null` only when nothing has launched yet.
+   */
+  onOpenSession: (target: {
+    sessionId: string;
+    swarmRunGroupId: string | null;
+    runLabels: Map<string, string>;
+  }) => void;
   /** Leave create flow and open Personas for an existing persona. */
   onEditExistingPersona: (personaRefId: string) => void;
   /**
@@ -301,24 +380,35 @@ export function NewSwarmCreateFlow({
    * per call, from the deployment actually being talked to.
    */
   const canMintAdhoc = environmentsEnabled;
+  /**
+   * The draft this mount is resuming, read ONCE so every initializer below sees
+   * the same snapshot. Null on a genuine cold start.
+   *
+   * This flow is remounted for reasons the user did not ask for — the Swarms
+   * route re-enters its "still deciding who you are" spinner whenever a Convex
+   * websocket reconnect (returning to a backgrounded tab does one) makes the
+   * membership query re-resolve — and a remount used to throw away a whole
+   * generated slate. See `new-swarm-flow-draft.ts`.
+   */
+  const [restoredDraft] = useState(() => readNewSwarmFlowDraft(projectId));
   const [step, setStep] = useState<"describe" | "confirm" | "running">(
-    "describe"
+    restoredDraft?.step ?? "describe"
   );
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(restoredDraft?.description ?? "");
   const [targetState, setTargetState] = useState<EnvironmentComposerState>(
-    emptyComposerState
+    () => restoredDraft?.targetState ?? emptyComposerState()
   );
   /** Env ids after materialize (compose path). Cleared when the composer changes. */
   const [resolvedEnvironmentIds, setResolvedEnvironmentIds] = useState<
     string[] | null
-  >(null);
+  >(restoredDraft?.resolvedEnvironmentIds ?? null);
   const [resolvedEnvironments, setResolvedEnvironments] = useState<
     ProjectEnvironmentView[] | null
-  >(null);
+  >(restoredDraft?.resolvedEnvironments ?? null);
   /** Newly created envs may lag the live list query — keep them for payload/labels. */
   const [createdEnvOverlay, setCreatedEnvOverlay] = useState<
     ProjectEnvironmentView[]
-  >([]);
+  >(restoredDraft?.createdEnvOverlay ?? []);
   const [materializing, setMaterializing] = useState(false);
   const [savingInsightsTuning, setSavingInsightsTuning] = useState(false);
 
@@ -350,29 +440,51 @@ export function NewSwarmCreateFlow({
     [onSetInsightsTuning]
   );
   const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
-    DEFAULT_SWARM_INTENSITY
+    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY
   );
-  const [reusedIds, setReusedIds] = useState<string[]>([]);
-  const [proposed, setProposed] = useState<ProposedPersona[]>([]);
-  const [launchedRuns, setLaunchedRuns] = useState<SwarmLaunchedRun[]>([]);
+  const [reusedIds, setReusedIds] = useState<string[]>(
+    restoredDraft?.reusedIds ?? []
+  );
+  const [proposed, setProposed] = useState<ProposedPersona[]>(
+    restoredDraft?.proposed ?? []
+  );
+  const [launchedRuns, setLaunchedRuns] = useState<SwarmLaunchedRun[]>(
+    restoredDraft?.launchedRuns ?? []
+  );
   const [generating, setGenerating] = useState(false);
+  /** When the in-flight generation started — drives the progress line. */
+  const [generatingSince, setGeneratingSince] = useState<number | null>(null);
+  const generationElapsedSeconds = useElapsedSeconds(generatingSince);
   const [launching, setLaunching] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // A generation that was in flight when this flow was remounted cannot be
+  // resumed: the request belonged to the unmounted component. Saying so beats
+  // restoring a Describe step that looks like the user never pressed Continue.
+  const [errorMessage, setErrorMessage] = useState<string | null>(
+    restoredDraft?.generatingSince != null
+      ? "Persona generation was interrupted when this view reloaded. Nothing was saved — press Continue to generate again."
+      : null
+  );
   // Sync latch: `generating`/`launching` are state, so two fast clicks in one
   // tick would both see the old value and fire twice.
   const inFlightRef = useRef(false);
   // Labels for Overview session grouping — set at launch, handed to onDone
   // when the user leaves Running (Cancel / Stop / Look now).
-  const launchedRunLabelsRef = useRef<Map<string, string>>(new Map());
+  const launchedRunLabelsRef = useRef<Map<string, string>>(
+    new Map(restoredDraft?.runLabels ?? [])
+  );
   // Rows a previous attempt already created. A launch failure leaves the user
   // on Confirm with a Retry, and without this the retry would create every
   // persona and journey a SECOND time — the rows are already real, only the
   // launch needs redoing.
-  const persistedTargetsRef = useRef<LaunchTarget[] | null>(null);
+  const persistedTargetsRef = useRef<LaunchTarget[] | null>(
+    restoredDraft?.launch.targets ?? null
+  );
   // Environments baked into those persisted journeys. If the user goes Back
   // and changes the env selection, retrying must NOT relaunch the old
   // single-client journeys while the matrix shows the new multi-client set.
-  const persistedEnvironmentKeyRef = useRef<string | null>(null);
+  const persistedEnvironmentKeyRef = useRef<string | null>(
+    restoredDraft?.launch.environmentKey ?? null
+  );
   /**
    * The wave id for THIS swarm, minted once and reused across a retry.
    *
@@ -383,19 +495,24 @@ export function NewSwarmCreateFlow({
    * different wave and split one user-visible swarm across two rows in the
    * Overview.
    */
-  const persistedRunGroupIdRef = useRef<string | null>(null);
+  const persistedRunGroupIdRef = useRef<string | null>(
+    restoredDraft?.launch.runGroupId ?? null
+  );
   /**
    * Stable prefix for this authoring session's idempotency keys.
    *
    * Every row the launch creates derives its key from this plus its own stable
    * local key, so a retry re-sends the SAME keys and the backend replays the
    * rows it already wrote instead of creating a second persona and journey per
-   * proposal. Known gap: the ref is in memory, so a reload between attempts
-   * loses it — the same exposure `persistedTargetsRef` already has.
+   * proposal. Kept in the session draft alongside `persistedTargetsRef` so a
+   * remount or reload between attempts resumes the same keys instead of
+   * doubling every row.
    */
-  const flowIdRef = useRef<string | null>(null);
+  const flowIdRef = useRef<string | null>(restoredDraft?.launch.flowId ?? null);
   /** The swarm row this launch created, so a retry doesn't create a second. */
-  const persistedSwarmIdRef = useRef<string | null>(null);
+  const persistedSwarmIdRef = useRef<string | null>(
+    restoredDraft?.launch.swarmId ?? null
+  );
 
   const envList = useMemo(() => environments ?? [], [environments]);
   const composeMode = isComposeMode(targetState);
@@ -444,7 +561,15 @@ export function NewSwarmCreateFlow({
     [composeMode, targetState]
   );
 
+  // A restored draft already carries the resolution for the selection key it
+  // was saved with, so the mount pass of this reset would throw away work the
+  // draft exists to keep.
+  const skipResolvedResetRef = useRef(restoredDraft !== null);
   useEffect(() => {
+    if (skipResolvedResetRef.current) {
+      skipResolvedResetRef.current = false;
+      return;
+    }
     setResolvedEnvironmentIds(null);
     setResolvedEnvironments(null);
   }, [environmentSelectionKey]);
@@ -474,6 +599,21 @@ export function NewSwarmCreateFlow({
     (!composeMode && targetState.environmentIds.length > 0) ||
     (composeMode && targetState.stack.hostIds.length > 0);
 
+  /**
+   * Swarm sessions run in MCPJam's cloud, so a target whose servers are absent
+   * or unreachable from there cannot produce a run — the resolver rejects it
+   * with `ENV_NO_SERVERS`, and only AFTER this flow has written personas, goals
+   * and (in compose mode) an ad-hoc environment row. Blocking here keeps that
+   * failure in front of the pickers that fix it. `null` = nothing measurable is
+   * wrong; the resolver stays the backstop for what we cannot see.
+   */
+  const serverReadiness = useCloudServerReadiness({
+    projectId,
+    state: targetState,
+    environments: envList,
+  });
+  const serverBlock = describeCloudServerBlock(serverReadiness);
+
   // Generating and reusing are two independent doors into Confirm, and they
   // compose. Writing anything in the box asks for a generation (which needs
   // targets to ground on); selecting personas alone is a complete swarm on
@@ -483,7 +623,7 @@ export function NewSwarmCreateFlow({
   const canGenerate =
     wantsGenerate && hasGenerateTargets && !generating && !materializing;
   const canContinue =
-    generating || materializing
+    generating || materializing || serverBlock !== null
       ? false
       : wantsGenerate
         ? canGenerate
@@ -493,6 +633,9 @@ export function NewSwarmCreateFlow({
   const continueHint = (() => {
     if (generating || materializing) return null;
     if (!canContinue) {
+      // The notice above carries the finding and the fix; repeating it here
+      // would put the same two sentences on screen twice.
+      if (serverBlock) return "Fix where it runs to continue.";
       if (wantsGenerate) {
         return environmentsEnabled
           ? "Pick an environment or clients to generate against."
@@ -630,6 +773,7 @@ export function NewSwarmCreateFlow({
     if (!canGenerate || inFlightRef.current) return;
     inFlightRef.current = true;
     setGenerating(true);
+    setGeneratingSince(Date.now());
     setErrorMessage(null);
     track("swarm_create_generate_started", {
       location: "swarms",
@@ -726,6 +870,7 @@ export function NewSwarmCreateFlow({
     } finally {
       inFlightRef.current = false;
       setGenerating(false);
+      setGeneratingSince(null);
     }
   }, [
     canGenerate,
@@ -1140,9 +1285,95 @@ export function NewSwarmCreateFlow({
     ]
   );
 
+  /**
+   * Nothing resumable yet: an untouched Describe step must not leave a draft
+   * behind, and must clear a previous one — otherwise the next remount would
+   * resurrect a flow the user has since abandoned in place.
+   */
+  const hasResumableWork =
+    step !== "describe" ||
+    draft.trim().length > 0 ||
+    reusedIds.length > 0 ||
+    proposed.length > 0 ||
+    launchedRuns.length > 0 ||
+    generatingSince !== null ||
+    targetState.environmentIds.length > 0 ||
+    targetState.stack.hostIds.length > 0;
+
+  /**
+   * Mirror the resumable flow into session storage on every change, so a
+   * remount picks up where the user was instead of at Describe.
+   *
+   * The retry-identity refs are READ here rather than tracked as deps: each is
+   * assigned immediately before the state update that lands in the same commit
+   * (a launch sets them, then `setStep("running")`), so this write always sees
+   * the current values.
+   */
+  useEffect(() => {
+    if (!hasResumableWork) {
+      clearNewSwarmFlowDraft();
+      return;
+    }
+    saveNewSwarmFlowDraft(projectId, {
+      step,
+      description: draft,
+      targetState,
+      resolvedEnvironmentIds,
+      resolvedEnvironments,
+      createdEnvOverlay,
+      pushIntensity,
+      reusedIds,
+      proposed,
+      launchedRuns,
+      runLabels: [...launchedRunLabelsRef.current.entries()],
+      generatingSince,
+      launch: {
+        flowId: flowIdRef.current,
+        swarmId: persistedSwarmIdRef.current,
+        runGroupId: persistedRunGroupIdRef.current,
+        targets: persistedTargetsRef.current,
+        environmentKey: persistedEnvironmentKeyRef.current,
+      },
+    });
+  }, [
+    createdEnvOverlay,
+    draft,
+    generatingSince,
+    hasResumableWork,
+    launchedRuns,
+    projectId,
+    proposed,
+    pushIntensity,
+    resolvedEnvironmentIds,
+    resolvedEnvironments,
+    reusedIds,
+    step,
+    targetState,
+  ]);
+
+  /** Leaving the flow ends it — the draft is for remounts, not for history. */
+  const leaveFlow = useCallback(() => {
+    clearNewSwarmFlowDraft();
+    onCancel();
+  }, [onCancel]);
+
   const leaveRunning = useCallback(() => {
+    clearNewSwarmFlowDraft();
     onDone(launchedRunLabelsRef.current);
   }, [onDone]);
+
+  // Labels ride along exactly as they do on `leaveRunning`: this is a leave
+  // too, so the Sessions grouping must still be able to name the runs.
+  const openRunningSession = useCallback(
+    (sessionId: string) => {
+      onOpenSession({
+        sessionId,
+        swarmRunGroupId: persistedRunGroupIdRef.current,
+        runLabels: launchedRunLabelsRef.current,
+      });
+    },
+    [onOpenSession]
+  );
 
   const activeStepIndex =
     step === "describe" ? 0 : step === "confirm" ? 1 : 2;
@@ -1245,7 +1476,7 @@ export function NewSwarmCreateFlow({
             size="sm"
             className="shrink-0"
             disabled={launching}
-            onClick={step === "running" ? leaveRunning : onCancel}
+            onClick={step === "running" ? leaveRunning : leaveFlow}
           >
             {step === "running" ? "Leave" : "Cancel"}
           </Button>
@@ -1267,6 +1498,7 @@ export function NewSwarmCreateFlow({
             fallbackColumns={runningFallbackColumns}
             environments={envList}
             onLeave={leaveRunning}
+            onOpenSession={openRunningSession}
           />
         ) : step === "confirm" ? (
           <NewSwarmConfirmStep
@@ -1282,7 +1514,12 @@ export function NewSwarmCreateFlow({
             environmentLabels={environmentLabels}
             launching={launching}
             errorMessage={errorMessage}
-            onBack={() => setStep("describe")}
+            // Back is the same move as the Describe breadcrumb, so it goes
+            // through `goToStep`: it clears the launch error too. Describe
+            // renders `errorMessage` as well, and an error the user has
+            // already walked away from reads there as a fresh failure of the
+            // step they just landed on.
+            onBack={() => goToStep(0)}
             onLaunch={(payload) => void handleLaunch(payload)}
             onEditExistingPersona={onEditExistingPersona}
           />
@@ -1297,6 +1534,19 @@ export function NewSwarmCreateFlow({
                 We infer the goals, the clients and a scoring rubric — you
                 confirm all of it next.
               </p>
+              {/* The requirement belongs here, once, above the pair: neither
+                  source is optional on its own — `canContinue` needs one of
+                  them — so labelling each panel "Optional" made the disabled
+                  button read as a bug. */}
+              {personaList.length > 0 ? (
+                <p
+                  className="text-sm font-medium text-foreground"
+                  data-testid="new-swarm-source-requirement"
+                >
+                  Pick at least one: personas you already have, new ones you
+                  describe, or both.
+                </p>
+              ) : null}
             </div>
 
             {/* Sources: choose existing and/or describe new. Shared setup
@@ -1315,7 +1565,7 @@ export function NewSwarmCreateFlow({
                   <div className="shrink-0 space-y-1">
                     <Label>Choose personas</Label>
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                      Optional. They keep their own goals and environments.
+                      They keep their own goals and environments.
                     </p>
                   </div>
                   <div
@@ -1378,9 +1628,7 @@ export function NewSwarmCreateFlow({
                       : "Describe your users"}
                   </Label>
                   <p className="text-sm leading-relaxed text-muted-foreground">
-                    {personaList.length > 0
-                      ? "Optional. We’ll propose personas and goals for you to confirm."
-                      : "We’ll propose personas and goals for you to confirm."}
+                    We’ll propose personas and goals for you to confirm.
                   </p>
                 </div>
                 <McpjamAgentComposer
@@ -1422,6 +1670,7 @@ export function NewSwarmCreateFlow({
                   onChange={setTargetState}
                   draftNameHint={draft.trim() || undefined}
                   disabled={generating || materializing}
+                  serverBlock={serverBlock}
                 />
                 {groundingEnvironmentId ? (
                   <ErrorBoundary fallback={null}>
@@ -1515,6 +1764,12 @@ export function NewSwarmCreateFlow({
                 type="button"
                 disabled={!canContinue}
                 data-testid="new-swarm-continue"
+                // Tie the reason to the control it blocks: a disabled button
+                // is skipped by most screen readers, so the sentence beside
+                // it is the only account of what's missing.
+                aria-describedby={
+                  continueHint ? "new-swarm-continue-hint" : undefined
+                }
                 onClick={handleContinue}
               >
                 {generating || materializing ? (
@@ -1528,8 +1783,30 @@ export function NewSwarmCreateFlow({
                   "Continue"
                 )}
               </Button>
-              {continueHint ? (
-                <p className="text-sm leading-relaxed text-muted-foreground">
+              {generating || materializing ? (
+                <p
+                  className="text-sm leading-relaxed text-muted-foreground"
+                  data-testid="new-swarm-generate-progress"
+                >
+                  {generationProgressLine({
+                    stage: materializing ? "targets" : "personas",
+                    elapsedSeconds: generationElapsedSeconds,
+                    personaCount: preset.personaCount,
+                    journeyCount: preset.journeyCount,
+                  })}
+                </p>
+              ) : continueHint ? (
+                <p
+                  id="new-swarm-continue-hint"
+                  data-testid="new-swarm-continue-hint"
+                  // One slot, two jobs. As a summary it stays muted; as the
+                  // only on-screen account of why Continue won't move it
+                  // shouldn't read like incidental helper text.
+                  className={cn(
+                    "text-sm leading-relaxed",
+                    canContinue ? "text-muted-foreground" : "text-foreground"
+                  )}
+                >
                   {continueHint}
                 </p>
               ) : null}

@@ -4,9 +4,11 @@ import {
   type OAuthFlowState,
 } from "@mcpjam/sdk/browser";
 import {
+  createDebugRequestExecutor,
   createInspectorOAuthStateMachine,
   type InspectorOAuthStateMachineConfig,
 } from "../debug-state-machine-adapter";
+import { authFetch } from "@/lib/session-token";
 
 const createOAuthStateMachineSpy = vi.fn(() => ({
   proceedToNextStep: vi.fn(),
@@ -229,6 +231,70 @@ describe("Inspector OAuth adapter one-step stepping", () => {
     // scheduleAutoAdvance via optional chaining, so leaving it out is precisely
     // what stops the prepare -> send -> receive burst on a single click.
     expect("scheduleAutoAdvance" in config).toBe(false);
+  });
+});
+
+describe("Inspector OAuth debug proxy failures", () => {
+  const authFetchMock = vi.mocked(authFetch);
+  const request = {
+    method: "GET",
+    url: "https://mcp.example.com/mcp",
+    headers: {},
+  };
+
+  function proxyFailure(body: string) {
+    return new Response(body, { status: 400, statusText: "Bad Request" });
+  }
+
+  beforeEach(() => {
+    authFetchMock.mockReset();
+  });
+
+  // Without the body the flow log and Sentry only ever saw "400 Bad Request",
+  // which is the same string for an unresolvable host, a blocked private
+  // address, and a timeout (INSPECTOR-CLIENT-21M).
+  it("includes the proxy's reason for the failure", async () => {
+    authFetchMock.mockResolvedValue(
+      proxyFailure(
+        JSON.stringify({
+          error: "mcp.internal resolves to a private or reserved address",
+        }),
+      ),
+    );
+
+    await expect(createDebugRequestExecutor()(request)).rejects.toThrow(
+      "Backend debug proxy error: 400 Bad Request: mcp.internal resolves to a private or reserved address",
+    );
+  });
+
+  it("falls back to the raw body when the response is not JSON", async () => {
+    authFetchMock.mockResolvedValue(proxyFailure("<html>502 upstream</html>"));
+
+    await expect(createDebugRequestExecutor()(request)).rejects.toThrow(
+      "Backend debug proxy error: 400 Bad Request: <html>502 upstream</html>",
+    );
+  });
+
+  // The cap applies to whichever branch produced the reason, not just the
+  // raw-text fallback — a JSON `error` is just as capable of being huge.
+  it.each([
+    ["json", JSON.stringify({ error: "x".repeat(1000) })],
+    ["raw text", "x".repeat(1000)],
+  ])("caps a long %s reason", async (_label, body) => {
+    authFetchMock.mockResolvedValue(proxyFailure(body));
+
+    const error = await createDebugRequestExecutor()(request).catch((e) => e);
+    expect(error.message).toBe(
+      `Backend debug proxy error: 400 Bad Request: ${"x".repeat(300)}`,
+    );
+  });
+
+  it("keeps the bare status line when the body is empty", async () => {
+    authFetchMock.mockResolvedValue(proxyFailure(""));
+
+    await expect(createDebugRequestExecutor()(request)).rejects.toThrow(
+      "Backend debug proxy error: 400 Bad Request",
+    );
   });
 });
 

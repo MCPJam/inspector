@@ -531,6 +531,14 @@ async function connectViaHttp(
     } catch (error) {
       streamableError = error;
       await safeCloseTransport(streamableTransport);
+      // Same opt-out the connect path honors: a server whose transport was
+      // DECLARED streamable-http must not be diagnosed "ready" over SSE.
+      // Without this the doctor contradicts MCPClientManager, which refuses
+      // the very same server — misleading diagnostics on an SSE-only
+      // endpoint that the declaration says should not be used.
+      if (config.disableSseFallback) {
+        throw error;
+      }
     }
   }
 
