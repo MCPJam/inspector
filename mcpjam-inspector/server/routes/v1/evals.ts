@@ -396,21 +396,12 @@ function normalizeCreateTestsToRunTests(
     // handed to the provider, and an explicit `provider` would otherwise carry
     // a blank model past validation.
     const model = requireNonBlankModelId(test.model ?? suite.model);
-    let provider = test.provider ?? suite.provider;
-    if (!provider) {
-      // The CANONICAL resolver, not a prefix split. Splitting derived
-      // "meta-llama" and "mistralai" as providers (they are aliases for `meta`
-      // and `mistral`) and refused every `custom:<slug>:<model>` id outright,
-      // because it has no slash.
-      provider = providerForModelId(model);
-    }
-    if (!provider) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `Cannot derive a provider for test "${test.title}". Pass a suite-level "provider", a per-test "provider", or a "provider/model" id.`
-      );
-    }
+    // The CANONICAL resolver, not a prefix split. Splitting derived
+    // "meta-llama" and "mistralai" as providers (they are aliases for `meta`
+    // and `mistral`) and refused every `custom:<slug>:<model>` id outright,
+    // because it has no slash. It is total for a non-blank id, so there is no
+    // "couldn't derive it" case left to raise here.
+    const provider = deriveProvider(model, test.provider ?? suite.provider);
     const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
     return {
       title: test.title,
@@ -1314,21 +1305,27 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
  * mirror on prefixes and aliases — `meta-llama/...` is `meta`, not
  * `meta-llama`, and `mistralai/...` is `mistral`.
  *
- * `undefined` only for a blank id.
+ * TOTAL for any non-blank id: the classifier ends in a catch-all (`ollama`), so
+ * the only input it cannot name a provider for is a blank one — and that is
+ * rejected up front, as a 400, rather than reported as an unresolvable
+ * provider. Callers therefore never need a "couldn't derive it" branch; one
+ * written anyway would be unreachable and would read as a live guard.
  */
-function providerForModelId(modelId: string): string | undefined {
+function providerForModelId(modelId: string): string {
   // Trim FIRST, exactly as `classifyModelIdProvider` does. Without it a padded
   // bare catalog id misses the lookup and falls through to the classifier's
   // bare-id catch-all, so `" claude-sonnet-4-5 "` would be attributed to
   // Ollama rather than to its real vendor.
-  const id = modelId.trim();
+  const id = requireNonBlankModelId(modelId);
   if (!id.includes("/")) {
     const match = MODEL_LOOKUP.find(
       (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`)
     );
     if (match) return String(match.provider);
   }
-  return classifyModelIdProvider(id)?.provider;
+  // Non-null by the totality above; the `??` is a type-level formality that
+  // must never fire, not a fallback with a meaning of its own.
+  return classifyModelIdProvider(id)?.provider ?? "ollama";
 }
 
 /**
@@ -1374,14 +1371,7 @@ function requireNonBlankModelId(model: string): string {
 }
 
 function deriveProvider(model: string, explicit: string | undefined): string {
-  if (explicit) return explicit;
-  const provider = providerForModelId(model);
-  if (provider) return provider;
-  throw new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    `Cannot derive a provider for model "${model}". Pass provider, or a "provider/model" id.`
-  );
+  return explicit || providerForModelId(model);
 }
 
 // Public case body (create + update share this; create requires title).
@@ -2358,8 +2348,7 @@ async function defaultCaseModels(
     if (modelId) {
       // Suite configs store bare ids (e.g. "claude-sonnet-4-5"); resolve the
       // provider via the catalog so the new case isn't persisted model-less.
-      const provider = providerForModelId(modelId);
-      if (provider) return [{ model: modelId, provider }];
+      return [{ model: modelId, provider: providerForModelId(modelId) }];
     }
   } catch {
     // No resolvable suite model — the case inherits the suite default at run.

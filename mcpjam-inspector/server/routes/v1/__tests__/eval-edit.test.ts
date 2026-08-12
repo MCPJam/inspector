@@ -973,14 +973,21 @@ describe("v1 eval-edit routes", () => {
     ]);
   });
 
-  it.each([
-    // Without a provider the blank id already had nowhere to go. WITH one,
+  it.each<[string, Record<string, unknown>]>([
+    // Whitespace-only WITHOUT a provider already had nowhere to go. WITH one,
     // `deriveProvider` returns early and never inspects the model — so this is
     // the case that used to persist `{ model: "", provider: "openai" }`: a case
     // that passes validation and then has no model to run.
-    ["with an explicit provider", { model: "   ", provider: "openai" }],
-    ["without a provider", { model: "   " }],
-  ])("REJECTS a whitespace-only model id %s", async (_label, entry) => {
+    ["whitespace-only, with an explicit provider", { model: "   ", provider: "openai" }],
+    ["whitespace-only, without a provider", { model: "   " }],
+    // These two never reached the route helper — `z.string().min(1)` rejects
+    // them at the schema. Pinned anyway so the endpoint's contract is one
+    // statement ("no usable id is a 400") rather than a fact about which of two
+    // layers happens to catch each shape.
+    ["literally empty", { model: "" }],
+    ["null", { model: null }],
+    ["null, with an explicit provider", { model: null, provider: "openai" }],
+  ])("REJECTS a model id that carries no value — %s", async (_label, entry) => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases",
