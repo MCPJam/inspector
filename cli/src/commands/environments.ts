@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import {
   archiveEnvironmentOperation,
   createEnvironmentOperation,
+  getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,
   listEnvironmentsOperation,
   resolveEnvironmentOperation,
@@ -94,6 +95,50 @@ function validateInput<TInput>(
     throw usageError(`Invalid input: ${detail}`);
   }
   return parsed.data;
+}
+
+/**
+ * Refuse a model-bearing write against a deployment that cannot accept one.
+ *
+ * The CLI ships independently of the platform, so `modelId` may be a field the
+ * target deployment's validator has never heard of — which surfaces there as an
+ * opaque "unexpected argument" rather than as anything a user can act on. Ask
+ * first and fail with a sentence that names the cause.
+ *
+ * ONLY when model input was actually supplied. An ordinary `environments
+ * create` has no reason to pay for a preflight round-trip, and a CLI that got
+ * slower for everyone in order to guard a field most calls never send would be
+ * a bad trade.
+ *
+ * A preflight that itself fails is treated as UNSUPPORTED, not as unknown: the
+ * capability route answers `false` rather than erroring when the backend is
+ * old, so a genuine failure here is a connectivity or auth problem that the
+ * subsequent write would hit anyway — better to stop before sending a field
+ * that might be rejected.
+ */
+async function assertModelOverridesSupported(
+  options: PlatformOptions,
+  timeoutMs: number,
+  args: { supplied: boolean }
+): Promise<void> {
+  if (!args.supplied) return;
+  let supported = false;
+  try {
+    const result = await runPlatformCommand(
+      options,
+      timeoutMs,
+      ({ client, signal }) =>
+        getEnvironmentCapabilitiesOperation.execute({}, { client, signal })
+    );
+    supported = result.capabilities.modelOverrides;
+  } catch {
+    supported = false;
+  }
+  if (!supported) {
+    throw usageError(
+      'This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --model / --clear-model / "modelId".'
+    );
+  }
 }
 
 /** Read a JSON object from --file (literal path or `-` for stdin) / --json. */
@@ -260,12 +305,16 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option("--host-id <id>", "ID of the host this environment runs against")
       .option("--description <text>", "Optional description")
       .option(
+        "--model <id>",
+        "Model this environment runs, overriding the model pinned on its host. Omit to inherit the host's. Stored verbatim — pass exactly the id the provider request should carry"
+      )
+      .option(
         "--sandbox-image <id>",
         "Project-shared sandbox image (see `mcpjam images`) to pin: eval runs boot a fresh sandbox from it"
       )
       .option(
         "--file <path>",
-        "Environment JSON file with any of name/hostId/description/serverAttachmentId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
+        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
       )
       .option("--json <json>", "Inline environment JSON (or @file, or -)")
   ).action(
@@ -275,6 +324,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         name?: string;
         hostId?: string;
         description?: string;
+        model?: string;
         sandboxImage?: string;
         file?: string;
         json?: string;
@@ -285,6 +335,13 @@ export function registerEnvironmentsCommands(program: Command): void {
       // Explicit flags win over the same key in the JSON body, so a scripted
       // template file can be reused with a per-run --name override.
       const body = loadJsonObject(options) ?? {};
+      // Version skew: a deployment that predates model overrides rejects an
+      // unknown `modelId` with an opaque validator error. Ask first, and only
+      // when the caller actually supplied model input — an ordinary create has
+      // no reason to pay for a round-trip.
+      await assertModelOverridesSupported(options, globalOptions.timeout, {
+        supplied: options.model !== undefined || "modelId" in body,
+      });
       const input = validateInput(createEnvironmentOperation, {
         ...body,
         ...(options.project !== undefined ? { project: options.project } : {}),
@@ -293,6 +350,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         ...(options.description !== undefined
           ? { description: options.description }
           : {}),
+        ...(options.model !== undefined ? { modelId: options.model } : {}),
         ...(options.sandboxImage !== undefined
           ? { sandboxImageId: options.sandboxImage }
           : {}),
@@ -311,7 +369,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     environments
       .command("update")
       .description(
-        "Edit an environment. Only the fields you pass change; use --file/--json with a null value to clear serverAttachmentId, skillSelection, pluginVersionIds, or sandboxImageId"
+        "Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, pluginVersionIds, or sandboxImageId"
       )
       .requiredOption("--environment <id-or-name>", "Environment name or ID")
       .requiredOption(
@@ -324,6 +382,14 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option(
         "--description <text>",
         "New description (empty string clears it)"
+      )
+      .option(
+        "--model <id>",
+        "New model override, replacing the host's pinned model"
+      )
+      .option(
+        "--clear-model",
+        "Clear the model override so the environment inherits its host's model again"
       )
       .option(
         "--sandbox-image <id>",
@@ -343,6 +409,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         name?: string;
         hostId?: string;
         description?: string;
+        model?: string;
+        clearModel?: boolean;
         sandboxImage?: string;
         file?: string;
         json?: string;
@@ -351,6 +419,17 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const body = loadJsonObject(options) ?? {};
+      // The two flags say opposite things about the same field, and picking a
+      // winner would silently discard half of what was asked for.
+      if (options.model !== undefined && options.clearModel) {
+        throw usageError("Provide either --model or --clear-model, not both.");
+      }
+      await assertModelOverridesSupported(options, globalOptions.timeout, {
+        supplied:
+          options.model !== undefined ||
+          options.clearModel === true ||
+          "modelId" in body,
+      });
       const input = validateInput(updateEnvironmentOperation, {
         ...body,
         ...(options.project !== undefined ? { project: options.project } : {}),
@@ -361,6 +440,10 @@ export function registerEnvironmentsCommands(program: Command): void {
         ...(options.description !== undefined
           ? { description: options.description }
           : {}),
+        // `--clear-model` is the flag spelling of the JSON `"modelId": null`
+        // both this command and the API already accept; neither is removed.
+        ...(options.clearModel ? { modelId: null } : {}),
+        ...(options.model !== undefined ? { modelId: options.model } : {}),
         ...(options.sandboxImage !== undefined
           ? { sandboxImageId: options.sandboxImage }
           : {}),

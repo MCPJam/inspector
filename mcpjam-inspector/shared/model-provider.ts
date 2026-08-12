@@ -101,7 +101,7 @@ export type ModelProviderClassification = {
  * case that returns `null`.
  */
 export function classifyModelIdProvider(
-  modelId: string,
+  modelId: string
 ): ModelProviderClassification | null {
   const id = modelId.trim();
   if (id.length === 0) return null;

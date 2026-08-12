@@ -447,6 +447,177 @@ describe("v1 project environment routes", () => {
     });
   });
 
+  describe("model override", () => {
+    it("emits the STORED override on the DTO, never the effective model", async () => {
+      // A row that carries an override and a row that inherits one must be
+      // distinguishable from a list read alone — an editor cannot render
+      // "Use client default" correctly otherwise.
+      mockQuery({
+        "projectEnvironments:listEnvironments": [
+          { ...ENV_ROW, modelId: "openai/gpt-5" },
+          { ...ENV_ROW, environmentId: "env2", name: "Inherits" },
+        ],
+      });
+      const res = await request("GET", "/api/v1/projects/p1/environments");
+      const body = (await res.json()) as {
+        items: Array<{ modelId?: string }>;
+      };
+      expect(body.items[0]!.modelId).toBe("openai/gpt-5");
+      expect(body.items[1]!.modelId).toBeUndefined();
+    });
+
+    it("round-trips modelId through create", async () => {
+      convexMutationMock.mockResolvedValue({
+        ...ENV_ROW,
+        modelId: "openai/gpt-5",
+      });
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", modelId: "openai/gpt-5" },
+      });
+      expect(res.status).toBe(201);
+      expect(mutationArgs("projectEnvironments:createEnvironment")).toEqual({
+        projectId: "p1",
+        name: "Staging",
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+      });
+      expect(((await res.json()) as { modelId?: string }).modelId).toBe(
+        "openai/gpt-5"
+      );
+    });
+
+    it("rejects a blank modelId on create — clearing is a PATCH null", async () => {
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", modelId: "   " },
+      });
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("forwards an explicit null modelId as a CLEAR", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, modelId: null },
+      });
+      expect(mutationArgs("projectEnvironments:updateEnvironment")).toEqual({
+        projectId: "p1",
+        environmentId: "env1",
+        expectedRevision: 3,
+        modelId: null,
+      });
+    });
+
+    it("omits modelId entirely when the PATCH does not mention it", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, name: "Renamed" },
+      });
+      expect(
+        "modelId" in mutationArgs("projectEnvironments:updateEnvironment")
+      ).toBe(false);
+    });
+
+    it("carries effectiveModelId and modelSource through resolve", async () => {
+      mockQuery({
+        "projectEnvironments:resolveEnvironmentForLaunch": {
+          ...RESOLVED_ROW,
+          modelId: "openai/gpt-5",
+          effectiveModelId: "openai/gpt-5",
+          modelSource: "environment",
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/env1/resolve"
+      );
+      expect(await res.json()).toMatchObject({
+        modelId: "openai/gpt-5",
+        effectiveModelId: "openai/gpt-5",
+        modelSource: "environment",
+      });
+    });
+
+    it("maps ENV_MODEL_REQUIRED to 409 with a branchable reason", async () => {
+      // The one resolution failure a caller is expected to ACT on rather than
+      // display: pick a model on the environment or on its client.
+      convexQueryMock.mockRejectedValue(
+        convexError(
+          "ENV_MODEL_REQUIRED",
+          'Environment "Staging" has no model to run.',
+          { environmentId: "env1", hostId: "h1", hostConfigId: "hc1" }
+        )
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/env1/resolve"
+      );
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as {
+        code?: string;
+        details?: Record<string, string>;
+      };
+      expect(body.code).toBe("CONFLICT");
+      expect(body.details).toMatchObject({
+        code: "ENV_MODEL_REQUIRED",
+        reason: "environment_model_required",
+        hostId: "h1",
+      });
+    });
+  });
+
+  describe("capabilities", () => {
+    it("reports what the deployment accepts", async () => {
+      mockQuery({
+        "projectEnvironments:getCapabilities": {
+          modelOverrides: true,
+          modelMatrix: true,
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities"
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        modelOverrides: true,
+        modelMatrix: true,
+      });
+    });
+
+    it("answers false — not an error — when the backend cannot answer", async () => {
+      // ABSENCE IS THE SIGNAL. An older deployment does not export the query;
+      // a 500 here would break clients that are perfectly able to fall back.
+      convexQueryMock.mockRejectedValue(new Error("Could not find function"));
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities"
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        modelOverrides: false,
+        modelMatrix: false,
+      });
+    });
+
+    it("is not mistaken for an environment id", async () => {
+      // The literal segment is registered before `/:environmentId`; without
+      // that ordering this reads as a lookup of an environment called
+      // "capabilities" and 404s.
+      mockQuery({
+        "projectEnvironments:getCapabilities": { modelOverrides: true },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities"
+      );
+      expect(res.status).toBe(200);
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "projectEnvironments:getCapabilities",
+        { projectId: "p1" }
+      );
+    });
+  });
+
   describe("archive + restore", () => {
     it("archives with the revision precondition", async () => {
       convexMutationMock.mockResolvedValue(ARCHIVED_ROW);
@@ -592,10 +763,7 @@ describe("v1 project environment routes", () => {
           computerEnvironmentId: "img1",
         },
       });
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/environments/env1"
-      );
+      const res = await request("GET", "/api/v1/projects/p1/environments/env1");
       expect(res.status).toBe(200);
       const dto = (await res.json()) as Record<string, unknown>;
       expect(dto.sandboxImageId).toBe("img1");
@@ -657,9 +825,13 @@ describe("v1 project environment routes", () => {
     it("rejects blank and whitespace-only ids (matches the published minLength/pattern)", async () => {
       for (const value of ["", "   "]) {
         convexMutationMock.mockClear();
-        const created = await request("POST", "/api/v1/projects/p1/environments", {
-          body: { name: "Staging", hostId: "h1", sandboxImageId: value },
-        });
+        const created = await request(
+          "POST",
+          "/api/v1/projects/p1/environments",
+          {
+            body: { name: "Staging", hostId: "h1", sandboxImageId: value },
+          }
+        );
         expect(created.status).toBe(400);
         expect(convexMutationMock).not.toHaveBeenCalled();
 

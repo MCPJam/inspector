@@ -1390,6 +1390,7 @@ describe("operation catalog consistency", () => {
     update_host: { host: "h", name: "renamed" },
     delete_host: { host: "h" },
     list_project_environments: {},
+    get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
     get_project_environment: { environment: "e" },

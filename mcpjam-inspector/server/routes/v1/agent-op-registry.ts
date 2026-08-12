@@ -642,6 +642,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Attachment changes silently redirect every later run of the suite.",
   resolve_project_environment:
     "Resolution detail the agent has no use for; get_environment suffices.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not an action. It answers whether this platform accepts an environment model override — a question the write paths already ask on the caller's behalf, and one the agent could do nothing useful with.",
 
   // Agent Plugins. Read-only inventory, shipped for the MCP catalog surface
   // first; registering them here is a deliberate widening of the public

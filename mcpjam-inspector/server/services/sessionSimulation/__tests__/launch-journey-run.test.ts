@@ -129,6 +129,9 @@ describe("launchJourneyRun", () => {
 
   it.each([
     [401, "UNAUTHORIZED"],
+    // The one that means STOP. A wave of sibling launches reads this to give
+    // up scheduling instead of firing N more requests against a spent quota.
+    [402, "BILLING_LIMIT_REACHED"],
     [403, "FORBIDDEN"],
     [404, "NOT_FOUND"],
     [409, "CONFLICT"],
@@ -136,19 +139,68 @@ describe("launchJourneyRun", () => {
     // turns "wait and try again" into "this request can never work".
     [429, "RATE_LIMITED"],
     [422, "VALIDATION_ERROR"],
-  ])("maps a backend %i to %s, not a blanket validation error", async (
-    status,
-    code
-  ) => {
-    // The status was always distinct; the CODE was not, and a client that
-    // branches on `code` was told to go fix its request for a launch refused
-    // on permissions or replaying a conflicting key.
+  ])(
+    "maps a backend %i to %s, not a blanket validation error",
+    async (status, code) => {
+      // The status was always distinct; the CODE was not, and a client that
+      // branches on `code` was told to go fix its request for a launch refused
+      // on permissions or replaying a conflicting key.
+      createRunMock.mockRejectedValue(
+        new SwarmAgentError(status as number, "nope", "nope")
+      );
+      await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+        status,
+        code,
+      });
+    }
+  );
+
+  it.each([
+    [
+      "v1 envelope",
+      '{"error":{"code":"BILLING_LIMIT_REACHED","message":"Monthly credit limit reached."}}',
+      "Monthly credit limit reached.",
+    ],
+    [
+      "Convex structured data",
+      '{"code":"ENV_MODEL_REQUIRED","message":"Environment \\"Prod\\" has no model to run."}',
+      'Environment "Prod" has no model to run.',
+    ],
+  ])(
+    "unwraps a structured backend body (%s)",
+    async (_label, body, expected) => {
+      // `bodyText` is the RAW response. Rendering it puts a JSON envelope — or a
+      // proxy's HTML error page — in front of the user.
+      createRunMock.mockRejectedValue(new SwarmAgentError(402, body, "nope"));
+      await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+        status: 402,
+        code: "BILLING_LIMIT_REACHED",
+        message: expected,
+      });
+    }
+  );
+
+  it.each([
+    ["an HTML error page", "<html><body>502 Bad Gateway</body></html>"],
+    ["a multi-line stack trace", "Error: boom\n  at thing (file.js:1:1)"],
+    ["an oversized blob", "x".repeat(1000)],
+  ])("never shows %s", async (_label, body) => {
+    createRunMock.mockRejectedValue(new SwarmAgentError(402, body, "nope"));
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      status: 402,
+      message: "This launch would exceed your organization's credit limit.",
+    });
+  });
+
+  it("keeps a plain sentence the backend wrote for a human", async () => {
+    // The useful case, and the reason the filter is a shape test rather than a
+    // blanket refusal to echo the body.
     createRunMock.mockRejectedValue(
-      new SwarmAgentError(status as number, "nope", "nope")
+      new SwarmAgentError(400, "journey exceeds the maximum host count", "nope")
     );
     await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
-      status,
-      code,
+      status: 400,
+      message: "journey exceeds the maximum host count",
     });
   });
 
@@ -156,7 +208,9 @@ describe("launchJourneyRun", () => {
     // A 400 tells the caller to change something. An upstream fault is not
     // theirs to fix, and dressing it as one sends them looking at their own
     // journey config during an incident.
-    createRunMock.mockRejectedValue(new SwarmAgentError(503, "upstream down", "upstream down"));
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(503, "upstream down", "upstream down")
+    );
 
     await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
       status: 503,

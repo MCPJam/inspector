@@ -1,14 +1,20 @@
 /**
- * THE parity vectors for provider classification.
+ * THE parity vectors for provider classification. VERBATIM-MIRRORED between
+ * the two repos — keep the files byte-identical (modulo quote style, which the
+ * mirror ratchet normalizes):
+ *
+ *   MCPJam/inspector  shared/__tests__/model-provider-fixtures.ts
+ *   MCPJam/mcpjam-backend  convex/lib/__tests__/modelProviderFixtures.ts
  *
  * Two implementations answer "which provider serves this model id?": the
- * canonical one here (`shared/model-provider.ts`) and a hand-kept mirror in the
- * backend (`convex/lib/modelProviderClassification.ts` in mcpjam-backend, which
- * cannot import from this repo). This list is copied verbatim into that repo's
- * test so a rule change that lands in one and not the other fails loudly
- * instead of silently splitting eval attribution from chat attribution.
+ * CANONICAL one in the inspector repo (`shared/model-provider.ts`) and a
+ * hand-kept mirror in the backend (`convex/lib/modelProviderClassification.ts`,
+ * which cannot import across repos). Each runs its own classifier against this
+ * list, so a rule that lands on one side only fails loudly instead of silently
+ * splitting a run's eval attribution from its chat attribution.
  *
- * Add a vector here AND there when you add a rule.
+ * Add a vector on BOTH sides when you add a rule; `npm run check:mirrors` in
+ * the backend repo ratchets the pair.
  */
 export type ProviderFixture = {
   id: string;

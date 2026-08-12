@@ -41,17 +41,17 @@ export function getEffectiveSuiteServers(
     environment?: { servers?: string[] } | undefined;
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
-  },
+  }
 ): string[] {
   if (suite.serverAttachment) {
     return Array.from(
-      new Set(suite.serverAttachment.resolvedServerNames ?? []),
+      new Set(suite.serverAttachment.resolvedServerNames ?? [])
     );
   }
   const flatServers = suite.environment?.servers ?? [];
   const hostAttachmentServers =
     suite.hostAttachments?.flatMap(
-      (attachment) => attachment.resolvedServerNames ?? [],
+      (attachment) => attachment.resolvedServerNames ?? []
     ) ?? [];
   if (hostAttachmentServers.length === 0) {
     return flatServers;
@@ -76,7 +76,7 @@ function suiteDefaultRunPlan(serverIds: string[]): SuiteHostRunPlan {
 function hostAttachmentRunPlan(
   attachment: NonNullable<EvalSuite["hostAttachments"]>[number],
   fallbackServerIds: string[],
-  useAttachmentServerIds = true,
+  useAttachmentServerIds = true
 ): SuiteHostRunPlan {
   return {
     namedHostId: attachment.namedHostId,
@@ -94,7 +94,7 @@ export function buildSuiteHostRunPlans(
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
   },
-  fallbackServerIds = getEffectiveSuiteServers(suite),
+  fallbackServerIds = getEffectiveSuiteServers(suite)
 ): SuiteHostRunPlan[] {
   const suiteServerIds = fallbackServerIds;
   const attachments = suite.hostAttachments ?? [];
@@ -103,7 +103,7 @@ export function buildSuiteHostRunPlans(
     return [suiteDefaultRunPlan(suiteServerIds)];
   }
   return attachments.map((attachment) =>
-    hostAttachmentRunPlan(attachment, suiteServerIds, useAttachmentServerIds),
+    hostAttachmentRunPlan(attachment, suiteServerIds, useAttachmentServerIds)
   );
 }
 
@@ -133,7 +133,7 @@ export function buildSuiteRunPlans(
     environmentIds?: string[];
   },
   environments?: Array<{ environmentId: string; name: string }>,
-  fallbackServerIds?: string[],
+  fallbackServerIds?: string[]
 ): SuiteRunPlan[] {
   const envIds = suite.environmentIds ?? [];
   if (envIds.length > 0) {
@@ -168,7 +168,7 @@ export function countSuiteRunPlans(
     environmentIds?: string[];
   },
   environments?: Array<{ environmentId: string; name: string }>,
-  fallbackServerIds?: string[],
+  fallbackServerIds?: string[]
 ): number {
   return buildSuiteRunPlans(suite, environments, fallbackServerIds).length;
 }
@@ -179,12 +179,12 @@ export function getSelectedSuiteHostRunPlan(
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
   },
-  namedHostId: string | undefined,
+  namedHostId: string | undefined
 ): SuiteHostRunPlan {
   const suiteServerIds = getEffectiveSuiteServers(suite);
   const attachment = namedHostId
     ? suite.hostAttachments?.find(
-        (candidate) => candidate.namedHostId === namedHostId,
+        (candidate) => candidate.namedHostId === namedHostId
       )
     : null;
   if (!attachment) {
@@ -193,7 +193,7 @@ export function getSelectedSuiteHostRunPlan(
   return hostAttachmentRunPlan(
     attachment,
     suiteServerIds,
-    !suite.serverAttachment,
+    !suite.serverAttachment
   );
 }
 
@@ -202,7 +202,7 @@ export function formatTime(ts?: number) {
 }
 
 export function getIterationRecencyTimestamp(
-  iteration: Pick<EvalIteration, "updatedAt" | "startedAt" | "createdAt">,
+  iteration: Pick<EvalIteration, "updatedAt" | "startedAt" | "createdAt">
 ) {
   return iteration.updatedAt ?? iteration.startedAt ?? iteration.createdAt ?? 0;
 }
@@ -258,7 +258,7 @@ export type RunContextSource = {
 
 /** The Project Environment this run resolved at start, or `null` (legacy run). */
 export function runEnvironmentRef(
-  run: RunContextSource,
+  run: RunContextSource
 ): NonNullable<
   NonNullable<RunContextSource["configSnapshot"]>["environmentRef"]
 > | null {
@@ -296,7 +296,7 @@ export function runContextKey(run: RunContextSource): string {
  */
 export function runHostLabel(
   run: RunContextSource,
-  hostNamesById?: Map<string, string | null>,
+  hostNamesById?: Map<string, string | null>
 ): string | null {
   if (!run.namedHostId) return null;
   return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
@@ -313,7 +313,7 @@ export function runHostLabel(
  */
 export function runContextLabel(
   run: RunContextSource,
-  hostNamesById?: Map<string, string | null>,
+  hostNamesById?: Map<string, string | null>
 ): string | null {
   const ref = runEnvironmentRef(run);
   if (ref) return ref.name;
@@ -340,7 +340,7 @@ export function buildHostNamesById(
   attachments:
     | Array<{ namedHostId: string; hostName: string | null }>
     | undefined,
-  projectHosts: Array<{ hostId: string; name: string }> | undefined,
+  projectHosts: Array<{ hostId: string; name: string }> | undefined
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
   for (const host of projectHosts ?? []) {
@@ -349,7 +349,7 @@ export function buildHostNamesById(
   for (const attachment of attachments ?? []) {
     map.set(
       attachment.namedHostId,
-      attachment.hostName ?? map.get(attachment.namedHostId) ?? null,
+      attachment.hostName ?? map.get(attachment.namedHostId) ?? null
     );
   }
   return map;
@@ -379,7 +379,7 @@ export function hasEnvironmentRun(runs: RunContextSource[]): boolean {
  * `"rev 2–7"` when they span. `null` when the group has no environment runs.
  */
 export function runContextRevisionSummary(
-  runs: RunContextSource[],
+  runs: RunContextSource[]
 ): string | null {
   const revisions = runs
     .map((run) => runEnvironmentRef(run)?.revision)
@@ -467,7 +467,7 @@ export function getTemplateKey(test: {
 export function aggregateSuite(
   _suite: EvalSuite,
   cases: EvalCase[],
-  iterations: EvalIteration[],
+  iterations: EvalIteration[]
 ): SuiteAggregate {
   // Backend already filters iterations by suite, so we use them directly
   const totals = iterations.reduce(
@@ -485,7 +485,7 @@ export function aggregateSuite(
       acc.tokens += it.tokensUsed || 0;
       return acc;
     },
-    { passed: 0, failed: 0, cancelled: 0, pending: 0, tokens: 0 },
+    { passed: 0, failed: 0, cancelled: 0, pending: 0, tokens: 0 }
   );
 
   const byCaseMap = new Map<string, SuiteAggregate["byCase"][number]>();
@@ -496,13 +496,24 @@ export function aggregateSuite(
       const c = cases.find((x) => x._id === id);
       // Count total iterations for this test case
       const totalRuns = iterations.filter(
-        (iter) => iter.testCaseId === id,
+        (iter) => iter.testCaseId === id
       ).length;
+      // THE ITERATION'S OWN SNAPSHOT WINS over the case's current definition.
+      // A case's authored `models[0]` is what it would run TODAY; an
+      // environment-backed run executes the environment's model instead, and a
+      // later edit to either can move the authored list. Labelling history
+      // from the live case therefore relabels finished runs with a model they
+      // never used — which matters most exactly where this is read, comparing
+      // two runs of one suite on two models.
+      //
+      // The fallback is for pre-snapshot rows only: those predate environment
+      // overrides, so their case's current model is the best available answer.
+      const snapshot = it.testCaseSnapshot;
       byCaseMap.set(id, {
         testCaseId: id,
-        title: c?.title || "Untitled",
-        provider: c?.models?.[0]?.provider || "",
-        model: c?.models?.[0]?.model || "",
+        title: snapshot?.title || c?.title || "Untitled",
+        provider: snapshot?.provider || c?.models?.[0]?.provider || "",
+        model: snapshot?.model || c?.models?.[0]?.model || "",
         runs: totalRuns,
         passed: 0,
         failed: 0,
@@ -538,19 +549,19 @@ export function aggregateSuite(
 export function sortExploreCasesBySignal(
   cases: EvalCase[],
   aggregate: SuiteAggregate | null,
-  iterations: EvalIteration[],
+  iterations: EvalIteration[]
 ): EvalCase[] {
   const byCaseId = new Map(
-    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? [],
+    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? []
   );
 
   const latestIterationForCase = (
-    testCaseId: string,
+    testCaseId: string
   ): EvalIteration | undefined => {
     const forCase = iterations.filter((i) => i.testCaseId === testCaseId);
     if (forCase.length === 0) return undefined;
     return forCase.reduce((a, b) =>
-      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b,
+      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b
     );
   };
 
@@ -652,7 +663,7 @@ export function evalStatusMiniBarClasses(result: string): string {
 
 /** Left `border-l-*` for a suite overview row from `latestRun`. */
 export function evalOverviewEntryLeftBorderClass(
-  entry: EvalSuiteOverviewEntry,
+  entry: EvalSuiteOverviewEntry
 ): string {
   const r = entry.latestRun;
   if (!r) return "border-l-transparent";
@@ -669,7 +680,7 @@ export function evalOverviewEntryLeftBorderClass(
 }
 
 export function evalOverviewEntryMiniBarClass(
-  entry: EvalSuiteOverviewEntry,
+  entry: EvalSuiteOverviewEntry
 ): string {
   const r = entry.latestRun;
   if (!r) return "bg-muted-foreground/25";
@@ -689,7 +700,7 @@ export function evalOverviewEntryMiniBarClass(
  */
 /** Selected nested row: inset ring + tint so left status border stays the outcome rail. */
 export function evalOverviewEntrySelectedRowClass(
-  entry: EvalSuiteOverviewEntry,
+  entry: EvalSuiteOverviewEntry
 ): string {
   const r = entry.latestRun;
   if (!r) {
@@ -708,7 +719,7 @@ export function evalOverviewEntrySelectedRowClass(
 }
 
 export function evalOverviewEntryOutcomeTitle(
-  entry: EvalSuiteOverviewEntry,
+  entry: EvalSuiteOverviewEntry
 ): string {
   const r = entry.latestRun;
   if (!r) return "No runs yet";
@@ -722,7 +733,7 @@ export function evalOverviewEntryOutcomeTitle(
 
 /** Short status label for compact list rows (sidebar). */
 export function evalOverviewEntryLastRunStatusLabel(
-  entry: EvalSuiteOverviewEntry,
+  entry: EvalSuiteOverviewEntry
 ): string {
   const r = entry.latestRun;
   if (!r) return "No runs yet";
@@ -738,7 +749,7 @@ export function evalOverviewEntryLastRunStatusLabel(
 
 /** Tailwind classes for {@link evalOverviewEntryLastRunStatusLabel}. */
 export function evalOverviewEntryLastRunStatusClass(
-  entry: EvalSuiteOverviewEntry,
+  entry: EvalSuiteOverviewEntry
 ): string {
   const r = entry.latestRun;
   if (!r) return "text-muted-foreground";
@@ -778,7 +789,7 @@ export type SuitePassRateTrendDisplay = {
  * Prepare pass-rate trend for sidebar sparklines: last N segments, optional overflow badge, summary text.
  */
 export function formatSuitePassRateTrendForDisplay(
-  rawTrend: number[] | undefined | null,
+  rawTrend: number[] | undefined | null
 ): SuitePassRateTrendDisplay | null {
   if (!rawTrend?.length) return null;
   const len = rawTrend.length;
@@ -786,7 +797,7 @@ export function formatSuitePassRateTrendForDisplay(
   const percents = slice.map(toPercentEvalTrend);
   const olderHiddenCount = Math.max(
     0,
-    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS,
+    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS
   );
   const showOlderRunsBadge = len > SUITE_PASS_RATE_TREND_BADGE_THRESHOLD;
   let good = 0;
@@ -865,7 +876,7 @@ export const formatters = {
  * passed, then other (same ordering as the former in-panel suite list).
  */
 export function orderCommitGroupRunsByOutcome(
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRun[]
 ): EvalSuiteRun[] {
   const failed: EvalSuiteRun[] = [];
   const running: EvalSuiteRun[] = [];
@@ -894,7 +905,7 @@ export function orderCommitGroupRunsByOutcome(
  */
 export function getRunMetricSource(
   run: { source?: EvalSuiteRun["source"] } | null | undefined,
-  suiteSource?: "ui" | "sdk",
+  suiteSource?: "ui" | "sdk"
 ): "ui" | "sdk" {
   return (run?.source ?? suiteSource) === "sdk" ? "sdk" : "ui";
 }
@@ -905,7 +916,7 @@ export function getRunMetricSource(
  */
 export function getLatestRunMetricSource(
   runs: EvalSuiteRun[],
-  suiteSource?: "ui" | "sdk",
+  suiteSource?: "ui" | "sdk"
 ): "ui" | "sdk" {
   let latest: EvalSuiteRun | null = null;
   let latestTs = -1;
@@ -924,7 +935,7 @@ export function getLatestRunMetricSource(
  * Runs without a commitSha go into a "manual" group.
  */
 export function groupRunsByCommit(
-  overview: EvalSuiteOverviewEntry[],
+  overview: EvalSuiteOverviewEntry[]
 ): CommitGroup[] {
   const buckets = new Map<
     string,
@@ -1014,7 +1025,7 @@ export function formatRelativeTime(timestamp?: number): string {
  * Group overview entries by tag and compute aggregated stats per tag.
  */
 export function groupSuitesByTag(
-  overview: EvalSuiteOverviewEntry[],
+  overview: EvalSuiteOverviewEntry[]
 ): TagGroupAggregate[] {
   const buckets = new Map<string, EvalSuiteOverviewEntry[]>();
 
@@ -1131,21 +1142,21 @@ export function iterationTokensP95(items: EvalIteration[]): number | null {
 /** Total ordering on runs: `runNumber` primary, `createdAt` as tiebreaker. */
 export function compareRunsBySequence(
   a: EvalSuiteRun,
-  b: EvalSuiteRun,
+  b: EvalSuiteRun
 ): number {
   return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
 export function pickLatestCompletedRun(
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRun[]
 ): EvalSuiteRun | null {
   const completed = runs.filter((r) => r.status === "completed");
   if (completed.length === 0) {
     return null;
   }
   return completed.reduce((best, r) =>
-    r.runNumber > best.runNumber ? r : best,
+    r.runNumber > best.runNumber ? r : best
   );
 }
 
@@ -1164,14 +1175,14 @@ export function evalSuitePinsSandboxImage(
   suite: Pick<EvalSuite, "environment" | "environmentIds">,
   attachedEnvironments:
     | Array<{ environmentId: string; computerEnvironmentId?: string | null }>
-    | undefined,
+    | undefined
 ): boolean {
   if (suite.environment?.computerEnvironmentId) return true;
   return (suite.environmentIds ?? []).some((environmentId) =>
     Boolean(
       (attachedEnvironments ?? []).find(
-        (environment) => environment.environmentId === environmentId,
-      )?.computerEnvironmentId,
-    ),
+        (environment) => environment.environmentId === environmentId
+      )?.computerEnvironmentId
+    )
   );
 }

@@ -165,6 +165,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Re-wiring a host's server set is an administrative action.",
   duplicate_host: "Host administration has its own tab.",
   list_project_environments: "Environments have their own tab.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not a user-facing action: it answers whether this platform accepts a model override, which every write path already asks on the caller's behalf.",
   get_project_environment: "Environments have their own tab.",
   resolve_project_environment: "Resolution detail with no chat-facing use.",
   create_project_environment: "Environment authoring has its own editor.",

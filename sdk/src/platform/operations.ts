@@ -51,6 +51,7 @@ import type {
   PlatformJourneyRunLaunched,
   PlatformScenario,
   PlatformScenarioDeleted,
+  PlatformEnvironmentCapabilities,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -3337,6 +3338,49 @@ export const listEnvironmentsOperation: PlatformOperation<
   },
 };
 
+const environmentCapabilitiesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type EnvironmentCapabilitiesInput = z.infer<
+  typeof environmentCapabilitiesInput
+>;
+
+export type EnvironmentCapabilitiesResult = {
+  project: SelectedProjectInfo;
+  capabilities: PlatformEnvironmentCapabilities;
+};
+
+export const getEnvironmentCapabilitiesOperation: PlatformOperation<
+  EnvironmentCapabilitiesInput,
+  EnvironmentCapabilitiesResult
+> = {
+  name: "get_project_environment_capabilities",
+  title: "Check what an MCPJam deployment's environment surface supports",
+  description:
+    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
+  readOnly: true,
+  inputSchema: environmentCapabilitiesInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      capabilities: await client.getEnvironmentCapabilities(
+        { projectId: project.id },
+        { signal }
+      ),
+    };
+  },
+};
+
 const environmentSelectorInput = z.object({
   project: z
     .string()
@@ -3462,6 +3506,14 @@ const createEnvironmentInput = z.object({
     .describe(
       "Optional standalone server group to pin. Omit to fall back to the host config's own servers."
     ),
+  modelId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
+    ),
   skillSelection: skillSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
   sandboxImageId: z
@@ -3503,6 +3555,7 @@ export const createEnvironmentOperation: PlatformOperation<
           ...(input.serverAttachmentId !== undefined
             ? { serverAttachmentId: input.serverAttachmentId }
             : {}),
+          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
           ...(input.skillSelection !== undefined
             ? { skillSelection: input.skillSelection }
             : {}),
@@ -3557,6 +3610,15 @@ const updateEnvironmentInput = z
       .describe(
         "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged."
       ),
+    modelId: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        "New model override, or null to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
+      ),
     skillSelection: skillSelectionInput
       .nullable()
       .optional()
@@ -3585,12 +3647,13 @@ const updateEnvironmentInput = z
       value.description !== undefined ||
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
+      value.modelId !== undefined ||
       value.skillSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
@@ -3602,7 +3665,7 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   inputSchema: updateEnvironmentInput,
   async execute(input, { client, signal }) {
@@ -3627,6 +3690,7 @@ export const updateEnvironmentOperation: PlatformOperation<
     if (input.hostId !== undefined) body.hostId = input.hostId;
     if (input.serverAttachmentId !== undefined)
       body.serverAttachmentId = input.serverAttachmentId;
+    if (input.modelId !== undefined) body.modelId = input.modelId;
     if (input.skillSelection !== undefined)
       body.skillSelection = input.skillSelection;
     if (input.pluginVersionIds !== undefined)
@@ -4793,6 +4857,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   setHostServersOperation,
   duplicateHostOperation,
   listEnvironmentsOperation,
+  getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
   createEnvironmentOperation,

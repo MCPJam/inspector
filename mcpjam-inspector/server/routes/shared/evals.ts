@@ -1602,9 +1602,22 @@ export async function prepareEvalRun(
     // No client substituted the suite default model onto these cases, so a
     // model-less prompt case would be silently dropped from execution. Reject
     // before cap-math so the error names the real cause, not the cap.
-    assertBareRerunCasesRunnable(
-      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0]
-    );
+    //
+    // NOT for an environment-backed run. The premise of this check — "nothing
+    // supplies a model, so the recorder drops the case" — stops holding the
+    // moment an environment is in play: `startTestSuiteRun` projects every
+    // prompt case onto the environment's effective model, writes that into
+    // `configSnapshot.tests`, and `precreateIterationsForRun` creates rows
+    // from the projection, so the case has both a model AND somewhere to
+    // record. (An environment that resolves to NO model never gets this far —
+    // the backend refuses the launch with `ENV_MODEL_REQUIRED`.) Keeping the
+    // check here would make an unattended env-backed rerun the one launch
+    // shape that cannot run a suite the interactive UI runs fine.
+    if (!environmentId) {
+      assertBareRerunCasesRunnable(
+        persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0]
+      );
+    }
     assertSuiteRunWithinCap({
       ...request,
       tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),
@@ -1908,16 +1921,13 @@ export async function prepareEvalRun(
       await recorder
         .finalize({ status: "failed", notes: cause })
         .catch((finalizeError: unknown) =>
-          logger.warn(
-            "[evals] Failed to finalize run after setup abort",
-            {
-              runId,
-              error:
-                finalizeError instanceof Error
-                  ? finalizeError.message
-                  : String(finalizeError),
-            }
-          )
+          logger.warn("[evals] Failed to finalize run after setup abort", {
+            runId,
+            error:
+              finalizeError instanceof Error
+                ? finalizeError.message
+                : String(finalizeError),
+          })
         );
       throw error;
     }

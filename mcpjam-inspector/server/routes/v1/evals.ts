@@ -795,7 +795,11 @@ function assertScheduleSurvivesEnvironmentChange(
   // launches ONE environment and the launch check rejects an unpinned
   // multi-environment suite — every scheduled run would fail until the
   // schedule paused itself on consecutive failures.
-  if (schedule.enabled === true && nextEnvironmentIds.length > 1 && !pinSurvives) {
+  if (
+    schedule.enabled === true &&
+    nextEnvironmentIds.length > 1 &&
+    !pinSurvives
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -1455,13 +1459,10 @@ const generateCasesSchema = z
   // Same mutual exclusion the run-create schema enforces: an environment's
   // closed server set is the point, so a `servers` override alongside it would
   // have to be silently dropped.
-  .refine(
-    (body) => !body.environmentId || (body.servers?.length ?? 0) === 0,
-    {
-      message:
-        "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
-    }
-  );
+  .refine((body) => !body.environmentId || (body.servers?.length ?? 0) === 0, {
+    message:
+      "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
+  });
 
 /**
  * Build createTestCase / updateTestCase mutation args from the public case
@@ -1942,12 +1943,12 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     undefined,
     undefined,
     {
-        serverNames,
-        // v1 eval API has no host-persona input — no enterprise policy to
-        // enforce; the issuer makes per-server XAA servers mint instead of
-        // failing with 'Missing XAA issuer'.
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      }
+      serverNames,
+      // v1 eval API has no host-persona input — no enterprise policy to
+      // enforce; the issuer makes per-server XAA servers mint instead of
+      // failing with 'Missing XAA issuer'.
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+    }
   );
 
   // Author-only is fully synchronous: the manager is only needed to resolve

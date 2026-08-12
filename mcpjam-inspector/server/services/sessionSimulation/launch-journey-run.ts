@@ -88,6 +88,62 @@ export interface LaunchJourneyRunResult {
   deduped?: boolean;
 }
 
+/**
+ * A human-readable reason from a backend launch rejection.
+ *
+ * `bodyText` is the RAW response body and is never passed through unexamined.
+ * It arrives in three shapes and only one of them is fit to show:
+ *
+ *   - a STRUCTURED rejection — a v1 envelope (`{"error":{"message":…}}`) or
+ *     Convex `ConvexError` data (`{"code":…,"message":…}`). Unwrap it; the raw
+ *     form renders as a wall of braces in a toast.
+ *   - a PLAIN SENTENCE the backend wrote for a human ("journey exceeds the
+ *     maximum host count"). This is the useful case and it survives — bounded,
+ *     because a "sentence" that is 8 KB or full of markup is not one.
+ *   - anything else — an HTML error page from a proxy, a stack trace, an empty
+ *     body. Replaced by a sentence of our own.
+ *
+ * Deliberately tolerant: every branch is best-effort, because the failure this
+ * runs inside is already a failure and a parse error here would replace a
+ * useful message with a 500.
+ */
+const MAX_PASSTHROUGH_REASON_LENGTH = 300;
+
+export function launchFailureMessage(err: SwarmAgentError): string {
+  const fallback =
+    err.status === 402
+      ? "This launch would exceed your organization's credit limit."
+      : "This journey can't be launched.";
+  const raw = err.bodyText?.trim();
+  if (!raw) return fallback;
+
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      // v1 envelope: { error: { code, message } }
+      const envelope = parsed.error;
+      if (envelope && typeof envelope === "object") {
+        const message = (envelope as { message?: unknown }).message;
+        if (typeof message === "string" && message.trim())
+          return message.trim();
+      }
+      // Convex structured ConvexError data: { code, message, details? }
+      const message = parsed.message;
+      if (typeof message === "string" && message.trim()) return message.trim();
+    } catch {
+      // Not JSON after all — fall through to the plain-sentence test.
+    }
+    return fallback;
+  }
+
+  // A plain sentence: short, single-line, and not markup.
+  const looksLikeProse =
+    raw.length <= MAX_PASSTHROUGH_REASON_LENGTH &&
+    !raw.includes("\n") &&
+    !raw.includes("<");
+  return looksLikeProse ? raw : fallback;
+}
+
 function requireConvexHttpUrl(): string {
   const url = process.env.CONVEX_HTTP_URL;
   if (!url) {
@@ -276,19 +332,22 @@ export async function launchJourneyRun(
       // 429 matters most of the five: it is the only RETRYABLE one, and
       // reading it as invalid input turns "wait and try again" into "this
       // request can never work".
+      //
+      // 402 is the SIXTH and the other one that changes what a caller should
+      // do: the organization is out of credit, so retrying is pointless and
+      // every sibling launch in the same wave will fail identically. The
+      // swarm fan-out reads this code to stop scheduling rather than fire N
+      // more doomed requests.
       const CODE_BY_STATUS: Record<number, ErrorCode> = {
         401: ErrorCode.UNAUTHORIZED,
+        402: ErrorCode.BILLING_LIMIT_REACHED,
         403: ErrorCode.FORBIDDEN,
         404: ErrorCode.NOT_FOUND,
         409: ErrorCode.CONFLICT,
         429: ErrorCode.RATE_LIMITED,
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
-      throw new WebRouteError(
-        err.status,
-        code,
-        err.bodyText || "This journey can't be launched."
-      );
+      throw new WebRouteError(err.status, code, launchFailureMessage(err));
     }
     throw err;
   }
@@ -435,8 +494,7 @@ export async function launchJourneyRun(
               : {}),
             ...(connection.requestTimeoutByServerId
               ? {
-                  requestTimeoutByServerId:
-                    connection.requestTimeoutByServerId,
+                  requestTimeoutByServerId: connection.requestTimeoutByServerId,
                 }
               : {}),
           }
