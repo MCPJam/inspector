@@ -107,8 +107,14 @@ export function MCPJamLimitDialog() {
   const showTopupDialog = !!user && intent === "topup" && isOpen;
   // Pitching Team to an org already on Team would be nonsense; those orgs get
   // the buy-credits path only.
+  const isFreeEffectivePlan = creditsUpgrade.effectivePlan === "free";
   const showCreditsUpgrade =
-    creditsUpgrade.effectivePlan === "free" && creditsUpgrade.canManageBilling;
+    isFreeEffectivePlan && creditsUpgrade.canManageBilling;
+  const creditsRequestAction =
+    isFreeEffectivePlan ? "upgrade" : "buyCredits";
+  const memberDescription = isFreeEffectivePlan
+    ? "Ask an organization owner or admin to buy credits or upgrade the plan."
+    : "Ask an organization owner or admin to buy credits.";
 
   return (
     <>
@@ -138,14 +144,15 @@ export function MCPJamLimitDialog() {
         <CreditsLimitDialogView
           description={
             isKnownNonManager
-              ? "Ask an organization owner or admin to buy credits or upgrade the plan."
-              : creditsUpgrade.effectivePlan === "free"
+              ? memberDescription
+              : isFreeEffectivePlan
               ? `Free credits reset daily. Our ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
               : "Buy credits to keep your team going, or use your own API key."
           }
           isKnownNonManager={isKnownNonManager}
           showUpgrade={showCreditsUpgrade}
           requestRecipients={requestRecipients}
+          requestAction={creditsRequestAction}
           organizationName={creditsUpgrade.organizationName}
           interval={creditsUpgrade.interval}
           onIntervalChange={creditsUpgrade.setInterval}

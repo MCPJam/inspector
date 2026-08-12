@@ -11,6 +11,7 @@ import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 import { UpgradeIntervalPicker } from "@/components/billing/UpgradeIntervalPicker";
 import {
   RequestUpgradeButton,
+  type UpgradeRequestAction,
   type UpgradeRequestRecipient,
 } from "@/components/billing/RequestUpgradeButton";
 
@@ -21,6 +22,7 @@ export interface CreditsLimitDialogViewProps {
   /** Free orgs whose user can manage billing. A paid org gets credits only. */
   showUpgrade: boolean;
   requestRecipients: UpgradeRequestRecipient[];
+  requestAction?: UpgradeRequestAction;
   organizationName: string;
   interval: BillingInterval;
   onIntervalChange: (interval: BillingInterval) => void;
@@ -53,6 +55,7 @@ export function CreditsLimitDialogView({
   isKnownNonManager,
   showUpgrade,
   requestRecipients,
+  requestAction = "upgrade",
   organizationName,
   interval,
   onIntervalChange,
@@ -94,6 +97,7 @@ export function CreditsLimitDialogView({
             teamName={teamName}
             origin="credits"
             limitKind="credits"
+            requestAction={requestAction}
           />
         ) : (
           <>
