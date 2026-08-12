@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -94,6 +94,14 @@ const createHeaderRow = (initial?: Partial<HeaderRow>): HeaderRow => {
   };
 };
 
+/**
+ * Named so the Registration dropdown can retract exactly this error and leave
+ * every other one standing — see `handleRegistrationChange`.
+ */
+const PREREGISTERED_CLIENT_ID_ERROR =
+  "Client ID is required for pre-registered registration. Add one under " +
+  "Advanced settings, or switch Registration to Dynamic (DCR).";
+
 const describeRegistrationStrategy = (strategy: string): string => {
   if (strategy === "cimd") return "CIMD (URL-based)";
   if (strategy === "dcr") return "Dynamic (DCR)";
@@ -125,6 +133,9 @@ export function OAuthProfileModal({
   const [allowPathScopedIssuer, setAllowPathScopedIssuer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Controlled so the pre-registered guard below can reveal the section that
+  // holds the Client ID. "" is the collapsed state for a single-type Accordion.
+  const [advancedOpen, setAdvancedOpen] = useState("");
   const supportedStrategies = useMemo(
     () => getSupportedRegistrationStrategies(draft.protocolVersion),
     [draft.protocolVersion],
@@ -135,29 +146,54 @@ export function OAuthProfileModal({
     return baseName;
   }, [server?.name, existingServerNames]);
 
+  // Seeding is an event — the modal opening, or a fresh agent prefill — not a
+  // re-render. `derivedProfile` and `generateDefaultName` change identity every
+  // time the parent's server record ticks (connection status, tokens), and
+  // reseeding on that would wipe whatever the user has typed into an open
+  // dialog. These two refs make the effect body run once per such event.
+  const seededWhileOpenRef = useRef(false);
+  const seededAgentSeedRef = useRef<OAuthProfileAgentSeed | null | undefined>(
+    undefined,
+  );
+
   useEffect(() => {
-    if (open) {
-      // The agent seed overlays the server-derived values; anything it omits
-      // keeps the derived default. It never carries credentials (see the
-      // OAuthProfileAgentSeed type).
-      setServerName(agentSeed?.serverName ?? generateDefaultName());
-      setDraft({
-        ...derivedProfile,
-        ...(agentSeed?.serverUrl ? { serverUrl: agentSeed.serverUrl } : {}),
-        ...(agentSeed?.registrationStrategy
-          ? { registrationStrategy: agentSeed.registrationStrategy }
-          : {}),
-      });
-      setHeaderRows(
-        derivedProfile.customHeaders.length
-          ? derivedProfile.customHeaders.map((header) =>
-              createHeaderRow(header),
-            )
-          : [createHeaderRow()],
-      );
-      setAllowPathScopedIssuer(server?.oauthAllowPathScopedIssuer === true);
-      setError(null);
+    if (!open) {
+      seededWhileOpenRef.current = false;
+      return;
     }
+    // An agent command can re-target an already-open modal, so a new seed must
+    // still reseed; anything else while open is parent churn to ignore.
+    if (seededWhileOpenRef.current && seededAgentSeedRef.current === agentSeed) {
+      return;
+    }
+    seededWhileOpenRef.current = true;
+    seededAgentSeedRef.current = agentSeed;
+
+    // The agent seed overlays the server-derived values; anything it omits
+    // keeps the derived default. It never carries credentials (see the
+    // OAuthProfileAgentSeed type).
+    setServerName(agentSeed?.serverName ?? generateDefaultName());
+    const nextDraft = {
+      ...derivedProfile,
+      ...(agentSeed?.serverUrl ? { serverUrl: agentSeed.serverUrl } : {}),
+      ...(agentSeed?.registrationStrategy
+        ? { registrationStrategy: agentSeed.registrationStrategy }
+        : {}),
+    };
+    setDraft(nextDraft);
+    // Derived from `nextDraft`, not `draft`: the setDraft above has not landed
+    // yet, so reading state here would reveal (or hide) the section based on
+    // the previously configured server.
+    setAdvancedOpen(
+      nextDraft.registrationStrategy === "preregistered" ? "advanced" : "",
+    );
+    setHeaderRows(
+      derivedProfile.customHeaders.length
+        ? derivedProfile.customHeaders.map((header) => createHeaderRow(header))
+        : [createHeaderRow()],
+    );
+    setAllowPathScopedIssuer(server?.oauthAllowPathScopedIssuer === true);
+    setError(null);
   }, [
     open,
     derivedProfile,
@@ -165,6 +201,23 @@ export function OAuthProfileModal({
     agentSeed,
     server?.oauthAllowPathScopedIssuer,
   ]);
+
+  // The Client ID input lives inside "Advanced settings (optional)", which is
+  // collapsed by default, while Registration is a top-level dropdown. Picking
+  // "Pre-registered" hid the one field that strategy cannot run without, and
+  // the flow only failed later at the registration step. Reveal the section
+  // whenever that strategy is chosen; a manual collapse afterwards sticks.
+  const handleRegistrationChange = (value: OAuthRegistrationStrategy) => {
+    setDraft((prev) => ({ ...prev, registrationStrategy: value }));
+    // That error names switching to DCR as one of its two remedies, so it must
+    // not outlive the user doing exactly that. Retract only that message: no
+    // other field clears the banner on edit, and a duplicate name or a bad URL
+    // survives a strategy change untouched.
+    setError((prev) => (prev === PREREGISTERED_CLIENT_ID_ERROR ? null : prev));
+    if (value === "preregistered") {
+      setAdvancedOpen("advanced");
+    }
+  };
 
   const normalizedHeaders = useMemo(
     () =>
@@ -195,6 +248,21 @@ export function OAuthProfileModal({
     }
 
     const trimmedClientId = draft.clientId.trim();
+
+    // A pre-registered flow has no way to obtain a client id: DCR is skipped,
+    // so an empty field means the flow dies at the registration step with
+    // "Pre-registered client ID is required". Reject the save instead.
+    //
+    // There is deliberately no exemption for a client id left over in
+    // `mcp-client-<name>` from an earlier DCR run: saving with an empty field
+    // removes that record (`saveOAuthConfigToLocalStorage`), so honouring it
+    // here would delete the very credential the flow would fall back to.
+    if (draft.registrationStrategy === "preregistered" && !trimmedClientId) {
+      setAdvancedOpen("advanced");
+      setError(PREREGISTERED_CLIENT_ID_ERROR);
+      return null;
+    }
+
     // Preserve the exact typed secret — only whether there's a real value is
     // trim-based (whitespace-only counts as none). Trimming the value itself
     // would silently corrupt a secret with legitimate surrounding whitespace.
@@ -428,11 +496,9 @@ export function OAuthProfileModal({
                   <Select
                     value={draft.registrationStrategy}
                     onValueChange={(value) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        registrationStrategy:
-                          value as OAuthRegistrationStrategy,
-                      }))
+                      handleRegistrationChange(
+                        value as OAuthRegistrationStrategy,
+                      )
                     }
                   >
                     <SelectTrigger
@@ -458,7 +524,12 @@ export function OAuthProfileModal({
             </div>
 
             <div className="rounded-lg border border-border">
-              <Accordion type="single" collapsible defaultValue="">
+              <Accordion
+                type="single"
+                collapsible
+                value={advancedOpen}
+                onValueChange={setAdvancedOpen}
+              >
                 <AccordionItem value="advanced" className="border-none">
                   <AccordionTrigger className="px-4 py-3 cursor-pointer">
                     <span className="text-sm font-medium">

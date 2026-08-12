@@ -21,6 +21,7 @@ const {
   mockGetStoredTokens,
   mockInitiateOAuth,
   mockValidateHostedServer,
+  mockCheckHostedServerOAuthRequirement,
   mockChatTabV2,
   mockUseApiContext,
   mockAuthFetch,
@@ -40,6 +41,7 @@ const {
   mockGetStoredTokens: vi.fn(),
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
+  mockCheckHostedServerOAuthRequirement: vi.fn(),
   mockChatTabV2: vi.fn(),
   mockUseApiContext: vi.fn(),
   mockAuthFetch: vi.fn(),
@@ -84,6 +86,7 @@ vi.mock("@/lib/analytics", () => ({
 
 vi.mock("@/lib/apis/web/servers-api", () => ({
   validateHostedServer: mockValidateHostedServer,
+  checkHostedServerOAuthRequirement: mockCheckHostedServerOAuthRequirement,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -189,6 +192,7 @@ describe("ChatboxChatPage", () => {
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
+    mockCheckHostedServerOAuthRequirement.mockReset();
     mockChatTabV2.mockReset();
     mockUseApiContext.mockReset();
     mockAuthFetch.mockReset();
@@ -203,6 +207,15 @@ describe("ChatboxChatPage", () => {
       success: true,
       status: "connected",
       initInfo: null,
+    });
+    // These fixtures model genuinely OAuth-backed servers (asana, linear), so
+    // the requirement probe says "yes" unless a test overrides it. The gate now
+    // asks this instead of trusting the payload's `useOAuth` compat mirror.
+    mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+      useOAuth: true,
+      requiresAuthorization: true,
+      effectiveAuthMethod: "oauth",
+      serverUrl: null,
     });
     mockAuthFetch.mockResolvedValue(
       createFetchResponse({
@@ -289,11 +302,11 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage pathToken="stale-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Swarm Link Unavailable" })
+      await screen.findByRole("heading", { name: "Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This swarm link is invalid or expired. Ask the owner to share a new link if you still need access."
+        "This link is invalid or expired. Ask whoever shared it for a new one if you still need access."
       )
     ).toBeInTheDocument();
     expect(screen.queryByText(/Uncaught Error:/)).not.toBeInTheDocument();
@@ -524,6 +537,46 @@ describe("ChatboxChatPage", () => {
     );
   });
 
+  /**
+   * SUTB-6. The author's Preview embed must never be told to sign in: the
+   * only sign-in the frame can perform returns to `/oauth/callback`, outside
+   * the `main.tsx` self-embed exemption, so the frame lands on
+   * `IframeRouterError`. The denial itself still shows — it's the honest
+   * answer — minus the CTA that cannot work.
+   */
+  it("offers no sign-in CTA when the denial lands inside the preview embed", async () => {
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    window.history.replaceState(
+      {},
+      "",
+      "/chatbox/test/token-denied?surface=preview"
+    );
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-denied" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in App" })
+    ).toBeInTheDocument();
+  });
+
   it("shows the sign-in CTA for guest-blocked links only after bootstrap denies access", async () => {
     mockConvexAuthState.isAuthenticated = false;
     mockWorkOsAuthState.user = null;
@@ -611,11 +664,11 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage pathToken="broken-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Swarm Link Unavailable" })
+      await screen.findByRole("heading", { name: "Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "We couldn't open this swarm right now. Please try again or open MCPJam."
+        "We couldn't open this link right now. Please try again or open MCPJam."
       )
     ).toBeInTheDocument();
     expect(
@@ -638,6 +691,17 @@ describe("ChatboxChatPage", () => {
     let hasToken = false;
     mockGetStoredTokens.mockImplementation(() =>
       hasToken ? { access_token: "chatbox-token" } : null
+    );
+    // Held open so the in-flight verification frame is observable: the
+    // requirement probe now resolves before the gate reacts, so an immediately
+    // resolving validation would settle in the same flush and the "Finishing
+    // authorization" layer would never be rendered.
+    let resolveValidation: ((value: unknown) => void) | null = null;
+    mockValidateHostedServer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveValidation = resolve;
+        })
     );
 
     writeChatboxSession({
@@ -676,6 +740,12 @@ describe("ChatboxChatPage", () => {
 
     render(<ChatboxChatPage />);
 
+    // The gate admits a server only once the authorization requirement probe
+    // has answered for it, so let that settle before asserting on the overlay.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
     expect(
       screen.getByRole("heading", { name: "Finishing authorization" })
     ).toBeInTheDocument();
@@ -685,6 +755,11 @@ describe("ChatboxChatPage", () => {
 
     await act(async () => {
       hasToken = true;
+      resolveValidation?.({
+        success: true,
+        status: "connected",
+        initInfo: null,
+      });
       await vi.runAllTimersAsync();
     });
 
@@ -804,6 +879,11 @@ describe("ChatboxChatPage", () => {
     });
 
     render(<ChatboxChatPage />);
+
+    // See above: the requirement probe resolves before the gate reacts.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
     expect(
       screen.getByRole("heading", { name: "Finishing authorization" })
@@ -1437,6 +1517,201 @@ describe("ChatboxChatPage", () => {
       expect(
         await screen.findByRole("heading", { name: "Access Denied" })
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("authorization is demanded only when the server needs it", () => {
+    // SUTB-9: a shared scenario asked its recipient to authorize a server with
+    // no OAuth at all. The bootstrap payload carries `useOAuth`, a derived
+    // mirror that is true for a discover-mode (`authMethod: "auto"`) row too, so
+    // gating on it prompts for servers that have nothing to authorize against —
+    // and the only offered action, "Authorize again", can never succeed.
+    function writeSharedScenario() {
+      writeChatboxSession({
+        chatboxId: "sbx_1",
+        accessVersion: 1,
+        payload: {
+          projectId: "ws_1",
+          chatboxId: "sbx_1",
+          name: "Rabona Chatbox",
+          description: "Hosted chatbox",
+          hostStyle: "claude",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [
+            {
+              serverId: "srv_rabona",
+              serverName: "rabona",
+              // The mirror the redeem payload actually sends for this row.
+              useOAuth: true,
+              serverUrl:
+                "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+              clientId: null,
+              oauthScopes: null,
+            },
+          ],
+        },
+      });
+    }
+
+    it("lets the recipient chat immediately when the server does not require authorization", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: false,
+        effectiveAuthMethod: "discover",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // A server with no OAuth has no credential to verify, so any attempt to
+      // verify one fails — that failure is what used to render the dead-end
+      // "Authorization could not be completed. Try again." card.
+      mockValidateHostedServer.mockRejectedValue(
+        new Error(
+          'Authentication failed for MCP server "rabona": invalid_token (401)'
+        )
+      );
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockCheckHostedServerOAuthRequirement).toHaveBeenCalledWith(
+          "srv_rabona"
+        )
+      );
+      expect(mockValidateHostedServer).not.toHaveBeenCalled();
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" })
+      ).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ chatboxComposerBlocked: false })
+        )
+      );
+    });
+
+    it("still escalates that server to the auth gate on a real 401 at runtime", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: false,
+        effectiveAuthMethod: "discover",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" })
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "Authorization Required" })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Authorize" })
+      ).toBeInTheDocument();
+    });
+
+    it("prompts the recipient when the server does require authorization", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // No usable credential for the recipient yet.
+      mockValidateHostedServer.mockRejectedValue(
+        new Error(
+          'Authentication failed for MCP server "rabona": invalid_token (401)'
+        )
+      );
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+
+      // Settle on the terminal state: the row passes through needs_auth and
+      // verifying on the way here, and only "error" stays put.
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Authorize again" })
+        ).toBeInTheDocument()
+      );
+      expect(
+        screen.getByRole("heading", { name: "Authorization Required" })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Authorize the required servers to continue.")
+      ).toBeInTheDocument();
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ chatboxComposerBlocked: true })
+      );
+    });
+
+    it("lets an authorized recipient chat once the credential verifies", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ chatboxComposerBlocked: false })
+        )
+      );
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("releases the composer when the offered authorization cannot succeed", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // The reported dead end: the card's only action cannot complete.
+      mockValidateHostedServer.mockRejectedValue(
+        new Error(
+          'Authentication failed for MCP server "rabona": invalid_token (401)'
+        )
+      );
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Authorize again" })
+        ).toBeInTheDocument()
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Continue without authorizing" })
+      );
+
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" })
+      ).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ chatboxComposerBlocked: false })
+        )
+      );
     });
   });
 });
