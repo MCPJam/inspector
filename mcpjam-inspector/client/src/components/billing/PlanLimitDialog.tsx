@@ -138,10 +138,14 @@ function useUpgradeReturnFlow(): void {
 
     track("plan_limit_upgrade_returned", {
       location: "plan_limit_dialog",
+      organization_id: upgradeReturn.organizationId,
       origin: upgradeReturn.origin,
       upgraded,
       plan: billingStatus.plan,
+      current_plan: billingStatus.plan,
+      effective_plan: billingStatus.effectivePlan ?? billingStatus.plan,
       billing_interval: billingStatus.billingInterval,
+      can_manage_billing: billingStatus.canManageBilling ?? false,
     });
   }, [
     billingStatus,
@@ -163,6 +167,7 @@ export function PlanLimitDialog() {
   const isOpen = usePlanLimitDialogStore((s) => s.isOpen);
   const limit = usePlanLimitDialogStore((s) => s.limit);
   const close = usePlanLimitDialogStore((s) => s.close);
+  const impressionTrackedRef = useRef(false);
 
   const organizationId = limit?.organizationId ?? null;
   const upgrade = useUpgradeCheckout({
@@ -173,41 +178,103 @@ export function PlanLimitDialog() {
   const requestRecipients = useUpgradeRequestRecipients(organizationId);
 
   useEffect(() => {
-    if (!isOpen || !limit) return;
+    if (!isOpen || !limit) {
+      impressionTrackedRef.current = false;
+      return;
+    }
+    if (upgrade.isLoadingBilling || impressionTrackedRef.current) return;
+
+    const isFreePlan = upgrade.effectivePlan === "free";
+    const showUpgrade = isFreePlan && upgrade.canManageBilling;
+    const showEnterprise =
+      !isFreePlan && upgrade.effectivePlan !== "enterprise";
+    impressionTrackedRef.current = true;
     track("plan_limit_dialog_shown", {
       location: "plan_limit_dialog",
+      wall_kind: "eval_iterations",
+      organization_id: organizationId,
       limit_kind: limit.kind,
       origin: limit.origin,
       used: limit.used,
       allowed: limit.allowed,
       window_kind: limit.windowKind,
+      current_plan: upgrade.currentPlan,
+      effective_plan: upgrade.effectivePlan,
+      can_manage_billing: upgrade.canManageBilling,
+      audience: upgrade.canManageBilling ? "billing_manager" : "member",
+      primary_action: showUpgrade
+        ? "upgrade"
+        : showEnterprise
+        ? "enterprise"
+        : requestRecipients.length > 0
+        ? "request_owner"
+        : "none",
+      request_recipient_count: requestRecipients.length,
+      billing_interval: upgrade.interval,
+      annual_supported: upgrade.annualSupported,
+      monthly_supported: upgrade.monthlySupported,
     });
-  }, [isOpen, limit]);
+  }, [
+    isOpen,
+    limit,
+    organizationId,
+    requestRecipients.length,
+    upgrade.annualSupported,
+    upgrade.canManageBilling,
+    upgrade.currentPlan,
+    upgrade.effectivePlan,
+    upgrade.interval,
+    upgrade.isLoadingBilling,
+    upgrade.monthlySupported,
+  ]);
 
   // New tab, not a same-tab navigation or a mailto. The user is mid-task with a
   // blocked eval run; sending them away from the app (or into a mail client
   // that may not be configured) loses their place for no reason.
   const handleRequestEnterprise = useCallback(() => {
+    window.open(ENTERPRISE_CONTACT_URL, "_blank", "noopener,noreferrer");
+    close();
     track("plan_limit_enterprise_cta_clicked", {
       location: "plan_limit_dialog",
+      organization_id: organizationId,
       limit_kind: limit?.kind ?? "evalIterations",
       origin: limit?.origin,
       plan: upgrade.effectivePlan,
+      current_plan: upgrade.currentPlan,
+      effective_plan: upgrade.effectivePlan,
+      can_manage_billing: upgrade.canManageBilling,
     });
-    window.open(ENTERPRISE_CONTACT_URL, "_blank", "noopener,noreferrer");
-    close();
-  }, [close, limit, upgrade.effectivePlan]);
+  }, [
+    close,
+    limit,
+    organizationId,
+    upgrade.canManageBilling,
+    upgrade.currentPlan,
+    upgrade.effectivePlan,
+  ]);
 
   const handleDismiss = useCallback(() => {
+    close();
     if (limit) {
       track("plan_limit_dialog_dismissed", {
         location: "plan_limit_dialog",
+        wall_kind: "eval_iterations",
+        organization_id: organizationId,
         limit_kind: limit.kind,
         origin: limit.origin,
+        current_plan: upgrade.currentPlan,
+        effective_plan: upgrade.effectivePlan,
+        audience: upgrade.canManageBilling ? "billing_manager" : "member",
       });
     }
-    close();
-  }, [close, limit]);
+  }, [
+    close,
+    limit,
+    organizationId,
+    upgrade.canManageBilling,
+    upgrade.currentPlan,
+    upgrade.effectivePlan,
+  ]);
 
   if (!isOpen || !limit || limit.kind !== "evalIterations") return null;
 
@@ -260,6 +327,7 @@ export function PlanLimitDialog() {
       showUpgrade={showUpgrade}
       showEnterprise={showEnterprise}
       requestRecipients={requestRecipients}
+      organizationId={organizationId}
       organizationName={upgrade.organizationName}
       origin="evals"
       limitKind={limit.kind}

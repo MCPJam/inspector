@@ -257,15 +257,24 @@ export const ANALYTICS_EVENTS = {
   playground_tools_pane_tab_changed: { source: "client" },
   playground_tools_refresh_clicked: { source: "client" },
   // --- Free-plan limit walls (PlanLimitDialog) ---
-  // `limit_kind` distinguishes which cap was hit so we can compare which wall
-  // converts. `plan_limit_upgrade_returned` fires on the post-checkout return
-  // and carries whether the org actually landed on a paid plan.
+  // One impression per opening, then explicit user actions and checkout
+  // outcomes. `limit_kind` distinguishes which cap was hit so we can compare
+  // which wall converts. Person data comes from the global identified profile,
+  // not duplicated PII in these events.
   plan_limit_dialog_shown: { source: "client" },
+  plan_limit_sign_in_clicked: { source: "client" },
+  plan_limit_buy_credits_clicked: { source: "client" },
+  plan_limit_byok_clicked: { source: "client" },
+  plan_limit_interval_selected: { source: "client" },
   plan_limit_upgrade_clicked: { source: "client" },
+  plan_limit_upgrade_failed: { source: "client" },
   plan_limit_upgrade_returned: { source: "client" },
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },
+  credit_topup_dialog_shown: { source: "client" },
+  credit_topup_package_selected: { source: "client" },
+  credit_topup_dialog_dismissed: { source: "client" },
   // --- OpenAI plugin import (Connect "Add plugin", INS-2) ---
   // Props are built by `client/src/lib/plugins/plugin-analytics.ts`, which
   // exists to keep bundle paths, server URLs, env/header names, and plugin

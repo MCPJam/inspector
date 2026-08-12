@@ -6,6 +6,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 const signIn = vi.fn();
+const trackMock = vi.hoisted(() => vi.fn());
 const authState: { isLoading: boolean; user: { id: string } | null } = {
   isLoading: false,
   user: null,
@@ -43,10 +44,13 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
     effectivePlan: upgradeState.effectivePlan,
     organizationName: "Acme Robotics",
     canManageBilling: upgradeState.canManageBilling,
+    isLoadingBilling: false,
     isStarting: false,
     start: upgradeState.start,
   }),
 }));
+
+vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
   useUpgradeRequestRecipients: () => [
@@ -87,6 +91,7 @@ const originalHash = window.location.hash;
 
 beforeEach(() => {
   signIn.mockReset();
+  trackMock.mockReset();
   upgradeState.start.mockReset();
   upgradeState.currentPlan = "free";
   upgradeState.effectivePlan = "free";
@@ -132,6 +137,25 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("button", { name: /^sign in$/i })
     ).toBeInTheDocument();
+  });
+
+  it("reports the guest wall once across rerenders", () => {
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    const view = render(<MCPJamLimitDialog />);
+
+    view.rerender(<MCPJamLimitDialog />);
+
+    const impressions = trackMock.mock.calls.filter(
+      ([event]) => event === "plan_limit_dialog_shown"
+    );
+    expect(impressions).toHaveLength(1);
+    expect(impressions[0]?.[1]).toEqual(
+      expect.objectContaining({
+        wall_kind: "guest_credits",
+        audience: "guest",
+        primary_action: "sign_in",
+      })
+    );
   });
 
   it("calls signIn() when the Sign in button is clicked", async () => {
@@ -234,9 +258,7 @@ describe("MCPJamLimitDialog", () => {
       screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? ""
     );
     expect(href).toContain("Credit purchase request for Acme Robotics");
-    expect(href).toContain(
-      "Our organization has run out of MCPJam credits."
-    );
+    expect(href).toContain("Our organization has run out of MCPJam credits.");
     expect(href).toContain("Could you buy more credits for Acme Robotics?");
     expect(href).not.toContain("upgrade Acme Robotics to the Team plan");
   });
