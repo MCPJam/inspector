@@ -391,9 +391,11 @@ function normalizeCreateTestsToRunTests(
 ): RunEvalsRequest["tests"] {
   return tests.map((test) => {
     const runs = test.runs ?? 1;
-    // Trimmed for the same reason as `toPersistedModelEntry`: this id is what
-    // gets stored on the case and handed to the provider.
-    const model = (test.model ?? suite.model).trim();
+    // Trimmed — and rejected when blank — for the same reason as
+    // `toPersistedModelEntry`: this id is what gets stored on the case and
+    // handed to the provider, and an explicit `provider` would otherwise carry
+    // a blank model past validation.
+    const model = requireNonBlankModelId(test.model ?? suite.model);
     let provider = test.provider ?? suite.provider;
     if (!provider) {
       // The CANONICAL resolver, not a prefix split. Splitting derived
@@ -1344,9 +1346,31 @@ function toPersistedModelEntry(entry: { model: string; provider?: string }): {
   provider: string;
 } {
   return {
-    model: entry.model.trim(),
+    model: requireNonBlankModelId(entry.model),
     provider: deriveProvider(entry.model, entry.provider),
   };
+}
+
+/**
+ * The trimmed id, or a 400.
+ *
+ * `z.string().min(1)` accepts `"   "`, and an EXPLICIT provider makes
+ * {@link deriveProvider} return without ever inspecting the model — so a
+ * whitespace-only id paired with `provider: "openai"` would otherwise persist
+ * as `{ model: "", provider: "openai" }`: a case that passes validation and
+ * then has no model to run. Blank is rejected here rather than silently
+ * normalized, because there is no id to fall back to.
+ */
+function requireNonBlankModelId(model: string): string {
+  const id = model.trim();
+  if (!id) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Model id cannot be blank."
+    );
+  }
+  return id;
 }
 
 function deriveProvider(model: string, explicit: string | undefined): string {

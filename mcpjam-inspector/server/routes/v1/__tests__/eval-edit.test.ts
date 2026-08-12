@@ -529,9 +529,13 @@ describe("v1 eval-edit routes", () => {
     });
 
     it("PATCH suite forwards environmentIds to setSuiteEnvironments", async () => {
-      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
-        environmentIds: ["env_1", "env_2"],
-      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          environmentIds: ["env_1", "env_2"],
+        }
+      );
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
         (c) => c[0] === "testSuites:setSuiteEnvironments"
@@ -543,9 +547,13 @@ describe("v1 eval-edit routes", () => {
     });
 
     it("PATCH suite clears attachments with an explicit null", async () => {
-      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
-        environmentIds: null,
-      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          environmentIds: null,
+        }
+      );
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
         (c) => c[0] === "testSuites:setSuiteEnvironments"
@@ -554,9 +562,13 @@ describe("v1 eval-edit routes", () => {
     });
 
     it("PATCH suite rejects [] instead of treating it as a clear", async () => {
-      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
-        environmentIds: [],
-      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          environmentIds: [],
+        }
+      );
       expect(res.status).toBe(400);
       expect(
         convexMutationMock.mock.calls.some(
@@ -581,14 +593,19 @@ describe("v1 eval-edit routes", () => {
           : defaultQueryImpl(name)
       );
 
-      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
-        name: "Renamed",
-        environmentIds: ["env_1"],
-      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          name: "Renamed",
+          environmentIds: ["env_1"],
+        }
+      );
 
       expect(res.status).toBe(400);
       expect(
-        ((await res.json()) as { details?: { reason?: string } }).details?.reason
+        ((await res.json()) as { details?: { reason?: string } }).details
+          ?.reason
       ).toBe("SCHEDULE_ENVIRONMENT_PINNED");
       // The whole PATCH is a no-op: the rename must NOT have landed just
       // because it happened to be applied before the environment write.
@@ -605,13 +622,18 @@ describe("v1 eval-edit routes", () => {
           : defaultQueryImpl(name)
       );
 
-      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
-        environmentIds: ["env_1", "env_2"],
-      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          environmentIds: ["env_1", "env_2"],
+        }
+      );
 
       expect(res.status).toBe(400);
       expect(
-        ((await res.json()) as { details?: { reason?: string } }).details?.reason
+        ((await res.json()) as { details?: { reason?: string } }).details
+          ?.reason
       ).toBe("SCHEDULE_ENVIRONMENT_PIN_REQUIRED");
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
@@ -633,9 +655,13 @@ describe("v1 eval-edit routes", () => {
           : defaultQueryImpl(name)
       );
 
-      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
-        environmentIds: ["env_1"],
-      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          environmentIds: ["env_1"],
+        }
+      );
 
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
@@ -645,9 +671,13 @@ describe("v1 eval-edit routes", () => {
     });
 
     it("PATCH suite leaves attachments alone when the field is omitted", async () => {
-      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
-        name: "Renamed",
-      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          name: "Renamed",
+        }
+      );
       expect(res.status).toBe(200);
       expect(
         convexMutationMock.mock.calls.some(
@@ -920,6 +950,52 @@ describe("v1 eval-edit routes", () => {
         },
       },
     ]);
+  });
+
+  it("TRIMS a padded model id rather than persisting it verbatim", async () => {
+    // The id is stored and handed to the provider verbatim, so a padded value
+    // would resolve to the right provider and then match nothing downstream.
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "padded",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        models: [{ model: "  openai/gpt-5  " }],
+      }
+    );
+    expect(res.status).toBe(201);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:createTestCase"
+    )![1];
+    expect(args.models).toEqual([
+      { model: "openai/gpt-5", provider: "openai" },
+    ]);
+  });
+
+  it.each([
+    // Without a provider the blank id already had nowhere to go. WITH one,
+    // `deriveProvider` returns early and never inspects the model — so this is
+    // the case that used to persist `{ model: "", provider: "openai" }`: a case
+    // that passes validation and then has no model to run.
+    ["with an explicit provider", { model: "   ", provider: "openai" }],
+    ["without a provider", { model: "   " }],
+  ])("REJECTS a whitespace-only model id %s", async (_label, entry) => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "blank",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        models: [entry],
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:createTestCase"
+      )
+    ).toBe(false);
   });
 
   it("GET cases returns scrubbed public case DTOs", async () => {
@@ -1274,7 +1350,14 @@ describe("v1 eval-edit routes", () => {
         return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
       if (name === "testSuites:getCaseGeneration")
         return Promise.resolve({
-          drafts: [{ title: "Cached", query: "from ledger", runs: 1, expectedToolCalls: [] }],
+          drafts: [
+            {
+              title: "Cached",
+              query: "from ledger",
+              runs: 1,
+              expectedToolCalls: [],
+            },
+          ],
           createdCaseIds: null,
         });
       return defaultQueryImpl(name);

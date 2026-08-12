@@ -116,8 +116,12 @@ const MAX_PASSTHROUGH_REASON_LENGTH = 300;
  * strips these at the ends but not in the middle, so a body carrying `\r` or a
  * Unicode separator would otherwise pass as a "single sentence" and then render
  * as multiple lines in a toast.
+ *
+ * Form feed is in the set because the toast renders with `white-space:
+ * pre-wrap`, and CSS Text converts U+000C to a segment break exactly as it does
+ * U+000D — so it breaks lines on screen even though it looks inert in a string.
  */
-const LINE_BREAK = /[\r\n\u2028\u2029]/;
+const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
 
 export function launchFailureMessage(err: SwarmAgentError): string {
   const fallback =

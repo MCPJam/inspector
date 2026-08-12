@@ -273,6 +273,9 @@ describe("launchJourneyRun", () => {
     ["a carriage-return body", "Error: boom\r  at thing (file.js:1:1)"],
     ["a U+2028 line-separator body", "Error: boom\u2028  at thing"],
     ["a U+2029 paragraph-separator body", "Error: boom\u2029  at thing"],
+    // Looks inert in a string, but the toast renders `white-space: pre-wrap`
+    // and CSS Text turns U+000C into a segment break just like U+000D.
+    ["a form-feed body", "Error: boom\f  at thing"],
     [
       "a U+2028 structured message",
       JSON.stringify({ error: { message: "boom\u2028  at thing" } }),
