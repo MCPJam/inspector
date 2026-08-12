@@ -100,6 +100,34 @@ describe("harness span metadata", () => {
     expect(meta.textContent).toContain("200.0 tok/s");
   });
 
+  // Rehydrated sessions rebuild the transcript from the UI, so it can be
+  // shorter than the server transcript the span indices were recorded against.
+  it("renders when span message indices point past the transcript", () => {
+    const staleSpans: EvalTraceSpan[] = [
+      {
+        id: "step-0",
+        name: "Step 1",
+        category: "step",
+        startMs: 0,
+        endMs: 500,
+        stepIndex: 0,
+        promptIndex: 0,
+        messageStartIndex: 5,
+        messageEndIndex: 6,
+      },
+    ];
+    render(
+      <TraceTimeline
+        recordedSpans={staleSpans}
+        transcriptMessages={[
+          { role: "user", content: "what's the weather" },
+          { role: "assistant", content: "it's sunny" },
+        ]}
+      />,
+    );
+    expect(screen.getAllByTestId("trace-row").length).toBeGreaterThan(0);
+  });
+
   it("omits throughput on non-llm rows", () => {
     const spans: EvalTraceSpan[] = [
       { id: "step-0", name: "Step 1", category: "step", startMs: 0, endMs: 500, stepIndex: 0 },
