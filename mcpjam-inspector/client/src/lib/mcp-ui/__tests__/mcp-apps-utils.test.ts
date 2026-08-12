@@ -24,6 +24,7 @@ describe("MCP App detection with malformed server metadata", () => {
     ["a non-ui:// string", "https://example.com/app.html"],
     ["a number", 42],
     ["an object", { href: "ui://server/app.html" }],
+    ["null", null],
   ];
 
   it.each(MALFORMED)(
