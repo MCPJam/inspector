@@ -95,3 +95,39 @@ export function estimateSwarmSessions(
 export function estimateSwarmJourneys(preset: SwarmIntensityPreset): number {
   return preset.personaCount * preset.journeyCount;
 }
+
+/**
+ * Sessions the launch on Confirm actually produces.
+ *
+ * The preset SEEDS the journeys this swarm creates; it never overwrites a
+ * number the user already set. A reused journey keeps the `sessionsPerTarget`
+ * its owner typed into the goal form — launch deliberately does not rewrite a
+ * shared journey's config — so quoting the preset's value for it both
+ * misreports the spend and moves the quote every time the intensity control is
+ * touched, for work the control does not size.
+ *
+ * `null` is the one case where the preset does answer: a row that carries no
+ * config at all gives nothing better to quote.
+ */
+export function estimateLaunchSessions({
+  preset,
+  newJourneyCount,
+  reusedSessionsPerTarget,
+  environmentCount,
+}: {
+  preset: SwarmIntensityPreset;
+  /** Newly authored journeys — the ones the preset's config is stamped onto. */
+  newJourneyCount: number;
+  /** One entry per reused journey: its own stored sessions, or `null`. */
+  reusedSessionsPerTarget: readonly (number | null)[];
+  environmentCount: number;
+}): number {
+  const reused = reusedSessionsPerTarget.reduce<number>(
+    (sum, sessions) => sum + (sessions ?? preset.sessionsPerTarget),
+    0
+  );
+  return (
+    (newJourneyCount * preset.sessionsPerTarget + reused) *
+    Math.max(1, environmentCount)
+  );
+}
