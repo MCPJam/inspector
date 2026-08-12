@@ -3,6 +3,7 @@ import {
   describeError,
   isUnauthorized401,
   originOf,
+  type ErrorOrigin,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-serialize.js";
@@ -89,6 +90,21 @@ export class WebRouteError extends Error {
    * rich ErrorCard without re-classifying from the raw message.
    */
   normalized?: NormalizedError;
+  /**
+   * The EFFECTIVE origin — the catalog value after any internal-boundary
+   * promotion, i.e. the same value the Sentry capture decision used.
+   *
+   * Distinct from `originOf(this.normalized)`, which is only the DECLARED
+   * catalog value. A route that reports through an `mcpjam_internal` boundary
+   * gets `mcpjam` back and pages Sentry, but the catalog slug underneath is
+   * usually `ambiguous`; recomputing from `normalized` at serialization time
+   * silently reports `ambiguous` for a failure we just paged ourselves for.
+   * That drift is why `origin=mcpjam` never appeared in Axiom.
+   *
+   * Populated by `mapRuntimeError`. Absent when nothing made a capture
+   * decision, in which case the declared value is the best available answer.
+   */
+  origin?: ErrorOrigin;
 
   constructor(
     status: number,
@@ -116,10 +132,21 @@ export function webError(
   // `extras` is permissive (rpc-log collectors, etc.). If it carries a
   // `normalized` key, hoist it to the top-level response body — clients
   // pluck the rich block off the JSON envelope without re-classifying.
-  const { normalized, ...restExtras } = (extras ?? {}) as Record<
-    string,
-    unknown
-  > & { normalized?: NormalizedError };
+  const {
+    normalized,
+    effectiveOrigin,
+    ...restExtras
+  } = (extras ?? {}) as Record<string, unknown> & {
+    normalized?: NormalizedError;
+    effectiveOrigin?: ErrorOrigin;
+  };
+  // Prefer the effective origin (post internal-boundary promotion) over the
+  // declared catalog value. `originOf(normalized)` alone reports `ambiguous`
+  // for failures Sentry was just paged for as `mcpjam`, which made
+  // `origin=mcpjam` unreachable in Axiom and left M2 with nothing to gate on.
+  const reportedOrigin = normalized
+    ? (effectiveOrigin ?? originOf(normalized))
+    : effectiveOrigin;
   // Stash the real code/message for `requestLogContextMiddleware`. A route that
   // *returns* an error response (rather than throwing) leaves the middleware
   // with nothing but a status code, so every such 5xx used to log as the
@@ -135,9 +162,8 @@ export function webError(
       status,
       code,
       message,
-      ...(normalized
-        ? { origin: originOf(normalized), slug: normalized.slug }
-        : {}),
+      ...(reportedOrigin ? { origin: reportedOrigin } : {}),
+      ...(normalized ? { slug: normalized.slug } : {}),
     });
   }
   return c.json(
@@ -146,7 +172,8 @@ export function webError(
       code,
       message,
       ...(details ? { details } : {}),
-      ...(normalized ? { normalized, origin: originOf(normalized) } : {}),
+      ...(normalized ? { normalized } : {}),
+      ...(reportedOrigin ? { origin: reportedOrigin } : {}),
     },
     status,
     // Also a HEADER, because the body does not always survive to the reader
@@ -156,7 +183,7 @@ export function webError(
     // page us for a user's own MCP server. `/api/web/chat-v2` is the primary
     // hosted chat path, so putting this on `webError` rather than on one
     // route covers every `/api/web/*` envelope at once.
-    normalized ? { "x-mcpjam-error-origin": originOf(normalized) } : undefined
+    reportedOrigin ? { "x-mcpjam-error-origin": reportedOrigin } : undefined
   );
 }
 
@@ -187,6 +214,9 @@ export function webErrorFromRoute(
     {
       ...(extras ?? {}),
       ...(routeError.normalized ? { normalized: routeError.normalized } : {}),
+      // Forward the effective origin. Without this the promotion survives all
+      // the way to the serializer and is then thrown away at the last step.
+      ...(routeError.origin ? { effectiveOrigin: routeError.origin } : {}),
     }
   );
 }
@@ -277,19 +307,24 @@ export function mapRuntimeError(error: unknown): WebRouteError {
     if (!error.normalized) {
       error.normalized = describeError(error);
     }
-    maybeCaptureOriginError(error, error.normalized, {
+    // Keep the EFFECTIVE origin the capture decision produced. Discarding it
+    // here is what forced serialization to fall back to the declared catalog
+    // value, so a promoted `mcpjam` failure logged as `ambiguous`.
+    const decision = maybeCaptureOriginError(error, error.normalized, {
       source: "web.mapRuntimeError",
       extra: { status: error.status, code: error.code },
     });
+    error.origin = decision.origin;
     return error;
   }
 
   const routeError = classifyRuntimeError(error);
   attachCause(routeError, error);
-  maybeCaptureOriginError(routeError, routeError.normalized, {
+  const decision = maybeCaptureOriginError(routeError, routeError.normalized, {
     source: "web.mapRuntimeError",
     extra: { status: routeError.status, code: routeError.code },
   });
+  routeError.origin = decision.origin;
   // Stamp the ORIGINAL as well. The cause link above makes the original
   // reachable from `routeError`, but the walk only goes that direction: a
   // handler that keeps its own reference and later calls `logger.error(error)`
