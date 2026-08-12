@@ -1,3 +1,5 @@
+import { isCredentialShapedAuthValue } from "./oauth/state-machines/trace-redaction.js";
+
 export function redactForTelemetry(value: unknown): unknown {
   return redactForTelemetryAtPath(value, []);
 }
@@ -27,10 +29,7 @@ function redactSensitiveString(value: string): string {
       /\b(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]*/giu,
       (_match, headerName: string) => `${headerName}: [REDACTED]`
     )
-    .replace(
-      /\bBearer\s+(?![A-Za-z_][A-Za-z0-9_-]*=)([A-Za-z0-9\-._~+/]+=*)/giu,
-      "Bearer [REDACTED]"
-    )
+    .replace(/\bBearer(\s+)(\S+)/giu, redactBareBearerMatch)
     .replace(
       /\b(access_token|refresh_token|client_secret|id_token|code|code_verifier|accessToken|refreshToken|clientSecret|idToken|codeVerifier)=([^&\s]+)/giu,
       "$1=[REDACTED]"
@@ -39,6 +38,27 @@ function redactSensitiveString(value: string): string {
       /(["']?(?:access_token|refresh_token|client_secret|id_token|code|code_verifier|accessToken|refreshToken|clientSecret|idToken|codeVerifier)["']?\s*:\s*["'])[^"']*(["'])/giu,
       "$1[REDACTED]$2"
     );
+}
+
+/**
+ * Replacer for a bare `Bearer <value>` with no header context.
+ *
+ * Over-redacting is this module's whole posture, but not onto the scheme word's
+ * own sentence: the hosted 401 for a bearer-less `/api/web/*` request says
+ * "Bearer token required", and the previous rule ate the noun after `Bearer` —
+ * publishing "Bearer [REDACTED] required" through `describeError` into the
+ * error banner a user reads. `isCredentialShapedAuthValue` owns the
+ * credential-vs-vocabulary call for both redactors, so the two cannot drift.
+ */
+function redactBareBearerMatch(
+  match: string,
+  gap: string,
+  value: string
+): string {
+  // A `name=value` pair belongs to the parameter rule below it, which keeps the
+  // NAME — the diagnostic half — and redacts only the value.
+  if (/^[A-Za-z_][A-Za-z0-9_-]*=/u.test(value)) return match;
+  return isCredentialShapedAuthValue(value) ? `Bearer${gap}[REDACTED]` : match;
 }
 
 function shouldRedactKey(key: string, value: unknown, path: string[]): boolean {

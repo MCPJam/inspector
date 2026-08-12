@@ -259,6 +259,7 @@ export type {
 export {
   OAUTH_TRACE_SENSITIVE_FIELD_NAMES,
   describeOAuthStateMatch,
+  isCredentialShapedAuthValue,
   isSensitiveHeaderName,
   isSensitiveQueryParamName,
   isSensitiveTraceFieldName,
