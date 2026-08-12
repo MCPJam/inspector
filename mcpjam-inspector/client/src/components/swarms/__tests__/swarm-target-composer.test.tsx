@@ -278,9 +278,9 @@ describe("SwarmTargetComposer", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("blocks NEW sandbox-image pins but keeps the clear path when cloud is unreachable", () => {
+  it("blocks NEW sandbox-image pins but keeps the clear path when cloud is unreachable", async () => {
     // `false` means a sandbox-backed session WOULD fail per-attempt — the
-    // composer must warn and disable the opt-in. But the SELECT stays live:
+    // composer must warn and disable the opt-in. But the PICKER stays live:
     // a pin seeded from a saved environment/draft must remain clearable back
     // to "Computer · default" (the opt-out the notice promises).
     flagState.computers = true;
@@ -288,10 +288,16 @@ describe("SwarmTargetComposer", () => {
     render(<Harness />);
     expect(screen.getByTestId("new-swarm-cloud-unreachable")).toBeVisible();
     expect(screen.getByTestId("new-swarm-sandbox-image")).not.toBeDisabled();
-    expect(screen.getByRole("option", { name: /Base box/i })).toBeDisabled();
+
+    // The rows only exist while the dropdown is open, and Radix marks a
+    // disabled one with aria-disabled rather than a native `disabled` prop.
+    fireEvent.click(screen.getByTestId("new-swarm-sandbox-image"));
+    expect(
+      await screen.findByRole("option", { name: /Base box/i })
+    ).toHaveAttribute("aria-disabled", "true");
     expect(
       screen.getByRole("option", { name: /Computer · default/i })
-    ).not.toBeDisabled();
+    ).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("stays quiet while cloud availability is still loading", () => {

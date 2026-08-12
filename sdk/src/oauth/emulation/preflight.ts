@@ -24,7 +24,7 @@
  */
 
 import { executeOAuthProxy } from "../../oauth-proxy.js";
-import { redactSensitiveValue } from "../../redaction.js";
+import { redactForTelemetry } from "../../telemetry-redaction.js";
 import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   getConformanceAuthCodeDynamicRegistrationMetadata,
@@ -241,7 +241,7 @@ function redactDiagnostics<T>(
     };
     working = scrub(working);
   }
-  return redactSensitiveValue(working) as T;
+  return redactForTelemetry(working) as T;
 }
 
 /**

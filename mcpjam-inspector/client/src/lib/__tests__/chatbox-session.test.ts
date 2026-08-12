@@ -1,22 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  buildPlaygroundChatboxLink,
   buildChatboxLink,
-  clearBuilderSession,
-  clearPlaygroundSession,
   clearChatboxSession,
   clearChatboxSignInReturnPath,
   extractChatboxTokenFromPath,
   hasActiveChatboxSession,
-  readBuilderSession,
-  readPlaygroundSession,
   readChatboxSurfaceFromUrl,
   readChatboxSession,
   readChatboxSignInReturnPath,
   CHATBOX_SESSION_STORAGE_KEY,
   CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
-  writeBuilderSession,
-  writePlaygroundSession,
   writeChatboxSession,
   writeChatboxSignInReturnPath,
 } from "../chatbox-session";
@@ -36,6 +29,16 @@ describe("chatbox-session", () => {
     );
     expect(extractChatboxTokenFromPath("/chatbox/onlyone")).toBeNull();
     expect(extractChatboxTokenFromPath("/settings")).toBeNull();
+  });
+
+  it("extracts token from /user-testing/<slug>/<token> paths", () => {
+    expect(extractChatboxTokenFromPath("/user-testing/demo/abc123")).toBe(
+      "abc123",
+    );
+    // The scenario screen lives one segment shorter, and must NOT be read as a
+    // tester link — doing so renders the public runtime over the app screen.
+    expect(extractChatboxTokenFromPath("/user-testing/host_123")).toBeNull();
+    expect(extractChatboxTokenFromPath("/user-testing/new")).toBeNull();
   });
 
   it("detects an active chatbox session", () => {
@@ -117,6 +120,35 @@ describe("chatbox-session", () => {
       },
       surface: "share_link",
     });
+  });
+
+  it("round-trips the share token — recovery's only way back to a grant", () => {
+    // The post-redeem URL strip removes the token from the address bar, so
+    // the persisted copy is what re-redeem reads. A session that dropped it
+    // could never recover from a rebind or a rotated guest identity.
+    const payload = {
+      projectId: "ws_1",
+      chatboxId: "sbx_1",
+      name: "Demo Chatbox",
+      hostStyle: "claude" as const,
+      mode: "anyone_with_link" as const,
+      allowGuestAccess: true,
+      viewerIsProjectMember: false,
+      systemPrompt: "You are helpful.",
+      modelId: "openai/gpt-5-mini",
+      temperature: 0.4,
+      requireToolApproval: false,
+      servers: [],
+    };
+
+    writeChatboxSession({
+      chatboxId: "sbx_1",
+      accessVersion: 2,
+      payload,
+      shareToken: "tok_share",
+    });
+
+    expect(readChatboxSession()?.shareToken).toBe("tok_share");
   });
 
   it("rejects stored sessions that lack a top-level chatboxId or accessVersion", () => {
@@ -242,55 +274,6 @@ describe("chatbox-session", () => {
     expect(readChatboxSession()?.surface).toBe("preview");
   });
 
-  it("round-trips playground sessions until their ttl expires", () => {
-    writePlaygroundSession({
-      playgroundId: "pg_123",
-      chatboxId: "sbx_1",
-      accessVersion: 1,
-      surface: "preview",
-      updatedAt: Date.now(),
-      payload: {
-        projectId: "ws_1",
-        chatboxId: "sbx_1",
-        name: "Playground Chatbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsProjectMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "openai/gpt-5-mini",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
-      },
-    });
-
-    const stored = readPlaygroundSession("pg_123");
-    expect(stored).toEqual(
-      expect.objectContaining({
-        playgroundId: "pg_123",
-        chatboxId: "sbx_1",
-        accessVersion: 1,
-        surface: "preview",
-      }),
-    );
-    expect(typeof stored?.updatedAt).toBe("number");
-
-    if (!stored) {
-      throw new Error("expected stored playground session");
-    }
-
-    localStorage.setItem(
-      "mcpjam_chatbox_playground_session_v1:pg_123",
-      JSON.stringify({
-        ...stored,
-        updatedAt: Date.now() - 24 * 60 * 60 * 1000 - 1,
-      }),
-    );
-
-    expect(readPlaygroundSession("pg_123")).toBeNull();
-  });
-
   it("reads chatbox surface from the url query", () => {
     expect(readChatboxSurfaceFromUrl("?surface=preview")).toBe("preview");
     expect(readChatboxSurfaceFromUrl("?surface=share_link")).toBe("share_link");
@@ -298,15 +281,11 @@ describe("chatbox-session", () => {
     expect(readChatboxSurfaceFromUrl("")).toBe("share_link");
   });
 
-  it("builds chatbox playground links with preview surface params", () => {
-    expect(
-      buildPlaygroundChatboxLink("token 123", "Demo Chatbox", "pg_123"),
-    ).toBe(
-      `${window.location.origin}/chatbox/demo-chatbox/token%20123?playground=1&surface=preview&playgroundId=pg_123`,
-    );
-  });
-
   it("round-trips chatbox sign-in return path", () => {
+    writeChatboxSignInReturnPath("/user-testing/demo/token-123");
+    expect(readChatboxSignInReturnPath()).toBe("/user-testing/demo/token-123");
+
+    clearChatboxSignInReturnPath();
     writeChatboxSignInReturnPath("/chatbox/demo/token-123");
     expect(readChatboxSignInReturnPath()).toBe("/chatbox/demo/token-123");
 
@@ -324,83 +303,8 @@ describe("chatbox-session", () => {
 
   it("builds chatbox links from the current browser origin", () => {
     expect(buildChatboxLink("token 123", "Demo Chatbox")).toBe(
-      `${window.location.origin}/chatbox/demo-chatbox/token%20123`,
+      `${window.location.origin}/user-testing/demo-chatbox/token%20123`,
     );
   });
 
-  it("clears stored playground sessions", () => {
-    writePlaygroundSession({
-      playgroundId: "pg_123",
-      chatboxId: "sbx_1",
-      accessVersion: 1,
-      surface: "preview",
-      updatedAt: Date.now(),
-      payload: {
-        projectId: "ws_1",
-        chatboxId: "sbx_1",
-        name: "Chatbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsProjectMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "openai/gpt-5-mini",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
-      },
-    });
-
-    clearPlaygroundSession("pg_123");
-    expect(readPlaygroundSession("pg_123")).toBeNull();
-  });
-
-  describe("builder session", () => {
-    it("returns null when no session exists", () => {
-      expect(readBuilderSession("ws_1")).toBeNull();
-    });
-
-    it("round-trips a builder session", () => {
-      const session = {
-        projectId: "ws_1",
-        chatboxId: "sbx_1",
-        draft: { name: "Test", hostStyle: "claude" },
-        viewMode: "preview",
-      };
-
-      writeBuilderSession(session);
-      expect(readBuilderSession("ws_1")).toEqual(session);
-    });
-
-    it("returns null when projectId does not match", () => {
-      writeBuilderSession({
-        projectId: "ws_1",
-        chatboxId: null,
-        draft: null,
-        viewMode: "builder",
-      });
-
-      expect(readBuilderSession("ws_other")).toBeNull();
-    });
-
-    it("clears the builder session", () => {
-      writeBuilderSession({
-        projectId: "ws_1",
-        chatboxId: "sbx_1",
-        draft: null,
-        viewMode: "builder",
-      });
-
-      clearBuilderSession();
-      expect(readBuilderSession("ws_1")).toBeNull();
-    });
-
-    it("returns null for corrupted JSON", () => {
-      sessionStorage.setItem(
-        "mcpjam_chatbox_builder_session_v1",
-        "not-valid-json",
-      );
-      expect(readBuilderSession("ws_1")).toBeNull();
-    });
-  });
 });

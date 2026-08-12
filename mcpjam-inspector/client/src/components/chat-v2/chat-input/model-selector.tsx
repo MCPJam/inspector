@@ -670,7 +670,9 @@ export function ModelSelector({
                 disabled={disabled || isLoading}
                 className={cn(
                   "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]",
+                  isComparingModels
+                    ? "max-w-[280px] gap-1"
+                    : "max-w-[180px] gap-1",
                 )}
                 data-testid="model-selector-trigger"
               >

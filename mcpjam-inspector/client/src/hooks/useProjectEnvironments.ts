@@ -302,8 +302,14 @@ export function usePromoteProjectEnvironment(): (args: {
  * overwrite a concurrent edit). On {@link isRevisionConflictError}, surface
  * the conflict and reinitialize only after user confirmation — never
  * auto-retry a stale patch.
+ *
+ * `projectId` is REQUIRED, like every other mutation here: the backend scopes
+ * the admin check and the row lookup by it, so it is not derivable from the
+ * environment id. Omitting it fails the Convex validator at RUNTIME (the
+ * mutation is referenced by string id, so nothing type-checks the payload).
  */
 export function useUpdateProjectEnvironment(): (args: {
+  projectId: string;
   environmentId: string;
   expectedRevision: number;
   name?: string;
@@ -330,14 +336,18 @@ export function useUpdateProjectEnvironment(): (args: {
   return useMutation("projectEnvironments:updateEnvironment" as any) as never;
 }
 
+/** `projectId` is required — see {@link useUpdateProjectEnvironment}. */
 export function useArchiveProjectEnvironment(): (args: {
+  projectId: string;
   environmentId: string;
   expectedRevision: number;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:archiveEnvironment" as any) as never;
 }
 
+/** `projectId` is required — see {@link useUpdateProjectEnvironment}. */
 export function useRestoreProjectEnvironment(): (args: {
+  projectId: string;
   environmentId: string;
   expectedRevision: number;
 }) => Promise<ProjectEnvironmentView> {

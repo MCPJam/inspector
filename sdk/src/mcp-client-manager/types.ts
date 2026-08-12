@@ -362,6 +362,7 @@ export type StdioServerConfig = BaseServerConfig & {
   reconnectionOptions?: never;
   sessionId?: never;
   preferSSE?: never;
+  disableSseFallback?: never;
   refreshToken?: never;
   clientId?: never;
   clientSecret?: never;
@@ -412,6 +413,17 @@ export type HttpServerConfig = BaseServerConfig & {
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
   /** Prefer SSE transport over Streamable HTTP */
   preferSSE?: boolean;
+  /**
+   * Opt out of the silent Streamable-HTTP → SSE downgrade. By default a
+   * failed Streamable HTTP connect falls back to SSE, which is right for
+   * ad-hoc URLs but wrong for a server whose transport was DECLARED
+   * streamable-http (e.g. an Agent Plugins manifest): connecting over SSE
+   * would misrepresent the server under test. When set, the Streamable HTTP
+   * failure surfaces instead of being retried over SSE. Meaningful only when
+   * Streamable HTTP is attempted first — inert alongside `preferSSE`, which
+   * makes SSE the declared transport rather than a fallback.
+   */
+  disableSseFallback?: boolean;
   /**
    * Pinned MCP protocol version (wire literal that lands in `_meta` +
    * `MCP-Protocol-Version` header). Absent → SDK default at request
