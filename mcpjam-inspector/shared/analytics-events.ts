@@ -28,6 +28,12 @@ export const ANALYTICS_EVENTS = {
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
+  // Client-only by design: the twin is deliberately absent. A rewind re-sends
+  // through the normal turn path, so the server already counts it as
+  // `send_message_server`; an `edit_message_server` would double-count the same
+  // inference. `ChatTabV2.tsx` relies on there being no twin to reconcile
+  // against when a rewind is refused.
+  edit_message: { source: "client" },
 
   // --- Tool execution (paired) ---
   execute_tool: { source: "client" },
@@ -70,6 +76,7 @@ export const ANALYTICS_EVENTS = {
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
+  chat_model_selector_manage_org_models_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
   // Every starter-chip surface fires this one event; props: prompt (chip
   // text), location: chat_tab | playground_single | playground_compare.
@@ -94,6 +101,23 @@ export const ANALYTICS_EVENTS = {
   computer_chat_attachment_uploaded: { source: "client" },
   computer_start_limit_hit: { source: "client" },
   computer_terminal_opened: { source: "client" },
+  // --- Local computer engine ("This machine") ---
+  // Content-free by construction: props are enums/booleans only. NEVER a
+  // command, a path, a workspace dir, an OS username, or a consent token.
+  // computer_engine_selected: the user moved the Local⇄Cloud toggle {engine}.
+  // local_computer_consent_gate_shown: the consent gate rendered.
+  // local_computer_consent_granted / _denied: Allow / "Use cloud instead" —
+  //   the only two affordances on the gate.
+  // local_computer_consent_reauthorized: "Forget & re-authorize" (the stale-
+  //   capability recovery path).
+  // local_terminal_unavailable: the local terminal could not be offered
+  //   {reason} — an enum, never a node-pty error string.
+  computer_engine_selected: { source: "client" },
+  local_computer_consent_denied: { source: "client" },
+  local_computer_consent_gate_shown: { source: "client" },
+  local_computer_consent_granted: { source: "client" },
+  local_computer_consent_reauthorized: { source: "client" },
+  local_terminal_unavailable: { source: "client" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
@@ -178,6 +202,15 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_tour_launch_skipped: { source: "client" },
   mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
+  /**
+   * A callback arrived with a pending server name but no stored flow session,
+   * so it could not be completed and the user was asked to reauthorize.
+   *
+   * Expected to be rare and to spike briefly around a deploy that changes the
+   * stored session shape. A sustained rate means something is clearing flow
+   * state that should not be.
+   */
+  oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
   oauth_flow_tab_viewed: { source: "client" },
@@ -201,6 +234,7 @@ export const ANALYTICS_EVENTS = {
   // display names OUT of these payloads: counts, closed enums, stable codes,
   // and a bundle-hash prefix only.
   add_plugin_button_clicked: { source: "client" },
+  plugin_component_configured: { source: "client" },
   plugin_disabled: { source: "client" },
   plugin_import_completed: { source: "client" },
   plugin_import_failed: { source: "client" },

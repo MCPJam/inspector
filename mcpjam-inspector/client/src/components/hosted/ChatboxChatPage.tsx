@@ -16,7 +16,6 @@ import {
   clearChatboxSession,
   extractChatboxTokenFromPath,
   normalizeChatboxSession,
-  readPlaygroundSession,
   readChatboxSurfaceFromUrl,
   readChatboxSession,
   CHATBOX_OAUTH_PENDING_KEY,
@@ -26,6 +25,10 @@ import {
   writeChatboxSession,
   writeChatboxSignInReturnPath,
 } from "@/lib/chatbox-session";
+import type {
+  HostedAccessErrorDetail,
+  HostedAccessRecoveryResult,
+} from "@/lib/hosted-runtime-context";
 import { navigateApp } from "@/lib/app-navigation";
 import {
   isEmbeddedPreview,
@@ -33,6 +36,7 @@ import {
   syncChatboxSessionHash,
 } from "@/lib/embedded-preview";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/chatbox-server-optional";
+import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
@@ -69,7 +73,7 @@ type ChatboxErrorKind =
   | "access_denied"
   | "guest_blocked"
   | "invalid_link"
-  | "playground_expired"
+  | "scenario_unavailable"
   | "unexpected";
 
 interface ChatboxDisplayError {
@@ -78,10 +82,26 @@ interface ChatboxDisplayError {
   message: string;
 }
 
+/**
+ * Visitor-facing copy on the public chatbox runtime, and the reason none of it
+ * names a product.
+ *
+ * Whoever reads these strings followed a link someone sent them. They are not
+ * signed in to MCPJam, have never seen the dashboard, and "swarm" is a word
+ * they have no referent for — it named the internal surface the link happened
+ * to be created from. Worse, one `chatboxes` row backs BOTH a Swarm and a User
+ * Testing scenario (nothing on the row distinguishes them; `isDeliberateScenario`
+ * infers it client-side), so on the User Testing surface the noun was outright
+ * wrong: the author's own preview told them their scenario was a swarm.
+ *
+ * "Link" is what the visitor actually has, and it is true on every surface.
+ * Keep it that way — reintroducing a product noun here means picking one of two
+ * products for a reader who knows neither.
+ */
 const INVALID_CHATBOX_LINK_MESSAGE =
-  "This swarm link is invalid or expired. Ask the owner to share a new link if you still need access.";
+  "This link is invalid or expired. Ask whoever shared it for a new one if you still need access.";
 const UNEXPECTED_CHATBOX_ERROR_MESSAGE =
-  "We couldn't open this swarm right now. Please try again or open MCPJam.";
+  "We couldn't open this link right now. Please try again or open MCPJam.";
 
 type ChatboxBootstrapAuthMode = "workos" | "guest";
 type ChatboxLandingState =
@@ -130,9 +150,20 @@ async function readRouteError(response: Response): Promise<ChatboxRouteError> {
       code?: string;
       message?: string;
       error?: string;
+      details?: { code?: string } | null;
     } | null;
 
-    code = typeof body?.code === "string" ? body.code : undefined;
+    // The DOMAIN code wins when the route forwarded one. Top-level `code` is
+    // the transport classification (CONFLICT, NOT_FOUND…); `details.code`
+    // says WHY — e.g. ENV_ARCHIVED, which is the difference between "this
+    // link is broken" and "its owner retired it".
+    const domainCode = body?.details?.code;
+    code =
+      typeof domainCode === "string" && domainCode
+        ? domainCode
+        : typeof body?.code === "string"
+          ? body.code
+          : undefined;
     message =
       body?.message ||
       body?.error ||
@@ -164,7 +195,7 @@ function getChatboxDisplayError(
   if (!error) {
     return {
       kind: "invalid_link",
-      title: "Swarm Link Unavailable",
+      title: "Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
@@ -173,7 +204,11 @@ function getChatboxDisplayError(
   const requiresSignIn = normalizedMessage.includes(
     "sign in to access this chatbox"
   );
-  const isAccessDenied = normalizedMessage.includes("don't have access");
+  // The code is authoritative when the route sent one; the substring checks
+  // stay as the deploy-skew fallback for servers that predate the code.
+  const isAccessDenied =
+    error.code === "CHATBOX_ACCESS_DENIED" ||
+    normalizedMessage.includes("don't have access");
   const isGuestBlocked =
     normalizedMessage.includes("guests cannot access") ||
     normalizedMessage.includes("guest access");
@@ -182,14 +217,19 @@ function getChatboxDisplayError(
     error.code === "NOT_FOUND" ||
     normalizedMessage.includes("invalid or has expired") ||
     normalizedMessage.includes("invalid or expired");
-  const isPlaygroundExpired = normalizedMessage.includes(
-    "playground session expired"
-  );
+  // The scenario exists and the link is valid — its environment just isn't
+  // openable (archived by its owner, a disabled plugin, a deleted host). The
+  // backend already authored visitor-facing copy for each case, so it is shown
+  // verbatim rather than re-derived from a status code.
+  const isScenarioUnavailable = Boolean(error.code?.startsWith("ENV_"));
 
-  if (isPlaygroundExpired) {
+  if (isScenarioUnavailable) {
     return {
-      kind: "playground_expired",
-      title: "Preview unavailable",
+      kind: "scenario_unavailable",
+      title:
+        error.code === "ENV_ARCHIVED"
+          ? "This link has been archived"
+          : "This link isn't available right now",
       message: error.message,
     };
   }
@@ -213,16 +253,85 @@ function getChatboxDisplayError(
   if (isInvalidLink) {
     return {
       kind: "invalid_link",
-      title: "Swarm Link Unavailable",
+      title: "Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
 
   return {
     kind: "unexpected",
-    title: "Swarm Link Unavailable",
+    title: "Link Unavailable",
     message: UNEXPECTED_CHATBOX_ERROR_MESSAGE,
   };
+}
+
+/**
+ * One round trip from share token to a validated session: /redeem exchanges
+ * the link token for a `chatboxId` + `accessVersion` grant plus the bootstrap
+ * payload. Every chatbox-aware backend call then keys on the resolved
+ * identity — the URL token is never threaded onto the read path.
+ *
+ * Shared by the mount bootstrap and by re-redeem recovery so both agree on
+ * validation: the response is untrusted shape until `normalizeChatboxSession`
+ * enforces every field `ChatboxBootstrapPayload` requires. Without that, a
+ * partial bootstrap would be persisted and the API context downstream would
+ * initialize with `null`s.
+ *
+ * Throws a `ChatboxRouteError` on any failure, so callers can classify the
+ * refusal (denied vs transient) off `status`/`code`.
+ */
+async function redeemChatboxToken(
+  token: string,
+  options?: {
+    /**
+     * Surface to stamp on the produced session instead of re-deriving it
+     * from the URL. Recovery passes the mounted session's surface: the
+     * post-redeem strip removes the query string in the standalone page, so
+     * a URL re-read mid-session would quietly demote a preview session to
+     * `share_link` on the request wire.
+     */
+    surface?: ChatboxSession["surface"];
+  }
+): Promise<ChatboxSession> {
+  const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chatboxToken: token }),
+  });
+
+  if (!redeemResponse.ok) {
+    throw await readRouteError(redeemResponse);
+  }
+
+  const redeemed = (await redeemResponse.json()) as {
+    chatboxId?: unknown;
+    accessVersion?: unknown;
+    bootstrap?: unknown;
+  };
+
+  const nextSession = normalizeChatboxSession({
+    chatboxId:
+      typeof redeemed.chatboxId === "string" ? redeemed.chatboxId : undefined,
+    accessVersion:
+      typeof redeemed.accessVersion === "number"
+        ? redeemed.accessVersion
+        : undefined,
+    payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
+    surface:
+      options?.surface ?? readChatboxSurfaceFromUrl(window.location.search),
+    // Stamped so recovery has a way back to a grant after the post-redeem
+    // strip removes the token from the URL.
+    shareToken: token,
+  });
+
+  if (!nextSession) {
+    throw createChatboxRouteError(
+      502,
+      "Chatbox redeem returned an incomplete bootstrap payload."
+    );
+  }
+
+  return nextSession;
 }
 
 function getChatboxBootstrapAuthMode(
@@ -248,17 +357,6 @@ export function ChatboxChatPage({
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  const playgroundParams = useMemo(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const isPlayground = params.get("playground") === "1";
-      const playgroundId = params.get("playgroundId");
-      return isPlayground && playgroundId ? { playgroundId } : null;
-    } catch {
-      return null;
-    }
-  }, []);
-
   // The embedded Preview iframe is same-origin, so it shares the tab's
   // sessionStorage with the outer dashboard. Reading or writing the chatbox
   // session from inside the embed would leak it into (or pick it up from)
@@ -267,38 +365,29 @@ export function ChatboxChatPage({
   // never needs the fallback anyway: its URL keeps the share token (the
   // post-redeem strip only runs standalone), so a reload re-redeems.
   const readCurrentSession = useCallback(() => {
-    if (playgroundParams) {
-      return readPlaygroundSession(playgroundParams.playgroundId);
+    return isEmbeddedPreview() ? null : readChatboxSession();
+  }, []);
+
+  const writeCurrentSession = useCallback((nextSession: ChatboxSession) => {
+    if (isEmbeddedPreview()) {
+      return;
     }
 
-    return isEmbeddedPreview() ? null : readChatboxSession();
-  }, [playgroundParams]);
-
-  const writeCurrentSession = useCallback(
-    (nextSession: ChatboxSession) => {
-      if (playgroundParams || isEmbeddedPreview()) {
-        return;
-      }
-
-      writeChatboxSession(nextSession);
-    },
-    [playgroundParams]
-  );
+    writeChatboxSession(nextSession);
+  }, []);
 
   const clearCurrentSession = useCallback(() => {
-    if (playgroundParams || isEmbeddedPreview()) {
+    if (isEmbeddedPreview()) {
       return;
     }
 
     clearChatboxSession();
-  }, [playgroundParams]);
+  }, []);
 
   const [session, setSession] = useState<ChatboxSession | null>(() =>
     readCurrentSession()
   );
-  const [isBootstrapping, setIsBootstrapping] = useState(
-    Boolean(pathToken || playgroundParams)
-  );
+  const [isBootstrapping, setIsBootstrapping] = useState(Boolean(pathToken));
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
   const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
@@ -311,10 +400,32 @@ export function ChatboxChatPage({
   useEffect(() => {
     tokenFromPathRef.current = tokenFromPath;
   }, [tokenFromPath]);
+  // Render-assigned (NOT effect-assigned) mirror of the resolved session, so
+  // async recovery reads the live share token instead of a one-render-stale
+  // one. The token is the ONLY way back to a grant once the post-redeem strip
+  // has removed it from the URL.
+  const sessionRef = useRef<ChatboxSession | null>(session);
+  sessionRef.current = session;
+  // Lifetime latch for async recovery: a re-redeem that resolves after this
+  // page unmounted must not write sessionStorage (which outlives the page and
+  // would hijack the next mount with a resurrected session).
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+  // The token still in the URL when there is one, else the token the redeem
+  // persisted onto the session. Post-strip these are the same value, which is
+  // precisely what keeps the staleness guards below from discarding every
+  // refresh forever; navigating to a DIFFERENT chatbox still trips them.
+  const resolveShareToken = useCallback(
+    () => tokenFromPathRef.current ?? sessionRef.current?.shareToken ?? null,
+    []
+  );
   const isAuthSettling =
-    Boolean(tokenFromPath) &&
-    !playgroundParams &&
-    (isWorkOsLoading || isAuthLoading);
+    Boolean(tokenFromPath) && (isWorkOsLoading || isAuthLoading);
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
@@ -385,9 +496,43 @@ export function ChatboxChatPage({
     return [...sessionServersRequired, ...optionalActive];
   }, [session, sessionServersRequired, enabledOptionalServerIds]);
 
+  // Does the recipient actually have to authorize anything? The bootstrap
+  // payload only carries `useOAuth`, a compat mirror that is also true for an
+  // `auto` (discover) server — gating on it is what asked recipients to
+  // authorize servers with no authorization server at all. The probe answers
+  // from the canonical `authMethod`.
+  const oauthRequirementByServerId = useHostedOAuthRequirements(
+    sessionServersActive,
+    !!session
+  );
+
   const oauthServers = useMemo(
-    () => sessionServersActive.map(bootstrapServerToHostedOAuthDescriptor),
-    [sessionServersActive]
+    () =>
+      sessionServersActive.map((server) => {
+        const descriptor = bootstrapServerToHostedOAuthDescriptor(server);
+        const requirement = oauthRequirementByServerId[server.serverId];
+        return {
+          ...descriptor,
+          // A server enters the gate only once the probe has answered for it.
+          // The gate seeds its status map the first time it sees a server and
+          // then preserves that status across rebuilds, so admitting a server
+          // while the answer is still "checking" would freeze it as satisfied
+          // and the panel would never appear for a real OAuth server.
+          useOAuth:
+            descriptor.useOAuth &&
+            (requirement === "required" || requirement === "not_required"),
+          // Still in the authorizable set either way: a "no" only means "do not
+          // prompt up front", and a genuine 401 later still routes through
+          // `markOAuthRequired` and gets its Authorize action.
+          authorizationRequiredUpfront: requirement === "required",
+        };
+      }),
+    [sessionServersActive, oauthRequirementByServerId]
+  );
+
+  const requiredOAuthServers = useMemo(
+    () => oauthServers.filter((server) => !server.optional),
+    [oauthServers]
   );
 
   const handleEnableChatboxOptionalServer = useCallback((serverId: string) => {
@@ -417,7 +562,6 @@ export function ChatboxChatPage({
     servers: oauthServers,
     projectId: session?.payload.projectId ?? null,
     chatboxId: session?.chatboxId,
-    accessVersion: session?.accessVersion,
     isAuthenticated,
   });
 
@@ -473,24 +617,6 @@ export function ChatboxChatPage({
     let cancelled = false;
 
     const resolve = async () => {
-      if (playgroundParams) {
-        const snapshot = readPlaygroundSession(playgroundParams.playgroundId);
-        if (snapshot) {
-          setSession({ ...snapshot, surface: "preview" });
-          setRouteError(null);
-        } else {
-          setSession(null);
-          setRouteError(
-            createChatboxRouteError(
-              410,
-              "Playground session expired. Return to the builder to preview."
-            )
-          );
-        }
-        setIsBootstrapping(false);
-        return;
-      }
-
       if (tokenFromPath) {
         const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
         setIsBootstrapping(true);
@@ -502,53 +628,8 @@ export function ChatboxChatPage({
           status: "started",
         });
         try {
-          // /redeem exchanges the URL link token for a `chatboxId` +
-          // `accessVersion` grant plus the bootstrap payload, in one round
-          // trip. Every chatbox-aware backend call then keys on the resolved
-          // identity — the URL token is not threaded onto the read path.
-          const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chatboxToken: tokenFromPath }),
-          });
-
-          if (!redeemResponse.ok) {
-            throw await readRouteError(redeemResponse);
-          }
-
-          const redeemed = (await redeemResponse.json()) as {
-            chatboxId?: unknown;
-            accessVersion?: unknown;
-            bootstrap?: unknown;
-          };
+          const nextSession = await redeemChatboxToken(tokenFromPath);
           if (cancelled) return;
-
-          // The redeem response is treated as untrusted shape until validated
-          // — `normalizeChatboxSession` enforces every field
-          // `ChatboxBootstrapPayload` requires. Without this, a partial
-          // bootstrap (missing projectId/modelId/etc.) would be persisted
-          // and the API context downstream would initialize with `null`s.
-          const nextSession = normalizeChatboxSession({
-            chatboxId:
-              typeof redeemed.chatboxId === "string"
-                ? redeemed.chatboxId
-                : undefined,
-            accessVersion:
-              typeof redeemed.accessVersion === "number"
-                ? redeemed.accessVersion
-                : undefined,
-            payload: redeemed.bootstrap as
-              | ChatboxSession["payload"]
-              | undefined,
-            surface: readChatboxSurfaceFromUrl(window.location.search),
-            shareToken: tokenFromPath ?? undefined,
-          });
-          if (!nextSession) {
-            throw createChatboxRouteError(
-              502,
-              "Swarm redeem returned an incomplete bootstrap payload."
-            );
-          }
 
           writeCurrentSession(nextSession);
           setSession(nextSession);
@@ -625,85 +706,128 @@ export function ChatboxChatPage({
     clearCurrentSession,
     isAuthenticated,
     isAuthSettling,
-    playgroundParams,
     readCurrentSession,
     tokenFromPath,
     writeCurrentSession,
   ]);
 
-  // Silent re-redeem path. The capture hook (or any chatbox-aware caller)
-  // calls this when the backend reports `chatbox_access_stale`. It re-runs
-  // /web/chatbox/redeem against the URL token and updates `session` in
-  // place, which propagates a fresh `accessVersion` to every downstream
-  // consumer. Errors are swallowed — the original error UI is owned by the
-  // primary bootstrap effect above, and a refresh failure should leave the
-  // already-mounted chat alone rather than tearing the UI down.
+  // Re-redeem path. Callers reach it when the backend reports the caller's
+  // access is stale or refused: the capture hook on `chatbox_access_stale`,
+  // and the chat turn on a CHATBOX_ACCESS_STALE / CHATBOX_ACCESS_DENIED
+  // response. It re-runs /web/chatbox/redeem against the share token and
+  // updates `session` in place, which propagates a fresh `accessVersion` to
+  // every downstream consumer.
   //
-  // The in-flight latch is keyed by *token*, not a plain boolean. A
-  // navigation that swaps `tokenFromPath` from A to B while A's redeem is
-  // still pending must not block B from starting its own refresh — A's
-  // response would be discarded by the token-staleness guards below
-  // anyway, so leaving B with no refresh in flight would strand the
-  // capture hook's queued stale snapshot until an unrelated stale event
-  // or page reload happens to retrigger the callback.
-  const refreshInFlightTokenRef = useRef<string | null>(null);
-  const requestRefreshAccessVersion = useCallback(() => {
-    const token = tokenFromPath;
-    if (!token) return;
-    // Same-token re-entry → drop. Different-token re-entry → allow; the
-    // older fetch will land in storage but its `setSession` is gated by
-    // `tokenFromPathRef`.
-    if (refreshInFlightTokenRef.current === token) return;
-    refreshInFlightTokenRef.current = token;
-    void (async () => {
-      try {
-        const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chatboxToken: token }),
-        });
-        if (!redeemResponse.ok) return;
-        if (tokenFromPathRef.current !== token) return;
-        const redeemed = (await redeemResponse.json()) as {
-          chatboxId?: unknown;
-          accessVersion?: unknown;
-          bootstrap?: unknown;
-        };
-        if (tokenFromPathRef.current !== token) return;
-        const nextSession = normalizeChatboxSession({
-          chatboxId:
-            typeof redeemed.chatboxId === "string"
-              ? redeemed.chatboxId
-              : undefined,
-          accessVersion:
-            typeof redeemed.accessVersion === "number"
-              ? redeemed.accessVersion
-              : undefined,
-          payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
-          surface: readChatboxSurfaceFromUrl(window.location.search),
-          shareToken: token,
-        });
-        if (!nextSession) return;
-        // Final guard before mutating shared session state: a navigation
-        // between the JSON parse and now would still race.
-        if (tokenFromPathRef.current !== token) return;
-        writeCurrentSession(nextSession);
-        setSession(nextSession);
-      } catch (error) {
-        console.warn(
-          "[ChatboxChatPage] Silent chatbox re-redeem failed",
-          error
-        );
-      } finally {
-        // Only clear the latch if we're still the active in-flight refresh.
-        // A newer token's refresh may have already overwritten it; don't
-        // stomp on that one.
-        if (refreshInFlightTokenRef.current === token) {
-          refreshInFlightTokenRef.current = null;
-        }
+  // It re-redeems on DENIED too, not just stale: /redeem re-MINTS the grant
+  // for an `anyone_with_link` chatbox, so a refusal caused by guest-identity
+  // rotation or a mode round-trip is recoverable. Only a redeem that itself
+  // fails definitively is terminal.
+  //
+  // The in-flight latch is keyed by *token* and holds the PROMISE, not a
+  // boolean: concurrent callers (N chat lanes plus the capture backoff) all
+  // await the same /redeem round trip instead of each minting a grant. A
+  // navigation that swaps the token from A to B while A's redeem is still
+  // pending must not block B from starting its own — A's response is
+  // discarded by the staleness guards anyway, so leaving B with no refresh
+  // in flight would strand the capture hook's queued stale snapshot.
+  const refreshInFlightRef = useRef<{
+    token: string;
+    promise: Promise<HostedAccessRecoveryResult>;
+  } | null>(null);
+  const refreshAccessSession =
+    useCallback(async (): Promise<HostedAccessRecoveryResult> => {
+      const token = resolveShareToken();
+      if (!token) {
+        return { ok: false, reason: "no_token" };
       }
-    })();
-  }, [tokenFromPath, writeCurrentSession]);
+      const inFlight = refreshInFlightRef.current;
+      if (inFlight && inFlight.token === token) {
+        return inFlight.promise;
+      }
+
+      const promise = (async (): Promise<HostedAccessRecoveryResult> => {
+        try {
+          const nextSession = await redeemChatboxToken(token, {
+            surface: sessionRef.current?.surface,
+          });
+          // Guards before mutating shared session state: a navigation to a
+          // different chatbox between the request and now would install
+          // another chatbox's session over the active one, and an unmount
+          // (the visitor left the page, or the exit path just CLEARED the
+          // stored session) must not resurrect a session the page no longer
+          // owns — sessionStorage outlives this component.
+          if (!isMountedRef.current || resolveShareToken() !== token) {
+            return { ok: false, reason: "transient" };
+          }
+          writeCurrentSession(nextSession);
+          setSession(nextSession);
+          return { ok: true, accessVersion: nextSession.accessVersion };
+        } catch (error) {
+          const routeError = isChatboxRouteError(error)
+            ? error
+            : createChatboxRouteError(
+                0,
+                error instanceof Error
+                  ? error.message
+                  : "Unable to refresh chatbox access."
+              );
+          const detail = {
+            status: routeError.status,
+            code: routeError.code,
+            message: routeError.message,
+          };
+          // Only a definitive refusal is terminal. Everything else — a 429
+          // from the redeem rate limiter, a 5xx, a dropped connection —
+          // leaves the mounted chat alone and gets another attempt on the
+          // next send.
+          const isDefinitive =
+            routeError.status === 401 ||
+            routeError.status === 403 ||
+            routeError.status === 404 ||
+            routeError.status === 410;
+          if (!isDefinitive) {
+            console.warn(
+              "[ChatboxChatPage] Chatbox re-redeem failed transiently",
+              detail
+            );
+          }
+          return isDefinitive
+            ? { ok: false, reason: "denied", error: detail }
+            : { ok: false, reason: "transient", error: detail };
+        } finally {
+          // Only clear the latch if we're still the active in-flight
+          // refresh. A newer token's refresh may have already overwritten
+          // it; don't stomp on that one.
+          if (refreshInFlightRef.current?.token === token) {
+            refreshInFlightRef.current = null;
+          }
+        }
+      })();
+
+      refreshInFlightRef.current = { token, promise };
+      return promise;
+    }, [resolveShareToken, writeCurrentSession]);
+
+  // Fire-and-forget wrapper kept for `useSharedChatWidgetCapture`, whose
+  // contract is a void call it never awaits.
+  const requestRefreshAccessVersion = useCallback(() => {
+    void refreshAccessSession();
+  }, [refreshAccessSession]);
+
+  // Terminal access loss: recovery ran and this visitor still cannot reach
+  // the chatbox. Drop the session so `landingState` computes "denied" and
+  // the landing panel (Sign in / Open in App) replaces the runtime, rather
+  // than leaving a generic banner over a chat that can no longer send.
+  const handleHostedAccessRevoked = useCallback(
+    (error: HostedAccessErrorDetail) => {
+      setSession(null);
+      clearCurrentSession();
+      setRouteError(
+        createChatboxRouteError(error.status, error.message, error.code)
+      );
+    },
+    [clearCurrentSession]
+  );
 
   const displayError = useMemo(
     () => getChatboxDisplayError(routeError),
@@ -770,7 +894,7 @@ export function ChatboxChatPage({
     // Copy link work across reloads.
     const token = shareableToken;
     if (!session || !token) {
-      toast.error("Swarm link unavailable");
+      toast.error("Link unavailable");
       return;
     }
 
@@ -783,9 +907,9 @@ export function ChatboxChatPage({
       await navigator.clipboard.writeText(
         buildChatboxLink(token, session.payload.name)
       );
-      toast.success("Swarm link copied");
+      toast.success("Link copied");
     } catch {
-      toast.error("Failed to copy swarm link");
+      toast.error("Failed to copy link");
     }
   }, [session, shareableToken]);
 
@@ -825,7 +949,10 @@ export function ChatboxChatPage({
     !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
-    servers: sessionServersRequired,
+    // The probed descriptors, not the raw bootstrap rows: the gate asks "does
+    // this session require authorization", which the payload's `useOAuth`
+    // mirror cannot answer (see `oauthServers` above).
+    servers: requiredOAuthServers,
     oauthPending,
     hasBusyOAuth,
     pendingOAuthServers,
@@ -865,7 +992,15 @@ export function ChatboxChatPage({
               {displayError.message}
             </p>
             <div className="mt-4 flex items-center justify-center gap-2">
-              {!isAuthenticated && (isAccessDenied || guestBlocked) ? (
+              {/* No sign-in CTA inside the author's Preview embed. `signIn()`
+                  navigates THIS frame to WorkOS and returns to
+                  `/oauth/callback`, outside the `main.tsx` self-embed
+                  exemption, so the frame lands on `IframeRouterError` — the
+                  author is offered a button that cannot complete. Standalone
+                  visitors keep it; it works there. */}
+              {!isAuthenticated &&
+              (isAccessDenied || guestBlocked) &&
+              !isEmbeddedPreview() ? (
                 <Button onClick={handleSignIn}>Sign in</Button>
               ) : null}
               <Button variant="outline" onClick={handleOpenMcpJam}>
@@ -900,10 +1035,11 @@ export function ChatboxChatPage({
               (server) => server.serverId
             ),
             requestRefreshAccessVersion,
+            refreshAccessSession,
+            onAccessRevoked: handleHostedAccessRevoked,
             // Redeemed sessions carry Convex-resolved server ids; only the
-            // web chat engine can connect them. Playground previews keep
-            // the platform default (local engine + builder connections).
-            requiresWebChatApi: !playgroundParams,
+            // web chat engine can connect them.
+            requiresWebChatApi: true,
           }}
           executionConfig={{
             modelId: session.payload.modelId,
@@ -932,6 +1068,7 @@ export function ChatboxChatPage({
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
           isFinishingOAuth={isFinishingOAuth}
+          onSkipAuthorization={introGate.dismissAuthPanel}
         />
       </div>
     );
@@ -958,10 +1095,8 @@ export function ChatboxChatPage({
               <ChatboxSurfaceProvider value={true}>
                 {/* Redeemed sessions: servers are Convex-resolved, so MCP
                     Apps widget fetches and bridge resource/prompt calls
-                    must take the hosted API branch on every platform.
-                    Playground previews keep platform routing (local
-                    builds reuse the builder's local connections). */}
-                <WebManagedServersProvider value={!playgroundParams}>
+                    must take the hosted API branch on every platform. */}
+                <WebManagedServersProvider value={true}>
                   <div
                     className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
                     data-host-style={hostStyle}

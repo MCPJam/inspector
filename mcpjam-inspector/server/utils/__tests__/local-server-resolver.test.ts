@@ -4,6 +4,7 @@ import {
   executeLocalServerConnect,
   parseConnectionDefaults,
   resolveLocalServerForConnect,
+  resolveLocalStdioServerConfig,
   toMCPServerConfig,
 } from "../local-server-resolver.js";
 
@@ -242,6 +243,53 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
         serverName: "Asana",
       },
     });
+  });
+});
+
+describe("toMCPServerConfig — declared httpVariant mapping", () => {
+  it("maps a declared sse transport to preferSSE", () => {
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: { ...httpHeaderOnlyAuth.serverConfig, httpVariant: "sse" },
+    });
+    expect(config.preferSSE).toBe(true);
+    expect(config.disableSseFallback).toBeUndefined();
+  });
+
+  it("maps a declared streamable-http transport to disableSseFallback", () => {
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: {
+        ...httpHeaderOnlyAuth.serverConfig,
+        httpVariant: "streamable-http" as const,
+      },
+    });
+    expect(config.disableSseFallback).toBe(true);
+    // Explicitly false, not merely absent — see below.
+    expect(config.preferSSE).toBe(false);
+  });
+
+  it("pins preferSSE false so a /sse URL cannot override the declaration", () => {
+    // The SDK resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`.
+    // Leaving preferSSE undefined here would hand a DECLARED streamable-http
+    // server straight to SSE on URL shape alone, and `disableSseFallback`
+    // could not save it — it only guards the post-attempt fallback.
+    const config: any = toMCPServerConfig({
+      ...httpHeaderOnlyAuth,
+      serverConfig: {
+        ...httpHeaderOnlyAuth.serverConfig,
+        url: "https://plugin.example.com/sse",
+        httpVariant: "streamable-http" as const,
+      },
+    });
+    expect(config.preferSSE).toBe(false);
+    expect(config.disableSseFallback).toBe(true);
+  });
+
+  it("sets neither flag when no transport was declared", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth);
+    expect(config.preferSSE).toBeUndefined();
+    expect(config.disableSseFallback).toBeUndefined();
   });
 });
 
@@ -915,7 +963,15 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
-      message: identityError,
+      // Framed for the surface that is connecting: names the server, keeps the
+      // backend's actionable sentence as the reason clause, and carries the
+      // classified reason so a swarm banner can pick its tone.
+      message: expect.stringContaining(identityError),
+      details: expect.objectContaining({
+        reason: "xaa_configuration_invalid",
+        serverId: "srv-xaa",
+        serverName: "Legacy XAA server",
+      }),
     });
 
     // Exactly one outbound call — the authorize batch. No secret reveal, no
@@ -1218,5 +1274,196 @@ describe("toMCPServerConfig — malformed protocol versions fail closed", () => 
       mcpProtocolVersion: "2025-11-52" as any,
     });
     expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+});
+
+describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  function localBatchResponse(serverConfig: Record<string, unknown>) {
+    return new Response(
+      JSON.stringify({
+        results: {
+          "srv-stdio": {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig,
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  it("builds a stdio SDK config from authorize-batch-local, threading cwd/timeout/capabilities", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return localBatchResponse({
+          transportType: "stdio",
+          command: "node",
+          args: ["server.js"],
+          env: { FOO: "bar" },
+          cwd: "/srv/plugin-root",
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const config: any = await resolveLocalStdioServerConfig(
+      "bearer-xyz",
+      "proj-1",
+      "srv-stdio",
+      {
+        timeoutMs: 12_345,
+        clientCapabilities: { sampling: {} },
+        serverDisplayName: "Stdio Server",
+      }
+    );
+
+    expect(config).toMatchObject({
+      command: "node",
+      args: ["server.js"],
+      env: { FOO: "bar" },
+      cwd: "/srv/plugin-root",
+      timeout: 12_345,
+    });
+    expect(config.url).toBeUndefined();
+    expect(config.capabilities).toMatchObject({ sampling: {} });
+    // The bearer is re-checked against the LOCAL endpoint — one call, no
+    // secret/plugin reads for a plain stdio server.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(String(calledUrl)).toContain("/web/authorize-batch-local");
+    expect((calledInit.headers as Record<string, string>).Authorization).toBe(
+      "Bearer bearer-xyz"
+    );
+  });
+
+  it("refuses an http row instead of silently building one", async () => {
+    const fetchMock = vi.fn(async () =>
+      localBatchResponse({
+        transportType: "http",
+        url: "https://hosted.example.com/mcp",
+        headers: {},
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalStdioServerConfig("bearer-xyz", "proj-1", "srv-stdio")
+    ).rejects.toMatchObject({ status: 409, code: "CONFLICT" });
+  });
+
+  // The stated invariant of the shared runtime resolution: a row with
+  // `hasEnv: true` and an empty env means the values live in the vault —
+  // the reveal must run and its env must land on the SDK config, carrying
+  // the same scope fields the hosted mint path would send.
+  it("reveals deferred secrets (hasEnv with empty env) with the caller's scope", async () => {
+    let revealInit: RequestInit | undefined;
+    const fetchMock = vi.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return localBatchResponse({
+          transportType: "stdio",
+          command: "node",
+          args: ["server.js"],
+          hasEnv: true,
+          env: {},
+        });
+      }
+      if (url.endsWith("/web/server/reveal-secrets")) {
+        revealInit = init;
+        return new Response(
+          JSON.stringify({ success: true, env: { API_KEY: "vault-value" } }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const config: any = await resolveLocalStdioServerConfig(
+      "bearer-xyz",
+      "proj-1",
+      "srv-stdio",
+      {
+        accessScope: "chat_v2",
+        chatboxId: "chatbox-1",
+        accessVersion: 7,
+      }
+    );
+
+    expect(config.env).toEqual({ API_KEY: "vault-value" });
+    expect((revealInit?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer bearer-xyz"
+    );
+    expect(JSON.parse(revealInit?.body as string)).toMatchObject({
+      purpose: "runtime",
+      projectId: "proj-1",
+      serverId: "srv-stdio",
+      accessScope: "chat_v2",
+      chatboxId: "chatbox-1",
+      accessVersion: 7,
+    });
+  });
+
+  // Plugin runtime reads ride the Convex QUERY protocol (user JWT), which
+  // cannot carry the service-token acting-as exchange. A delegated caller
+  // hitting a plugin component must get the real reason, not an
+  // unauthenticated-query failure.
+  it("fails closed when a delegated caller resolves a plugin component", async () => {
+    const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return localBatchResponse({
+          transportType: "stdio",
+          command: "node",
+          args: ["${PLUGIN_ROOT}/server/index.js"],
+          env: {},
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(
+        resolveLocalStdioServerConfig("", "proj-1", "srv-stdio", {
+          workosApiKeyActingAs: {
+            workosUserId: "user_workos_1",
+            mcpjamOrganizationId: "org_1",
+          },
+        })
+      ).rejects.toMatchObject({
+        status: 501,
+        code: "FEATURE_NOT_SUPPORTED",
+      });
+    } finally {
+      if (originalServiceToken === undefined) {
+        delete process.env.INSPECTOR_SERVICE_TOKEN;
+      } else {
+        process.env.INSPECTOR_SERVICE_TOKEN = originalServiceToken;
+      }
+    }
   });
 });

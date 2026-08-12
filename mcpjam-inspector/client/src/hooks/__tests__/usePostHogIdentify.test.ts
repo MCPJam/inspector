@@ -7,6 +7,7 @@ const mockState = vi.hoisted(() => ({
     identify: vi.fn(),
     register: vi.fn(),
     reset: vi.fn(),
+    setPersonPropertiesForFlags: vi.fn(),
   },
   auth: {
     user: null as {
@@ -41,6 +42,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: mockState.detectPlatform,
 }));
 
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+}));
+
 vi.mock("@/hooks/use-actor-key", () => ({
   useActorKey: () => mockState.actorKey,
 }));
@@ -69,6 +74,7 @@ describe("usePostHogIdentify", () => {
     renderHook(() => usePostHogIdentify());
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      deployment: "self_hosted",
       email: "user@example.com",
       name: "Taylor Smith",
       first_name: "Taylor",
@@ -87,7 +93,11 @@ describe("usePostHogIdentify", () => {
 
     renderHook(() => usePostHogIdentify());
 
-    expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {});
+    expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {
+      // Set for EVERY actor, guests included, so a "self_hosted" flag cohort
+      // evaluates before sign-in too.
+      deployment: "self_hosted",
+    });
     expect(mockState.posthog.register).toHaveBeenCalledWith({
       user_id: "guest_abc",
     });
@@ -135,6 +145,7 @@ describe("usePostHogIdentify", () => {
     const { rerender } = renderHook(() => usePostHogIdentify());
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      deployment: "self_hosted",
       email: "user@example.com",
       name: "Taylor Smith",
       first_name: "Taylor",
@@ -154,10 +165,23 @@ describe("usePostHogIdentify", () => {
       environment: import.meta.env.MODE,
       platform: "mac",
       version: "2.0.13-test",
+      deployment: "self_hosted",
+      source: "client",
     });
-    expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {});
+    expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {
+      // Set for EVERY actor, guests included, so a "self_hosted" flag cohort
+      // evaluates before sign-in too.
+      deployment: "self_hosted",
+    });
     expect(mockState.posthog.register).toHaveBeenCalledWith({
       user_id: "guest_abc",
+    });
+    // `reset()` clears flag person properties too, so they must be restored —
+    // otherwise every flag evaluated before the next page load targets an
+    // unknown deployment.
+    expect(mockState.posthog.setPersonPropertiesForFlags).toHaveBeenCalledWith({
+      deployment: "self_hosted",
+      platform: "mac",
     });
   });
 
@@ -168,7 +192,11 @@ describe("usePostHogIdentify", () => {
 
     const { rerender } = renderHook(() => usePostHogIdentify());
 
-    expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {});
+    expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {
+      // Set for EVERY actor, guests included, so a "self_hosted" flag cohort
+      // evaluates before sign-in too.
+      deployment: "self_hosted",
+    });
 
     vi.clearAllMocks();
 
@@ -185,6 +213,7 @@ describe("usePostHogIdentify", () => {
 
     expect(mockState.posthog.reset).not.toHaveBeenCalled();
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      deployment: "self_hosted",
       email: "user@example.com",
       name: "Taylor Smith",
       first_name: "Taylor",
@@ -209,6 +238,7 @@ describe("usePostHogIdentify", () => {
     renderHook(() => usePostHogIdentify());
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      deployment: "self_hosted",
       email: "user@example.com",
       name: "Taylor Smith",
       first_name: "Taylor",
@@ -231,6 +261,7 @@ describe("usePostHogIdentify", () => {
     renderHook(() => usePostHogIdentify());
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      deployment: "self_hosted",
       email: "user@example.com",
       name: "Taylor Smith",
       first_name: "Taylor",

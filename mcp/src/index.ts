@@ -1,13 +1,14 @@
-import { McpJamMcpServer } from "./server.js";
+import type { AuthInfo } from "@modelcontextprotocol/server";
+import type { JWTPayload } from "jose";
+import { handleMcpRequest } from "./server.js";
 import {
   GUEST_ISSUER,
   OAUTH_DISCOVERY_HEADERS,
   normalizeIssuer,
+  resourceIdentifier,
   verifyBearerToken,
   type VerifyConfig,
 } from "./auth.js";
-
-export { McpJamMcpServer };
 
 const LANDING_PAGE = `<!doctype html>
 <html lang="en">
@@ -30,18 +31,81 @@ const LANDING_PAGE = `<!doctype html>
 
 function protectedResourceMetadata(origin: string, issuer: string) {
   return {
-    resource: `${origin}/mcp`,
+    // Shared with the audience check in `verifyBearerToken` — we must accept
+    // exactly the identifier we advertise here.
+    resource: resourceIdentifier(origin),
     authorization_servers: [issuer],
     bearer_methods_supported: ["header"],
   };
 }
 
+/**
+ * CORS for `/mcp`. The v2 handler is deliberately validation-free — it emits
+ * no CORS headers and does not answer OPTIONS — where `McpAgent.serve()` used
+ * to do both, so this file now owns the whole preflight contract.
+ *
+ * The allow-list is every non-safelisted header the official MCP client sends
+ * to this endpoint, and each one is load-bearing for a browser client: a
+ * request header absent here fails the preflight before the worker ever sees
+ * it. `mcp-method`/`mcp-name` in particular are NOT optional — the v2 client
+ * derives them from the message body on *every* modern-era request. The
+ * 2025-era pair (`mcp-session-id`, `last-event-id`) stays listed so a legacy
+ * browser client is not blocked either, even though this stateless endpoint
+ * issues no session id and answers `405` to the GET stream those would ride
+ * on. `expose-headers` covers what a client reads back off the response.
+ */
+const MCP_CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+  "access-control-allow-headers": [
+    "authorization",
+    "content-type",
+    "accept",
+    "mcp-protocol-version",
+    "mcp-method",
+    "mcp-name",
+    "mcp-session-id",
+    "last-event-id",
+  ].join(", "),
+  "access-control-expose-headers": "mcp-session-id, WWW-Authenticate",
+};
+
+function withMcpCors(response: Response): Response {
+  const withCors = new Response(response.body, response);
+  for (const [header, value] of Object.entries(MCP_CORS_HEADERS)) {
+    withCors.headers.set(header, value);
+  }
+  return withCors;
+}
+
+/**
+ * The verified bearer in the shape the v2 handler passes through to the server
+ * factory. Only `token` is read downstream; `clientId` is required by the type
+ * and set to our own WorkOS client id — not the caller's, which for a
+ * third-party OAuth client we never learn (a guest token likewise has no
+ * client of its own) — and the claims ride along in `extra` for
+ * future per-principal behavior. `expiresAt` carries the token's own `exp`
+ * (seconds since epoch, the same unit `AuthInfo` uses) — `verifyBearerToken`
+ * has already enforced it, so this just keeps the pass-through faithful for
+ * any consumer that checks.
+ */
+function toAuthInfo(
+  verified: { token: string; payload: JWTPayload },
+  clientId: string,
+): AuthInfo {
+  return {
+    token: verified.token,
+    clientId,
+    scopes: [],
+    ...(typeof verified.payload.exp === "number"
+      ? { expiresAt: verified.payload.exp }
+      : {}),
+    extra: { claims: verified.payload },
+  };
+}
+
 export default {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const origin = url.origin;
 
@@ -114,7 +178,10 @@ export default {
 
     if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
       if (request.method === "OPTIONS") {
-        return McpJamMcpServer.serve("/mcp").fetch(request, env, ctx);
+        return new Response(null, {
+          status: 204,
+          headers: { ...MCP_CORS_HEADERS, "access-control-max-age": "86400" },
+        });
       }
 
       // Killswitch: when locked down, the server is AuthKit-only — guest
@@ -130,7 +197,11 @@ export default {
           ? { issuer: GUEST_ISSUER, jwksUrl: env.MCPJAM_GUEST_JWKS_URL }
           : undefined;
 
-      let props: { bearerToken?: string; claims?: unknown; clientIp?: string };
+      // Pass-through auth: the v2 handler verifies nothing itself, so this
+      // stays the single place a bearer is checked. `authInfo` left undefined
+      // means anonymous — the factory then mints a guest lazily, on first tool
+      // execution rather than at connect/tools/list.
+      let authInfo: AuthInfo | undefined;
       if (request.headers.has("authorization")) {
         // A bearer was presented → it must verify (AuthKit or guest). A
         // present-but-invalid token still 401s; we never downgrade it to an
@@ -140,11 +211,8 @@ export default {
           { clientId, authkitDomain: env.AUTHKIT_DOMAIN, guest },
           origin,
         );
-        if (!result.ok) return result.response;
-        props = {
-          bearerToken: result.verified.token,
-          claims: result.verified.payload,
-        };
+        if (!result.ok) return withMcpCors(result.response);
+        authInfo = toAuthInfo(result.verified, clientId);
       } else if (lockedDown) {
         // Tokenless + locked down → preserve the 401 → OAuth challenge.
         const result = await verifyBearerToken(
@@ -153,30 +221,16 @@ export default {
           origin,
         );
         // verifyBearerToken returns the 401 missing-token response here.
-        if (!result.ok) return result.response;
-        props = {
-          bearerToken: result.verified.token,
-          claims: result.verified.payload,
-        };
-      } else {
-        // Tokenless anonymous session: NO mint here. The Durable Object mints
-        // a guest token lazily on first platform-tool execution. Capture the
-        // edge-provided client IP (trustworthy here — set by Cloudflare on the
-        // inbound hit) so the DO can forward it to the rate-limited mint route.
-        props = {
-          bearerToken: undefined,
-          claims: undefined,
-          clientIp: request.headers.get("cf-connecting-ip") ?? undefined,
-        };
+        if (!result.ok) return withMcpCors(result.response);
+        authInfo = toAuthInfo(result.verified, clientId);
       }
 
-      const authedCtx: ExecutionContext<Record<string, unknown>> = {
-        waitUntil: (promise: Promise<unknown>) => ctx.waitUntil(promise),
-        passThroughOnException: () => ctx.passThroughOnException(),
-        props,
-      };
-
-      return McpJamMcpServer.serve("/mcp").fetch(request, env, authedCtx);
+      // No `parsedBody`: nothing above reads the request body, so there is no
+      // first read to hand the handler — let it read the raw request. The
+      // handler does no path routing of its own, so `/mcp/...` is served too.
+      return withMcpCors(
+        await handleMcpRequest(request, env, authInfo ? { authInfo } : undefined),
+      );
     }
 
     if (url.pathname === "/" && request.method === "GET") {

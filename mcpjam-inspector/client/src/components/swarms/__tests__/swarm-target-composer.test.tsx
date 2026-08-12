@@ -2,9 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import {
-  emptySwarmTargetComposerState,
-  type SwarmTargetComposerState,
-} from "../swarm-target-types";
+  emptyComposerState,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
 
 const flagState = vi.hoisted(() => ({
   skills: false,
@@ -31,9 +31,20 @@ vi.mock("@/hooks/useSandboxImages", () => ({
     },
   ],
 }));
+const cloudState = vi.hoisted(() => ({
+  ephemeralAvailable: true as boolean | undefined,
+}));
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
+}));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
-    hosts: [{ hostId: "host-1", name: "Claude" }],
+    // Two, because the multi-environment fixtures below reference both — a
+    // one-host list made a second environment's client unmanipulable.
+    hosts: [
+      { hostId: "host-1", name: "Claude" },
+      { hostId: "host-2", name: "Cursor" },
+    ],
     isLoading: false,
   }),
 }));
@@ -53,13 +64,22 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
     onChange: (next: string[]) => void;
     triggerTestId?: string;
   }) => (
-    <button
-      type="button"
-      data-testid={triggerTestId}
-      onClick={() => onChange(value.length ? [] : ["env-1"])}
-    >
-      {value.length ? `${value.length} environment` : "pick environment"}
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid={triggerTestId}
+        onClick={() => onChange(value.length ? [] : ["env-1"])}
+      >
+        {value.length ? `${value.length} environment` : "pick environment"}
+      </button>
+      {/* Adds a SECOND environment without clearing the first, so the
+          seed-from-the-whole-selection contract is drivable. */}
+      <button
+        type="button"
+        data-testid="mock-add-second-environment"
+        onClick={() => onChange([...value, "env-2"])}
+      />
+    </>
   ),
 }));
 vi.mock(
@@ -96,6 +116,7 @@ function Harness({
       updatedAt: 1,
     },
   ],
+  onChange,
 }: {
   environments?: Array<{
     environmentId: string;
@@ -105,17 +126,22 @@ function Harness({
     revision: number;
     createdAt: number;
     updatedAt: number;
+    pluginVersionIds?: string[];
   }>;
+  onChange?: (next: EnvironmentComposerState) => void;
 }) {
-  const [value, setValue] = useState<SwarmTargetComposerState>(
-    emptySwarmTargetComposerState
+  const [value, setValue] = useState<EnvironmentComposerState>(
+    emptyComposerState
   );
   return (
     <SwarmTargetComposer
       projectId="proj-1"
       environments={environments}
       value={value}
-      onChange={setValue}
+      onChange={(next) => {
+        setValue(next);
+        onChange?.(next);
+      }}
       draftNameHint="Billing"
     />
   );
@@ -126,23 +152,51 @@ beforeEach(() => {
   flagState.skills = false;
   flagState.computers = false;
   flagState.environments = true;
+  cloudState.ephemeralAvailable = true;
 });
 
 describe("SwarmTargetComposer", () => {
   it("seeds stack from a selected environment and marks custom after client edits", () => {
-    render(<Harness />);
+    let latest: EnvironmentComposerState | null = null;
+    render(<Harness onChange={(next) => (latest = next)} />);
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
       /claude/i
     );
-    expect(
-      screen.queryByTestId("new-swarm-target-custom-badge")
-    ).not.toBeInTheDocument();
+    expect(latest?.customized).toBe(false);
 
     fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
     // Toggle off the seeded client to mark customized.
     fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
-    expect(screen.getByTestId("new-swarm-target-custom-badge")).toBeVisible();
+    expect(latest?.customized).toBe(true);
+  });
+
+  it("blocks stack edits when a selected environment pins plugin versions", () => {
+    // The stack has no plugin slot and the resolver never reuses a pinned named
+    // row, so an edit would silently run without the pins. The picker stays
+    // usable — changing the selection is the way out.
+    render(
+      <Harness
+        environments={[
+          {
+            environmentId: "env-1",
+            projectId: "proj-1",
+            name: "Prod-like",
+            hostId: "host-1",
+            revision: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            pluginVersionIds: ["pv-1"],
+          },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-collapse-hint")).toHaveTextContent(
+      /pins plugin versions/i
+    );
+    expect(screen.getByTestId("new-swarm-environments-picker")).toBeEnabled();
   });
 
   it("saves a tentative draft from the lego strip", () => {
@@ -209,5 +263,150 @@ describe("SwarmTargetComposer", () => {
     expect(screen.getByTestId("new-swarm-sandbox-image")).toHaveTextContent(
       /Computer · default/i
     );
+  });
+
+  it("labels computer execution as MCPJam cloud when computers are on", () => {
+    flagState.computers = true;
+    render(<Harness />);
+    expect(screen.getByTestId("new-swarm-cloud-run-badge")).toBeVisible();
+  });
+
+  it("shows no cloud badge when computers are off", () => {
+    render(<Harness />);
+    expect(
+      screen.queryByTestId("new-swarm-cloud-run-badge")
+    ).not.toBeInTheDocument();
+  });
+
+  it("blocks NEW sandbox-image pins but keeps the clear path when cloud is unreachable", async () => {
+    // `false` means a sandbox-backed session WOULD fail per-attempt — the
+    // composer must warn and disable the opt-in. But the PICKER stays live:
+    // a pin seeded from a saved environment/draft must remain clearable back
+    // to "Computer · default" (the opt-out the notice promises).
+    flagState.computers = true;
+    cloudState.ephemeralAvailable = false;
+    render(<Harness />);
+    expect(screen.getByTestId("new-swarm-cloud-unreachable")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-sandbox-image")).not.toBeDisabled();
+
+    // The rows only exist while the dropdown is open, and Radix marks a
+    // disabled one with aria-disabled rather than a native `disabled` prop.
+    fireEvent.click(screen.getByTestId("new-swarm-sandbox-image"));
+    expect(
+      await screen.findByRole("option", { name: /Base box/i })
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("option", { name: /Computer · default/i })
+    ).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("stays quiet while cloud availability is still loading", () => {
+    // Loading/fetch-failure must never paint the warning — only a real
+    // server `false` may.
+    flagState.computers = true;
+    cloudState.ephemeralAvailable = undefined;
+    render(<Harness />);
+    expect(
+      screen.queryByTestId("new-swarm-cloud-unreachable")
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-sandbox-image")).not.toBeDisabled();
+  });
+});
+
+/**
+ * Seeding across a MULTI-environment selection. The stack's fan-out axis is
+ * `hostIds`, so seeding only the newest environment's client means the first
+ * later edit — which flips `customized` and hands resolution to the stack —
+ * silently drops every other selected environment from the run.
+ */
+describe("SwarmTargetComposer — multi-environment seeding", () => {
+  const twoEnvironments = [
+    {
+      environmentId: "env-1",
+      projectId: "proj-1",
+      name: "Prod-like",
+      origin: "named",
+      hostId: "host-1",
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      environmentId: "env-2",
+      projectId: "proj-1",
+      name: "Staging",
+      origin: "named",
+      hostId: "host-2",
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+
+  it("blocks slot edits when the selection disagrees on a shared slot", () => {
+    // A stack has ONE server group for all its clients, so an edit would resolve
+    // both with defaults and replace each environment's execution context.
+    const differentGroups = [
+      { ...twoEnvironments[0], serverAttachmentId: "grp-1" },
+      { ...twoEnvironments[1], serverAttachmentId: "grp-2" },
+    ];
+    render(<Harness environments={differentGroups as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+
+    expect(screen.getByTestId("new-swarm-collapse-hint")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeDisabled();
+  });
+
+  it("keeps EVERY selected environment's client in the stack", () => {
+    render(<Harness environments={twoEnvironments as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+
+    // Both clients, not just the one added last.
+    const clients = screen.getByTestId("new-swarm-clients-picker");
+    expect(clients).toHaveTextContent(/claude/i);
+    expect(clients).toHaveTextContent(/\+1/);
+  });
+
+  it("drops a removed environment's client from the stack", () => {
+    render(<Harness environments={twoEnvironments as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+    // Customize, so the stack — not the selection — is what resolves.
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
+      /claude/i,
+    );
+
+    // Detach every environment. Resolution goes through `hostIds`, so keeping
+    // them would mean the detach did nothing and both clients still ran.
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
+      /no clients/i,
+    );
+  });
+
+  it("blocks slot edits when two selected environments share a client", () => {
+    const sameHost = [
+      { ...twoEnvironments[0] },
+      { ...twoEnvironments[1], hostId: "host-1" },
+    ];
+    render(<Harness environments={sameHost as never} />);
+
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("mock-add-second-environment"));
+
+    // One host for two environments: an edit would resolve them to ONE row.
+    expect(screen.getByTestId("new-swarm-collapse-hint")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeDisabled();
+    // The way out stays open — the SELECTION is still editable.
+    expect(
+      screen.getByTestId("new-swarm-environments-picker"),
+    ).not.toBeDisabled();
   });
 });

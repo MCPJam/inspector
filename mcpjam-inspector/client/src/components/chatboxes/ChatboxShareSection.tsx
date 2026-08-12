@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Clock, Globe, Lock, Users } from "lucide-react";
+import { ChevronDown, Clock, Globe, Link2, Lock, Users } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -9,6 +9,8 @@ import {
   type ChatboxSettings,
   useChatboxMutations,
 } from "@/hooks/useChatboxes";
+import { buildChatboxLink } from "@/lib/chatbox-session";
+import { copyToClipboard } from "@/lib/clipboard";
 import { getInitials } from "@/lib/utils";
 import {
   chatboxAccessPresetFromSettings,
@@ -123,7 +125,7 @@ export function ChatboxShareSection({
   };
 
   const handleInvite = async () => {
-    if (!normalizedEmail || emailValidationError) return;
+    if (!normalizedEmail || emailValidationError || unrunnableReason) return;
 
     setIsInviting(true);
     try {
@@ -178,6 +180,30 @@ export function ChatboxShareSection({
         ? Globe
         : Lock;
 
+  /**
+   * Why this scenario cannot be handed to anyone right now: its environment
+   * doesn't resolve (archived, a pinned plugin disabled, its host gone), so a
+   * tester opening the link would be the one to find out. Read from the
+   * envelope, which every settings-returning mutation carries — and REACTIVE,
+   * so rebinding to a working environment restores the link on the next update.
+   * Nothing is rotated or revoked; the same token is simply withheld while the
+   * scenario can't run.
+   */
+  const unrunnableReason = settings.environmentError?.message ?? null;
+
+  const shareLink =
+    settings.link?.token && !unrunnableReason
+      ? buildChatboxLink(settings.link.token, settings.name)
+      : null;
+  const displayLink = shareLink?.replace(/^https?:\/\//, "") ?? null;
+
+  const handleCopyLink = async () => {
+    if (!shareLink) return;
+    const ok = await copyToClipboard(shareLink);
+    if (ok) toast.success("Link copied");
+    else toast.error("Failed to copy share link");
+  };
+
   if (!isAuthenticated) {
     return (
       <p className="pt-4 text-sm text-muted-foreground">
@@ -189,6 +215,47 @@ export function ChatboxShareSection({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
+        <label className="text-sm font-medium" htmlFor="chatbox-tester-link">
+          Tester link
+        </label>
+        <div className="flex gap-2">
+          {/* `output` rather than a div: the label above needs a LABELABLE
+              control to point at, and this is a read-only value, not an input. */}
+          <output
+            id="chatbox-tester-link"
+            className="flex min-w-0 flex-1 items-center rounded-md border border-input bg-muted/30 px-3 py-2"
+            title={shareLink ?? undefined}
+          >
+            <span className="truncate text-sm text-muted-foreground">
+              {displayLink ??
+                (unrunnableReason
+                  ? "Withheld — this scenario can't run."
+                  : "No share link yet.")}
+            </span>
+          </output>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!shareLink}
+            onClick={() => void handleCopyLink()}
+            data-testid="chatbox-copy-tester-link"
+          >
+            <Link2 className="mr-1.5 size-4" />
+            Copy link
+          </Button>
+        </div>
+        {unrunnableReason ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="chatbox-share-unrunnable"
+          >
+            {unrunnableReason} Point this scenario at a working environment to
+            share it again — its link and its sessions are unchanged.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor="chatbox-share-email">
           Invite with email
         </label>
@@ -199,6 +266,10 @@ export function ChatboxShareSection({
               type="email"
               placeholder="Add people, emails..."
               value={email}
+              // Inviting mails the same link out, so it is gated on the same
+              // condition: an invite to a scenario that can't run is a broken
+              // session with someone else's name on it.
+              disabled={Boolean(unrunnableReason)}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -212,7 +283,12 @@ export function ChatboxShareSection({
           </div>
           <Button
             onClick={() => void handleInvite()}
-            disabled={!normalizedEmail || !!emailValidationError || isInviting}
+            disabled={
+              !normalizedEmail ||
+              !!emailValidationError ||
+              isInviting ||
+              Boolean(unrunnableReason)
+            }
           >
             {isInviting ? "..." : "Invite"}
           </Button>

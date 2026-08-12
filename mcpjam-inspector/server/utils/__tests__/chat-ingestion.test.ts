@@ -67,7 +67,6 @@ describe("chat-ingestion", () => {
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
       chatboxId: "cbx_test",
-      accessVersion: 1,
       sourceType: "chatbox",
       origin: "chatbox",
       surface: "share_link",
@@ -106,6 +105,34 @@ describe("chat-ingestion", () => {
       },
     ]);
     expect(body.surface).toBe("share_link");
+  });
+
+  it("serializes rewind lineage for an edited branch", async () => {
+    await persistChatSessionToConvex({
+      chatSessionId: "branch-session",
+      modelId: "openai/gpt-4.1-mini",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      projectId: "project-1",
+      sourceType: "direct",
+      origin: "playground",
+      rewind: {
+        parentChatSessionId: "original-session",
+        rewoundFromMessageId: "user-message-2",
+        reason: "message_edit",
+      },
+      sessionMessages: [],
+      startedAt: 1,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.rewind).toEqual({
+      parentChatSessionId: "original-session",
+      rewoundFromMessageId: "user-message-2",
+      reason: "message_edit",
+    });
   });
 
   it("stamps senderUserId onto persisted user messages only for the authenticated user", () => {

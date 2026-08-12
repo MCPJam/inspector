@@ -15,6 +15,7 @@ import {
   canManageOrgCredits,
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
@@ -69,6 +70,7 @@ import {
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
   extractUserMessageText,
+  UPSTREAM_ERROR_PAGE_CODE,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
@@ -328,6 +330,9 @@ export function ChatTabV2({
   const modelConfigOrganizationId = hostedContext?.projectId
     ? null
     : organizationId;
+  // The model picker's "Your providers" footer points at the org whose keys back
+  // this chat, so hosted surfaces (no org page to reach) get no footer.
+  const manageOrgProviders = useOrgModelsHandoff(modelConfigOrganizationId);
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
@@ -403,6 +408,7 @@ export function ChatTabV2({
     resetChat: baseResetChat,
     startChatWithMessages,
     loadChatSession,
+    rewindToMessage,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -1800,19 +1806,148 @@ export function ChatTabV2({
     }
   }, []);
 
-  // Concurrency-throttle retry: re-submit the user's last typed message via
-  // the same source-tracking ref the topup CTA uses. The retry button only
-  // ever surfaces on the concurrency banner (see `onRetry` gate below), so
-  // we don't risk firing this on unrelated retryable errors.
-  const handleRetryConcurrencyMessage = useCallback(() => {
+  // Transient-failure retry: re-submit the user's last typed message via the
+  // same source-tracking ref the topup CTA uses. The retry button only ever
+  // surfaces on failures where resending is the whole fix (see the
+  // `canRetryLastMessage` gate below), so we don't risk firing this on
+  // unrelated retryable errors.
+  const handleRetryLastMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
     sendMessage({ text, metadata: outgoingSenderMetadata });
   }, [sendMessage, outgoingSenderMetadata]);
 
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
+  // so the original transcript survives in history.
+  //
+  // Readiness is checked BEFORE the branch is minted: a branch that never
+  // sends would leave an empty orphan thread behind.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return false;
+      // A rewind ends in `onReset("fork")`, which wipes the composer: input,
+      // attachments, prompt/skill results, both queues. `handleNewChat` and
+      // `handleSelectThread` ask before doing that; editing has to ask too, or
+      // a typed-but-unsent draft disappears the moment the user clicks the
+      // pencil on an older message.
+      //
+      // Asked BEFORE `ensureThreadReadyForSend` so a declined discard costs no
+      // network round trip. Deliberately no `clearComposerDraft()` here: the
+      // rewind can still be refused below, and `onReset` only fires when one
+      // actually happens — clearing eagerly would wipe the draft for an edit
+      // that never sent.
+      if (!(await ensureDiscardDraftConfirmed())) return false;
+      // Snapshot what this edit is aimed at. Both awaits above yield — the
+      // discard dialog waits on a human, `ensureThreadReadyForSend` on a
+      // network round trip — and the user can pick a different history thread
+      // in either gap. The three detach lines below are unconditional, so
+      // without this they would detach the NEWLY selected thread, which this
+      // edit has nothing to do with.
+      //
+      // Keyed on the SELECTION counter, not on `activeHistorySessionId`:
+      // `refreshCurrentHistorySession` legitimately calls
+      // `setActiveHistorySessionId` as part of the preflight, so comparing the
+      // id would abort every edit on a resumed thread. The counter moves only
+      // on deliberate selection changes (`handleSelectThread`,
+      // `cancelPendingHistorySelection`, and so New Chat through it).
+      const editSelectionId = historySelectionRequestIdRef.current;
+      const threadReady = await ensureThreadReadyForSend();
+      if (!threadReady) return false;
+      if (historySelectionRequestIdRef.current !== editSelectionId)
+        return false;
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file"
+      );
+      // Same exposure as the Playground handler: the branch mint inside
+      // `rewindToMessage` can reject, and `UserMessageRow.submitEdit` calls
+      // this fire-and-forget, so the rejection would go unhandled with the
+      // editor already closed.
+      let outcome: Awaited<ReturnType<typeof rewindToMessage>>;
+      try {
+        outcome = await rewindToMessage({
+          messageId: message.id,
+          text,
+          files: files.length > 0 ? files : undefined,
+          metadata: outgoingSenderMetadata,
+          // Detach from the resumed thread as the branch is minted, not before
+          // the rewind. The teardown has to precede the branch's turn — the
+          // post-stream conflict check captures its baseline the instant that
+          // turn starts, and still attached it would name the ORIGINAL thread,
+          // surfacing the deliberate branch as a phantom "this chat changed
+          // elsewhere" and re-forking into a third session. But running it up
+          // front meant a refusal left the original session stripped of its
+          // concurrency guard, so the next ordinary send overwrote its row
+          // blind. `onBeforeBranch` fires only once the rewind is past every
+          // refusal that leaves the thread untouched.
+          //
+          // These are the same three lines every other deliberate session
+          // change runs (`handleNewChat`, and `detachHistorySession` itself).
+          onBeforeBranch: () => {
+            resumedThreadSendBaselineRef.current = null;
+            cancelPendingHistorySelection();
+            syncResumedVersion(null);
+          },
+        });
+      } catch (error) {
+        console.error("[ChatTabV2] Failed to rewind to message", error);
+        toast.error("Couldn't apply that edit. Try again.");
+        return false;
+      }
+      // `null` means the rewind was refused — a turn started under the editor
+      // in the gap after `ensureThreadReadyForSend`'s network round trip, or
+      // the message is gone. Nothing branched, so say nothing — and don't
+      // touch bookkeeping either: `lastSentUserMessageRef` is shared with
+      // `handleRetryLastMessage` and `handleOpenTopupDialog`, both of
+      // which resend whatever text currently sits in it, and `edit_message`
+      // has no server twin to reconcile a phantom count against. Stomping
+      // either one here for an edit that never sent would corrupt state for
+      // an unrelated later action.
+      if (!outcome) return false;
+      track("edit_message", {
+        location: "chat_tab",
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
+      lastSentUserMessageRef.current = text;
+      // Nothing is announced. A rewind forks the session so the original
+      // transcript survives in the database, but that is deliberately invisible
+      // — same as Claude Code and Codex, where editing a message just edits it.
+      // This used to raise a "New branch created" toast with an "Open original"
+      // action; both were removed on the task author's call.
+      return true;
+    },
+    [
+      sendBlocked,
+      ensureDiscardDraftConfirmed,
+      ensureThreadReadyForSend,
+      cancelPendingHistorySelection,
+      syncResumedVersion,
+      rewindToMessage,
+      outgoingSenderMetadata,
+      selectedModel,
+    ]
+  );
+
   const isConcurrencyThrottle =
     errorMessage?.code === "user_rate_limit" &&
     errorMessage?.limitKind === "concurrency";
+
+  // An upstream hop returning an error page (a gateway 502 in front of
+  // MCPJam) is transient, and resending is the entire fix. Without this the
+  // banner offered `Reset chat` alone, which on the chatbox surfaces throws
+  // away the session the tester's whole run exists to collect.
+  //
+  // Gated on the formatter's own code, not on `isRetryable`: the server sets
+  // that flag on failures a blind resend cannot help with.
+  const canRetryLastMessage =
+    isConcurrencyThrottle || errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE;
+  const errorRetryHandler = canRetryLastMessage
+    ? handleRetryLastMessage
+    : undefined;
 
   useCreditTopupReturnFlow({ chatSessionId, sendMessage });
 
@@ -2141,6 +2276,7 @@ export function ChatTabV2({
         ? chatboxOptionalInventory
         : undefined,
     onAttachChatboxServer: onEnableChatboxOptionalServer,
+    onManageOrgProviders: manageOrgProviders,
   };
 
   const showStarterPrompts =
@@ -2274,11 +2410,7 @@ export function ChatTabV2({
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
-                            onRetry={
-                              isConcurrencyThrottle
-                                ? handleRetryConcurrencyMessage
-                                : undefined
-                            }
+                            onRetry={errorRetryHandler}
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2544,11 +2676,7 @@ export function ChatTabV2({
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
-                              onRetry={
-                                isConcurrencyThrottle
-                                  ? handleRetryConcurrencyMessage
-                                  : undefined
-                              }
+                              onRetry={errorRetryHandler}
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2627,6 +2755,29 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          // Also gated on `showHistoryRail`, not just compare
+                          // mode. `ChatTabV2` is the published chatbox runtime
+                          // too (`ChatboxChatPage` renders it with `minimalMode`
+                          // and a `hostedContext.chatboxId`), and it ships in
+                          // non-hosted builds (desktop / `npx` inspector) —
+                          // surfaces where `showHistoryRail` is false because
+                          // there is no history UI at all.
+                          //
+                          // Editing BRANCHES: it seeds a fresh session with the
+                          // prefix and leaves the original behind. Without
+                          // persistence and a history surface to reach it
+                          // through, branching simply DISCARDS the original
+                          // thread with no way back — worse than the in-place
+                          // truncation this feature replaced.
+                          //
+                          // Do not re-enable this for those surfaces without
+                          // first solving the way back.
+                          onEditUserMessage={
+                            isMultiModelMode || !showHistoryRail
+                              ? undefined
+                              : handleEditUserMessage
+                          }
+                          editDisabled={sendBlocked}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}
                         />
@@ -2652,11 +2803,7 @@ export function ChatTabV2({
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
-                            onRetry={
-                              isConcurrencyThrottle
-                                ? handleRetryConcurrencyMessage
-                                : undefined
-                            }
+                            onRetry={errorRetryHandler}
                             onResetChat={baseResetChat}
                           />
                         </div>

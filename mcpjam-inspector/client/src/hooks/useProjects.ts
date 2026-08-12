@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { ProjectVisibility } from "@/state/app-types";
@@ -253,6 +253,20 @@ export function canViewSwarms(
   return role === "owner" || role === "admin" || role === "member";
 }
 
+// Promoting a session into an eval test case is MEMBER-gated server-side
+// (`PROMOTION_POLICIES` — chatbox and swarm rows both require project
+// 'member'). Mirror it so a guest never sees an affordance that would throw.
+//
+// Deliberately a separate export from `canViewSwarms` despite the identical
+// body today: "may I see the Swarms tab" and "may I copy a tester's words
+// into a durable suite artifact" are different questions, and collapsing them
+// would make a future divergence silent. An unresolved role denies.
+export function canPromoteSessions(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin" || role === "member";
+}
+
 // Host create / update / delete are ADMIN-gated server-side (`hosts.ts`
 // `requireAdminAccess` → project role 'admin', which owner+admin resolve to).
 // Mirror that in the UI so a member — who CAN view Swarms — never sees a
@@ -317,17 +331,44 @@ export function useViewerProjectRole({
     projectId,
   });
 
+  const email = viewerEmail?.trim().toLowerCase() ?? null;
   const role = useMemo(() => {
-    const email = viewerEmail?.trim().toLowerCase();
     if (!email) return undefined;
     return activeMembers.find((member) => member.email.toLowerCase() === email)
       ?.role;
-  }, [activeMembers, viewerEmail]);
+  }, [activeMembers, email]);
 
-  return {
-    role,
-    isLoading: isViewerRolePending(isLoading, identityLoading, viewerEmail),
-  };
+  /**
+   * The last DECIDED answer for this (project, viewer) pair.
+   *
+   * The members list does not only load once: the Convex client throws its
+   * whole remote query set away on every websocket reconnect (`onOpen` builds a
+   * fresh `RemoteQuerySet`), so `useQuery` returns `undefined` again until the
+   * server's first transition lands. Returning to a tab that was backgrounded
+   * long enough to drop the socket therefore replays "role not decided yet" —
+   * and a caller that renders a spinner (or, worse, an access-denied state) for
+   * that UNMOUNTS its subtree, throwing away whatever the user was in the
+   * middle of. See the Swarms route gate.
+   *
+   * Latching only spans a RE-load: the first resolution still gates normally,
+   * and every later resolution overwrites the latch, so a revoked membership
+   * takes effect as soon as the list says so.
+   */
+  const decidedRef = useRef<{
+    key: string;
+    role: ProjectMembershipRole | undefined;
+  } | null>(null);
+  const decisionKey = `${projectId ?? ""}|${email ?? ""}`;
+  const pending = isViewerRolePending(isLoading, identityLoading, viewerEmail);
+  if (!pending) {
+    decidedRef.current = { key: decisionKey, role };
+  }
+  const decided = decidedRef.current;
+  if (pending && decided?.key === decisionKey) {
+    return { role: decided.role, isLoading: false };
+  }
+
+  return { role, isLoading: pending };
 }
 
 /**

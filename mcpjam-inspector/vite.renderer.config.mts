@@ -70,10 +70,23 @@ export default defineConfig(({ mode }) => {
           target: "http://localhost:6274",
           changeOrigin: true,
         },
+        // /tlm is the same relay on its edge-safe alias prefix (see
+        // RELAY_MOUNT_PREFIXES in server/routes/relay.ts).
+        "/tlm": {
+          target: "http://localhost:6274",
+          changeOrigin: true,
+        },
       },
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+    },
+    build: {
+      // Desktop stack traces were unsymbolicated: the renderer build emitted
+      // no source maps at all, so every Electron issue in Sentry showed
+      // minified frames. The release workflows upload these to
+      // `inspector-client` and the maps are not shipped in the installer.
+      sourcemap: true,
     },
   };
 });

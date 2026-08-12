@@ -54,6 +54,7 @@ import {
   ErrorCode,
   WebRouteError,
   webError,
+  webErrorFromRoute,
   mapRuntimeError,
   extractMcpInitializeOptions,
 } from "./auth.js";
@@ -61,6 +62,7 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import {
   fetchChatboxRuntimeConfig,
+  planChatboxSandbox,
   readChatboxEnvironment,
   readComputerSandboxMode,
   type ChatboxEnvironmentRuntime,
@@ -88,7 +90,10 @@ import {
   runtimeSkills as environmentRuntimeSkills,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
-import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  fetchPluginRuntimeAttribution,
+  type PluginRuntimeAttribution,
+} from "../../services/environments/plugin-attribution.js";
 import {
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
@@ -102,6 +107,8 @@ import {
 } from "../../utils/built-in-tools/registry.js";
 import {
   ackChatboxSandboxNotices,
+  isChatboxSandboxNotice,
+  isComputersDataPlaneConfigured,
   provisionChatboxSandbox,
 } from "../../utils/computers/control-plane-client.js";
 import {
@@ -371,6 +378,11 @@ chatV2.post("/", async (c) => {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
         bearer: bearerToken,
+        // Opt this turn into backend version enforcement. A caller whose
+        // cached version is behind the row's is running against a config
+        // that has since moved (rebind, mode change, republish); it must
+        // re-redeem rather than have its stale view honored.
+        accessVersion,
       });
       if (runtime.ok) {
         // Environment-backed chatbox (live-follow): the backend resolved the
@@ -393,15 +405,65 @@ chatV2.post("/", async (c) => {
         }
         if (environmentRead.kind === "present") {
           chatboxEnvironment = environmentRead.environment;
+          // Phase 6.1: attribution for chatbox turns, from the payload's own
+          // pinned plugin versions. Guarded on their presence — a backend
+          // that predates `pluginVersions` (or an environment pinning none)
+          // costs zero extra reads — and FAIL-OPEN like the environment
+          // target's probe: this turn is guest-reachable, and the probe is
+          // member-gated backend-side, so a guest (or any probe failure)
+          // degrades to "origin unknown" rather than stopping the send.
+          let attribution: PluginRuntimeAttribution | null = null;
+          const pinnedVersionIds = (
+            chatboxEnvironment.pluginVersions ?? []
+          ).map((plugin) => plugin.pluginVersionId);
+          if (pinnedVersionIds.length > 0) {
+            try {
+              attribution = await fetchPluginRuntimeAttribution(
+                createConvexClient(await getConvexBearerForRequest(c)),
+                {
+                  projectId: hostedBody.projectId,
+                  pluginVersionIds: pinnedVersionIds,
+                }
+              );
+            } catch (error) {
+              // `fetchPluginRuntimeAttribution` already swallows probe
+              // failures; this catches client construction (missing
+              // CONVEX_URL on a deployment that never configured it).
+              logger.warn(
+                "[chat-v2] chatbox attribution unavailable; running without plugin origin",
+                {
+                  chatboxId,
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                }
+              );
+            }
+          }
           // Same projection the environment target uses, so the EMULATED
           // engine advertises the environment's skills (skillsSource:
-          // "resolved") instead of silently delivering zero. Attribution is
-          // null on purpose: the payload pins no plugin versions (the backend
-          // already re-gated plugins before serving it), so there is nothing
-          // to attribute and no probe to degrade on a guest-reachable turn.
+          // "resolved") instead of silently delivering zero.
           effectiveCapabilities = resolveEffectiveCapabilities(
             chatboxEnvironment,
-            null
+            attribution
+          );
+          if (effectiveCapabilities.problems.length > 0) {
+            // Codes and ids only — same redaction rationale as the
+            // environment-target log above.
+            logger.warn("[chat-v2] effective capability problems", {
+              environmentId: chatboxEnvironment.environmentRef.environmentId,
+              codes: effectiveCapabilities.problems.map(
+                (problem) => problem.code
+              ),
+              skillIds: effectiveCapabilities.problems.flatMap((problem) =>
+                "skillId" in problem ? [problem.skillId] : []
+              ),
+            });
+          }
+          // Plugin origin on this turn's RPC frames, exactly as the
+          // environment target stamps it. Empty (no-op) until the backend
+          // serves `pluginVersions` and the probe attributes them.
+          rpcCollector?.setPluginOriginByServerId(
+            pluginOriginByServerId(effectiveCapabilities)
           );
         }
         hostRuntimeConfig = runtime.config as unknown as Record<
@@ -422,10 +484,25 @@ chatV2.post("/", async (c) => {
           status: runtime.status,
           error: runtime.error,
         });
+        // Two ACCESS verdicts, neither an internal fault, each with its own
+        // recovery: STALE means "re-redeem and replay" (the client does it
+        // transparently), DENIED means "you cannot run this turn".
+        // Everything else keeps the generic classification (>=500 collapses
+        // to a 502 upstream failure).
+        const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+        if (runtime.code === "CHATBOX_ACCESS_STALE") {
+          throw new WebRouteError(
+            409,
+            ErrorCode.CHATBOX_ACCESS_STALE,
+            failClosedMessage
+          );
+        }
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
-          ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
+          runtime.status === 403
+            ? ErrorCode.CHATBOX_ACCESS_DENIED
+            : ErrorCode.INTERNAL_ERROR,
+          failClosedMessage
         );
       }
     } else if (executionTarget.kind === "host") {
@@ -976,6 +1053,10 @@ chatV2.post("/", async (c) => {
                 mrtrBridge.mrtrInputCollectorForServer,
             }
           : {}),
+        // Same scope the bash tool reserves under, so a plugin's stdio
+        // component colocates into THIS turn's machine rather than waking the
+        // member's personal one alongside it.
+        ...(executionScope ? { executionScope } : {}),
       }
     );
     oauthServerUrls = urls;
@@ -1102,96 +1183,112 @@ chatV2.post("/", async (c) => {
     let ackSandboxNotices:
       | ((delivered: SandboxNoticeReason[]) => void)
       | undefined;
-    // Drop the personal-computer resource for this turn, so `bash` is not
-    // advertised at all rather than falling back to the member's own box —
-    // which is precisely the behaviour this feature replaces.
-    //
-    // Set for BOTH marker states, not just the one that provisions:
-    //   - `ephemeral` + no box  → we asked and failed; no fallback.
-    //   - `unavailable`         → the backend has already dropped `computer`,
+    // Drop the personal-computer resource for every suppressing plan, so
+    // `bash` is not advertised at all rather than falling back to the member's
+    // own box — which is precisely the behaviour this feature replaces:
+    //   - `ephemeral` + no box   → we asked and failed; no fallback.
+    //   - `not_a_data_plane`     → we never ask: `provisionChatboxSandbox` is
+    //     bearer-authed and would SUCCEED from a server that cannot exec in
+    //     the box (`sandbox-bash` has no remote delegation), stranding a
+    //     billable sandbox whose every command fails. The tester gets a
+    //     notice instead of an opaque broken shell.
+    //   - `unavailable`          → the backend has already dropped `computer`,
     //     but that is its promise, not ours to depend on. Enforcing the marker
     //     locally means a payload that ever carried both (a backend regression,
     //     a proxy that merges configs) still cannot expose the member's
     //     personal shell to a share-link-reachable chatbox turn.
-    let suppressComputerResource = computerSandboxMode === "unavailable";
-    if (
-      computerSandboxMode === "ephemeral" &&
-      chatboxId &&
-      (resolvedExecution.builtInToolIds ?? []).includes(BASH_TOOL_NAME)
-    ) {
-      if (!body.chatSessionId) {
-        // The conversation id IS the isolation boundary (`scopeKey =
-        // chatbox:<chatSessionId>`). Without one there is nothing to key a box
-        // to, and binding anyway would put every session that omits it on one
-        // shared box. No shell beats the wrong shell.
+    const sandboxPlan = planChatboxSandbox({
+      mode: computerSandboxMode,
+      bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
+        BASH_TOOL_NAME
+      ),
+      ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
+      hasChatSessionId: Boolean(body.chatSessionId),
+    });
+    let suppressComputerResource = sandboxPlan.action === "suppress";
+    if (sandboxPlan.suppressReason === "no_chat_session_id") {
+      // The conversation id IS the isolation boundary (`scopeKey =
+      // chatbox:<chatSessionId>`). Without one there is nothing to key a box
+      // to, and binding anyway would put every session that omits it on one
+      // shared box. No shell beats the wrong shell.
+      logger.warn(
+        "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
+        { chatboxId }
+      );
+    } else if (sandboxPlan.suppressReason === "not_a_data_plane") {
+      logger.warn(
+        "[chat-v2] ephemeral chatbox sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",
+        { chatboxId }
+      );
+      if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
+    }
+    if (sandboxPlan.action === "provision" && chatboxId && body.chatSessionId) {
+      const provisioned = await provisionChatboxSandbox({
+        bearer: bearerToken,
+        chatboxId,
+        chatSessionId: body.chatSessionId,
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (provisioned.ok) {
+        sandboxBinding = {
+          sandboxId: provisioned.value.sandboxId,
+          ...(provisioned.value.workdir
+            ? { workdir: provisioned.value.workdir }
+            : {}),
+          // Tell the model the truth about the box's lifetime. The default
+          // (`run`) copy says it is destroyed after this session — a chatbox
+          // box is not, and a model that believes otherwise won't build work
+          // up across turns, which is the whole point of a persistent shell.
+          lifetime: "conversation",
+        };
+        const notices = (provisioned.value.notices ?? []).filter(
+          isSandboxNoticeReason
+        );
+        if (notices.length > 0) sandboxNotices = notices;
+        // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
+        // over WITHOUT consuming it and waits for us to confirm it reached
+        // the wire, because the SSE writer does not exist yet — provisioning
+        // happens here, streaming starts several steps later. Anything that
+        // throws in between used to destroy the notice, and did so exactly
+        // when a reset was most likely to have happened (flaky setup and "the
+        // box was idle long enough to be reaped" share a cause).
+        //
+        // Unacked ⇒ re-delivered next turn. That makes duplicate display the
+        // worst case instead of silent loss, which is the right way round for
+        // "earlier files are gone": a repeated toast is noise, a missing one
+        // makes the model confabulate about a filesystem it can't see.
+        //
+        // `noticeAckPending: false` means the backend already consumed them
+        // (a deploy that predates #829) — leave `ackSandboxNotices` unset and
+        // behave exactly as before.
+        const sandboxRowId = provisioned.value.sandboxRowId;
+        if (provisioned.value.noticeAckPending && notices.length > 0) {
+          ackSandboxNotices = (delivered) => {
+            // Only BACKEND-mintable notices enter the ack protocol —
+            // inspector-minted reasons (`sandbox_unavailable`) have no
+            // backend row to ack against.
+            const ackable = delivered.filter(isChatboxSandboxNotice);
+            if (ackable.length === 0) return;
+            void ackChatboxSandboxNotices({
+              bearer: bearerToken,
+              sandboxRowId,
+              notices: ackable,
+            });
+          };
+        }
+      } else {
+        // Degrade to a turn with no shell rather than failing the turn: the
+        // conversation is still useful, and 503 (at capacity / a sibling call
+        // still booting) resolves on its own by the next turn.
         logger.warn(
-          "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
-          { chatboxId }
+          "[chat-v2] chatbox sandbox provision failed; running without bash",
+          {
+            chatboxId,
+            status: provisioned.status,
+            error: provisioned.error,
+          }
         );
         suppressComputerResource = true;
-      } else {
-        const provisioned = await provisionChatboxSandbox({
-          bearer: bearerToken,
-          chatboxId,
-          chatSessionId: body.chatSessionId,
-          signal: c.req.raw.signal as AbortSignal | undefined,
-        });
-        if (provisioned.ok) {
-          sandboxBinding = {
-            sandboxId: provisioned.value.sandboxId,
-            ...(provisioned.value.workdir
-              ? { workdir: provisioned.value.workdir }
-              : {}),
-            // Tell the model the truth about the box's lifetime. The default
-            // (`run`) copy says it is destroyed after this session — a chatbox
-            // box is not, and a model that believes otherwise won't build work
-            // up across turns, which is the whole point of a persistent shell.
-            lifetime: "conversation",
-          };
-          const notices = (provisioned.value.notices ?? []).filter(
-            isSandboxNoticeReason
-          );
-          if (notices.length > 0) sandboxNotices = notices;
-          // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
-          // over WITHOUT consuming it and waits for us to confirm it reached
-          // the wire, because the SSE writer does not exist yet — provisioning
-          // happens here, streaming starts several steps later. Anything that
-          // throws in between used to destroy the notice, and did so exactly
-          // when a reset was most likely to have happened (flaky setup and "the
-          // box was idle long enough to be reaped" share a cause).
-          //
-          // Unacked ⇒ re-delivered next turn. That makes duplicate display the
-          // worst case instead of silent loss, which is the right way round for
-          // "earlier files are gone": a repeated toast is noise, a missing one
-          // makes the model confabulate about a filesystem it can't see.
-          //
-          // `noticeAckPending: false` means the backend already consumed them
-          // (a deploy that predates #829) — leave `ackSandboxNotices` unset and
-          // behave exactly as before.
-          const sandboxRowId = provisioned.value.sandboxRowId;
-          if (provisioned.value.noticeAckPending && notices.length > 0) {
-            ackSandboxNotices = (delivered) => {
-              void ackChatboxSandboxNotices({
-                bearer: bearerToken,
-                sandboxRowId,
-                notices: delivered,
-              });
-            };
-          }
-        } else {
-          // Degrade to a turn with no shell rather than failing the turn: the
-          // conversation is still useful, and 503 (at capacity / a sibling call
-          // still booting) resolves on its own by the next turn.
-          logger.warn(
-            "[chat-v2] chatbox sandbox provision failed; running without bash",
-            {
-              chatboxId,
-              status: provisioned.status,
-              error: provisioned.error,
-            }
-          );
-          suppressComputerResource = true;
-        }
       }
     }
 
@@ -1253,9 +1350,13 @@ chatV2.post("/", async (c) => {
     // TURN-INJECTED, never persisted: `persist.systemPrompt` keeps the raw host
     // prompt, so a resumed turn does not replay a stale "your sandbox was
     // reset" long after the fact. Same rule as the blueprint image block above.
+    // Notices exist in exactly two states: derived from a provisioned box
+    // (binding present) or minted by the preflight that refused to provision
+    // (binding absent, `sandbox_unavailable`). Both carry model-facing copy in
+    // the exhaustive SANDBOX_NOTICE_MODEL_CONTEXT record, so no binding gate.
     const effectiveSystemPrompt = appendSandboxNoticeContext(
       withEnvironmentContext,
-      sandboxBinding ? sandboxNotices : undefined
+      sandboxNotices
     );
 
     try {
@@ -1423,6 +1524,7 @@ chatV2.post("/", async (c) => {
           // versions that fork an incompatible resumed sandbox.
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
+          ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
           // prepare resolved temperature into `buildDirectHostConfig`.
@@ -1525,13 +1627,16 @@ chatV2.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
-    const routeError = mapRuntimeError(error);
-    return webError(
+    // `webErrorFromRoute`, not `webError` — this call dropped
+    // `routeError.normalized`, so the envelope carried no `origin` and no
+    // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,
+    // the one the client actually selects, and the client's reporter has
+    // nothing but the status by the time it runs: without the verdict it
+    // guesses `mcpjam` from the 500 and pages us for the user's own MCP
+    // server.
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      mapRuntimeError(error),
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }

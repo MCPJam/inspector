@@ -128,10 +128,27 @@ export interface StartJourneyRunOptions {
    */
   hasRubric?: boolean;
   convexHttpUrl: string;
-  /** Launching member's bearer TOKEN for `/journey-execution/*` calls. */
-  bearer: string;
-  /** Full `Authorization` header (`Bearer …`) for the drain + transcript persist. */
-  authHeader: string;
+  /**
+   * Resolves the launching member's bearer for `/journey-execution/*` calls.
+   *
+   * A THUNK, not a string, because a swarm run outlives its token. Delegated
+   * JWTs (`sk_`, Slack, Discord callers) live ~2h; a wide fan-out can run
+   * longer, and the captured-string version failed every remaining call the
+   * moment it expired — claims, terminal reports, transcript persists — with
+   * the run left looking half-finished. `getConvexBearerForDelegation`
+   * caches and re-mints near expiry, so calling this repeatedly is cheap.
+   *
+   * Session-JWT callers pass a constant thunk: their token's lifetime is the
+   * browser session's and nothing here can extend it. The stale-run sweep
+   * covers a run whose launching tab closed. Precedent for the shape:
+   * `github-checks-worker.ts`.
+   *
+   * RESOLVED PER UNIT OF WORK — once per target, once per session attempt,
+   * once per finalizer — not per outbound call. That bounds a run's staleness
+   * to one session rather than the whole run, which is the property that
+   * matters; threading an await through all ~35 call sites would buy noise.
+   */
+  getBearer: () => Promise<string>;
   /** Builds a fresh connected manager scoped to one host's `serverIds`. */
   managerFactory: JourneyManagerFactory;
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
@@ -233,10 +250,18 @@ export async function startJourneyRun(
   }
 }
 
-/** Map a shared-core session outcome to the attempt terminal state + error. */
+/** Map a shared-core session outcome to the attempt terminal state + error.
+ *
+ * `errorReason` is the structured tag the thrown route error carried
+ * (`details.reason` — e.g. an XAA failure classified by
+ * `toXaaConnectFailure`). It becomes the attempt's `errorCode` in place of the
+ * generic `session_failed`, which is what lets the run banner choose a tone:
+ * a stale sign-in that needs re-running is not the same event as a session
+ * that crashed, and only the producer still knows which one this was. */
 function terminalForOutcome(
   outcome: "succeeded" | "failed" | "rate_limited",
-  errorMessage: string | undefined
+  errorMessage: string | undefined,
+  errorReason?: string
 ): { status: SwarmAttemptStatus; errorCode?: string; errorMessage?: string } {
   if (outcome === "succeeded") {
     return { status: "succeeded" };
@@ -263,7 +288,7 @@ function terminalForOutcome(
   // `succeeded` terminal, which must carry the claim's chatSessionId).
   return {
     status: "failed",
-    errorCode: "session_failed",
+    errorCode: errorReason ?? "session_failed",
     ...(safeMessage ? { errorMessage: safeMessage } : {}),
   };
 }
@@ -319,8 +344,7 @@ async function runJourneyFanOut(
     maxTurns,
     hasRubric,
     convexHttpUrl,
-    bearer,
-    authHeader,
+    getBearer,
     managerFactory,
     abortSignal,
     hub,
@@ -346,7 +370,14 @@ async function runJourneyFanOut(
     if (abortSignal?.aborted) return;
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
-    heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId })
+    // Re-resolved on every beat. Cheap (the mint is cached) and it makes the
+    // heartbeat the one thing that CANNOT go stale — which matters, because a
+    // silent heartbeat is what the backend's stale sweep reads as a dead
+    // runner.
+    getBearer()
+      .then((bearer) =>
+        heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId })
+      )
       .catch((err) => {
         logger.warn("[swarm.runner] heartbeat failed", {
           runId,
@@ -392,6 +423,21 @@ async function runJourneyFanOut(
 
   // --- Run one target's sessions SEQUENTIALLY ------------------------------
   const runTarget = async (target: PinnedHostExecutionSpec): Promise<void> => {
+    /**
+     * Per-TARGET resolution: a target's setup (harness admission, pinned-skill
+     * fetch) runs before its first session, so it gets its own read rather than
+     * inheriting one minted at launch.
+     *
+     * DECLARED here, RESOLVED inside the guarded block below. Minting can fail
+     * — a delegated JWT is an outbound call — and resolving it out here would
+     * reject `runTarget` itself, which rejects the worker, which rejects the
+     * `Promise.all` over workers, which skips both the other targets and the
+     * run-level finalize. One expired credential would leave a whole run's
+     * attempts `pending` with nothing having recorded why. Inside the try, the
+     * same failure lands in the target-level catch, which finalizes this
+     * target's attempts and lets the other workers carry on.
+     */
+    let bearer: string | undefined;
     const hostId = target.hostId;
     const targetId = target.targetId;
     const modelId = target.modelId;
@@ -408,6 +454,8 @@ async function runJourneyFanOut(
     let harnessTargetBlockedReason: string | undefined;
     let harnessTargetIntent: SandboxIntent | undefined;
     try {
+      bearer = await getBearer();
+
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
       // refetch the live host config — everything comes from the immutable
@@ -587,6 +635,21 @@ async function runJourneyFanOut(
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
+
+        // Per-SESSION re-resolution — the granularity that actually bounds
+        // staleness. Everything constructed below bakes this value in for the
+        // session's lifetime: the browser-artifact outbox, the widget-snapshot
+        // persist, the `authHeader` the shared turn core carries, and the
+        // persona-next-turn calls. Re-reading here means the worst case is one
+        // long session outliving its token, not the whole run.
+        bearer = await getBearer();
+        // The same value, as a `const`, for the callbacks below. `bearer` is a
+        // reassigned `let` (and now starts undefined until the first mint), so
+        // TypeScript drops its narrowing the moment it is read inside a
+        // closure. Binding it here keeps those reads typed AND documents that a
+        // callback fired later in the session uses the token this session began
+        // with — which is the intended semantics, not an accident.
+        const sessionBearer = bearer;
 
         // Deterministic claim key — the immutable chatSessionId the attempt is
         // claimed with and every persist + terminal reuse (shared mint, D1: env
@@ -898,7 +961,7 @@ async function runJourneyFanOut(
           // failure classification, and NEVER throws (returns a SessionResult).
           // Because it persists per-turn and returns only after the last persist,
           // the transcript is durable before we report the terminal below.
-          const { outcome, errorMessage } = await runSyntheticHostSession({
+          const sessionResult = await runSyntheticHostSession({
             runId,
             projectId,
             chatSessionId,
@@ -946,7 +1009,7 @@ async function runJourneyFanOut(
               // Swarm authorizes via project membership — no chatbox access
               // version, no chatbox id.
             },
-            authHeader,
+            authHeader: `Bearer ${bearer}`,
             // Each attempt gets a fresh manager + browser context, scoped to THIS
             // target's pinned required servers.
             managerFactory: () => managerFactory(target),
@@ -954,7 +1017,7 @@ async function runJourneyFanOut(
             // spend-cap short-circuit cancels this host's in-flight turns.
             abortSignal: sessionSignal,
             nextPersonaTurn: (transcriptSoFar) =>
-              swarmPersonaNextTurn(convexHttpUrl, bearer, {
+              swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,
                 runId,
                 hostId,
@@ -992,12 +1055,13 @@ async function runJourneyFanOut(
               await captureAndPersistWidgetSnapshotsForSession({
                 messages,
                 mcpClientManager: manager,
-                convexAuthToken: bearer,
+                convexAuthToken: sessionBearer,
                 chatSessionId,
                 capturedToolCallIds: capturedWidgetToolCallIds,
               });
             },
           });
+          const { outcome, errorMessage, errorReason } = sessionResult;
 
           // Report the terminal with the SAME chatSessionId ONLY after the
           // transcript is persisted. Best-effort: a terminal write failure is
@@ -1028,7 +1092,7 @@ async function runJourneyFanOut(
                     }
                   : {}),
               }
-            : terminalForOutcome(outcome, errorMessage);
+            : terminalForOutcome(outcome, errorMessage, errorReason);
           emit({
             type: "attempt_status",
             status: terminal.status,
@@ -1234,8 +1298,23 @@ async function runJourneyFanOut(
       // sweep re-claims the in-flight attempt (if the throw landed after a
       // claim; an idempotent re-claim with the same chatSessionId) and every
       // never-claimed pending, reporting each `failed`.
+      //
+      // `bearer` is undefined only when the failure WAS the initial mint, so
+      // try once more — a transient mint failure should not also cost us the
+      // cleanup. If that fails too there is no credential to write with; say so
+      // rather than throwing out of the catch, which would take the worker (and
+      // with it the other targets and the run-level finalize) down. The
+      // stale-run cron is the backstop for what stays pending.
+      const cleanupBearer = bearer ?? (await getBearer().catch(() => undefined));
+      if (!cleanupBearer) {
+        logger.error(
+          "[swarm.runner] no credential to finalize this target's attempts; leaving them for the stale-run sweep",
+          { runId, hostId, targetId, sessionIdx }
+        );
+        return;
+      }
       await markRemainingTargetAttemptsFailed(
-        { convexHttpUrl, bearer, projectId, runId, target },
+        { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
         sessionIdx,
         sessionsPerTarget
       );
@@ -1260,20 +1339,43 @@ async function runJourneyFanOut(
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
     // Run-level finalize of any still-pending attempts.
-    if (spendCapTripped) {
-      await finalizeRun(
-        { convexHttpUrl, bearer, projectId, runId },
-        {
-          terminalStatus: "rate_limited",
+    //
+    // Run-LEVEL: every target has already finished, so the last per-session
+    // mint could be arbitrarily old. Re-resolve, or a long run's cleanup fails
+    // exactly when it is needed.
+    //
+    // A mint failure here must not be silent. Resolving inline in the argument
+    // list would throw into the outer catch, which logs "journey run failed" —
+    // true but useless, since the actual event is that a spend-cap or shutdown
+    // finalize never ran and the attempts are still `pending`. Naming it makes
+    // the operational signal match what happened.
+    const finalizeTerminal = spendCapTripped
+      ? {
+          terminalStatus: "rate_limited" as const,
           errorCode: "spend_cap_exceeded",
           errorMessage: spendCapMessage,
         }
-      );
-    } else if (abortSignal?.aborted) {
-      await finalizeRun(
-        { convexHttpUrl, bearer, projectId, runId },
-        { errorCode: "runner_shutdown" }
-      );
+      : abortSignal?.aborted
+        ? { errorCode: "runner_shutdown" }
+        : undefined;
+    if (finalizeTerminal) {
+      const finalizeBearer = await getBearer().catch((error: unknown) => {
+        logger.error(
+          "[swarm.runner] could not mint a credential for the run-level finalize; attempts stay pending for the stale-run sweep",
+          {
+            runId,
+            reason: finalizeTerminal.errorCode,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+        return undefined;
+      });
+      if (finalizeBearer) {
+        await finalizeRun(
+          { convexHttpUrl, bearer: finalizeBearer, projectId, runId },
+          finalizeTerminal
+        );
+      }
     }
   } catch (error) {
     // Defensive: per-host/per-session work is already guarded, so this only

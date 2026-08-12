@@ -153,6 +153,20 @@ describe("UserTestingOverviewPanel", () => {
     expect(onCreateScenario).toHaveBeenCalled();
   });
 
+  // The empty state carries the only explanation of what a scenario IS, and it
+  // read as a parenthetical buried inside a long clause. One dash can be
+  // deliberate; two in one sentence means the sentence wanted to be two.
+  it("explains a scenario without a double-dash parenthetical", () => {
+    render(<UserTestingOverviewPanel {...defaults} chatboxes={[]} />);
+
+    const empty = screen.getByTestId("user-testing-overview-empty");
+    const copy = empty.textContent ?? "";
+
+    expect(copy).toContain("a link you can hand to a real person");
+    // No table placeholders live in the empty state, so every dash here is prose.
+    expect(copy.split("—").length - 1).toBeLessThan(2);
+  });
+
   it("shows a skeleton while the list is loading, not an empty state", () => {
     render(
       <UserTestingOverviewPanel

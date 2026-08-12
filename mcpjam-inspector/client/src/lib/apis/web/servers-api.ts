@@ -64,7 +64,19 @@ export interface HostedServerValidateResponse {
 }
 
 export interface HostedServerOAuthRequirementResponse {
+  /**
+   * Derived compat mirror of the canonical `authMethod`: true for an `auto`
+   * (discover) row too, which is why it must NOT be read as "authorize this
+   * before using it". Read `requiresAuthorization` for that.
+   */
   useOAuth: boolean;
+  /**
+   * Whether the server's stored auth configuration demands interactive
+   * authorization before it can be used at all (effective auth method
+   * `oauth`). Optional because an older inspector server does not send it.
+   */
+  requiresAuthorization?: boolean;
+  effectiveAuthMethod?: "oauth" | "xaa" | "bearer" | "none" | "discover";
   serverUrl: string | null;
 }
 

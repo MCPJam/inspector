@@ -6,11 +6,12 @@ import { copyToClipboard } from "@/lib/clipboard";
 /**
  * App-wide toast.
  *
- * Identical to Sonner's `toast`, except error toasts persist until the user
- * dismisses them (the global `<Toaster>` enables a close button) instead of
- * auto-dismissing on Sonner's ~4s default. Errors are the one toast type users
- * must read and usually act on, so they shouldn't vanish on a timer the way
- * success/info toasts do.
+ * Identical to Sonner's `toast`, except error toasts stay up longer than
+ * Sonner's ~4s default (the global `<Toaster>` also enables a close button
+ * for anyone who wants to dismiss sooner). Errors are the one toast type
+ * users must read and usually act on, so they get more time than
+ * success/info toasts — but they still time out on their own; nothing should
+ * require a manual close to go away.
  *
  * Error toasts also get a copy button (visible on hover, via the `<Toaster>`'s
  * `group/toast` class) so long/unreadable error text can be grabbed and
@@ -56,10 +57,12 @@ function CopyableErrorMessage({ text }: { text: string }) {
   );
 }
 
+const ERROR_TOAST_DURATION_MS = 8000;
+
 const error: typeof sonnerToast.error = (message, data) =>
   sonnerToast.error(
     typeof message === "string" ? <CopyableErrorMessage text={message} /> : message,
-    { duration: Infinity, ...data },
+    { duration: ERROR_TOAST_DURATION_MS, ...data },
   );
 
 export const toast: typeof sonnerToast = Object.assign(

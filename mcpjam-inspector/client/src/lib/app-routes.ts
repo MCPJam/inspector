@@ -67,7 +67,6 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "resources", kind: "screen", surfaceId: "resources" },
   { path: "prompts", kind: "screen", surfaceId: "prompts" },
   { path: "tasks", kind: "screen", surfaceId: "tasks" },
-  { path: "auth", kind: "screen", surfaceId: "auth" },
   { path: "skills", kind: "screen", surfaceId: "skills" },
   { path: "learning", kind: "screen", surfaceId: "learning" },
   { path: "conformance", kind: "screen", surfaceId: "conformance" },
@@ -149,6 +148,19 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   // to claim a nav segment nothing navigates to.
   {
     path: "organizations/:orgId/slack",
+    kind: "screen",
+    surfaceId: "organizations",
+  },
+  // Discord agent org settings, on the same terms as Slack above — an
+  // `organizations` section, not a surface. It has no `?tab=` because it is a
+  // single view (see DiscordAgentSettingsSection), which changes nothing here:
+  // sub-tabs never appeared in the path for Slack either.
+  // Discord agent org settings, on the same terms as Slack above — an
+  // `organizations` section, not a surface. It has no `?tab=` because it is a
+  // single view (see DiscordAgentSettingsSection), which changes nothing here:
+  // sub-tabs never appeared in the path for Slack either.
+  {
+    path: "organizations/:orgId/discord",
     kind: "screen",
     surfaceId: "organizations",
   },

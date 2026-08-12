@@ -8,6 +8,8 @@ import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
+import { reportRouteFailure } from "./utils/route-error-report.js";
+import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -18,6 +20,7 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env";
+import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
@@ -53,6 +56,10 @@ import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
+import {
+  createLocalComputerTerminalWsHandler,
+  shutdownLocalComputerTerminals,
+} from "./routes/web/local-computer-terminal";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
@@ -85,6 +92,18 @@ process.on("unhandledRejection", (reason, _promise) => {
       error: reason,
       sentry: true,
     }
+  );
+});
+
+// Sentry's OnUncaughtException integration owns CAPTURE (and the exit) for
+// these; this handler exists only so the crash also lands in Axiom with the
+// same shape as every other system event. Deliberately NOT `sentry: true` —
+// that would double-count against the integration.
+process.on("uncaughtException", (error) => {
+  sysLogger.event(
+    "process.uncaught_exception",
+    { errorCode: error instanceof Error ? error.name : "unknown" },
+    { error }
   );
 });
 
@@ -163,6 +182,7 @@ import {
 } from "./utils/caniuse-meta-tags";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
+import { buildHealthMeta } from "./utils/health-payload.js";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -259,6 +279,12 @@ try {
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
 
+// Immediately after the env load and before anything that can throw: the init
+// reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
+// once `loadInspectorEnv` has run. Deliberately a call, not an import side
+// effect — an import would be hoisted above the env load.
+initServerSentry();
+
 // Generate session token for API authentication
 generateSessionToken();
 setXaaIdpLogger(appLogger);
@@ -278,7 +304,19 @@ startLocalBrowserRenderingSetupInBackground();
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
-  appLogger.error("Unhandled error:", err);
+  // Last-resort handler: an exception escaped every route and every router's
+  // own `onError`. Declared `mcpjam_internal` — if our routers could not name
+  // the failure, the unrecognized remainder is ours. The declaration still
+  // does not overrule positive evidence, so an ECONNREFUSED that reached here
+  // from a user-server hop is classified and stays quiet.
+  //
+  // Path + method are what make the issue actionable; without them every
+  // unhandled route error groups into one blob.
+  const { normalized, origin } = reportRouteFailure("Unhandled error", err, {
+    source: "app.onError",
+    hop: "mcpjam_internal",
+    context: { path: c.req.path, method: c.req.method },
+  });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
   // observes the throw — it just sees a 500 response. Record the cause here so
@@ -290,6 +328,11 @@ const app = new Hono().onError((err, c) => {
     code:
       err instanceof HTTPException ? "http_exception" : "unhandled_exception",
     message: err instanceof Error ? err.message : String(err),
+    // The EFFECTIVE origin, including the internal-boundary promotion — not
+    // `originOf(normalized)`, which would report `ambiguous` for a failure
+    // Sentry was just paged for as `mcpjam`.
+    origin,
+    slug: normalized.slug,
   });
 
   // Return appropriate response
@@ -423,6 +466,15 @@ app.get(
   "/api/web/computers/terminal",
   createComputerTerminalWsHandler(upgradeWebSocket)
 );
+// LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted —
+// a hosted server must have no path at all to a local PTY. Auth is the
+// single-use nonce from POST /api/mcp/computers/local-terminal-token.
+if (!HOSTED_MODE) {
+  app.get(
+    "/api/web/computers/local-terminal",
+    createLocalComputerTerminalWsHandler(upgradeWebSocket)
+  );
+}
 // Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
 // auth as the WS above; its own 30MB bodyLimit (the global /api/web/* 1MB cap
 // excludes this path). See routes/web/computer-upload.
@@ -483,8 +535,13 @@ app.route("/api/cli/auth", cliAuthRoutes);
 // whose catch-all only skips /api/* and would otherwise swallow /relay GETs
 // with index.html. Mirror of the mount in server/app.ts::createHonoApp —
 // both production entries must wire this up.
+// Mounted on BOTH prefixes — see RELAY_MOUNT_PREFIXES in routes/relay.ts:
+// /tlm is the alias new clients use because Railway's edge 403s GETs under
+// /relay/static and /relay/array on hosted; /relay stays for old builds.
 app.use("/relay/*", relayBodyLimit());
 app.route("/relay", relayRoutes);
+app.use("/tlm/*", relayBodyLimit());
+app.route("/tlm", relayRoutes);
 
 // XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
 // target authorization server fetches it anonymously) and mounted before
@@ -493,20 +550,6 @@ app.route("/relay", relayRoutes);
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
 
-// Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
-// We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
-// CORS preflight
-app.options("/sse/message", (c) => {
-  return c.body(null, 204, {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Authorization, Content-Type, Accept, Accept-Language",
-    "Access-Control-Max-Age": "86400",
-    Vary: "Origin, Access-Control-Request-Headers",
-  });
-});
-
 // Health check
 app.get("/health", (c) => {
   return c.json({
@@ -514,6 +557,7 @@ app.get("/health", (c) => {
     timestamp: new Date().toISOString(),
     hasActiveClient: inspectorCommandBus.hasActiveClient(),
     frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
+    ...buildHealthMeta(),
   });
 });
 
@@ -766,6 +810,11 @@ const server = serve({
   port: SERVER_PORT,
   hostname,
 });
+// Count socket-level failures. These die before Node parses a request line,
+// so they emit no `http.request.*` event and are otherwise invisible — the
+// class the 08-11 Cloudflare 502 fell into. Must be attached before traffic
+// arrives; it also owns the `clientError` response (see the module).
+attachSocketDiagnostics(server);
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 
@@ -847,6 +896,10 @@ async function shutdown() {
     // and lets in-flight sessions report a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
+    // Kill local PTYs BEFORE server.close(): close() stops new connections but
+    // does NOT tear down established sockets, so a live shell would otherwise
+    // outlive the inspector.
+    shutdownLocalComputerTerminals();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

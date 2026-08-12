@@ -102,6 +102,27 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  launch_journey_run:
+    "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
+  cancel_journey_run:
+    "The Swarms tab has a Stop control with the run in front of you; a chat tool would cancel by id with none of that context.",
+  // Scenarios (user testing).
+  publish_scenario:
+    "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
+  unpublish_scenario:
+    "Takes a live scenario down; the UI confirms it, since guest sessions die with it.",
+
+  // Journeys (the Swarms product) stay out of this catalog WHOLESALE until GA.
+  // That is a CATALOG decision, not the `sandboxes-enabled` flag: these reads
+  // are deliberately ungated and never answer FEATURE_UNAVAILABLE — the flag
+  // covers the exposure-creating writes (launch, authoring, publish). Do not
+  // read this list as "what the flag blocks"; it is "what we have not committed
+  // to a public tool contract for yet".
+  list_journeys: "Pre-GA product — expose at GA.",
+  list_journey_runs: "Pre-GA product — expose at GA.",
+  get_journey_run: "Pre-GA product — expose at GA.",
+  list_journey_run_sessions: "Pre-GA product — expose at GA.",
+
   // Identity and catalogs the surrounding UI already owns. Chat runs inside a
   // chosen project; re-offering the pickers as tools invites the model to
   // wander out of the surface the person is looking at.
@@ -150,6 +171,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   update_project_environment: "Environment authoring has its own editor.",
   archive_project_environment: "Environment lifecycle has its own controls.",
   restore_project_environment: "Environment lifecycle has its own controls.",
+  list_project_plugins: "Plugin inventory lives in the Plugins surface.",
+  get_plugin_version: "Plugin version detail lives in the Plugins surface.",
 
   // Sandbox images and computers: minutes-long builds and billable compute.
   list_sandbox_images:

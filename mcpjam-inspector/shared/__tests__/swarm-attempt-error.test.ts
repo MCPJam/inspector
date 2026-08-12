@@ -104,3 +104,92 @@ describe("humanizeSwarmAttemptError", () => {
     expect(info.canTopUp).toBeUndefined();
   });
 });
+
+describe("humanizeSwarmAttemptError — sandbox error codes", () => {
+  it("maps each sandbox code to a cloud-framed sentence", () => {
+    for (const code of [
+      "sandbox_unavailable",
+      "sandbox_at_capacity",
+      "sandbox_error",
+    ]) {
+      const info = humanizeSwarmAttemptError("whatever was stored", code);
+      expect(info.code).toBe(code);
+      expect(info.message).toMatch(/MCPJam cloud|cloud sandbox/i);
+      expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
+    }
+  });
+
+  it("prefers the code over the stored operator-framed message", () => {
+    // The stored sentence talks about data planes — accurate for operators,
+    // opaque for the user whose swarm didn't run.
+    const info = humanizeSwarmAttemptError(
+      "This server is not configured to provision disposable sandboxes (the computers data plane is unavailable), so this session cannot run the shell its target requires.",
+      "sandbox_unavailable"
+    );
+    expect(info.message).not.toMatch(/data plane/i);
+    expect(info.message).toMatch(/MCPJam cloud/i);
+  });
+
+  it("ignores unknown codes and falls back to message parsing", () => {
+    const info = humanizeSwarmAttemptError(
+      '{"error":"Daily limit reached"}',
+      "spend_cap_exceeded"
+    );
+    expect(info.message).toBe("Daily limit reached");
+  });
+
+  it("maps a recognized code even with no stored message at all", () => {
+    const info = humanizeSwarmAttemptError(undefined, "sandbox_at_capacity");
+    expect(info.message).toMatch(/at capacity/i);
+    expect(info.code).toBe("sandbox_at_capacity");
+  });
+
+  it("stays idempotent-compatible when no code is passed", () => {
+    const info = humanizeSwarmAttemptError("Could not provision a sandbox.");
+    expect(info.message).toBe("Could not provision a sandbox.");
+    expect(info.code).toBeUndefined();
+  });
+});
+
+describe("humanizeSwarmAttemptError — connect-time XAA failures", () => {
+  // The whole point of the reason code: a swarm attempt row is a status + a
+  // string, and "an authorization handshake needs re-running" cannot be
+  // recovered from that string without guessing at its wording.
+  it("marks an expired sign-in re-runnable and keeps the server-named sentence", () => {
+    const stored =
+      'Your sign-in no longer proves your identity to "Billing MCP", so its enterprise access token couldn\'t be issued — sign in again, then re-run.';
+    const info = humanizeSwarmAttemptError(stored, "xaa_reauth_required");
+
+    expect(info.message).toBe(stored);
+    expect(info.code).toBe("xaa_reauth_required");
+    expect(info.rerunnable).toBe(true);
+  });
+
+  it("does not mark a configuration failure re-runnable", () => {
+    const info = humanizeSwarmAttemptError(
+      'Server "Billing MCP" isn\'t fully configured for enterprise-managed authorization: Client ID is required.',
+      "xaa_configuration_invalid"
+    );
+
+    expect(info.rerunnable).toBeUndefined();
+    expect(info.code).toBe("xaa_configuration_invalid");
+  });
+
+  it("never says 'unknown reason' about an XAA failure it can name", () => {
+    for (const code of [
+      "xaa_reauth_required",
+      "xaa_authorization_server_unknown",
+      "xaa_not_supported_here",
+      "xaa_authorization_rejected",
+      "xaa_configuration_invalid",
+      "xaa_handshake_failed",
+    ]) {
+      const info = humanizeSwarmAttemptError(undefined, code);
+      expect(info.message).not.toMatch(/unknown reason/i);
+      expect(info.message).toMatch(
+        /sign in again|auth settings|XAA settings|try again/i
+      );
+      expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
+    }
+  });
+});

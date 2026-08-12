@@ -71,6 +71,7 @@ import {
 } from "@/hooks/useRegistryServers";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import { track } from "@/lib/analytics";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   HoverCard,
   HoverCardContent,
@@ -101,7 +102,6 @@ import {
 } from "@/hooks/useAutoConnectProjectServers";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { ConnectEnvironmentsStrip } from "./project-environments/ConnectEnvironmentsStrip";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
@@ -1424,7 +1424,19 @@ export function ServersTab({
     setPendingQuickConnect(nextPendingQuickConnect);
     try {
       await connectRegistryServer(server);
-    } catch {
+    } catch (err) {
+      // This used to swallow the failure entirely: the pending state was
+      // cleared and the user was left with a card that silently never
+      // connected.
+      reportCaught(err, {
+        source: "registry_quick_connect",
+        extra: { registryServerId: server._id },
+      });
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : `Failed to connect ${server.displayName ?? serverName}`
+      );
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
     }
@@ -1895,8 +1907,6 @@ export function ServersTab({
 
           {renderQuickConnectSection()}
 
-          <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
-
           {renderPluginsSection()}
 
           {/* Server Cards Grid (drag-and-drop reorderable, order saved to localStorage only) */}
@@ -2032,8 +2042,6 @@ export function ServersTab({
       </div>
 
       {renderQuickConnectSection()}
-
-      <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
 
       {renderPluginsSection()}
 

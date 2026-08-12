@@ -157,7 +157,7 @@ export function applyBillingGateNavState(
 
 // Define sections with their respective items.
 // Exported so tests can assert against the real nav data (e.g. that Skills is
-// not a sidebar item — it lives in the Servers page's tab switcher).
+// not a sidebar item — it lives in the Connect tab switcher).
 export const navigationSections: NavSection[] = [
   {
     id: "connection",
@@ -169,12 +169,7 @@ export const navigationSections: NavSection[] = [
         featureFlag: "home-page-enabled",
       },
       {
-        // Renamed from "Connect" (PUR-1): "Connect" was a verb among nouns
-        // and didn't fit the environments model (server/client/computer/
-        // skills). Kept as a distinct item from the legacy entry below —
-        // same title now, but mutually exclusive via the flags, so only one
-        // ever renders (see the "Servers current/legacy swap" tests).
-        title: "Servers",
+        title: "Connect",
         url: "/servers",
         icon: Cable,
         featureFlag: "hosts-enabled",
@@ -182,7 +177,6 @@ export const navigationSections: NavSection[] = [
       },
       {
         // Legacy fallback for signed-out users (pre-hosts-enabled nav).
-        // Same title as the item above by design; see comment there.
         title: "Servers",
         url: "/servers",
         icon: Cable,
@@ -236,8 +230,8 @@ export const navigationSections: NavSection[] = [
     id: "others",
     items: [
       // Skills is not a sidebar item: it's execution-context config, so it
-      // lives as a tab on the Servers page (Servers | Client | Computer |
-      // Skills) and is reached through that switcher.
+      // lives as a Connect tab (Servers | Client | Computer | Skills) and is
+      // reached through that switcher.
       {
         title: "Learning",
         url: "/learning",
@@ -501,7 +495,7 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
-      // Hosts/Servers and Home are fully rolled out; their nav visibility is
+      // Hosts/Connect and Home are fully rolled out; their nav visibility is
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
@@ -683,7 +677,7 @@ export function MCPSidebar({
                       aria-label={item.title}
                       onClick={() => handleNavClick(item.url)}
                       className={cn(
-                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                         isNavItemActive(item) &&
                           "bg-sidebar-accent text-sidebar-accent-foreground"
                       )}

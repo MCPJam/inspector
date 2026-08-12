@@ -59,6 +59,11 @@ import {
   describeAsSlug,
   readXaaEnterprisePolicy,
 } from "@mcpjam/sdk";
+import {
+  reportRouteFailure,
+  reportRouteFailureForResponse,
+  readRequestJson,
+} from "../../utils/route-error-report.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
@@ -75,6 +80,12 @@ import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
+import { resolvePersonalComputerEngine } from "../../utils/computers/engine.js";
+import {
+  LOCAL_CONSENT_HEADER,
+  verifyLocalComputerConsent,
+} from "../../utils/computers/local-consent.js";
+import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -499,7 +510,16 @@ function streamDirectChatWithLiveTrace(options: {
       if (abortSignal?.aborted || handle?.isAborted() || isAbortError(error)) {
         return "";
       }
-      logger.error("[mcp/chat-v2] stream error", error);
+      // Deliberately NO `mcpjam_internal` boundary here, unlike the route's
+      // outer catch. Everything a turn touches fails through this handler: the
+      // user's MCP server timing out mid-tool-call, a BYO provider key hitting
+      // a quota wall, a model refusing a schema. That is precisely the traffic
+      // that has been paging us for other people's outages, so the catalog's
+      // verdict stands on its own and only MCPJam-fault slugs escalate.
+      reportRouteFailure("[mcp/chat-v2] stream error", error, {
+        source: "mcp.chat-v2.stream",
+        hop: "user_server_hop",
+      });
       return formatStreamError(error, provider);
     },
     execute: async ({ writer }) => {
@@ -548,6 +568,15 @@ function streamDirectChatWithLiveTrace(options: {
           },
           onError: (error) => {
             if (handle!.isAborted() || isAbortError(error)) return "";
+            // `toUIMessageStream` CONSUMES the error here and emits an error
+            // chunk; it does not rethrow to the enclosing
+            // `createUIMessageStream` handler. Without this call, every model,
+            // provider, and tool failure on the direct-stream path produced a
+            // client error and no telemetry at all.
+            reportRouteFailure("[mcp/chat-v2] direct stream error", error, {
+              source: "mcp.chat-v2.direct-stream",
+              hop: "user_server_hop",
+            });
             return formatStreamError(error, provider);
           },
         })) {
@@ -578,7 +607,7 @@ const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
   try {
-    const body = (await c.req.json()) as ChatV2Request & {
+    const body = (await readRequestJson(c)) as ChatV2Request & {
       // Phase F: when the local inspector serves an owner-preview of a
       // chatbox (the share-link surface running in /mcp), the client
       // passes the resolved chatbox identity so persistence reads
@@ -589,6 +618,11 @@ chatV2.post("/", async (c) => {
       surface?: "preview" | "share_link";
       // Saved host being previewed (Playground over /mcp). See web/chat-v2.ts.
       hostId?: string;
+      // Local⇄Cloud engine preference for the PERSONAL computer. Selects
+      // WHERE the host-attached computer executes, never WHETHER one exists
+      // (computer still comes only from the server-resolved runtime config).
+      // "local" additionally requires the consent capability header.
+      computerEngine?: "local" | "cloud";
     };
     const mcpClientManager = c.mcpClientManager;
     const rawScopeStepUpResume = body.scopeStepUpResume;
@@ -701,6 +735,9 @@ chatV2.post("/", async (c) => {
         const runtime = await fetchChatboxRuntimeConfig({
           chatboxId: bodyChatboxId,
           bearer,
+          // Opt this turn into backend version enforcement — see
+          // web/chat-v2.ts for the rationale.
+          accessVersion: bodyAccessVersion,
         });
         if (runtime.ok) {
           // Cast the typed `ChatboxRuntimeConfig` to a plain record so
@@ -719,11 +756,29 @@ chatV2.post("/", async (c) => {
               error: runtime.error,
             }
           );
+          const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+          // This route hand-rolls its error envelope (no WebRouteError), so
+          // the access code rides as a top-level `code` — which is exactly
+          // where the client's `readRouteError` looks. Only the access
+          // verdicts carry one; every other status keeps the pre-existing
+          // shape.
+          if (runtime.code === "CHATBOX_ACCESS_STALE") {
+            return c.json(
+              { error: failClosedMessage, code: "CHATBOX_ACCESS_STALE" },
+              409
+            );
+          }
+          if (runtime.status === 403) {
+            return c.json(
+              { error: failClosedMessage, code: "CHATBOX_ACCESS_DENIED" },
+              403
+            );
+          }
           return c.json(
-            {
-              error: `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`,
-            },
-            runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
+            { error: failClosedMessage },
+            runtime.status >= 500
+              ? 502
+              : (runtime.status as 400 | 401 | 403 | 409)
           );
         }
       }
@@ -1019,6 +1074,47 @@ chatV2.post("/", async (c) => {
         | undefined
     )?.executionScope;
 
+    // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
+    // is not mounted hosted). The field selects WHERE the host-attached
+    // computer executes; the consent CAPABILITY in the header — never the
+    // field — is the proof the human clicked Allow on this machine. An
+    // ineligible request degrades to the legacy cloud family; an eligible
+    // explicit ask that can't be honored resolves `unavailable`, never
+    // silently cloud.
+    const rawEnginePref = body.computerEngine;
+    const enginePref =
+      rawEnginePref === "local" || rawEnginePref === "cloud"
+        ? rawEnginePref
+        : undefined;
+    // A GUEST must never resolve the local engine — bash on the local machine
+    // has no backend reserve gate (unlike the cloud path), so the request-level
+    // guest check IS the boundary (see isGuestChatRequest).
+    const requestIsGuest = isGuestChatRequest(requestAuthHeader);
+    const localPrefEligible =
+      enginePref === "local" && !requestIsGuest && !isChatboxSession;
+    if (enginePref === "local" && !localPrefEligible) {
+      logger.debug(
+        "[mcp/chat-v2] computerEngine=local ignored for an ineligible request",
+        { isChatboxSession, isGuest: requestIsGuest }
+      );
+    }
+    const localConsentValid = localPrefEligible
+      ? await verifyLocalComputerConsent(c.req.header(LOCAL_CONSENT_HEADER))
+      : false;
+    if (localPrefEligible && !localConsentValid) {
+      logger.warn(
+        "[mcp/chat-v2] computerEngine=local without a valid consent capability; local engine unavailable for this turn"
+      );
+    }
+    const computerEngine = resolvePersonalComputerEngine({
+      ...(localPrefEligible
+        ? { preference: "local" as const }
+        : enginePref === "cloud"
+          ? { preference: "cloud" as const }
+          : {}),
+      localConsentValid,
+    });
+
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1042,6 +1138,13 @@ chatV2.post("/", async (c) => {
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
               : {}),
+            // Host approval policy — previously not threaded on this route,
+            // so playground bash silently ran with needsApproval:false
+            // whatever the host said. Cloud bash now honors it; local bash
+            // requires approval regardless (see bash.ts).
+            requireToolApproval: resolvedExecution.requireToolApproval === true,
+            computerEngine,
+            localComputerRequested: localPrefEligible,
           }
         : null
     );
@@ -1054,7 +1157,11 @@ chatV2.post("/", async (c) => {
     // block is turn-injected, not user configuration.
     const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
       systemPrompt,
-      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
+      // The environment context describes the pinned E2B image — the WRONG
+      // machine when this turn's bash runs on the user's own computer.
+      hasBashTool:
+        computerEngine !== "local" &&
+        Boolean(builtInTools?.[BASH_TOOL_NAME]),
       bearer: builtInAuthHeader,
       projectId:
         typeof body.projectId === "string" ? body.projectId : undefined,
@@ -1140,6 +1247,9 @@ chatV2.post("/", async (c) => {
       if (msg.includes("Invalid tool name(s) for Anthropic")) {
         return c.json({ error: msg }, 400);
       }
+      // Any user-server attribution is marked inside `prepareChatV2`, on the
+      // single await that leaves MCPJam. Marking the whole call here would
+      // silence a genuine bug in the preparation work that follows it.
       throw error;
     }
 
@@ -1357,11 +1467,11 @@ chatV2.post("/", async (c) => {
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
+                ...(!isChatboxSession && body.rewind
+                  ? { rewind: body.rewind }
+                  : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                  ? { accessVersion: bodyAccessVersion }
-                  : {}),
                 authHeader,
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
@@ -1461,11 +1571,11 @@ chatV2.post("/", async (c) => {
                 runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
+              ...(!isChatboxSession && body.rewind
+                ? { rewind: body.rewind }
+                : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                ? { accessVersion: bodyAccessVersion }
-                : {}),
               authHeader: requestAuthHeader,
               sessionMessages: stampSenderUserIdsOnSessionMessages(
                 fullHistory,
@@ -1665,11 +1775,11 @@ chatV2.post("/", async (c) => {
               modelSource: "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
+              ...(!isChatboxSession && body.rewind
+                ? { rewind: body.rewind }
+                : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                ? { accessVersion: bodyAccessVersion }
-                : {}),
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,
@@ -1711,8 +1821,28 @@ chatV2.post("/", async (c) => {
         : undefined,
     });
   } catch (error) {
-    logger.error("[mcp/chat-v2] failed to process chat request", error);
-    return c.json({ error: "Unexpected error" }, 500);
+    // This catch wraps MCPJam's OWN request handling — config resolution,
+    // backend dispatch, stream setup — not a hop into the user's MCP server,
+    // so an unrecognized throw here is ours by default and the boundary
+    // declaration says so. Without it, `internal/unknown` classifies
+    // `ambiguous` and this route would go quiet in Sentry.
+    const { origin } = reportRouteFailureForResponse(
+      "[mcp/chat-v2] failed to process chat request",
+      error,
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
+    );
+    // Also a HEADER, not just the body. By the time the failure reaches the
+    // client's reporter the Response is gone — the AI SDK throws
+    // `new Error(await response.text())` — so the body's `origin` is
+    // unreachable without re-reading a consumed stream. The header is captured
+    // alongside the status in `ChatResponseMeta`, which is what stops the
+    // client's "our route answered 5xx, so it's ours" fallback from
+    // overwriting a failure we just attributed to the user's server.
+    return c.json(
+      { error: "Unexpected error", origin },
+      500,
+      { "x-mcpjam-error-origin": origin },
+    );
   }
 });
 

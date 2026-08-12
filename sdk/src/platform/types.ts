@@ -475,6 +475,80 @@ export interface PlatformEnvironmentResolved {
   sandboxImageId?: string;
 }
 
+// ── Agent Plugins ────────────────────────────────────────────────────────────
+//
+// A plugin bundle (agent-plugins.org format) imported into a project. Each
+// immutable VERSION materializes MCP servers and skills as ordinary project
+// rows; environments pin `pluginVersionIds` to run them. This surface is
+// READ-ONLY — import, activate, enable/disable and uninstall stay in the app.
+
+/** One live (installed, non-uninstalled) plugin in a project. */
+export interface PlatformPlugin {
+  id: string;
+  projectId: string;
+  /** Normalized plugin name — the namespace its skills load under. */
+  name: string;
+  displayName?: string;
+  description?: string;
+  /** Disabled plugins keep their versions but resolve for no run. */
+  enabled: boolean;
+  /** The version environment pins default to; absent before first activate. */
+  activeVersionId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Per-component tallies of one imported version. `apps` counts preserved
+ *  `.app.json` metadata entries only (no runtime effect). */
+export interface PlatformPluginComponentCounts {
+  skills: number;
+  servers: number;
+  apps: number;
+  assets: number;
+  unsupported: number;
+}
+
+/** One MCP server a plugin version declares, with its materialized row. */
+export interface PlatformPluginServerComponent {
+  componentId: string;
+  /** Stable key within the version (normalized server map key). */
+  componentKey: string;
+  declaredName: string;
+  /** Where the component can execute; `local`/`computer` never run hosted. */
+  placement: "remote" | "local" | "computer";
+  /** Declared auth timing: setup right after import, or on first use. */
+  authenticationPolicy: "on_install" | "on_use";
+  /** The project server row this component materialized as. */
+  materializedServerId: string;
+}
+
+/** One skill a plugin version declares, with its materialized row. */
+export interface PlatformPluginSkillComponent {
+  componentId: string;
+  componentKey: string;
+  declaredName: string;
+  /** Namespaced model-facing reference: `<plugin-name>/<skill-name>`. */
+  modelRef: string;
+  materializedSkillId: string;
+}
+
+/** One immutable imported version with its component projections. */
+export interface PlatformPluginVersion {
+  id: string;
+  pluginId: string;
+  /** `manifest.version` — metadata only; `bundleHash` is the identity. */
+  declaredVersion?: string;
+  bundleHash: string;
+  manifestHash?: string;
+  /** Only `ready` versions resolve at runtime or serve bundle bytes. */
+  status: "staging" | "ready" | "invalid";
+  componentCounts: PlatformPluginComponentCounts;
+  servers: PlatformPluginServerComponent[];
+  skills: PlatformPluginSkillComponent[];
+  createdAt: number;
+  readyAt?: number;
+}
+
 // ── Sandbox images ───────────────────────────────────────────────────────────
 //
 // A project's custom Computer base image: a blueprint plus its builds. Named
@@ -693,4 +767,193 @@ export interface PlatformTunnelGrant {
 export interface PlatformTunnelClosed {
   serverId: string;
   status: string;
+}
+
+// ── Journeys (the API surface for the Swarms product) ────────────────────────
+//
+// "Swarm" is deliberately not a resource noun. A swarm is a container users
+// author in the UI; what EXECUTES is a journey (a persona pursuing a goal
+// against one or more environments) and what it produces is a journey run.
+//
+// FLAG-GATED BETA (`sandboxes-enabled`). Reads are open — an empty list leaks
+// nothing — but launching, cancelling and authoring are enforced server-side
+// per organization, so an unflagged caller gets a structured
+// FEATURE_UNAVAILABLE error from those.
+
+export interface PlatformJourney {
+  id: string;
+  projectId: string;
+  name: string;
+  /** What the persona is trying to accomplish. Drives the whole run. */
+  goal: string;
+  personaId: string;
+  /** The swarm container this journey was authored under, if any. Opaque. */
+  swarmId: string | null;
+  /** Environments this journey fans out across. Empty on a host-pinned journey. */
+  environmentIds: string[];
+  serverAttachmentId?: string;
+  /** Sessions run against EACH target. Total sessions = targets x this. */
+  sessionsPerTarget: number | null;
+  maxTurns: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformJourneyRunTarget {
+  hostId: string;
+  hostName?: string;
+  /** Execution identity. Two targets can share a `hostId`. */
+  targetId?: string;
+  modelId?: string;
+}
+
+export interface PlatformJourneyRunAttempt {
+  chatSessionId: string | null;
+  hostId: string;
+  targetId: string | null;
+  sessionIndex: number;
+  status: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export interface PlatformJourneyRun {
+  id: string;
+  projectId: string;
+  journeyId: string;
+  /**
+   * The batch this run was launched with. Sibling runs of one co-launched
+   * wave share it; a solo relaunch is a wave of one.
+   */
+  waveId?: string;
+  status: "running" | "completed" | "partial" | "failed" | "rate_limited";
+  /**
+   * True when someone STOPPED this run. It reports `status: "failed"` because
+   * the backend records cancellation as a marker rather than a status literal
+   * — so check this before showing a run as a failure.
+   */
+  canceled: boolean;
+  /** True when the runner went silent and the watchdog settled the run. */
+  stale: boolean;
+  /** Raw marker behind `canceled` / `stale`, when present. */
+  error?: string;
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  targets: PlatformJourneyRunTarget[];
+  persona?: {
+    personaId: string | null;
+    name: string | null;
+    role: string | null;
+  };
+  /** Per-session execution records. Present on the single-run read. */
+  attempts?: PlatformJourneyRunAttempt[];
+  targetSummaries?: Array<{
+    hostId: string;
+    targetId?: string;
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  }>;
+  createdAt: number;
+  lastHeartbeatAt?: number;
+}
+
+export interface PlatformJourneyRunSession {
+  /**
+   * The session's document id — the same value `listChatSessions` returns as
+   * `id`, so a session found here can be looked up there.
+   */
+  id: string;
+  /**
+   * The RUNTIME key for the same session, which the chat transport and the
+   * app's deep links use. Distinct from `id` and not interchangeable with it.
+   */
+  chatSessionId: string;
+  projectId: string;
+  hostId?: string;
+  runId?: string;
+  journeyId?: string;
+  personaId?: string;
+  personaLabel?: string;
+  status: string | null;
+  readiness: unknown;
+  goalScore: unknown;
+  messageCount: number;
+  preview?: string;
+  modelId?: string;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+}
+
+// ── Scenarios (the API surface for user testing) ─────────────────────────────
+//
+// A scenario is a project environment published for people outside the project
+// to talk to. Internally these are `chatboxes` rows and will stay that way —
+// the rename is a transport-DTO boundary, not a migration. The older
+// `list_chatboxes` / `get_chatbox` operations still work against the old
+// routes until GA.
+
+export interface PlatformScenario {
+  id: string;
+  environmentId: string;
+  name: string;
+  /**
+   * Who may open the share link. `anyone_with_link` is the widest — anyone
+   * holding the URL, signed in or not.
+   */
+  mode: "project_members" | "invited_only" | "anyone_with_link";
+  /**
+   * Bumped whenever access NARROWS (mode change, member removal, link
+   * rotation). Sessions minted under an older version stop working, which is
+   * what makes those changes take effect at once rather than at expiry.
+   */
+  accessVersion: number;
+  /** The share link. Null when the scenario has no link token. */
+  link: string | null;
+  /** False when the environment was already published and this returned it. */
+  created?: boolean;
+}
+
+export interface PlatformScenarioDeleted {
+  environmentId: string;
+  /** False when the environment had no scenario — not an error. */
+  deleted: boolean;
+  id?: string;
+}
+
+/** Result of `POST /projects/{p}/journeys/{journeyId}/runs`. */
+export interface PlatformJourneyRunLaunched {
+  /** The run id. Poll `getJourneyRun` with it, or stop it with `cancel`. */
+  id: string;
+  journeyId: string;
+  projectId: string;
+  /**
+   * Always `"running"` — the run row exists and its fan-out has been started.
+   * The response is a 202: nothing here says the journey has finished, only
+   * that it is under way.
+   */
+  status: string;
+  /**
+   * True when an idempotency key replayed onto a run that ALREADY existed, so
+   * nothing new was started. A retry of a dropped response lands here, which
+   * is how you tell "I launched it" from "it was already going".
+   */
+  deduped: boolean;
+}
+
+/** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
+export interface PlatformJourneyRunCanceled {
+  id: string;
+  /** The run's terminal status after the cancel settled it. */
+  status: PlatformJourneyRun["status"];
+  canceled: true;
+  /** True when the run was ALREADY canceled and this call did nothing. */
+  alreadyCanceled: boolean;
+  /** Attempts this call moved to terminal. Zero on an idempotent replay. */
+  finalized: number;
 }

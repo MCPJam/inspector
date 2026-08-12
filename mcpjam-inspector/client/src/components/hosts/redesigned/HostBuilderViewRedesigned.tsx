@@ -474,7 +474,7 @@ export function HostBuilderViewRedesigned({
           <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
-              ariaLabel="Servers view"
+              ariaLabel="Connect view"
               onChange={(next) => {
                 try {
                   track("connect_view_selected", { from: "host", to: next });
@@ -605,9 +605,11 @@ export function HostBuilderViewRedesigned({
                     }
                     focusSubKey={focusState.focusSubKey}
                     hostDisplayName={draftName}
+                    savedHostDisplayName={host?.name ?? draftName}
                     onHostDisplayNameChange={setDraftName}
                     themeMode={themeMode}
                     draft={draftConfig}
+                    savedDraft={savedConfig ?? draftConfig}
                     onDraftChange={(updater) =>
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))
                     }

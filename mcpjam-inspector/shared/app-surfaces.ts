@@ -526,22 +526,6 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
-    id: "auth",
-    canonicalPath: "/auth",
-    routePatterns: ["auth"],
-    navSegments: ["auth"],
-    title: "Auth",
-    purpose: "Local authentication settings for MCP servers.",
-    userActivities: ["Review server auth state"],
-    hostedBlocked: true,
-    agentTools: {
-      kind: "none",
-      reason:
-        "Sensitive auth state (server credentials and sessions); the agent must not automate it.",
-    },
-    showInAtlas: true,
-  },
-  {
     id: "settings",
     canonicalPath: "/settings",
     // `settings/github-checks` is deliberately absent: the page moved under
@@ -599,6 +583,9 @@ export const APP_SURFACES = [
       // it at a screen most orgs cannot see would waste a turn on a door that
       // is locked.
       "organizations/:orgId/slack",
+      // Discord agent settings — same reasoning as Slack directly above,
+      // including staying out of `userActivities` while `discord-agent` is off.
+      "organizations/:orgId/discord",
     ],
     navSegments: ["organizations"],
     title: "Organizations",

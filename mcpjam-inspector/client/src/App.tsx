@@ -44,7 +44,6 @@ import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
 import { TracingTab } from "./components/TracingTab";
-import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
@@ -63,7 +62,7 @@ import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigC
 import { CaniuseCapabilityPage } from "./components/hosts/comparison/CaniuseCapabilityPage";
 import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
-import { ComputerView } from "./components/computer/ComputerView";
+import { ComputerTabView } from "./components/computer/ComputerTabView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
 import { useSkillsEnabledState } from "./hooks/useSkillsEnabled";
 import { motion } from "framer-motion";
@@ -106,6 +105,7 @@ import {
 import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
@@ -139,7 +139,9 @@ import {
   ChatboxChatPage,
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
+import { isEmbeddedPreview } from "./lib/embedded-preview";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
@@ -221,15 +223,14 @@ import {
 import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
+  OAUTH_PENDING_STORAGE_KEY,
 } from "./lib/oauth/mcp-oauth";
 import {
   buildElectronMcpCallbackUrl,
   resolveEffectiveWireProtocolVersion,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
-import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
-  getDefaultClientCapabilities,
   isKnownProtocolVersion,
   readTasksPolicy,
   readXaaEnterprisePolicy,
@@ -241,7 +242,11 @@ import {
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
-import { useHostList, useHostMutations } from "@/hooks/useClients";
+import {
+  shouldQueryHostId,
+  useHostList,
+  useHostMutations,
+} from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import {
   HOST_TEMPLATES,
@@ -297,6 +302,7 @@ import {
   getAppSurfaceByNavSegment,
   isAppSurfaceId,
 } from "@/shared/app-surfaces";
+import { sanitizeTraceErrorMessage } from "./lib/oauth/trace-redaction";
 import { waitForUiToolNames } from "./lib/webmcp/ui-tools-readiness";
 import { listSurfaceGroupToolNames } from "./lib/webmcp/groups";
 import {
@@ -331,7 +337,7 @@ function clearHostedCallbackRetryState() {
   clearHostedOAuthPendingState();
   clearHostedOAuthResumeMarker();
   clearGuestSession();
-  localStorage.removeItem("mcp-oauth-pending");
+  localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
   localStorage.removeItem("mcp-oauth-return-hash");
 
   for (const storage of [window.localStorage, window.sessionStorage]) {
@@ -350,38 +356,39 @@ function clearHostedCallbackRetryState() {
   }
 }
 
-const OAUTH_DEBUGGER_SECRET_PATTERNS = [
-  /\b(access_token|refresh_token|id_token|client_secret|clientSecret|code_verifier|code|state)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/gi,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
-  /\bBasic\s+[A-Za-z0-9+/=._~-]+\b/gi,
-];
+/**
+ * Redact the OAuth debugger's error-boundary output.
+ *
+ * Uses the SDK's single trace redactor rather than a local pattern list — this
+ * used to be a fourth private copy, and a private copy is how the sensitive-
+ * field set drifts.
+ *
+ * The stack is redacted in ONE pass with a raised cap, not line by line. A
+ * multi-line payload can put a JSON credential's key and its value on separate
+ * lines, and splitting first hands the redactor two fragments that match
+ * neither — so the value survives into copied and reported output. The cap
+ * exists for a single error message; a stack legitimately needs more room.
+ */
+const MAX_REDACTED_STACK = 8_000;
 
-function sanitizeOAuthDebuggerText(value: string | null | undefined): string {
-  if (!value) {
-    return "";
-  }
-
-  return OAUTH_DEBUGGER_SECRET_PATTERNS.reduce(
-    (sanitized, pattern) =>
-      sanitized.replace(pattern, (...args) => {
-        const key = typeof args[1] === "string" ? args[1] : undefined;
-        const separator = typeof args[2] === "string" ? args[2] : undefined;
-        return key && separator ? `${key}${separator}[redacted]` : "[redacted]";
-      }),
-    value
-  );
+function redactStackLikeText(value: string | null | undefined): string {
+  if (!value) return "";
+  return sanitizeTraceErrorMessage(value, {
+    maxLength: MAX_REDACTED_STACK,
+    maxScanned: MAX_REDACTED_STACK * 2,
+  });
 }
 
-function sanitizeOAuthDebuggerError(error: Error | null) {
+function redactOAuthDebuggerError(error: Error | null) {
   return {
-    name: sanitizeOAuthDebuggerText(error?.name ?? "Error"),
-    message: sanitizeOAuthDebuggerText(error?.message ?? "Unknown error"),
-    stack: sanitizeOAuthDebuggerText(error?.stack),
+    name: sanitizeTraceErrorMessage(error?.name ?? "Error"),
+    message: sanitizeTraceErrorMessage(error?.message ?? "Unknown error"),
+    stack: redactStackLikeText(error?.stack),
   };
 }
 
 function formatOAuthDebuggerErrorDetails(error: Error | null): string {
-  const sanitized = sanitizeOAuthDebuggerError(error);
+  const sanitized = redactOAuthDebuggerError(error);
   return [
     "OAuth Debugger error",
     `Name: ${sanitized.name}`,
@@ -504,8 +511,31 @@ function useAppRouteContext() {
   return context ?? useOutletContext<AppRouteContext>();
 }
 
+/**
+ * The no-router render path.
+ *
+ * REACHABLE — it is what renders when the app runs without React Router
+ * (App.tsx mounts it twice). It is easy to assume otherwise because the router
+ * table in `router.tsx` looks like the only route map, which is exactly why the
+ * two had drifted: the router handles the legacy `chat` and `client-config`
+ * aliases and this switch did not, so those two tab ids fell through to
+ * `default` and rendered Servers.
+ *
+ * `client-config` happened to be harmless (Servers IS its redirect target);
+ * `chat` was not — it rendered Servers while the sidebar showed Playground.
+ * Both are explicit arms now, pointing at the same destinations `router.tsx`
+ * uses. When you add a route there, add it here.
+ */
 function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
   switch (activeTab) {
+    // Legacy aliases, mirroring router.tsx's ChatAliasRoute /
+    // ServersRedirectRoute. A navigate-away effect also fires for these; the
+    // arm is what they render in the meantime, so it must match where they
+    // are going.
+    case "chat":
+      return <PlaygroundRoute />;
+    case "client-config":
+      return <ServersRoute />;
     case "registry":
       return <RegistryRoute />;
     case "tools":
@@ -516,8 +546,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <PromptsRoute />;
     case "tasks":
       return <TasksRoute />;
-    case "auth":
-      return <AuthRoute />;
     case "skills":
       return <SkillsRoute />;
     case "learning":
@@ -729,25 +757,134 @@ export function HostsRoute() {
       : null);
   const urlHostId = useMemo(() => {
     if (!routeHostId) return null;
+    let decoded = routeHostId;
     try {
-      return decodeURIComponent(routeHostId);
+      decoded = decodeURIComponent(routeHostId);
     } catch {
-      return routeHostId;
+      // Malformed escape: fall through with the raw segment.
     }
+    // Trimmed HERE so one canonical id reaches every consumer. `useHost` trims
+    // before querying, so a padded `/hosts/%20<id>%20` would otherwise resolve
+    // the host while the synced and PERSISTED value kept its whitespace — and
+    // `HostsTab` reconciles both against the host list, so it would bounce the
+    // user to the list and clear the project's previewed host.
+    const trimmed = decoded.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }, [routeHostId]);
+  // Only a Convex document id may be opened, synced, or persisted. Typed and
+  // shared links put clients-catalog slugs here too (`/hosts/chatgpt`, whose
+  // supported deep link is `/hosts?template=chatgpt`), and such a value can
+  // never resolve to a host. `useHost` skips it; what this adds is keeping it
+  // out of the project's PERSISTED previewed host, where it would outlive the
+  // URL and reopen a dead id on every later visit to `/hosts`.
+  //
+  // This gate is SHAPE only, so it settles with no host list at all — which is
+  // what separates it from the liveness gate below. A slug never resolves for
+  // any project, so it is rejected on the first render rather than waiting out
+  // a query that would fail argument validation anyway.
+  const idShapedHostId =
+    urlHostId && shouldQueryHostId(urlHostId) ? urlHostId : null;
+
+  useEffect(() => {
+    // Keyed off the raw segment, so `/hosts/%20` (nothing left after trimming)
+    // is cleaned up too rather than sitting on a URL that opens nothing.
+    // No toast: a slug was never a client of theirs, so "no longer exists"
+    // (what a dead permalink says below) would be telling them the wrong story.
+    if (routeHostId && !idShapedHostId) {
+      navigate(routePaths.hosts, { replace: true });
+    }
+  }, [routeHostId, idShapedHostId, navigate]);
+
+  const { hosts: routeHosts, isLoading: isRouteHostListLoading } = useHostList({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+
+  // Where the URL's id stands against the project's client list. Client URLs
+  // are permalinks, so bookmarks and history outlive the client itself, and
+  // `dead` — deleted, or a link from a project this session isn't in — is
+  // reachable from ordinary navigation.
+  //
+  // `pending` is a real state, not a rounding of `dead`: the list is empty for
+  // a beat on every cold start (and `useHostList` also reports loading while
+  // signed out, or while `convexProjectId` is still a placeholder, because it
+  // skips the query in both cases). Calling an id dead in that window would
+  // break every working deep link.
+  //
+  // Reads `idShapedHostId`, not the raw URL id: a non-id has already been sent
+  // to `/hosts` by the shape gate above, and routing it through here too would
+  // stall it in `pending` on a cold start and then fire the dead-permalink
+  // toast at someone who never had that client.
+  const urlHostState: "none" | "pending" | "live" | "dead" =
+    idShapedHostId === null
+      ? "none"
+      : isRouteHostListLoading
+        ? "pending"
+        : routeHosts.some((h) => h.hostId === idShapedHostId)
+          ? "live"
+          : "dead";
+
+  // The id the canvas may open. A dead id resolves to null HERE, before it
+  // reaches shared state, which is what keeps this route out of a fight with
+  // `HostsTab`: that component reconciles selection and the previewed host
+  // against the same list and clears anything missing, so a route that kept
+  // re-syncing the dead id from the URL would have it cleared and re-set on
+  // every pass. The corrective navigation below is a React Router transition,
+  // and the resulting stream of higher-priority state updates starves it — the
+  // canvas never lands on `/hosts`, the loop never ends, and it surfaces either
+  // as a pegged CPU core or, when the updates chain synchronously, as "Maximum
+  // update depth exceeded" (INSPECTOR-CLIENT-224).
+  //
+  // A `pending` id stays openable so a legitimate permalink opens its canvas
+  // immediately rather than flashing the client list for the length of the
+  // query. That optimism is safe because it never leaves memory — see the
+  // persistence rule below.
+  const openableHostId = urlHostState === "dead" ? null : idShapedHostId;
+
+  // Only a CONFIRMED id is written to the project's previewed client, because
+  // that store is on disk and outlives the URL that seeded it. Persisting a
+  // `pending` id would file an unverified — possibly deleted — client as the
+  // project's preview, and closing the tab mid-load would leave it there to be
+  // reopened on the next visit.
+  const persistableHostId = urlHostState === "live" ? idShapedHostId : null;
+
+  // Bounce a dead permalink to bare `/hosts`, so the user lands on the client
+  // list (or their previously previewed client) instead of on a canvas stuck
+  // rendering skeletons for a client that isn't there.
+  //
+  // `replace`, so the dead URL leaves the history stack: a plain push would
+  // leave Back pointing at it, and the bounce would repeat on every Back.
+  // Keyed by id so it fires once per arrival rather than once per render —
+  // and CLEARED whenever the route isn't sitting on a dead id, because this
+  // component stays mounted across `/hosts` ↔ `/hosts/:hostId` (both paths
+  // render it, so React reuses the instance and the ref survives). Without the
+  // reset, returning to a dead id already bounced once this session would skip
+  // both the redirect and the toast, stranding the user on the dead URL.
+  const bouncedDeadHostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (urlHostState !== "dead" || !idShapedHostId) {
+      bouncedDeadHostIdRef.current = null;
+      return;
+    }
+    if (bouncedDeadHostIdRef.current === idShapedHostId) return;
+    bouncedDeadHostIdRef.current = idShapedHostId;
+    navigate(routePaths.hosts, { replace: true });
+    toast.error("That client no longer exists. It may have been deleted.");
+  }, [urlHostState, idShapedHostId, navigate]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
-    if (hostsTabSelectedHostId !== urlHostId) {
-      setHostsTabSelectedHostId(urlHostId);
+    if (hostsTabSelectedHostId !== openableHostId) {
+      setHostsTabSelectedHostId(openableHostId);
     }
-    if (urlHostId && previewedHostId !== urlHostId) {
-      setPreviewedHostId(urlHostId);
+    if (persistableHostId && previewedHostId !== persistableHostId) {
+      setPreviewedHostId(persistableHostId);
     }
   }, [
-    urlHostId,
+    openableHostId,
+    persistableHostId,
     hostsTabSelectedHostId,
     previewedHostId,
     setHostsTabSelectedHostId,
@@ -775,7 +912,7 @@ export function HostsRoute() {
     <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      selectedHostId={urlHostId ?? previewedHostId}
+      selectedHostId={openableHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
@@ -1084,7 +1221,7 @@ export function ComputerRoute() {
   }
 
   const computerView = (
-    <ComputerView
+    <ComputerTabView
       projectId={convexProjectId}
       isSignedInMember={isSignedInMember}
     />
@@ -1287,7 +1424,9 @@ export function ChatboxesRoute() {
   // reserving the word here means route-ordering can't quietly turn the create
   // page into a "Scenario not found".
   const scenarioId =
-    rawScenarioId && rawScenarioId !== "new" ? decodeParam(rawScenarioId) : null;
+    rawScenarioId && rawScenarioId !== "new"
+      ? decodeParam(rawScenarioId)
+      : null;
 
   return (
     <UserTestingTab
@@ -1655,17 +1794,6 @@ export function TasksRoute() {
   );
 }
 
-export function AuthRoute() {
-  const { selectedMCPConfig, appState } = useAppRouteContext();
-  return (
-    <AuthTab
-      serverConfig={selectedMCPConfig}
-      serverEntry={appState.servers[appState.selectedServer]}
-      serverName={appState.selectedServer}
-    />
-  );
-}
-
 export function OAuthFlowRoute() {
   const {
     appState,
@@ -1699,7 +1827,7 @@ export function OAuthFlowRoute() {
                   OAuth Debugger crashed
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {sanitizeOAuthDebuggerError(error).message}
+                  {redactOAuthDebuggerError(error).message}
                 </p>
               </div>
               <div className="flex justify-center gap-2">
@@ -1715,13 +1843,13 @@ export function OAuthFlowRoute() {
         );
       }}
       onError={(error, errorInfo) => {
-        const sanitizedError = sanitizeOAuthDebuggerError(error);
+        const sanitizedError = redactOAuthDebuggerError(error);
         track("oauth_debugger_error_boundary", {
           location: "oauth_flow",
           name: sanitizedError.name,
           message: sanitizedError.message,
           stack: sanitizedError.stack,
-          componentStack: sanitizeOAuthDebuggerText(errorInfo.componentStack),
+          componentStack: redactStackLikeText(errorInfo.componentStack),
         });
       }}
     >
@@ -2177,7 +2305,7 @@ export default function App() {
       }
 
       clearHostedOAuthPendingState();
-      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
@@ -2303,6 +2431,9 @@ export default function App() {
   }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
 
   usePostHogIdentify();
+  // Stops replay while on `/results/<token>` — the init-time
+  // `disable_session_recording` flag cannot cover in-app navigation into it.
+  useSessionRecordingPathGuard();
 
   const lastLaunchedActorRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2607,6 +2738,10 @@ export default function App() {
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     nonProdLockdown: NON_PROD_LOCKDOWN,
+    // Read on every render, like `chatboxPathToken` above: framing is a fact
+    // about this document, fixed for its lifetime, so there is nothing to
+    // memoize and nothing that can change under us.
+    embeddedPreview: isChatboxChatRoute && isEmbeddedPreview(),
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
@@ -2761,8 +2896,7 @@ export default function App() {
       activeTab === "prompts" ||
       activeTab === "tasks" ||
       activeTab === "conformance" ||
-      activeTab === "compatibility" ||
-      activeTab === "auth";
+      activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(projectServers).find(
@@ -2810,9 +2944,15 @@ export default function App() {
   // The host is the authoritative source once `activeHost` hydrates; the
   // shadow path only matters during the bootstrap window before
   // `hostConfigsV2:getProjectDefault` returns.
-  const hostedClientCapabilities = (activeHost?.clientCapabilities ??
-    getEffectiveProjectClientCapabilities(activeProject?.clientConfig) ??
-    getDefaultClientCapabilities()) as Record<string, unknown>;
+  // Memoized because this feeds `useApiContext`'s dependency array. Computing
+  // it inline returned a fresh object on every render whenever the host had
+  // not hydrated capabilities — i.e. whenever a server was failing to connect —
+  // which closed a render-speed refetch loop on /api/web/tools/list. See the
+  // hook for the full chain.
+  const hostedClientCapabilities = useHostedClientCapabilities(
+    activeHost?.clientCapabilities,
+    activeProject?.clientConfig,
+  );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
@@ -3553,14 +3693,16 @@ export default function App() {
       shouldSnapToServersOnActiveProjectChange({
         previousActiveProjectId,
         nextActiveProjectId: activeProjectId,
-        activeTab,
+        // Deliberately not the `activeTab` hook value: the router commits in a
+        // transition, so that still names the page being left while the project
+        // change is already live. `navigateToServers` reads the same source.
+        activeTab: pathnameToActiveTab(window.location.pathname),
       })
     ) {
       navigateToServers();
     }
   }, [
     activeProjectId,
-    activeTab,
     isAuthLoading,
     isLoadingRemoteProjects,
     isWorkOsLoading,
@@ -3907,7 +4049,11 @@ export default function App() {
       await handleSwitchProject(projectId);
 
       const navigationTarget = getProjectSwitchNavigationTarget({
-        activeTab,
+        // Read the tab from the live pathname, not the `activeTab` hook value:
+        // the switcher's per-row gear navigates while this switch is still in
+        // flight, and a closure-captured tab would send the user back to
+        // Servers on top of the settings page they just opened.
+        activeTab: pathnameToActiveTab(window.location.pathname),
         activeOrganizationId,
         nextProjectOrganizationId: nextProject?.organizationId,
       });
@@ -3915,13 +4061,7 @@ export default function App() {
         navigateToTarget(navigationTarget);
       }
     },
-    [
-      activeOrganizationId,
-      activeTab,
-      handleSwitchProject,
-      navigateToTarget,
-      projects,
-    ]
+    [activeOrganizationId, handleSwitchProject, navigateToTarget, projects]
   );
 
   const isBillingEntryHandoff =
@@ -4347,7 +4487,13 @@ export default function App() {
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
-          hidden={playgroundOnboarding || activeTab === "home"}
+          // "make nux clean" (#2868) hid this on Home for everyone, but that
+          // also hid guests' only Sign in / Create account affordance there
+          // (PUR-35). Keep Home clean for signed-in users; show the header
+          // for guests so they still get sign-in/sign-up.
+          hidden={
+            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
+          }
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />

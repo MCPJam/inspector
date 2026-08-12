@@ -1,4 +1,4 @@
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { ErrorOrigin, MCPClientManager } from "@mcpjam/sdk";
 import type { RequestLogContext } from "../utils/log-events.js";
 
 // Extend Hono's context with our custom variables
@@ -14,8 +14,20 @@ declare module "hono" {
      * Code + message from the last `webError()` on this request. Set so
      * `requestLogContextMiddleware` can record *why* a returned (non-thrown)
      * 5xx failed; without it the middleware only ever sees a status code.
+     *
+     * `origin`/`slug` are present whenever the failing route had a normalized
+     * describe-error block. They make `http.request.failed` sliceable by whose
+     * fault a failure was, which is what lets the Sentry capture policy stay
+     * narrow: `ambiguous` volume stays visible in Axiom without paying for it
+     * in issue-tracker noise.
      */
-    webErrorMeta?: { status: number; code: string; message: string };
+    webErrorMeta?: {
+      status: number;
+      code: string;
+      message: string;
+      origin?: ErrorOrigin;
+      slug?: string;
+    };
     /**
      * Auth method used to resolve the caller. Set by `bearerAuthMiddleware`:
      * - `"workos_api_key"` — caller presented a WorkOS `sk_…` API key
@@ -25,7 +37,18 @@ declare module "hono" {
      *   user has a completed account link. The identity below is the LINKED
      *   user's, never the bot's: `slk_` names the bot and grants nothing on
      *   its own.
-     * - Absent — guest JWT (see `guestId`) or WorkOS AuthKit JWT.
+     * - `"discord_service"` — the Discord bot's `dsc_…` credential, resolving
+     *   to a linked user by the same rule as `slack_service`.
+     * - `"guest"` — a VALIDATED guest JWT. `guestId` is set alongside.
+     * - `"unverified_passthrough"` — a bearer that LOOKED like a WorkOS AuthKit
+     *   JWT and was let through unverified, on the expectation that Convex
+     *   checks it downstream. Not an authenticated caller. See
+     *   `middleware/require-verified-auth.ts`.
+     * - Absent — no bearer at all, or one this middleware did not classify.
+     *
+     * The last two are the ones to be careful with: a value being present here
+     * does NOT mean the caller was authenticated. Anything deciding trust must
+     * name the methods it accepts rather than testing for presence.
      *
      * `getConvexBearerForRequest` reads this to decide between forwarding the
      * original bearer (JWT/guest) and minting a delegated org-scoped JWT (both
@@ -42,7 +65,23 @@ declare module "hono" {
      * through would break it, so teach `authorizeBatch` about `slack_service`
      * before adding one.
      */
-    authMethod?: "workos_api_key" | "slack_service" | "discord_service" | "teams_service";
+    authMethod?:
+      | "workos_api_key"
+      | "slack_service"
+      | "discord_service"
+      // RESERVED, and currently UNREACHABLE: `surface-service-auth.ts` no
+      // longer accepts `"teams"`, so no branch assigns this. Kept so a future
+      // Teams gate is an additive change — but it must not appear in any
+      // allowlist while nothing can produce it.
+      | "teams_service"
+      // A validated guest JWT. `guestId` is set alongside.
+      | "guest"
+      // ASSERTED, NOT VERIFIED. The bearer looked like a WorkOS AuthKit JWT
+      // and `bearerAuthMiddleware` let it through without checking the
+      // signature, because the routes it normally fronts forward the bearer to
+      // Convex, which does check it. A route that does NOT forward the bearer
+      // must not trust this — see `middleware/require-verified-auth.ts`.
+      | "unverified_passthrough";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */
     workosApiKeyId?: string;
     /** WorkOS user externalId. Set with `authMethod`. */

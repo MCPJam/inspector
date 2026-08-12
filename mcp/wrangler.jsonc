@@ -41,20 +41,6 @@
         "MCPJAM_INSPECTOR_SERVICE_TOKEN": "mcpjam-local-dev-service-token",
         "MCPJAM_GUEST_JWKS_URL": "http://localhost:6274/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "http://localhost:6274/api/web/guest-token"
-      },
-      "migrations": [
-        {
-          "tag": "v1",
-          "new_sqlite_classes": ["McpJamMcpServer"]
-        }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
       }
     },
     // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
@@ -72,20 +58,6 @@
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
         "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
-      },
-      "migrations": [
-        {
-          "tag": "v1",
-          "new_sqlite_classes": ["McpJamMcpServer"]
-        }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
       }
     },
     "staging": {
@@ -103,23 +75,32 @@
         "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
       },
+      // Durable Object teardown. The worker is stateless now (see
+      // src/server.ts), so the `McpJamMcpServer` class and its MCP_OBJECT
+      // binding are gone. Migrations are append-only and must carry the full
+      // applied history: the deployed staging worker's last-applied tag is
+      // `v1`, so `v1` stays and `v2` deletes the class. A lone `v2` entry is
+      // rejected by wrangler. `production` carries the identical block for the
+      // same reason (see below). `dev` and `preview` list no migrations at all:
+      // `dev` is local-only with no persisted state, and preview workers are
+      // recreated per PR and never serve enough traffic to instantiate the DO,
+      // so Cloudflare lets the class disappear without a delete-class
+      // migration. Do NOT add these migrations to `preview` — a freshly
+      // created worker would apply `v1`, which asks for a `new_sqlite_classes`
+      // class the stateless script no longer exports.
       "migrations": [
         {
           "tag": "v1",
           "new_sqlite_classes": ["McpJamMcpServer"]
+        },
+        {
+          "tag": "v2",
+          "deleted_classes": ["McpJamMcpServer"]
         }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
-      }
+      ]
     },
-    // Production config is ready but no workflow deploys it yet — prod
-    // rollout is a deliberate future step.
+    // Promoted manually via deploy-mcp-prod.yml (workflow_dispatch only) —
+    // prod rollout is a deliberate step, never a side effect of merging.
     "production": {
       "workers_dev": false,
       "routes": [
@@ -135,20 +116,24 @@
         "MCPJAM_GUEST_JWKS_URL": "https://app.mcpjam.com/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "https://app.mcpjam.com/api/web/guest-token"
       },
+      // Same DO teardown as staging, and for the same reason: `production`
+      // HAS been deployed (repeatedly, most recently 2026-08-06) with the
+      // `v1` DO migration, so the live worker holds `McpJamMcpServer`
+      // instances and Cloudflare rejects any version that stops exporting the
+      // class (error 10064). `v1` is the applied history and must stay; `v2`
+      // deletes the class. The deleted state is per-session MCP scratch (a
+      // tool registrar and a cached guest token) that the stateless worker
+      // recreates per request, so there is nothing durable to preserve.
       "migrations": [
         {
           "tag": "v1",
           "new_sqlite_classes": ["McpJamMcpServer"]
+        },
+        {
+          "tag": "v2",
+          "deleted_classes": ["McpJamMcpServer"]
         }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
-      }
+      ]
     }
   }
 }

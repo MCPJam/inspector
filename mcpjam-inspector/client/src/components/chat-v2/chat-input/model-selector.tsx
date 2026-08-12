@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
-import { Check, X } from "lucide-react";
+import { ArrowUpRight, Check, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -76,6 +76,13 @@ interface ModelSelectorProps {
    * on the configured tab. Only the chat-input instance opts in.
    */
   respondToProviderTabIntent?: boolean;
+  /**
+   * Navigates to the org's model providers page. Rendered as a footer under the
+   * "Your providers" list so adding another BYOK key doesn't mean hunting
+   * through Settings. Callers pass it only when the viewer may actually open
+   * org settings; omitted, the footer is absent rather than disabled.
+   */
+  onManageOrgProviders?: () => void;
 }
 
 type GroupKey = string;
@@ -205,6 +212,7 @@ export function ModelSelector({
   align = "start",
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
+  onManageOrgProviders,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -301,6 +309,16 @@ export function ModelSelector({
     if (!nextOpen) {
       setHoveredLockedModelId(null);
     }
+  };
+
+  const handleManageOrgProviders = () => {
+    track("chat_model_selector_manage_org_models_clicked", {
+      location: analyticsLocation,
+    });
+    // Navigating away from a chat while the popover is mounted leaves it
+    // orphaned over the next screen, so close it before handing off.
+    setIsOpen(false);
+    onManageOrgProviders?.();
   };
 
   const selectedModelsData =
@@ -652,7 +670,9 @@ export function ModelSelector({
                 disabled={disabled || isLoading}
                 className={cn(
                   "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]",
+                  isComparingModels
+                    ? "max-w-[280px] gap-1"
+                    : "max-w-[180px] gap-1",
                 )}
                 data-testid="model-selector-trigger"
               >
@@ -788,19 +808,27 @@ export function ModelSelector({
             ) : null}
 
             {(() => {
-              const hasBothSections =
-                modelSections.provided.length > 0 &&
-                modelSections.configured.length > 0;
               const isSearching = search.trim().length > 0;
-              const showTabs = hasBothSections && !isSearching;
+              // An org admin with no keys yet is exactly who the footer below is
+              // for, so the tab stays reachable while their list is empty —
+              // gating it on a non-empty list hid the offer to add a key from
+              // everyone who had none.
+              const offerEmptyConfigured =
+                !!onManageOrgProviders && modelSections.configured.length === 0;
+              const showTabs =
+                !isSearching &&
+                modelSections.provided.length > 0 &&
+                (modelSections.configured.length > 0 || offerEmptyConfigured);
               const showProvided =
                 visibleSections.provided.length > 0 &&
-                (isSearching || !hasBothSections || providerTab === "provided");
+                (isSearching || !showTabs || providerTab === "provided");
               const showConfigured =
                 visibleSections.configured.length > 0 &&
-                (isSearching ||
-                  !hasBothSections ||
-                  providerTab === "configured");
+                (isSearching || !showTabs || providerTab === "configured");
+              const showConfiguredEmpty =
+                showTabs &&
+                providerTab === "configured" &&
+                visibleSections.configured.length === 0;
 
               return (
                 <>
@@ -827,7 +855,18 @@ export function ModelSelector({
                   ) : null}
 
                   <CommandList className="max-h-[min(320px,45vh)]">
-                    <CommandEmpty>No matching models.</CommandEmpty>
+                    {/* cmdk renders Empty whenever no rows are mounted, which
+                        the empty providers tab below would otherwise inherit —
+                        and "No matching models" reads as a failed search. */}
+                    {showConfiguredEmpty ? null : (
+                      <CommandEmpty>No matching models.</CommandEmpty>
+                    )}
+
+                    {showConfiguredEmpty ? (
+                      <p className="px-2.5 py-3 text-[11px] text-muted-foreground">
+                        No provider keys yet.
+                      </p>
+                    ) : null}
 
                     {showProvided ? (
                       <CommandGroup
@@ -863,6 +902,23 @@ export function ModelSelector({
                       </CommandGroup>
                     ) : null}
                   </CommandList>
+
+                  {/* Only under the user's own providers — while searching the
+                      rows are a transient mix of both sections. */}
+                  {onManageOrgProviders &&
+                  !isSearching &&
+                  (showConfigured || showConfiguredEmpty) ? (
+                    <div className="border-t px-2 py-1.5">
+                      <button
+                        type="button"
+                        onClick={handleManageOrgProviders}
+                        className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        Manage organization models
+                        <ArrowUpRight className="size-3 shrink-0" />
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               );
             })()}

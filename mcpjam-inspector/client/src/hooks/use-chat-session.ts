@@ -81,11 +81,20 @@ import {
   getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
 import {
+  classifyChatboxAccessResponse,
+  patchBodyAccessVersion,
+} from "@/lib/chatbox-access-errors";
+import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
+import {
+  reportChatFailure,
+  type ChatResponseMeta,
+} from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
@@ -106,7 +115,7 @@ import {
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import type { ChatRewind, WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
   isScopeStepUpDataPart,
   isScopeStepUpFinishedDataPart,
@@ -208,7 +217,7 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
 
 // User-facing copy for a chatbox ephemeral-sandbox notice, keyed by reason.
 //
-// Both are shown. A reset is the sharper one: the model may have written files
+// All are shown. A reset is the sharper one: the model may have written files
 // in an earlier turn and will otherwise reason confidently about a filesystem
 // that no longer exists, so silence is worse than an interruption.
 const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
@@ -216,6 +225,8 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
     "This conversation's sandbox was reset after being idle — files and shell state from earlier turns are gone.",
   stale_image:
     "This conversation is still running on the computer image it started with; a newer build is available and will be used by your next conversation.",
+  sandbox_unavailable:
+    "This conversation's bash runs in a disposable cloud sandbox, but this inspector can't execute disposable sandboxes. The conversation continues without bash.",
 };
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
@@ -304,6 +315,18 @@ export interface UseChatSessionOptions {
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /**
+   * Resolved Local⇄Cloud engine for this project's personal computer, provided
+   * by the caller (Playground) so the CENTRAL hook stays free of the config
+   * fetch `useComputerEngine` runs. When `engine === "local"` a direct
+   * /api/mcp/chat-v2 turn forwards `computerEngine:"local"` plus the consent
+   * capability header, so the server runs this host's bash on the local
+   * machine. Absent ⇒ legacy cloud-family resolution (every other surface).
+   */
+  personalComputerEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
   /**
@@ -407,7 +430,55 @@ export interface UseChatSessionReturn {
     metadata?: Record<string, unknown>;
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     widgetModelContext?: WidgetModelContextEntry[];
-  }) => void;
+    /**
+     * Resolves `true` once the message was actually dispatched, `false` on
+     * every fail-closed preflight path (server-id resolution failed, or the
+     * target/session changed while it was being prepared). Those paths surface
+     * their own toast and RESOLVE rather than reject, so awaiting alone cannot
+     * tell "sent" from "swallowed" — `rewindToMessage` needs the boolean to
+     * avoid treating a branch whose turn never ran as a success. Fire-and-forget
+     * callers can ignore it.
+     */
+  }) => Promise<boolean>;
+  /**
+   * Rewind to a past user message and re-run the turn from edited text.
+   *
+   * The thread BRANCHES rather than being overwritten: the original session
+   * keeps its full transcript and the edited thread continues under a fresh
+   * `chatSessionId`. Resolves to the previous session id so callers can offer a
+   * way back, or `null` when the rewind was refused, which happens for any of
+   * four reasons: a turn is in flight (`status` is `"submitted"` or
+   * `"streaming"` — a failed turn is deliberately allowed, since rewinding is
+   * how a user recovers from one); the message is no longer in the thread; or
+   * the branch's session id is not the live one by the time hydration
+   * resolves — a concurrent session change (`loadChatSession`/`resetChat`/
+   * fork) superseded it first, and the live id could be either the original
+   * (nothing else committed) or an unrelated third session (the interloper's
+   * own change won), neither of which is safe to send into; or the send itself
+   * failed closed after the branch was minted — `sendMessage`'s preflight
+   * (hosted server-id resolution, or the target/session changing under it)
+   * resolves `false` without dispatching, and an underlying throw is caught.
+   * The branch exists in that last case but its turn never ran, so callers
+   * must not report success.
+   */
+  rewindToMessage: (options: {
+    messageId: string;
+    text: string;
+    files?: Array<{
+      type: "file";
+      mediaType: string;
+      filename?: string;
+      url: string;
+    }>;
+    metadata?: Record<string, unknown>;
+    /**
+     * Runs as the branch is minted, and only then — every refusal above that
+     * point returns without calling it. Callers detach from the resumed thread
+     * here so the teardown and the branch stay atomic: a refusal must not leave
+     * the original session stripped of its optimistic-concurrency guard.
+     */
+    onBeforeBranch?: () => void;
+  }) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -470,13 +541,25 @@ export interface UseChatSessionReturn {
 
   // Actions
   resetChat: () => void;
+  /**
+   * Mint a fresh `chatSessionId`, seed it with `messages`, and reset
+   * `resumedVersion` to null. Resolves once the seeded messages have been
+   * applied (the hydration `useLayoutEffect` has run) to the session id it
+   * minted — NOT necessarily the id that's live by the time it resolves: a
+   * concurrent session change (another `startChatWithMessages`/
+   * `loadChatSession`/`resetChat`/fork) can supersede this one first, in
+   * which case the live `chatSessionId` will differ from the resolved value.
+   * Callers that need to confirm their own branch actually went live (e.g.
+   * `rewindToMessage`) should compare the resolved id against the live one,
+   * not just treat resolution as success.
+   */
   startChatWithMessages: (
     messages: UIMessage[],
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     }
-  ) => Promise<void>;
+  ) => Promise<string>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -1398,8 +1481,13 @@ export function useChatSession(
     minimalMode: _minimalMode = false,
     executionConfig,
     hostStyle,
+    personalComputerEngine,
     onReset,
   } = options;
+  // Caller-provided (Playground): send local only when it will actually run
+  // there. Consent-gated `engine`, device-scoped token — both from the caller.
+  const resolvedLocalEngine = personalComputerEngine?.engine === "local";
+  const localConsentToken = personalComputerEngine?.consentToken ?? null;
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
   // defaults. Surfaces that pass `executionConfig` are in controlled mode and
@@ -1463,6 +1551,8 @@ export function useChatSession(
   const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
+  const hostedRefreshAccessSession = hostedContext?.refreshAccessSession;
+  const hostedOnAccessRevoked = hostedContext?.onAccessRevoked;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
@@ -1503,6 +1593,13 @@ export function useChatSession(
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
+  // Whether the turn's Authorization is a real member (WorkOS) bearer vs a
+  // guest bearer (which the auth effect attaches when signed out). Defense in
+  // depth for the local engine: a stale consent token can outlive sign-out, so
+  // never forward the local engine on a guest turn even if the token verifies.
+  // The server independently rejects guest local turns — this just avoids
+  // sending a header a guest can't use.
+  const authIsMemberRef = useRef(false);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
   const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
@@ -1554,6 +1651,10 @@ export function useChatSession(
     Map<string, Map<string | number, string>>
   >(new Map());
   const resumedVersionRef = useRef<number | null>(null);
+  const rewindRef = useRef<{
+    chatSessionId: string;
+    lineage: ChatRewind;
+  } | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
   >({});
@@ -2212,15 +2313,88 @@ export function useChatSession(
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
 
+  // Last thing `chatFetch` saw. This is the ONLY place the Response object
+  // still exists — the AI SDK turns a non-ok response into
+  // `new Error(await response.text())` and the status, content type, and
+  // request id are gone by the time `handleChatError` runs.
+  const lastChatResponseRef = useRef<ChatResponseMeta | null>(null);
+
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
+      // Clear BEFORE awaiting, not just on the way out. If this turn's fetch
+      // rejects outright — DNS failure, connection refused, offline — no
+      // Response is ever produced and the ref would still hold the PREVIOUS
+      // turn's values, so `handleChatError` would report a fresh network
+      // failure under the last turn's status and, worse, under a request id
+      // belonging to a different request.
+      lastChatResponseRef.current = null;
+
       // authFetch owns auth resolution (WorkOS bearer / guest bearer via
       // the chatbox-installed apiContext) wherever the web engine is in
       // play — hosted builds, and chatbox runtime sessions on any platform.
       const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
-      const response = useAuthedFetch
+      let response = useAuthedFetch
         ? await authFetch(input, init)
         : await fetch(input, init);
+
+      // Chatbox access recovery. A chatbox turn re-resolves its authoritative
+      // config server-side on every send, so an open tab can lose access
+      // between one send and the next — a rebind, a mode round-trip, a
+      // rotated guest identity. The refusal lands here PRE-STREAM (the route
+      // fails closed during turn setup, before a single token reaches the
+      // parser and while `useChat` is still awaiting this promise), which is
+      // the one place a re-redeem + replay is invisible to the tester.
+      //
+      // DENIED is retried as well as STALE: /redeem re-mints the grant for an
+      // `anyone_with_link` chatbox, so most "denied" verdicts are recoverable
+      // identity drift rather than a real refusal. Exactly ONE recovery per
+      // send — the replay's own verdict is final.
+      if (
+        !response.ok &&
+        useAuthedFetch &&
+        hostedChatboxId &&
+        typeof init?.body === "string" &&
+        hostedRefreshAccessSession
+      ) {
+        const accessError = await classifyChatboxAccessResponse(response);
+        if (accessError) {
+          const recovery = await hostedRefreshAccessSession();
+          if (recovery.ok) {
+            // Byte-identical replay except for the field that went stale.
+            // `init.signal` rides along in the spread, so Stop still aborts.
+            response = await authFetch(input, {
+              ...init,
+              body: patchBodyAccessVersion(init.body, recovery.accessVersion),
+            });
+            if (!response.ok) {
+              const replayError =
+                await classifyChatboxAccessResponse(response);
+              if (replayError?.kind === "denied") {
+                hostedOnAccessRevoked?.(replayError);
+              }
+            }
+          } else if (recovery.reason === "denied") {
+            hostedOnAccessRevoked?.(recovery.error);
+          }
+          // "transient" / "no_token" fall through deliberately: the original
+          // error surfaces in the normal banner and the next send is a fresh
+          // chatFetch that gets to recover again.
+        }
+      }
+
+      // Stash on every outcome, including ok: a stream that fails partway
+      // through still wants the request id that opened it.
+      lastChatResponseRef.current = {
+        ok: response.ok,
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? undefined,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+        // The route's own verdict on whose fault this was, when it had the
+        // error object in hand. Read from a header because the body is
+        // consumed by the AI SDK before the reporter ever runs.
+        origin: response.headers.get("x-mcpjam-error-origin") ?? undefined,
+      };
+
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
         if (useAuthedFetch) {
@@ -2229,10 +2403,21 @@ export function useChatSession(
       }
       return response;
     },
-    [hostedRequiresWebChatApi]
+    [
+      hostedRequiresWebChatApi,
+      hostedChatboxId,
+      hostedRefreshAccessSession,
+      hostedOnAccessRevoked,
+    ]
   );
 
   const handleChatError = useCallback((chatError: Error) => {
+    // Every chat failure used to end here and go no further: this handler
+    // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
+    // that no-ops everything else. A hosted 502 produced zero client
+    // telemetry — the failure a user reported was one we had no record of.
+    reportChatFailure(chatError, lastChatResponseRef.current);
+
     // Try to recover a structured limitKind from a JSON-shaped error message
     // so the concurrency carve-out is honored on the SSE error path. Best
     // effort: untouched if the message isn't JSON.
@@ -2299,6 +2484,27 @@ export function useChatSession(
       string,
       string
     >;
+    // Consent capability for the local computer engine — a header, never the
+    // body, so it can't land in a persisted transcript. Only on a direct
+    // (non-chatbox) turn whose resolved engine is local; the server re-checks
+    // !HOSTED_MODE + non-guest + non-chatbox + verifies the token.
+    //
+    // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
+    // local engine only exists on the local server's mcp route (both this
+    // transmission AND the server-side resolver live there). An org-runtime
+    // model routes to /api/web/chat-v2, which has no local engine — so we send
+    // nothing local there (no stray consent header on the web route) and that
+    // turn's bash resolves cloud, as it must. Local engine + org model is a
+    // deliberate non-combo in v1.
+    const sendLocalEngine =
+      !shouldUseOrgAwareChatApi &&
+      resolvedLocalEngine &&
+      !hostedChatboxId &&
+      Boolean(localConsentToken) &&
+      authIsMemberRef.current;
+    if (sendLocalEngine && localConsentToken) {
+      mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
+    }
     // When authFetch carries the request (hosted builds, chatbox runtime
     // sessions), it owns the Authorization header — don't double-attach.
     const transportHeaders =
@@ -2414,6 +2620,10 @@ export function useChatSession(
           : getTrackedTaskScope();
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
+        const rewind =
+          rewindRef.current?.chatSessionId === chatSessionIdRef.current
+            ? rewindRef.current.lineage
+            : undefined;
         return {
           model: selectedModel,
           ...(shouldSendClientApiKey ? { apiKey } : {}),
@@ -2450,6 +2660,13 @@ export function useChatSession(
                 // to be an environment run.
                 ...(!hostedChatboxId && !hostedExecutionTarget && hostedHostId
                   ? { hostId: hostedHostId }
+                  : {}),
+                // "This machine": run this host's bash on the local computer
+                // engine. The consent capability rides the header above; the
+                // server ignores this without it (and off the /mcp direct
+                // path). Absent ⇒ the legacy cloud-family resolution.
+                ...(sendLocalEngine
+                  ? { computerEngine: "local" as const }
                   : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
@@ -2517,6 +2734,7 @@ export function useChatSession(
           ...(resumedVersionRef.current !== null
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
+          ...(rewind ? { rewind } : {}),
           // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
           // when non-empty so pre-feature traces stay byte-identical. The
           // chatbox path overrides this with the persisted host config server-
@@ -2568,6 +2786,11 @@ export function useChatSession(
     getAzureBaseUrl,
     hostStyle,
     chatFetch,
+    // Local computer engine: rebuild the transport when the resolved engine or
+    // consent token changes, so the header/body reflect a grant or toggle on
+    // the very next turn.
+    resolvedLocalEngine,
+    localConsentToken,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -3283,7 +3506,13 @@ export function useChatSession(
         widgetModelContext && widgetModelContext.length > 0
           ? widgetModelContext
           : undefined;
-      return (async () => {
+      // Resolves `true` once `baseSendMessage` has actually been invoked, and
+      // `false` on every fail-closed path below. The preflight bails by
+      // RETURNING (after surfacing its own toast), not by rejecting, so a caller
+      // that merely awaits this promise cannot tell "sent" from "swallowed" —
+      // `rewindToMessage` needs that distinction to avoid announcing a branch
+      // whose turn never ran. Callers that fire-and-forget are unaffected.
+      return (async (): Promise<boolean> => {
         // Hosted preflight: resolve selected runtime server NAMES → persisted
         // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
         // transport body builds, so the hosted send never carries a display
@@ -3298,6 +3527,15 @@ export function useChatSession(
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
         const serverNamesSnapshot = selectedServers;
+        // Snapshot the session this message was composed against. `useChat` is
+        // wired to `proxyTransport`, which delegates at REQUEST time to
+        // `latestTransportRef.current` — reassigned every render — so the POST
+        // body carries whatever `chatSessionId` is live when it fires, not the
+        // one this send was bound to. That indirection is what makes
+        // `rewindToMessage`'s branch work; it also means a session change
+        // during the preflight below would post this turn under an unrelated
+        // session and ingest it into that transcript.
+        const sessionAtSend = chatSessionIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -3324,7 +3562,19 @@ export function useChatSession(
               toast.error(
                 "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
               );
-              return;
+              return false;
+            }
+            // Same class of guard, on the session rather than the target: the
+            // thread moved (new chat, a history thread, or a rewind branch)
+            // while this message was being prepared, so the POST would land in
+            // a transcript this message was never composed for. Fail closed.
+            if (chatSessionIdRef.current !== sessionAtSend) {
+              pendingWidgetModelContextRef.current = undefined;
+              resolvedHostedServersRef.current = null;
+              toast.error(
+                "The chat changed while this message was being prepared. Send it again to run it in the current thread."
+              );
+              return false;
             }
             resolvedHostedServersRef.current = {
               serverIds: resolved.map((r) => r.serverId),
@@ -3338,7 +3588,7 @@ export function useChatSession(
                 ? error.message
                 : "Couldn't prepare the selected servers for this run."
             );
-            return; // fail closed — do not send with unresolved servers
+            return false; // fail closed — do not send with unresolved servers
           }
         }
         try {
@@ -3353,6 +3603,7 @@ export function useChatSession(
           resolvedHostedServersRef.current = null;
           throw error;
         }
+        return true;
       })();
     },
     [
@@ -3365,12 +3616,33 @@ export function useChatSession(
     ]
   );
 
+  // `sendMessage` is NOT a stable function, and callers that cross an `await`
+  // must not hold onto it. `useChat` recreates its internal `Chat` whenever its
+  // `id` changes, and the `sendMessage` it returns is a per-instance arrow
+  // property bound to THAT instance's private message state. `baseSendMessage`
+  // is therefore a new identity after every session change, which propagates
+  // into this wrapper (it lists `baseSendMessage` in its deps).
+  //
+  // `rewindToMessage` awaits a session change and then sends. A closure-captured
+  // `sendMessage` would send on the PRE-branch instance: the POST body would
+  // carry the branch's `chatSessionId` (the transport proxy reads a ref) while
+  // `messages` came from the original, untruncated store — and the response
+  // would stream into a `Chat` nothing is rendering. Read it through this ref
+  // instead, like `messagesRef`/`statusRef`/`chatSessionIdRef`.
+  //
+  // Assigned during render (not in an effect) so it is already fresh by the
+  // time any layout effect — including the one that resolves session
+  // hydration — runs.
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
+
   // Reset chat
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
+    rewindRef.current = null;
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
@@ -3401,21 +3673,178 @@ export function useChatSession(
       skipNextForkDetectionRef.current = true;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
-      // Return the hydration promise so callers can chain work that must run
-      // AFTER the seeded messages are applied (e.g. the eval handoff sending a
-      // widget's `ui/message` follow-up so the model replies to the seeded
-      // conversation). Existing callers ignore the return value.
+      rewindRef.current = null;
+      // Resolve to the minted session id (not just a void hydration signal) so
+      // callers can chain work that must run AFTER the seeded messages are
+      // applied (e.g. the eval handoff sending a widget's `ui/message`
+      // follow-up so the model replies to the seeded conversation) AND, per
+      // `rewindToMessage`, so a caller can confirm ITS OWN id — not some
+      // superseding session change — is the one that actually went live.
+      // Existing callers that ignore the return value are unaffected.
+      const nextSessionId = generateId();
       const hydrationPromise = queueSessionHydration({
-        sessionId: generateId(),
+        sessionId: nextSessionId,
         messages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],
       });
       onResetRef.current?.(options?.resetReason ?? "fork");
-      return hydrationPromise;
+      return hydrationPromise.then(() => nextSessionId);
     },
     [queueSessionHydration]
+  );
+
+  /**
+   * Rewind to a past user message and re-run the turn from edited text.
+   *
+   * BRANCHES instead of overwriting. Every turn ships the COMPLETE history to a
+   * row keyed by `chatSessionId` (`server/utils/web-chat-turn.ts:845-849`,
+   * `server/utils/chat-ingestion.ts:403`), so rewinding in place would replace
+   * the original transcript with the truncated one — the messages would be gone
+   * from the backend, not just from this tab.
+   *
+   * `startChatWithMessages` does the work: it mints a fresh `chatSessionId`
+   * seeded with the prefix and resets `resumedVersion` to null, which drops
+   * `expectedVersion` from the branch's first ingest and makes a 409 on that
+   * write impossible.
+   *
+   * Deliberately does NOT pass `messageId` to the AI SDK. That mutates the Chat
+   * store directly, so the wrapped `setMessages` never runs and no branch is
+   * ever created.
+   *
+   * The `await` is load-bearing: the transport `body()` reads `chatSessionId`
+   * from render scope, so sending before hydration lands would write this
+   * turn to the ORIGINAL row.
+   *
+   * That await resolving is NOT proof the new id ever committed, though: a
+   * superseded hydration (`clearPendingSessionHydration`, triggered by a
+   * `loadChatSession`/`resetChat`/fork-detecting `setMessages` that lands
+   * first) resolves the same promise — but the live id it leaves behind can
+   * be either the ORIGINAL id (nothing else committed either) or some THIRD
+   * id (the interloper's own session change won the race). Neither is safe
+   * to send into: the first re-creates the original data-loss bug, the second
+   * silently contaminates a session that has nothing to do with this branch.
+   * `startChatWithMessages` now resolves to the id IT minted, so the
+   * post-await check below can require an EXACT match against the live id —
+   * not just "it changed from what it was" — and refuse either failure mode.
+   *
+   * Return value:
+   * - `{ previousChatSessionId }` — the branch is live AND the edited turn was
+   *   actually dispatched on it. Callers may report success and offer a way
+   *   back to `previousChatSessionId`.
+   * - `null` — nothing to report. Either no branch was created (refused
+   *   mid-stream, target message gone, or a concurrent session switch won the
+   *   race) or a branch was created but the send could NOT be dispatched — the
+   *   `sendMessage` preflight failed closed, having already surfaced its own
+   *   error toast. Callers must stay silent and must not touch bookkeeping.
+   */
+  const rewindToMessage = useCallback(
+    async (options: {
+      messageId: string;
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+      metadata?: Record<string, unknown>;
+      /**
+       * Runs immediately before the branch is minted, and ONLY then — every
+       * refusal above this point returns without calling it.
+       *
+       * Callers detach from the resumed thread here (baseline, pending
+       * selection, `resumedVersion`, the conversation URL). That has to happen
+       * before the branch's turn starts, or the post-stream conflict check
+       * captures a baseline naming the ORIGINAL thread. But doing it in the
+       * caller *before* `rewindToMessage` meant a refusal left the session id
+       * unchanged with its optimistic-concurrency guard already torn down: the
+       * next ordinary send then rewrote the original's row carrying no
+       * `expectedVersion`, silently clobbering turns another tab or device had
+       * added. Deferring to this hook keeps the teardown and the branch
+       * atomic — refuse early and the thread is untouched.
+       */
+      onBeforeBranch?: () => void;
+    }): Promise<{ previousChatSessionId: string } | null> => {
+      // Refuse only mid-flight. A failed turn ("error") is deliberately
+      // allowed through — rewinding is the natural way to recover from one,
+      // and the prefix excludes the broken tail by construction.
+      if (
+        statusRef.current === "submitted" ||
+        statusRef.current === "streaming"
+      ) {
+        return null;
+      }
+
+      const targetIndex = messagesRef.current.findIndex(
+        (message) => message.id === options.messageId
+      );
+      if (targetIndex < 0) {
+        return null;
+      }
+
+      const previousChatSessionId = chatSessionIdRef.current;
+      const prefix = messagesRef.current.slice(0, targetIndex);
+
+      // Past every refusal that leaves the thread untouched — safe to detach.
+      options.onBeforeBranch?.();
+
+      const branchSessionId = await startChatWithMessages(prefix, {
+        resetReason: "fork",
+      });
+
+      // An awaited resolve is not proof of commit: clearPendingSessionHydration
+      // resolves a SUPERSEDED hydration too. If anything switched sessions in
+      // that window, the live id is either still the original or some third
+      // session an interloper installed — sending into either corrupts a row
+      // that has nothing to do with this branch. Refuse instead.
+      if (chatSessionIdRef.current !== branchSessionId) {
+        return null;
+      }
+
+      rewindRef.current = {
+        chatSessionId: branchSessionId,
+        lineage: {
+          parentChatSessionId: previousChatSessionId,
+          rewoundFromMessageId: options.messageId,
+          reason: "message_edit",
+        },
+      };
+
+      // Read through the ref, NOT the closure: the `sendMessage` captured
+      // before the await belongs to the pre-branch `Chat` instance and would
+      // send the original untruncated history. See `sendMessageRef`.
+      // Awaited, not fire-and-forget. `sendMessage` runs its own async preflight
+      // (hosted server-id resolution) that can fail CLOSED — it surfaces its own
+      // toast and returns without ever calling `baseSendMessage` — and by then
+      // the branch has already been minted. Returning success before that
+      // settles gave the user "New branch created" plus a server-resolution
+      // error, sitting on a truncated prefix whose turn never ran and with the
+      // original detached: exactly the orphan branch the pre-mint readiness
+      // checks exist to prevent.
+      //
+      // Note the fail-closed paths RESOLVE rather than reject, so awaiting alone
+      // proves nothing — hence the boolean. The try/catch covers the remaining
+      // case where the underlying send throws, which would otherwise escape as
+      // an unhandled rejection.
+      let dispatched = false;
+      try {
+        dispatched = await sendMessageRef.current({
+          text: options.text,
+          files: options.files,
+          metadata: options.metadata,
+        });
+      } catch {
+        return null;
+      }
+      if (!dispatched) {
+        return null;
+      }
+
+      return { previousChatSessionId };
+    },
+    [startChatWithMessages]
   );
 
   const loadChatSession = useCallback(
@@ -3513,6 +3942,7 @@ export function useChatSession(
       }
 
       skipNextForkDetectionRef.current = true;
+      rewindRef.current = null;
       await queueSessionHydration({
         sessionId: session.chatSessionId,
         messages: uiMessages,
@@ -3572,12 +4002,15 @@ export function useChatSession(
         if (!active) return;
         if (token) {
           resolvedAuthHeaders = { Authorization: `Bearer ${token}` };
+          authIsMemberRef.current = true;
           setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         }
       } catch {
         // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
       }
+      // Anything past the WorkOS-token path is a guest (or unauthenticated).
+      if (!resolved) authIsMemberRef.current = false;
 
       // In non-hosted mode, attach a guest bearer so local chat persistence and
       // history lookups use the same Convex identity as the active thread.
@@ -3976,6 +4409,7 @@ export function useChatSession(
     // Chat state
     messages,
     setMessages,
+    rewindToMessage,
     sendMessage,
     stop: stopChat,
     status,
