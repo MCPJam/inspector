@@ -520,7 +520,9 @@ Your LLM provider rejected the request because you hit a rate limit or quota.
 
 These codes come from the environment resolution service. They appear in the Playground, the Environment Tools pane, and on chatbox shared links when a project environment cannot be resolved to a usable set of servers. The error card offers an action where one exists — for example, **Open Servers** for `ENV_NO_SERVERS` — rather than a generic retry that would fail identically.
 
-When a visitor opens a chatbox shared link and the scenario's environment is archived, they see **"This link has been archived"** instead of a generic failure message. For other unresolvable environment states they see **"This link isn't available right now"**. Signing in cannot change either state — the environment itself must be restored or reconfigured by the scenario owner.
+**Scenario owner (share panel):** when a scenario's environment stops resolving, the tester link is withheld on the scenario detail page — the link field reads "Withheld — this scenario can't run." and both **Copy link** and **Invite** are disabled. The reason from the environment resolution service is shown inline. The link is restored automatically once the scenario points at an environment that resolves; nothing is rotated or revoked.
+
+**Tester (visitor side):** when a visitor opens a chatbox shared link and the scenario's environment is archived, they see **"This link has been archived"** instead of a generic failure message. For other unresolvable environment states they see **"This link isn't available right now"**. Signing in cannot change either state — the environment itself must be restored or reconfigured by the scenario owner.
 
 ### No servers
 
