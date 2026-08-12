@@ -269,6 +269,32 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+/**
+ * Keep the Streamable HTTP failure reachable on an error whose `cause` is
+ * already the SSE failure. The two transports usually fail the same way, but
+ * when they don't, `cause` alone silently discards half the story — including
+ * the case where Streamable HTTP carried the auth challenge and SSE merely
+ * timed out afterwards.
+ *
+ * Non-enumerable so it never widens a log line or a `JSON.stringify` of the
+ * error. Both combined-failure throw sites go through here so neither can
+ * drift away from the other.
+ */
+function attachStreamableCause<E extends Error>(
+  error: E,
+  streamableError: unknown
+): E {
+  if (streamableError !== undefined) {
+    Object.defineProperty(error, "streamableCause", {
+      value: streamableError,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return error;
+}
+
 type UpstreamToolDefinition = NonNullable<
   NonNullable<Parameters<ManagedMcpClient["callTool"]>[1]>["toolDefinition"]
 >;
@@ -2735,10 +2761,18 @@ export class MCPClientManager {
               { cause: error }
             );
           }
+          // Preserve `cause`: `formatError` reduces the failure to its
+          // message, and the Node errno (`ECONNREFUSED`, `ENOTFOUND`, ...)
+          // lives on the error object — usually one `.cause` hop down, since
+          // undici wraps connect failures as `TypeError("fetch failed")`.
+          // Without the chain, `extractNodeErrno` finds nothing and
+          // `describeError` degrades from a specific transport slug to
+          // message-regex guessing.
           throw new Error(
             `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
               error
-            )}`
+            )}`,
+            { cause: error }
           );
         }
       }
@@ -2781,15 +2815,31 @@ export class MCPClientManager {
       if (sseAuthCheck.isAuth || streamableAuthCheck.isAuth) {
         const statusCode =
           sseAuthCheck.statusCode ?? streamableAuthCheck.statusCode;
-        throw new MCPAuthError(
-          `Authentication failed for MCP server "${serverId}": ${combinedErrorMessage}`,
-          statusCode,
-          { cause: error }
+        // `cause` stays the SSE failure for continuity, but the Streamable
+        // attempt matters twice as much here: when IT is the auth failure and
+        // SSE failed for some other reason, the challenge that triggered this
+        // branch lives only on `streamableError`.
+        throw attachStreamableCause(
+          new MCPAuthError(
+            `Authentication failed for MCP server "${serverId}": ${combinedErrorMessage}`,
+            statusCode,
+            { cause: error }
+          ),
+          streamableError
         );
       }
 
-      throw new Error(
-        `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`
+      // `cause` is the SSE failure (the last attempt, and the one whose errno
+      // the message above quotes). Both transports fail with the same errno
+      // whenever the server is simply unreachable — ECONNREFUSED, ENOTFOUND —
+      // so this is the chain `extractNodeErrno` needs to reach a specific
+      // `transport/*` slug instead of message-regex guessing.
+      throw attachStreamableCause(
+        new Error(
+          `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+          { cause: error }
+        ),
+        streamableError
       );
     }
   }

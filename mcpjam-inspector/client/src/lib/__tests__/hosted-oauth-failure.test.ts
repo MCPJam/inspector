@@ -67,3 +67,100 @@ describe("describeHostedOAuthFailure", () => {
     expect(describeHostedOAuthFailure(null, "X")).toBeNull();
   });
 });
+
+// Structured shapes: what actually reaches the client once the backend
+// classifies the failure (backend #922/#927). The WebApiError carries `code`
+// and `details` off the JSON error body; the messages here are the real ones
+// the backend sends, not invented.
+describe("describeHostedOAuthFailure structured backend shapes", () => {
+  const UNREACHABLE_503 = Object.assign(
+    new Error("Could not reach the authorization server (HTTP 502)."),
+    {
+      code: "authorization_server_unreachable",
+      details: {
+        authorizationServerUnreachable: true,
+        serverId: "srv_1",
+        serverName: "Descope",
+        failure: {
+          url: "https://eliya.descope.team/oauth2/v1/apps/token",
+          status: 502,
+          body: '{"title":"Error 502: Bad gateway","retryable":true}',
+        },
+      },
+    }
+  );
+
+  it("names the host from the recorded failure and offers Retry", () => {
+    const copy = describeHostedOAuthFailure(UNREACHABLE_503, "Descope");
+
+    expect(copy).toEqual({
+      kind: "unreachable",
+      title: "Could not reach eliya.descope.team",
+      detail: [
+        "https://eliya.descope.team/oauth2/v1/apps/token",
+        'HTTP 502, {"title":"Error 502: Bad gateway","retryable":true}',
+      ],
+      action: "retry",
+    });
+  });
+
+  it("falls back to the backend message when no failure was recorded", () => {
+    const copy = describeHostedOAuthFailure(
+      Object.assign(new Error("Could not reach the authorization server."), {
+        code: "authorization_server_unreachable",
+        details: { authorizationServerUnreachable: true, failure: null },
+      }),
+      "Descope"
+    );
+
+    expect(copy).toEqual({
+      kind: "unreachable",
+      title: "Could not reach the authorization server",
+      detail: ["Could not reach the authorization server."],
+      action: "retry",
+    });
+  });
+
+  it("classifies the backend's generic 401 as a decline needing Reconnect", () => {
+    // The inspector server remaps refresh_token_invalid to UNAUTHORIZED but
+    // keeps details.refreshTokenInvalid; the message matches no provider
+    // regex, so only the structured branch can catch it.
+    const copy = describeHostedOAuthFailure(
+      Object.assign(
+        new Error("Hosted OAuth refresh token is invalid. Please reconnect."),
+        {
+          code: "UNAUTHORIZED",
+          details: {
+            oauthRequired: true,
+            refreshTokenInvalid: true,
+            serverId: "srv_1",
+            serverName: "Linear",
+          },
+        }
+      ),
+      "Linear"
+    );
+
+    expect(copy?.kind).toBe("declined");
+    expect(copy?.action).toBe("reconnect");
+    expect(copy?.detail).toEqual([
+      "Hosted OAuth refresh token is invalid. Please reconnect.",
+    ]);
+  });
+});
+
+describe("describeHostedOAuthFailure invalid_client messages", () => {
+  // Real CONVEX-PY events: paths that still surface the raw provider message
+  // (older backend, uncaught throws) rather than the structured 401.
+  it.each([
+    "Uncaught InvalidClientError: Unknown client. The authorization flow may have expired — please retry.",
+    "Uncaught InvalidClientError: Invalid client_id",
+    "Uncaught InvalidClientError: Client authentication failed (e.g., unknown client, no client authentication included, or unsupported authentication method).",
+  ])("asks for a reconnect: %s", (message) => {
+    const copy = describeHostedOAuthFailure(message, "Notion");
+
+    expect(copy?.kind).toBe("declined");
+    expect(copy?.title).toBe("Refresh token declined for Notion");
+    expect(copy?.action).toBe("reconnect");
+  });
+});

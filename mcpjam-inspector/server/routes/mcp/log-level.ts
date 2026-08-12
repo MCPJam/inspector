@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
 import "../../types/hono"; // Extend Hono context
-import { logger } from "../../utils/logger";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 type SetLogLevelRequest = {
   serverId?: string;
@@ -110,9 +110,10 @@ logLevel.post("/", async (c) => {
           : `Logging level set to "${level}" for server "${serverId}" (${mechanism})`,
     });
   } catch (error) {
-    logger.error("Error setting MCP server logging level", error, {
-      serverId,
-      level,
+    reportRouteFailure("Error setting MCP server logging level", error, {
+      source: "mcp.log-level.set",
+      hop: "user_server_hop",
+      context: { serverId, level },
     });
     return c.json(
       {

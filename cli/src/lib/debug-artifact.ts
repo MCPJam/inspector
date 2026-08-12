@@ -6,7 +6,7 @@ import {
   type ServerDoctorResult,
 } from "@mcpjam/sdk";
 import { getCliRpcLogEvents, type CliRpcLogCollector } from "./rpc-logs.js";
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./redaction.js";
 import { operationalError } from "./output.js";
 import {
   normalizeCliError,
@@ -125,7 +125,7 @@ export function buildDebugArtifactEnvelope<TTarget = unknown>(options: {
     payload._rpcLogs = rpcLogs;
   }
 
-  return redactSensitiveValue(payload) as DebugArtifactEnvelope<TTarget>;
+  return redactForTelemetry(payload) as DebugArtifactEnvelope<TTarget>;
 }
 
 export function buildCommandArtifactError(
@@ -169,7 +169,7 @@ export async function writeDebugArtifact(
   payload: unknown,
 ): Promise<string> {
   const resolvedPath = path.resolve(process.cwd(), outputPath);
-  const redactedPayload = redactSensitiveValue(payload);
+  const redactedPayload = redactForTelemetry(payload);
 
   try {
     await mkdir(path.dirname(resolvedPath), { recursive: true });
