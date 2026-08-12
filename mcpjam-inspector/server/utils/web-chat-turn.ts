@@ -843,7 +843,6 @@ export async function streamWebChatTurn(
           ? { surface: persist.surface }
           : {}),
         chatboxId: persist.chatboxId,
-        accessVersion: persist.accessVersion,
         authHeader: runtime.authHeader,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),

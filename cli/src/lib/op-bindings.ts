@@ -91,6 +91,14 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_project_environment: { command: "environments update" },
   archive_project_environment: { command: "environments archive" },
   restore_project_environment: { command: "environments restore" },
+  list_project_plugins: {
+    excluded:
+      "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
+  },
+  get_plugin_version: {
+    excluded:
+      "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
+  },
   list_sandbox_images: { command: "images list" },
   get_sandbox_image: { command: "images get" },
   create_sandbox_image: { command: "images create" },

@@ -1519,4 +1519,219 @@ describe("useChatSession — environment execution target", () => {
     expect(mockState.authFetch).not.toHaveBeenCalled();
     unmount();
   });
+
+  describe("chatbox access recovery", () => {
+    const TURN_URL = "/api/web/chat-v2";
+
+    function turnInit(accessVersion: number) {
+      return {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatboxId: "cbx_recover",
+          accessVersion,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      } satisfies RequestInit;
+    }
+
+    function accessErrorResponse(code: string, status: number) {
+      return new Response(JSON.stringify({ code, message: "no" }), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    function renderChatbox(
+      hostedOverrides: Record<string, unknown>
+    ) {
+      return renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+            chatboxId: "cbx_recover",
+            accessVersion: 1,
+            requiresWebChatApi: true,
+            ...hostedOverrides,
+          },
+        })
+      );
+    }
+
+    /** The transport's fetch IS chatFetch — call it directly. */
+    function chatFetch() {
+      return lastTransportOptions.fetch as (
+        input: RequestInfo | URL,
+        init?: RequestInit
+      ) => Promise<Response>;
+    }
+
+    it("recovers from a 409 stale turn and replays it with the fresh accessVersion", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 12 });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderChatbox({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(200);
+      expect(refreshAccessSession).toHaveBeenCalledTimes(1);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+
+      // The replay is byte-identical except for the field that went stale.
+      const replayInit = mockState.authFetch.mock.calls[1][1] as RequestInit;
+      expect(JSON.parse(replayInit.body as string)).toEqual({
+        chatboxId: "cbx_recover",
+        accessVersion: 12,
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(onAccessRevoked).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it("recovers from a direct denial too — /redeem re-mints the link grant", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 3 });
+      const { unmount } = renderChatbox({ refreshAccessSession });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(200);
+      expect(refreshAccessSession).toHaveBeenCalledTimes(1);
+      unmount();
+    });
+
+    it("never recovers twice — a replay that also fails is final", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 2 });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderChatbox({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409))
+        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409));
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(409);
+      expect(refreshAccessSession).toHaveBeenCalledTimes(1);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+      // A still-stale replay is not a revocation.
+      expect(onAccessRevoked).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it("revokes when the replay itself comes back denied", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 2 });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderChatbox({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403))
+        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403));
+
+      await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(onAccessRevoked).toHaveBeenCalledTimes(1);
+      expect(onAccessRevoked).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 403, code: "CHATBOX_ACCESS_DENIED" })
+      );
+      unmount();
+    });
+
+    it("revokes when the recovery redeem is itself definitively refused", async () => {
+      const error = { status: 403, code: "CHATBOX_MEMBERS_ONLY", message: "no" };
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: false, reason: "denied", error });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderChatbox({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch.mockResolvedValue(
+        accessErrorResponse("CHATBOX_ACCESS_DENIED", 403)
+      );
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(403);
+      // No replay — the redeem already said no.
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+      expect(onAccessRevoked).toHaveBeenCalledWith(error);
+      unmount();
+    });
+
+    it("leaves a transient recovery failure to the normal error path", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: false, reason: "transient" });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderChatbox({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch.mockResolvedValue(
+        accessErrorResponse("CHATBOX_ACCESS_STALE", 409)
+      );
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      // The original error surfaces; the next send gets a fresh attempt.
+      expect(response.status).toBe(409);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+      expect(onAccessRevoked).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it("skips classification entirely on a non-chatbox turn", async () => {
+      const refreshAccessSession = vi.fn();
+      const { unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+            requiresWebChatApi: true,
+            refreshAccessSession,
+          },
+        })
+      );
+
+      mockState.authFetch.mockResolvedValue(
+        accessErrorResponse("CHATBOX_ACCESS_STALE", 409)
+      );
+
+      await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(refreshAccessSession).not.toHaveBeenCalled();
+      unmount();
+    });
+  });
 });
