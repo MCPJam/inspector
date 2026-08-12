@@ -54,11 +54,16 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabBlocked("tasks")).toBe(false);
   });
 
-  it("blocks tracing and auth hashes in hosted mode", () => {
+  it("blocks the tracing hash in hosted mode", () => {
     expect(HOSTED_HASH_BLOCKED_TABS).toContain("tracing");
-    expect(HOSTED_HASH_BLOCKED_TABS).toContain("auth");
     expect(isHostedHashTabBlocked("tracing")).toBe(true);
-    expect(isHostedHashTabBlocked("auth")).toBe(true);
+  });
+
+  // The Auth surface is retired. Without this, reintroducing it would make the
+  // policy silently permissive rather than failing here.
+  it("no longer knows about the retired auth surface", () => {
+    expect(HOSTED_HASH_BLOCKED_TABS).not.toContain("auth");
+    expect(isHostedHashTabBlocked("auth")).toBe(false);
   });
 
   it("treats #chat as allowed after normalization to #playground", () => {

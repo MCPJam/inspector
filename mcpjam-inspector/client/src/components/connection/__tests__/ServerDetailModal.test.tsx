@@ -365,7 +365,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(protocolSelect);
     await user.click(
-      await screen.findByRole("option", { name: "November (2025-11-25)" })
+      await screen.findByRole("option", { name: "2025-11-25" })
     );
 
     await waitFor(() => {
@@ -412,7 +412,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(hostDefaultSelect);
     await user.click(
-      await screen.findByRole("option", { name: "November (2025-11-25)" })
+      await screen.findByRole("option", { name: "2025-11-25" })
     );
 
     await waitFor(() => {
@@ -430,7 +430,7 @@ describe("ServerDetailModal", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByRole("option", { name: "November (2025-11-25)" })
+        screen.queryByRole("option", { name: "2025-11-25" })
       ).not.toBeInTheDocument();
     });
     unmount();
@@ -452,7 +452,7 @@ describe("ServerDetailModal", () => {
     );
 
     const latestSelect = getProtocolVersionCombobox();
-    expect(latestSelect).toHaveTextContent("November (2025-11-25)");
+    expect(latestSelect).toHaveTextContent("2025-11-25");
 
     await user.click(latestSelect);
     await user.click(
@@ -497,7 +497,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const protocolSelect = getProtocolVersionCombobox();
-    expect(protocolSelect).toHaveTextContent("November (2025-11-25)");
+    expect(protocolSelect).toHaveTextContent("2025-11-25");
 
     await user.click(protocolSelect);
     await user.click(

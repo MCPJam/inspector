@@ -44,7 +44,6 @@ import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
 import { TracingTab } from "./components/TracingTab";
-import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
@@ -140,7 +139,9 @@ import {
   ChatboxChatPage,
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
+import { isEmbeddedPreview } from "./lib/embedded-preview";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
@@ -222,15 +223,14 @@ import {
 import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
+  OAUTH_PENDING_STORAGE_KEY,
 } from "./lib/oauth/mcp-oauth";
 import {
   buildElectronMcpCallbackUrl,
   resolveEffectiveWireProtocolVersion,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
-import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
-  getDefaultClientCapabilities,
   isKnownProtocolVersion,
   readTasksPolicy,
   readXaaEnterprisePolicy,
@@ -302,6 +302,7 @@ import {
   getAppSurfaceByNavSegment,
   isAppSurfaceId,
 } from "@/shared/app-surfaces";
+import { sanitizeTraceErrorMessage } from "./lib/oauth/trace-redaction";
 import { waitForUiToolNames } from "./lib/webmcp/ui-tools-readiness";
 import { listSurfaceGroupToolNames } from "./lib/webmcp/groups";
 import {
@@ -336,7 +337,7 @@ function clearHostedCallbackRetryState() {
   clearHostedOAuthPendingState();
   clearHostedOAuthResumeMarker();
   clearGuestSession();
-  localStorage.removeItem("mcp-oauth-pending");
+  localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
   localStorage.removeItem("mcp-oauth-return-hash");
 
   for (const storage of [window.localStorage, window.sessionStorage]) {
@@ -355,38 +356,39 @@ function clearHostedCallbackRetryState() {
   }
 }
 
-const OAUTH_DEBUGGER_SECRET_PATTERNS = [
-  /\b(access_token|refresh_token|id_token|client_secret|clientSecret|code_verifier|code|state)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/gi,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
-  /\bBasic\s+[A-Za-z0-9+/=._~-]+\b/gi,
-];
+/**
+ * Redact the OAuth debugger's error-boundary output.
+ *
+ * Uses the SDK's single trace redactor rather than a local pattern list — this
+ * used to be a fourth private copy, and a private copy is how the sensitive-
+ * field set drifts.
+ *
+ * The stack is redacted in ONE pass with a raised cap, not line by line. A
+ * multi-line payload can put a JSON credential's key and its value on separate
+ * lines, and splitting first hands the redactor two fragments that match
+ * neither — so the value survives into copied and reported output. The cap
+ * exists for a single error message; a stack legitimately needs more room.
+ */
+const MAX_REDACTED_STACK = 8_000;
 
-function sanitizeOAuthDebuggerText(value: string | null | undefined): string {
-  if (!value) {
-    return "";
-  }
-
-  return OAUTH_DEBUGGER_SECRET_PATTERNS.reduce(
-    (sanitized, pattern) =>
-      sanitized.replace(pattern, (...args) => {
-        const key = typeof args[1] === "string" ? args[1] : undefined;
-        const separator = typeof args[2] === "string" ? args[2] : undefined;
-        return key && separator ? `${key}${separator}[redacted]` : "[redacted]";
-      }),
-    value
-  );
+function redactStackLikeText(value: string | null | undefined): string {
+  if (!value) return "";
+  return sanitizeTraceErrorMessage(value, {
+    maxLength: MAX_REDACTED_STACK,
+    maxScanned: MAX_REDACTED_STACK * 2,
+  });
 }
 
-function sanitizeOAuthDebuggerError(error: Error | null) {
+function redactOAuthDebuggerError(error: Error | null) {
   return {
-    name: sanitizeOAuthDebuggerText(error?.name ?? "Error"),
-    message: sanitizeOAuthDebuggerText(error?.message ?? "Unknown error"),
-    stack: sanitizeOAuthDebuggerText(error?.stack),
+    name: sanitizeTraceErrorMessage(error?.name ?? "Error"),
+    message: sanitizeTraceErrorMessage(error?.message ?? "Unknown error"),
+    stack: redactStackLikeText(error?.stack),
   };
 }
 
 function formatOAuthDebuggerErrorDetails(error: Error | null): string {
-  const sanitized = sanitizeOAuthDebuggerError(error);
+  const sanitized = redactOAuthDebuggerError(error);
   return [
     "OAuth Debugger error",
     `Name: ${sanitized.name}`,
@@ -544,8 +546,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <PromptsRoute />;
     case "tasks":
       return <TasksRoute />;
-    case "auth":
-      return <AuthRoute />;
     case "skills":
       return <SkillsRoute />;
     case "learning":
@@ -1794,17 +1794,6 @@ export function TasksRoute() {
   );
 }
 
-export function AuthRoute() {
-  const { selectedMCPConfig, appState } = useAppRouteContext();
-  return (
-    <AuthTab
-      serverConfig={selectedMCPConfig}
-      serverEntry={appState.servers[appState.selectedServer]}
-      serverName={appState.selectedServer}
-    />
-  );
-}
-
 export function OAuthFlowRoute() {
   const {
     appState,
@@ -1838,7 +1827,7 @@ export function OAuthFlowRoute() {
                   OAuth Debugger crashed
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {sanitizeOAuthDebuggerError(error).message}
+                  {redactOAuthDebuggerError(error).message}
                 </p>
               </div>
               <div className="flex justify-center gap-2">
@@ -1854,13 +1843,13 @@ export function OAuthFlowRoute() {
         );
       }}
       onError={(error, errorInfo) => {
-        const sanitizedError = sanitizeOAuthDebuggerError(error);
+        const sanitizedError = redactOAuthDebuggerError(error);
         track("oauth_debugger_error_boundary", {
           location: "oauth_flow",
           name: sanitizedError.name,
           message: sanitizedError.message,
           stack: sanitizedError.stack,
-          componentStack: sanitizeOAuthDebuggerText(errorInfo.componentStack),
+          componentStack: redactStackLikeText(errorInfo.componentStack),
         });
       }}
     >
@@ -2316,7 +2305,7 @@ export default function App() {
       }
 
       clearHostedOAuthPendingState();
-      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
@@ -2749,6 +2738,10 @@ export default function App() {
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     nonProdLockdown: NON_PROD_LOCKDOWN,
+    // Read on every render, like `chatboxPathToken` above: framing is a fact
+    // about this document, fixed for its lifetime, so there is nothing to
+    // memoize and nothing that can change under us.
+    embeddedPreview: isChatboxChatRoute && isEmbeddedPreview(),
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
@@ -2903,8 +2896,7 @@ export default function App() {
       activeTab === "prompts" ||
       activeTab === "tasks" ||
       activeTab === "conformance" ||
-      activeTab === "compatibility" ||
-      activeTab === "auth";
+      activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(projectServers).find(
@@ -2952,9 +2944,15 @@ export default function App() {
   // The host is the authoritative source once `activeHost` hydrates; the
   // shadow path only matters during the bootstrap window before
   // `hostConfigsV2:getProjectDefault` returns.
-  const hostedClientCapabilities = (activeHost?.clientCapabilities ??
-    getEffectiveProjectClientCapabilities(activeProject?.clientConfig) ??
-    getDefaultClientCapabilities()) as Record<string, unknown>;
+  // Memoized because this feeds `useApiContext`'s dependency array. Computing
+  // it inline returned a fresh object on every render whenever the host had
+  // not hydrated capabilities — i.e. whenever a server was failing to connect —
+  // which closed a render-speed refetch loop on /api/web/tools/list. See the
+  // hook for the full chain.
+  const hostedClientCapabilities = useHostedClientCapabilities(
+    activeHost?.clientCapabilities,
+    activeProject?.clientConfig,
+  );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,

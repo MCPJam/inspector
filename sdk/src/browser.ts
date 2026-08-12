@@ -26,7 +26,19 @@ export {
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/model-output.js";
-export { redactSensitiveValue } from "./redaction.js";
+export { redactForTelemetry } from "./telemetry-redaction.js";
+/**
+ * @deprecated Renamed to `redactForTelemetry`. Kept as an alias so external
+ * consumers do not break on the rename; there is no plan to remove it soon.
+ *
+ * The rename exists because this is the SENTRY redactor: it over-redacts on
+ * purpose, replacing whole values rather than preserving a correlatable
+ * prefix. The OAuth *display* redactor is
+ * `sanitizeOAuthTraceValue` in `oauth/state-machines/trace-redaction.ts`, and
+ * the two must never be confused for each other — one being used where the
+ * other belongs is how a credential either leaks or becomes unusable.
+ */
+export { redactForTelemetry as redactSensitiveValue } from "./telemetry-redaction.js";
 
 // Error describer — pure, browser-safe. Same module exported from the
 // root entrypoint; client code MUST import from this `/browser` subpath
@@ -241,6 +253,27 @@ export type {
   OAuthTraceStepSnapshot,
   OAuthTraceStepStatus,
 } from "./oauth/state-machines/trace.js";
+// The single owner of OAuth trace redaction. The inspector re-exports these
+// rather than keeping its own copy — the two sets had already drifted (`state`
+// was sensitive on one side only), and drift here is a leak.
+export {
+  OAUTH_TRACE_SENSITIVE_FIELD_NAMES,
+  describeOAuthStateMatch,
+  isCredentialShapedAuthValue,
+  isSensitiveHeaderName,
+  isSensitiveQueryParamName,
+  isSensitiveTraceFieldName,
+  parseOAuthRequestFields,
+  redactSensitiveTraceValue,
+  sanitizeOAuthHeaders,
+  sanitizeOAuthTraceValue,
+  sanitizeOAuthUrl,
+  sanitizeTraceErrorMessage,
+} from "./oauth/state-machines/trace-redaction.js";
+export type {
+  OAuthRequestFields,
+  OAuthStateMatchDiagnostics,
+} from "./oauth/state-machines/trace-redaction.js";
 export {
   getStepInfo,
   getStepIndex,

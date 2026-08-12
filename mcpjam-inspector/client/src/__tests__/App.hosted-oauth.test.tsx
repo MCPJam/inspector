@@ -294,6 +294,11 @@ vi.mock("../lib/theme-utils", () => ({
 }));
 
 vi.mock("../lib/oauth/mcp-oauth", () => ({
+  // Literal rather than the real export: the module under mock is the one
+  // being stubbed out. Drift is caught by the ratchet in
+  // lib/oauth/__tests__/oauth-callback-recovery.test.ts, which pins the
+  // constant to this exact value.
+  OAUTH_PENDING_STORAGE_KEY: "mcp-oauth-pending",
   completeHostedOAuthCallback: mockCompleteHostedOAuthCallback,
   hasOAuthConfig: vi.fn(() => false),
   handleOAuthCallback: mockHandleOAuthCallback,
@@ -363,9 +368,6 @@ vi.mock("../components/client-config/ProjectClientConfigSync", () => ({
 }));
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
-}));
-vi.mock("../components/AuthTab", () => ({
-  AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
   OAuthFlowTab: (props: unknown) => {

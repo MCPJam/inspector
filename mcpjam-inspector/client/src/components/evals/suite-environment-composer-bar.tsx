@@ -33,7 +33,6 @@ import {
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
-import { CompareClientsButton } from "@/components/evals/compare-clients-button";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
@@ -318,7 +317,6 @@ function EnvironmentModeBar({
           }
           testIdPrefix="suite-env"
         />
-        <CompareClientsButton hostIds={state.stack.hostIds} />
       </div>
       {unresolvedCount > 0 ? (
         <p
@@ -501,7 +499,6 @@ function LegacyModeBar({
             );
           })
         )}
-        <CompareClientsButton hostIds={hostIds} />
       </div>
 
       {computersEnabled && editable && suite.projectId ? (

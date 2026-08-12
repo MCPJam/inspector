@@ -55,6 +55,38 @@ describe("required-metadata policy", () => {
     expect(requiresAdvertisedS256(version)).toBe(S256_ERAS.includes(version));
   });
 
+  // Both gates are denylists so that an era nobody has added yet inherits the
+  // strict policy. An allowlist would fail the other way: a 2027 era would
+  // match no literal, quietly revert to warn-and-continue, and emit no
+  // compiler diagnostic to notice it by.
+  it("defaults an unrecognized future era to strict", () => {
+    expect(requiresAdvertisedAuthorizationServers("2027-01-01")).toBe(true);
+    expect(requiresAdvertisedS256("2027-01-01")).toBe(true);
+    expect(
+      describePkceMetadataNonConformance(["plain"], "2027-01-01"),
+    ).toContain("without S256");
+    expect(
+      selectAuthorizationServerFromResourceMetadata({
+        authorizationServers: undefined,
+        fallbackServerUrl: SERVER_URL,
+        protocolVersion: "2027-01-01",
+      }).error,
+    ).toContain("authorization_servers");
+  });
+
+  it("trims a padded authorization server rather than passing it through", () => {
+    expect(
+      selectAuthorizationServerFromResourceMetadata({
+        authorizationServers: ["  https://auth.example.com  "],
+        fallbackServerUrl: SERVER_URL,
+        protocolVersion: "2025-11-25",
+      }),
+    ).toEqual({
+      authorizationServerUrl: "https://auth.example.com",
+      substituted: false,
+    });
+  });
+
   it("leaves PKCE metadata unchecked on eras that never required it", () => {
     for (const version of ["2025-03-26", "2025-06-18"] as const) {
       expect(describePkceMetadataNonConformance([], version)).toBeUndefined();
@@ -322,7 +354,7 @@ describe.each(S256_ERAS)("PKCE metadata verification (%s)", (version) => {
     await advance(machine);
 
     // Still surfaced, but as a warning attached to metadata the flow kept.
-    expect(getState().error ?? "").toMatch(/^Warning:|S256/);
+    expect(getState().error ?? "").toMatch(/^Warning:/);
     expect(getState().authorizationServerMetadata).toBeTruthy();
   });
 
