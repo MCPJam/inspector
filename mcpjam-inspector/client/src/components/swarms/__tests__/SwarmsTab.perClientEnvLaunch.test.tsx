@@ -297,13 +297,16 @@ function describeAcrossBothClients() {
     target: { value: "Finance ops reconciling payouts" },
   });
   const picker = screen.getByTestId("new-swarm-environments-picker");
-  fireEvent.click(picker);
+  // Auto-seed already has env-gpt; one click adds env-claude.
   fireEvent.click(picker);
   expect(picker).toHaveTextContent("2 env");
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The flow mirrors resumable state into sessionStorage; clear leftovers so a
+  // prior test's Running step can't resurrect on the next render.
+  sessionStorage.clear();
   environmentsRef.current = perClientEnvironments();
   let personaSeq = 0;
   let journeySeq = 0;
