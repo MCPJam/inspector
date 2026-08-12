@@ -200,6 +200,18 @@ function desiredBody(def) {
 function diffFields(existing, desired) {
   const changed = [];
   for (const [k, v] of Object.entries(desired)) {
+    // A key the API omits entirely from its response is not comparable: we
+    // cannot know what it stored, so treating "absent" as "differs" reports a
+    // change on every run. This deployment omits notifyByGroup / alertOnNoData
+    // / notifyEveryRun when they equal its defaults, which made every re-run
+    // print `update` and buried real drift in permanent noise — exactly what
+    // the plan/diff step exists to surface.
+    //
+    // The cost is that drift in those specific fields is undetectable. That is
+    // a property of the API, not a choice: it declines to tell us. Fields it
+    // does echo — including `resolvable`, which governs repeat notifications —
+    // still diff normally.
+    if (!(k in existing)) continue;
     const before = existing[k];
     const same =
       Array.isArray(v) && Array.isArray(before)
