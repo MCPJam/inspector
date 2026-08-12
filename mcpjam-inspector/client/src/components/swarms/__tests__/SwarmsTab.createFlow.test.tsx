@@ -1371,6 +1371,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a reused journey's own sessions when the intensity changes", async () => {
+    // SUTB-26: a preset may seed a field, never overwrite one the user set.
+    // This journey was saved at 3 sessions and launch does not rewrite a
+    // shared journey's config, so pushing harder must not re-price it.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        config: { sessionsPerTarget: 3, maxTurns: 9 },
+      },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    expect(
+      await screen.findByText(/1 persona · 1 goal · 3 new sessions/i)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^describe$/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /launch gate/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    expect(
+      await screen.findByText(/1 persona · 1 goal · 3 new sessions/i)
+    ).toBeInTheDocument();
+  });
+
   it("merges swarm grading into a reused journey on a reuse-only launch", async () => {
     // No environment selection at all. The Confirm copy promises the merge
     // unconditionally, and shared criterion ids are what put this journey in
