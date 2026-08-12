@@ -137,7 +137,6 @@ type GraphNode = {
   vy: number;
   fx?: number;
   fy?: number;
-  color: string;
   radius: number;
 };
 
@@ -721,13 +720,6 @@ export function TopicMapPanel({
         y,
         vx: 0,
         vy: 0,
-        color: colorForNode(
-          node,
-          colorMode,
-          node.clusterId != null
-            ? clusterColorIndex.get(node.clusterId)
-            : undefined,
-        ),
         radius: Math.max(
           4.4,
           Math.min(11.8, 4 + Math.log1p(node.degree + node.messageCount) * 1.3),
@@ -747,7 +739,25 @@ export function TopicMapPanel({
           }) satisfies GraphLink,
       );
     return { nodes, links };
-  }, [clusterColorIndex, colorMode, journeyRunIdSet, snapshot]);
+  }, [clusterColorIndex, journeyRunIdSet, snapshot]);
+
+  // Colour is resolved per frame, NOT baked onto the nodes. force-graph owns
+  // these node objects and mutates x/y/vx/vy on them as the simulation runs, so
+  // a new array is a new layout: it re-seeds every position and reheats, which
+  // is the visible "bounce". Storing the colour here would put `colorMode` in
+  // the memo above and make a Theme <-> Outcome flip — a repaint, not a data
+  // change — throw the settled layout away.
+  const nodeColor = useCallback(
+    (node: Pick<GraphNode, "clusterId" | "outcome">) =>
+      colorForNode(
+        node,
+        colorMode,
+        node.clusterId != null
+          ? clusterColorIndex.get(node.clusterId)
+          : undefined,
+      ),
+    [clusterColorIndex, colorMode],
+  );
 
   const nodeById = useMemo(
     () => new Map((graphData?.nodes ?? []).map((node) => [node.id, node])),
@@ -965,20 +975,21 @@ export function TopicMapPanel({
       // echoing the cluster label (which is already visible in the sidebar).
       const hoverWord = topicMapNodeHoverLabel(node);
       const fullLabel = hoverWord || node.sessionId;
+      const color = nodeColor(node);
 
       ctx.save();
       ctx.globalAlpha = dimmed ? 0.16 : 1;
 
       if (!dimmed) {
-        ctx.shadowColor = node.color;
+        ctx.shadowColor = color;
         ctx.shadowBlur = isSelected ? 32 : isHovered ? 22 : 16;
       }
 
       ctx.beginPath();
       ctx.fillStyle = isSelected
-        ? hexToRgba(node.color, 0.2)
+        ? hexToRgba(color, 0.2)
         : isHovered
-          ? hexToRgba(node.color, 0.14)
+          ? hexToRgba(color, 0.14)
           : "transparent";
       ctx.arc(node.x, node.y, node.radius + (isSelected ? 6 : isHovered ? 4 : 0), 0, 2 * Math.PI);
       ctx.fill();
@@ -986,7 +997,7 @@ export function TopicMapPanel({
       if (!dimmed) {
         ctx.beginPath();
         ctx.fillStyle = hexToRgba(
-          node.color,
+          color,
           isSelected ? 0.22 : isHovered ? 0.18 : 0.12,
         );
         ctx.arc(
@@ -1012,7 +1023,7 @@ export function TopicMapPanel({
       }
 
       ctx.beginPath();
-      ctx.fillStyle = dimmed ? canvasPalette.mutedForeground : node.color;
+      ctx.fillStyle = dimmed ? canvasPalette.mutedForeground : color;
       ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
       ctx.fill();
 
@@ -1130,6 +1141,7 @@ export function TopicMapPanel({
       deferredSearch,
       hoveredNodeId,
       isNodeDimmed,
+      nodeColor,
       searchMatchIds,
       selectedNodeId,
     ],
@@ -1157,7 +1169,8 @@ export function TopicMapPanel({
         (sourceId === hoveredNodeId || targetId === hoveredNodeId);
 
       if (touchesSelection) return faintLine(canvasPalette.foreground, 42);
-      if (touchesHover && sourceNode) return hexToRgba(sourceNode.color, 0.34);
+      if (touchesHover && sourceNode)
+        return hexToRgba(nodeColor(sourceNode), 0.34);
       if (dimmed) return faintLine(canvasPalette.mutedForeground, 6);
       if (
         sourceNode &&
@@ -1165,7 +1178,7 @@ export function TopicMapPanel({
         sourceNode.clusterId &&
         sourceNode.clusterId === targetNode.clusterId
       ) {
-        return hexToRgba(sourceNode.color, 0.22);
+        return hexToRgba(nodeColor(sourceNode), 0.22);
       }
       return faintLine(canvasPalette.border, 28);
     },
@@ -1176,6 +1189,7 @@ export function TopicMapPanel({
       hoveredNodeId,
       isNodeDimmed,
       nodeById,
+      nodeColor,
       selectedNodeId,
     ],
   );
@@ -1234,10 +1248,11 @@ export function TopicMapPanel({
         }
         clusters.set(clusterKey, {
           // Halos denote the CLUSTER, so they always take the theme colour —
-          // never `node.color`, which in outcome mode is the first-iterated
-          // node's outcome. A mixed-outcome cluster would otherwise get an
-          // order-dependent halo asserting one outcome for the whole goal,
-          // which is exactly the overclaim the outcome tint exists to avoid.
+          // never the node's own paint colour, which in outcome mode is the
+          // first-iterated node's outcome. A mixed-outcome cluster would
+          // otherwise get an order-dependent halo asserting one outcome for
+          // the whole goal, which is exactly the overclaim the outcome tint
+          // exists to avoid.
           color: colorForCluster(
             node.clusterId,
             node.clusterId != null
