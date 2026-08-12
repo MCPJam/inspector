@@ -24,7 +24,7 @@
     "| where tostring(environment) in ('prod','production')",
     "| extend fpSource = coalesce(tostring(errorMessage), tostring(errorCode), strcat(tostring(route), ' ', tostring(statusCode)))",
     "| extend fp = replace_regex(@'[0-9a-z]{20,}', 'ID', substring(fpSource, 0, 100))",
-    "| summarize recent = countif(_time > ago(1h)), baseline = countif(_time <= ago(1h)), orgs = dcountif(orgId, _time > ago(1h)), maxStatus = max(toint(statusCode)) by fp",
+    "| summarize recent = countif(_time > ago(1h)), baseline = countif(_time <= ago(1h)) by fp",
     "| where baseline == 0 and recent >= 10",
     "| summarize Count = count()"
   ],
@@ -40,8 +40,8 @@
     "NAME THE CLASS (the alert only carries a count):",
     "['inspector-logs'] | where _time > ago(14d) | where event in ('http.request.failed','http.request.completed') | where toint(statusCode) >= 400 | where tostring(environment) in ('prod','production') | extend fpSource = coalesce(tostring(errorMessage), tostring(errorCode), strcat(tostring(route), ' ', tostring(statusCode))) | extend fp = replace_regex(@'[0-9a-z]{20,}', 'ID', substring(fpSource, 0, 100)) | summarize firstSeen = min(_time), recent = countif(_time > ago(1h)), baseline = countif(_time <= ago(1h)), orgs = dcountif(orgId, _time > ago(1h)), sample = any(errorMessage) by fp | where baseline == 0 and recent >= 10 | sort by recent desc",
     "",
-    "TRIAGE: (1) Correlate firstSeen with the last deploy — check `release` on those rows. A class born at a deploy boundary is a rollback candidate. (2) Multi-org novelty is ours until proven otherwise: a genuine user-fault class does not appear from nothing across several orgs at once. (3) Single-org novelty is usually one customer's new server and belongs in the dashboard, not the channel — if that dominates, raise the org floor rather than the event floor.",
+    "TRIAGE: (1) Correlate firstSeen with the last deploy — check `release` on those rows. A class born at a deploy boundary is a rollback candidate. (2) Multi-org novelty is ours until proven otherwise: a genuine user-fault class does not appear from nothing across several orgs at once. (3) Single-org novelty is usually one customer's new server and belongs in the dashboard, not the channel — if that dominates, add an org floor here rather than raising the event floor. The rule deliberately carries no org guard today: the plan specifies novelty at >=10/hour, and the measured first-run volume was zero, so a guard would be tuning against noise that has not appeared yet.",
     "",
-    "ROLLBACK: node ops/axiom-monitors/apply.mjs --only inspector-new-error-class after reverting the definition file."
+    "ROLLBACK: revert the definition file, then run `node ops/axiom-monitors/apply.mjs --apply --only inspector-new-error-class`. The --apply flag is required: the script defaults to read-only plan mode, so omitting it reports the change and leaves the live monitor untouched."
   ]
 }

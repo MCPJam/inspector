@@ -36,6 +36,6 @@
     "2. Ingest broken. AXIOM_TOKEN / AXIOM_DATASET missing or changed (the logger constructs its client lazily and silently no-ops when they are absent), or DO_NOT_TRACK is set. A config change alone can cause this.",
     "3. Traffic not reaching us. Check the Prod canary workflow and Cloudflare before touching the app. Note the canary's real cadence is ~50 min, not the 15 min its cron requests, so a green canary can be up to an hour stale.",
     "",
-    "ROLLBACK: node ops/axiom-monitors/apply.mjs --only inspector-telemetry-deadman after reverting the definition file. If prod legitimately has 15-minute zero-traffic windows, add an explicit system heartbeat event and deadman that instead of widening this query back to arbitrary rows."
+    "ROLLBACK: node ops/axiom-monitors/apply.mjs --apply --only inspector-telemetry-deadman after reverting the definition file. If prod legitimately has 15-minute zero-traffic windows, add an explicit system heartbeat event and deadman that instead of widening this query back to arbitrary rows."
   ]
 }
