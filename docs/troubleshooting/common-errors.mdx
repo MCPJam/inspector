@@ -136,6 +136,20 @@ The enable/connect toggle on a server card or detail modal reuses existing crede
 - Typos in server URLs or commands
 - Missing file permissions or executable flags
 
+## Chat Errors
+
+### "MCPJam was briefly unreachable" banner
+
+If a transient upstream failure (such as a gateway 502) interrupts a chat request, the chat surface shows:
+
+> **MCPJam was briefly unreachable.** Nothing in this chat was lost — retry to send your message again.
+
+This is a temporary network blip, not a problem with your MCP server or your session. Your conversation history is intact.
+
+**What to do:** Click **Retry** in the error banner. This resends your last message without resetting the chat. If the problem persists after a few retries, use **Reset chat** or check [MCPJam's status page](https://mcpjam.com).
+
+The **More details** section of the banner shows the HTTP status code and the gateway's request ID (if one was present), which can be useful when reporting a persistent issue.
+
 ## Chat Model Limit
 
 ### "MCPJam model limit reached" warning
