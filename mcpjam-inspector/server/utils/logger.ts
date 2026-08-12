@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { Axiom } from "@axiomhq/js";
+import { resolveEnvironment } from "./log-events.js";
 import type {
   LogEventName,
   RequestEventMap,
@@ -8,6 +9,7 @@ import type {
   SystemLogContext,
 } from "./log-events.js";
 import { scrubLogPayload } from "./log-scrubber.js";
+import { isOriginCaptureHandled } from "./error-capture-stamp.js";
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -49,7 +51,21 @@ function getAxiom(): Axiom | null {
 
 const dataset = () => process.env.AXIOM_DATASET ?? "";
 
-const environment = () => process.env.ENVIRONMENT ?? "unknown";
+/**
+ * Same resolver the typed-event path uses.
+ *
+ * These two disagreed. `logger.event` went through `resolveEnvironment()`,
+ * which maps anything outside the allowlist onto a canonical value, while the
+ * free-form logs below read `ENVIRONMENT` raw — so a deploy setting
+ * `ENVIRONMENT=production` split Axiom in half: typed rows tagged `"prod"`,
+ * free-form rows tagged `"production"`, and any query that filtered on one
+ * silently missed the other. Sharing the resolver kills that class of bug
+ * permanently, rather than fixing the one value that happened to diverge.
+ *
+ * NOTE for dashboards: historical production rows are still `"production"`.
+ * Saved queries that span the seam need `in ("prod","production")`.
+ */
+const environment = () => resolveEnvironment();
 
 /**
  * Sentry capture for typed events is **opt-in**: pass `{ sentry: true }` at the
@@ -72,6 +88,51 @@ function ingestToAxiom(
 }
 
 /**
+ * Read a loggable string off an arbitrary thrown value.
+ *
+ * `error.message` and `String(error)` both run a Proxy `get`/`toString` trap
+ * and can therefore throw. This is the CENTRAL logger: a throw here escapes
+ * into whatever catch block was reporting a failure, losing the original
+ * diagnostic and replacing the route's response with a secondary failure from
+ * the logging code. Diagnostics must never escalate the thing they describe.
+ */
+function safeErrorText(error: unknown): string {
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "[unreadable error value]";
+  }
+}
+
+/**
+ * Send an error-origin capture to Sentry.
+ *
+ * The one seam in this module's "single Sentry capture path" rule, and it is
+ * deliberately narrow: `error-origin-capture.ts` decides WHETHER an error is
+ * MCPJam's fault, and that policy is worth keeping in its own module — but the
+ * MECHANISM stays here, so there is still exactly one place where the server
+ * talks to Sentry, one place where the SDK could be swapped, and no second
+ * implementation of the tags/extra shape to keep in sync.
+ *
+ * Not `logger.error`, because these two differ on purpose: this one has
+ * already made a capture decision and must NOT consult the stamp (it is the
+ * thing that sets it), carries structured tags rather than a free-form
+ * message, and does not write an Axiom row — its caller does that separately,
+ * with the verdict attached.
+ *
+ * Route handlers must never call this. They go through `reportRouteFailure`.
+ */
+export function captureOriginErrorToSentry(
+  error: Error,
+  options: {
+    tags: Record<string, string>;
+    extra: Record<string, unknown>;
+  },
+): void {
+  Sentry.captureException(error, options);
+}
+
+/**
  * Centralized logger that sends errors to Sentry and only logs to console
  * in dev mode or when verbose mode is enabled (--verbose flag or VERBOSE_LOGS=true).
  * Sends info/warn/error logs to Axiom when AXIOM_TOKEN and AXIOM_DATASET are set.
@@ -89,13 +150,22 @@ export const logger = {
    * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
    */
   error(message: string, error?: unknown, context?: Record<string, unknown>) {
-    Sentry.captureException(error ?? new Error(message), {
-      extra: { message, ...context },
-    });
+    // `logger.error` still captures by DEFAULT. Genuinely-ours background
+    // failures (schedulers, eval workers) reach Sentry through here and must
+    // not vanish. The single exception is an error an error-origin capture
+    // point has already ruled on: a route that logs an error and then
+    // serializes it into an envelope holds the same object at both sites, and
+    // without this check every declined user-fault error would be re-captured
+    // here — rebuilding the noise the origin policy exists to remove.
+    if (!isOriginCaptureHandled(error)) {
+      Sentry.captureException(error ?? new Error(message), {
+        extra: { message, ...context },
+      });
+    }
 
     ingestToAxiom("error", message, {
       ...context,
-      error: error instanceof Error ? error.message : String(error),
+      error: safeErrorText(error),
     });
 
     if (shouldLog()) {

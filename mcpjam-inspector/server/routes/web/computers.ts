@@ -34,6 +34,7 @@ import { executionScopeSchema } from "../../utils/execution-scope.js";
 import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
 import { resolveComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
 import { isLocalComputerEngineAvailable } from "../../utils/computers/local-machine.js";
+import { getLocalTerminalAvailability } from "../../utils/computers/local-pty.js";
 import {
   MAX_COMMAND_TIMEOUT_S,
   e2bRunner,
@@ -68,6 +69,10 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
       resolveComputersRemoteDataPlaneUrl(),
     ]);
     const localEngine = isLocalComputerEngineAvailable();
+    // Probed once per process (node-pty is an optional native dep — see
+    // local-pty.ts). False here is a clean degrade: chat bash still works, the
+    // client just renders the terminal-off state.
+    const localTerminal = await getLocalTerminalAvailability();
     // The capability SPLIT is the point of this shape: `remoteDataPlaneUrl`
     // delegates only PERSONAL-computer exec/terminal, so a remote-only
     // inspector can drive a personal Computer yet cannot execute one
@@ -82,9 +87,7 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
       engines: {
         local: {
           available: localEngine.available,
-          // PR 8 (node-pty) wires the real probe; until then the local
-          // engine is bash-only and the client shows the terminal-off state.
-          terminalAvailable: false,
+          terminalAvailable: localTerminal.available,
           // This endpoint is OPEN (no bearer), so only the tilde display
           // root ever leaves the server — never an absolute home path or OS
           // username. The client renders `${workspaceDisplayRoot}/<projectId>`;

@@ -60,9 +60,15 @@ RUN npm run build:lib -w @mcpjam/inspector
 
 COPY mcpjam-inspector/server ./mcpjam-inspector/server
 COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
+# This image enumerates the bundle steps instead of running `npm run build`, so
+# every generated-and-gitignored module `build:server` imports has to be listed
+# here by hand. `bundle:plugin-shim` emits the in-VM plugin shim as a TS const
+# that `services/plugins/computer-stdio.ts` imports at top level: without it the
+# server bundle does not resolve and the image fails to build.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
-    npm run bundle:sandbox-proxies -w @mcpjam/inspector
+    npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
+    npm run bundle:plugin-shim -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the

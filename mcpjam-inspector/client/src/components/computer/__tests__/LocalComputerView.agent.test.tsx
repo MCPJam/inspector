@@ -16,6 +16,11 @@ import type {
 import { LocalComputerView } from "../LocalComputerView";
 import type { ComputerEngineState } from "@/hooks/useComputerEngine";
 
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (sel: (s: { themeMode: string }) => unknown) =>
+    sel({ themeMode: "dark" }),
+}));
+
 function engineState(): ComputerEngineState {
   return {
     engine: "local",
