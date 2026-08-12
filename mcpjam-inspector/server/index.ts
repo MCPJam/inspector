@@ -8,6 +8,8 @@ import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
+import { reportRouteFailure } from "./utils/route-error-report.js";
+import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -180,6 +182,7 @@ import {
 } from "./utils/caniuse-meta-tags";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
+import { buildHealthMeta } from "./utils/health-payload.js";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -301,12 +304,18 @@ startLocalBrowserRenderingSetupInBackground();
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
-  // The logger owns Sentry capture for the server (logger.error ->
-  // captureException). Path + method are what make the issue actionable;
-  // without them every unhandled route error groups into one blob.
-  appLogger.error("Unhandled error", err, {
-    path: c.req.path,
-    method: c.req.method,
+  // Last-resort handler: an exception escaped every route and every router's
+  // own `onError`. Declared `mcpjam_internal` — if our routers could not name
+  // the failure, the unrecognized remainder is ours. The declaration still
+  // does not overrule positive evidence, so an ECONNREFUSED that reached here
+  // from a user-server hop is classified and stays quiet.
+  //
+  // Path + method are what make the issue actionable; without them every
+  // unhandled route error groups into one blob.
+  const { normalized, origin } = reportRouteFailure("Unhandled error", err, {
+    source: "app.onError",
+    hop: "mcpjam_internal",
+    context: { path: c.req.path, method: c.req.method },
   });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
@@ -319,6 +328,11 @@ const app = new Hono().onError((err, c) => {
     code:
       err instanceof HTTPException ? "http_exception" : "unhandled_exception",
     message: err instanceof Error ? err.message : String(err),
+    // The EFFECTIVE origin, including the internal-boundary promotion — not
+    // `originOf(normalized)`, which would report `ambiguous` for a failure
+    // Sentry was just paged for as `mcpjam`.
+    origin,
+    slug: normalized.slug,
   });
 
   // Return appropriate response
@@ -543,6 +557,7 @@ app.get("/health", (c) => {
     timestamp: new Date().toISOString(),
     hasActiveClient: inspectorCommandBus.hasActiveClient(),
     frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
+    ...buildHealthMeta(),
   });
 });
 
@@ -795,6 +810,11 @@ const server = serve({
   port: SERVER_PORT,
   hostname,
 });
+// Count socket-level failures. These die before Node parses a request line,
+// so they emit no `http.request.*` event and are otherwise invisible — the
+// class the 08-11 Cloudflare 502 fell into. Must be attached before traffic
+// arrives; it also owns the `clientError` response (see the module).
+attachSocketDiagnostics(server);
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 

@@ -22,6 +22,7 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import {
   parseXaaPolicyValue,
   resolveEffectiveAuthMethod,
@@ -49,6 +50,7 @@ import {
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
+import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
 import {
   getLocalConfidentialCimdProvider,
   withSkillsExtensionCapability,
@@ -1288,18 +1290,20 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    const xaaFailureTarget = {
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      ...(sc.url ? { serverUrl: sc.url } : {}),
+    };
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
+    // Framed for this surface (the stored sentence is written for the server's
+    // auth form and names neither the server nor where to fix it).
     if (sc.xaaIdentityError) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        sc.xaaIdentityError,
-        {
-          serverId,
-          serverName: options?.serverDisplayName ?? null,
-        }
+      throw toXaaConnectFailure(
+        new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError),
+        xaaFailureTarget
       );
     }
     const mintArgs = buildXaaMintArgs({
@@ -1335,7 +1339,10 @@ export async function resolveLocalServerForConnect(
           resource: sc.url,
         });
       }
-      throw error;
+      // Re-framed AFTER the log above: the debugger-worded original still
+      // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
+      // names this server and the action that fixes it.
+      throw toXaaConnectFailure(error, xaaFailureTarget);
     }
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
     // 401 surfaces to the caller rather than looping mint→401→mint.
@@ -1351,8 +1358,12 @@ export async function resolveLocalServerForConnect(
         );
       }
       reMinted = true;
-      const minted = await mintXaaAccessToken(mintArgs);
-      return { accessToken: minted.accessToken };
+      try {
+        const minted = await mintXaaAccessToken(mintArgs);
+        return { accessToken: minted.accessToken };
+      } catch (error) {
+        throw toXaaConnectFailure(error, xaaFailureTarget);
+      }
     };
   }
 
@@ -1535,12 +1546,29 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
   const normalized = error.normalized ?? describeError(error);
+  // Skip-if-stamped by construction: most callers reach here holding a
+  // `WebRouteError` that `mapRuntimeError` already ruled on, and the helper
+  // short-circuits on the stamp. The call is still made so the local-mode
+  // paths that build a `WebRouteError` by hand — never passing through the
+  // mapper — are classified too.
+  const { origin } = maybeCaptureOriginError(error, normalized, {
+    source: "mcp.localRouteError",
+    extra: { status: error.status, code: error.code },
+  });
+  c.set("webErrorMeta", {
+    status: error.status,
+    code: error.code,
+    message: error.message,
+    origin,
+    slug: normalized.slug,
+  });
   return c.json(
     {
       success: false,
       error: error.message,
       ...(error.details ?? {}),
       normalized,
+      origin,
     },
     error.status as any
   );

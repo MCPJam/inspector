@@ -314,7 +314,7 @@ describe("AdvancedConnectionSettingsSection", () => {
 
     await user.click(protocolSelect);
     await user.click(
-      screen.getByRole("option", { name: "November (2025-11-25)" })
+      screen.getByRole("option", { name: "2025-11-25" })
     );
     expect(onProtocolChange).toHaveBeenLastCalledWith("2025-11-25");
   });
