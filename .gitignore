@@ -9,6 +9,7 @@ node_modules/
 docs/superpowers/
 mcpjam-inspector/server/routes/apps/**/*.bundled.ts
 mcpjam-inspector/server/utils/browser-harness/*.generated.ts
+mcpjam-inspector/server/services/plugins/shim/*.bundled.ts
 cli/dist/
 sdk/dist/
 chat-ui/dist/

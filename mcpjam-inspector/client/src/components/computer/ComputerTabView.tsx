@@ -1,3 +1,4 @@
+import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
@@ -48,7 +49,14 @@ export function ComputerTabView({
               { value: "local", label: "This machine" },
               { value: "cloud", label: "Cloud" },
             ]}
-            onChange={(next) => engine.setEngine(next)}
+            onChange={(next) => {
+              // The engine NAME only — no project id, no workspace path.
+              track("computer_engine_selected", {
+                location: "computer_tab",
+                engine: next,
+              });
+              engine.setEngine(next);
+            }}
           />
         </div>
       ) : null}

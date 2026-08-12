@@ -52,6 +52,12 @@ export default defineConfig({
     "execa",
     // Sentry packages with native modules must remain external
     "@sentry/node",
+    // node-pty (local computer terminal) is an OPTIONAL dependency with a
+    // native addon: it may be absent entirely (no build toolchain on an npx
+    // install) and can never be bundled. Keep it external so the runtime
+    // `import("node-pty")` resolves from node_modules — and cleanly fails to,
+    // degrading the terminal off, when it isn't there. See utils/computers/local-pty.ts.
+    "node-pty",
     // evals-cli dependencies
     "posthog-node",
     "@openrouter/ai-sdk-provider",
