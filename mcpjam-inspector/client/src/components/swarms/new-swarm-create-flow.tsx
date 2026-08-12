@@ -1302,7 +1302,12 @@ export function NewSwarmCreateFlow({
             environmentLabels={environmentLabels}
             launching={launching}
             errorMessage={errorMessage}
-            onBack={() => setStep("describe")}
+            // Back is the same move as the Describe breadcrumb, so it goes
+            // through `goToStep`: it clears the launch error too. Describe
+            // renders `errorMessage` as well, and an error the user has
+            // already walked away from reads there as a fresh failure of the
+            // step they just landed on.
+            onBack={() => goToStep(0)}
             onLaunch={(payload) => void handleLaunch(payload)}
             onEditExistingPersona={onEditExistingPersona}
           />
