@@ -17,7 +17,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Breadcrumb,
@@ -43,6 +43,7 @@ import {
 } from "@/components/swarms/journey-environments";
 import {
   composerTargetCount,
+  defaultComposerState,
   emptyComposerState,
   isComposeMode,
   type EnvironmentComposerState,
@@ -97,6 +98,12 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { useHostList } from "@/hooks/useClients";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
+import { useProjectServerAttachments } from "@/hooks/useViews";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
@@ -400,6 +407,20 @@ export function NewSwarmCreateFlow({
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const resolveComposerTargets = useComposerResolver(projectId);
+  const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  const hostsQueryEnabled =
+    isAuthenticated && shouldQueryProjectId(projectId);
+  const attachmentsQueryEnabled =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
+  const { hosts, isLoading: hostsLoading } = useHostList({
+    isAuthenticated,
+    projectId,
+  });
+  const { serverAttachments, isLoading: attachmentsLoading } =
+    useProjectServerAttachments({ isAuthenticated, projectId });
+  const [previewedHostId] = usePreviewedHostId(projectId);
+  const [previewedEnvironmentId] = usePreviewedEnvironmentId(projectId);
   /**
    * On a deployment with Project Environments off the user cannot even reach
    * `/environments`, so minting rows there would create data they can never see
@@ -426,6 +447,8 @@ export function NewSwarmCreateFlow({
   const [targetState, setTargetState] = useState<EnvironmentComposerState>(
     () => restoredDraft?.targetState ?? emptyComposerState()
   );
+  /** One-shot auto-seed — never overwrite after the user clears or edits. */
+  const targetSeededRef = useRef(false);
   /** Env ids after materialize (compose path). Cleared when the composer changes. */
   const [resolvedEnvironmentIds, setResolvedEnvironmentIds] = useState<
     string[] | null
@@ -543,6 +566,73 @@ export function NewSwarmCreateFlow({
   );
 
   const envList = useMemo(() => environments ?? [], [environments]);
+
+  useEffect(() => {
+    if (targetSeededRef.current) return;
+    // Wait until the queries that feed the seed have settled — but only when
+    // those queries are actually enabled. A skipped host/attachment query
+    // reports loading forever (`undefined`), which used to block seeding for
+    // unauthenticated or transient-project opens.
+    if (environmentsEnabled && environments === undefined) return;
+    if (hostsQueryEnabled && hostsLoading) return;
+    if (attachmentsQueryEnabled && attachmentsLoading) return;
+    // Auth settled but DB user not ready yet — attachments are still skipped.
+    // Seeding now would permanently miss the default server group.
+    if (
+      isAuthenticated &&
+      shouldQueryProjectId(projectId) &&
+      !isUserReady
+    ) {
+      return;
+    }
+    // Any non-empty stack or customized flag means the user already touched
+    // the composer; do not overwrite a slot-only edit that landed before seed.
+    if (
+      targetState.customized ||
+      targetState.environmentIds.length > 0 ||
+      targetState.stack.hostIds.length > 0 ||
+      targetState.stack.serverAttachmentId != null ||
+      targetState.stack.skillSelection != null ||
+      targetState.stack.computerEnvironmentId != null
+    ) {
+      targetSeededRef.current = true;
+      return;
+    }
+    // If flag toggles off, don't carry forward stale environments from the prior state.
+    const effectiveEnvList = environmentsEnabled ? envList : [];
+    const next = defaultComposerState({
+      environments: effectiveEnvList,
+      hosts,
+      preferredHostId: previewedHostId,
+      preferredEnvironmentId: previewedEnvironmentId,
+      serverAttachments,
+      environmentsEnabled,
+    });
+    targetSeededRef.current = true;
+    if (next) setTargetState(next);
+  }, [
+    attachmentsLoading,
+    attachmentsQueryEnabled,
+    envList,
+    environments,
+    environmentsEnabled,
+    hosts,
+    hostsLoading,
+    hostsQueryEnabled,
+    isAuthenticated,
+    isUserReady,
+    previewedEnvironmentId,
+    previewedHostId,
+    projectId,
+    serverAttachments,
+    targetState.customized,
+    targetState.environmentIds.length,
+    targetState.stack.computerEnvironmentId,
+    targetState.stack.hostIds.length,
+    targetState.stack.serverAttachmentId,
+    targetState.stack.skillSelection,
+  ]);
+
   const composeMode = isComposeMode(targetState);
   const targetCount = composerTargetCount(targetState);
   const environmentIds = useMemo(() => {

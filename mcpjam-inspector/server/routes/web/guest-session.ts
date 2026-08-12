@@ -18,7 +18,7 @@ import {
   extractGuestSessionCookie,
   shouldFetchGuestSessionFromConvex,
 } from "./guest-session-shared.js";
-import { ErrorCode } from "./errors.js";
+import { ErrorCode, webError } from "./errors.js";
 
 const guestSession = new Hono();
 
@@ -143,12 +143,16 @@ guestSession.post("/", async (c) => {
     );
   }
 
-  return c.json(
-    {
-      code: ErrorCode.INTERNAL_ERROR,
-      message: "Unable to obtain a guest session right now. Please try again.",
-    },
-    503
+  // Through `webError` so the code and message reach `webErrorMeta`, and from
+  // there `http.request.failed`. Returning `c.json` directly produced a 5xx row
+  // with no message at all: on 2026-07-22 this path failed 434 times in a day
+  // and the reason was unrecoverable, because the route knew why and threw the
+  // text away at the response boundary. Body shape is unchanged.
+  return webError(
+    c,
+    503,
+    ErrorCode.INTERNAL_ERROR,
+    "Unable to obtain a guest session right now. Please try again."
   );
 });
 
@@ -223,12 +227,11 @@ guestSession.post("/revoke", async (c) => {
     return c.json({ revoked: false, upstream: "missing" });
   }
 
-  return c.json(
-    {
-      code: ErrorCode.INTERNAL_ERROR,
-      message: "Unable to revoke guest session right now.",
-    },
-    503
+  return webError(
+    c,
+    503,
+    ErrorCode.INTERNAL_ERROR,
+    "Unable to revoke guest session right now."
   );
 });
 
@@ -309,13 +312,11 @@ guestSession.post("/promotion-proof", async (c) => {
     );
   }
 
-  return c.json(
-    {
-      code: ErrorCode.INTERNAL_ERROR,
-      message:
-        "Unable to obtain a guest promotion proof right now. Please try again.",
-    },
-    503
+  return webError(
+    c,
+    503,
+    ErrorCode.INTERNAL_ERROR,
+    "Unable to obtain a guest promotion proof right now. Please try again."
   );
 });
 
