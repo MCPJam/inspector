@@ -74,7 +74,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     ).toEqual([
       "Automatic",
       "Latest (2026-07-28)",
-      "November (2025-11-25)",
+      "2025-11-25",
       "2025-06-18",
       "2025-03-26",
     ]);
@@ -104,9 +104,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     await user.click(
       screen.getByRole("combobox", { name: "MCP protocol version" })
     );
-    await user.click(
-      screen.getByRole("option", { name: "November (2025-11-25)" })
-    );
+    await user.click(screen.getByRole("option", { name: "2025-11-25" }));
 
     // A stateful pin is not cosmetic: it narrows the initialize accept-list.
     expect(screen.getByTestId("pin").textContent).toBe("2025-11-25");
@@ -214,9 +212,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     await user.click(
       screen.getByRole("combobox", { name: "MCP protocol version" })
     );
-    await user.click(
-      screen.getByRole("option", { name: "November (2025-11-25)" })
-    );
+    await user.click(screen.getByRole("option", { name: "2025-11-25" }));
 
     expect(toast.warning).not.toHaveBeenCalled();
   });
@@ -268,7 +264,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     // nothing — survives alongside the advertised revision.
     expect(
       (await screen.findAllByRole("option")).map((o) => o.textContent)
-    ).toEqual(["Automatic", "November (2025-11-25)"]);
+    ).toEqual(["Automatic", "2025-11-25"]);
   });
 
   it("offers a stateless version when the client does advertise it", async () => {
@@ -282,7 +278,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     );
     expect(
       (await screen.findAllByRole("option")).map((o) => o.textContent)
-    ).toEqual(["Automatic", "Latest (2026-07-28)", "November (2025-11-25)"]);
+    ).toEqual(["Automatic", "Latest (2026-07-28)", "2025-11-25"]);
   });
 
   it("offers every version when the client advertises no list", async () => {

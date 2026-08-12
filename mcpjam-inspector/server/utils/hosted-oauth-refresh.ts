@@ -85,6 +85,11 @@ export async function forceRefreshHostedOAuthAccessToken(
         ? body.message
         : `OAuth refresh failed (${response.status})`;
     const isReconnectRequired = code === "refresh_token_invalid";
+    // The backend's 503: the credential is fine, the authorization server
+    // never answered usably. Its `detail` is what that server actually
+    // returned ({url, status, body}) — forwarded so the client can name the
+    // host instead of guessing, null when the backend recorded nothing.
+    const isAuthServerUnreachable = code === "authorization_server_unreachable";
     throw new WebRouteError(
       response.status,
       isReconnectRequired ? ErrorCode.UNAUTHORIZED : (code as ErrorCode),
@@ -95,6 +100,13 @@ export async function forceRefreshHostedOAuthAccessToken(
             refreshTokenInvalid: true,
             serverId,
             serverName: options?.serverName ?? null,
+          }
+        : isAuthServerUnreachable
+        ? {
+            authorizationServerUnreachable: true,
+            serverId,
+            serverName: options?.serverName ?? null,
+            failure: body?.detail ?? null,
           }
         : undefined
     );

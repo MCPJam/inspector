@@ -4,6 +4,9 @@
  * The create-flow matrix is the place to watch a just-launched swarm. Clicking
  * a session chip must open the shared SwarmLiveStreamPane on the right with
  * that session's selection — not leave the wizard.
+ *
+ * The finding rail is the other half: "Look now" has to hand the caller the
+ * SESSION that produced the finding, not the generic leave callback.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -74,8 +77,28 @@ const runFixture: JourneyRun = {
   createdAt: 1,
 } as JourneyRun;
 
-const emptySessions: unknown[] = [];
+/**
+ * Sessions the run-live bridge sees. Empty by default: the matrix tests assert
+ * the chip grid, which comes from the run snapshot, not from graded rows.
+ */
+let sessionsFixture: unknown[] = [];
 const hostsFixture = [{ hostId: "host-1", name: "MCPJam" }];
+
+/** One graded session with a failing check — the finding rail's only input. */
+const failedSessionFixture = {
+  id: "thread-fail",
+  chatSessionId: "synth_run-1_host-1_0",
+  projectId: "proj-1",
+  hostId: "host-1",
+  journeyRunId: "run-1",
+  startedAt: 1,
+  goalScore: { reason: "never called the refund tool" },
+  criteria: {
+    status: "completed" as const,
+    generation: 1,
+    results: [{ criterionId: "crit-refund", passed: false }],
+  },
+};
 
 vi.mock("convex/react", () => ({
   useQuery: (name: string) => {
@@ -89,7 +112,7 @@ vi.mock("convex/react", () => ({
     }
   },
   usePaginatedQuery: () => ({
-    results: emptySessions,
+    results: sessionsFixture,
     status: "Exhausted",
     loadMore: vi.fn(),
     isLoading: false,
@@ -108,6 +131,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     streamState.connected = true;
     streamState.error = null;
     streamState.runComplete = false;
+    sessionsFixture = [];
   });
 
   it("shows an empty stream pane until a session is clicked", async () => {
@@ -138,6 +162,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
             },
           ]}
           onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
         />
       </div>
     );
@@ -178,6 +203,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
             },
           ]}
           onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
         />
       </div>
     );
@@ -191,5 +217,55 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(screen.queryByTestId("swarm-live-pane-empty")).not.toBeInTheDocument();
     expect(screen.getByText(/Session #1/i)).toBeInTheDocument();
     expect(chips[0]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  /**
+   * The bug this guards: "Look now" was wired to `onLeave`, so a finding
+   * dumped the viewer on Overview with nothing identifying the session that
+   * produced it. A finding you cannot trace back to a session is a claim, so the
+   * assertion is on the session ID reaching the caller — not on navigation,
+   * which the caller owns.
+   */
+  it("'Look now' opens the session that produced the finding, not a generic leave", async () => {
+    sessionsFixture = [failedSessionFixture];
+    const onLeave = vi.fn();
+    const onOpenSession = vi.fn();
+
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "run",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[
+            {
+              environmentId: "env-1",
+              projectId: "proj-1",
+              name: "Prod-like",
+              hostId: "host-1",
+              revision: 1,
+            },
+          ]}
+          onLeave={onLeave}
+          onOpenSession={onOpenSession}
+        />
+      </div>
+    );
+
+    const finding = await screen.findByTestId("new-swarm-running-finding");
+    expect(finding.textContent).toMatch(/never called the refund tool/);
+
+    fireEvent.click(screen.getByTestId("new-swarm-running-finding-open"));
+    expect(onOpenSession).toHaveBeenCalledWith("thread-fail");
+    expect(onLeave).not.toHaveBeenCalled();
   });
 });
