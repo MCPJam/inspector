@@ -33,6 +33,7 @@ export function SwarmTargetComposer({
   onChange,
   draftNameHint,
   disabled = false,
+  serverBlock = null,
 }: {
   projectId: string;
   environments: ProjectEnvironmentView[];
@@ -42,6 +43,13 @@ export function SwarmTargetComposer({
   /** Used for draft naming. */
   draftNameHint?: string;
   disabled?: boolean;
+  /**
+   * Why the current selection can't back a cloud run, from
+   * `describeCloudServerBlock`. The owning flow computes it because it also
+   * gates its primary action on it; this only paints it, next to the pickers
+   * that fix it.
+   */
+  serverBlock?: { message: string; detail: string } | null;
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
@@ -106,6 +114,14 @@ export function SwarmTargetComposer({
           data-testid="new-swarm-cloud-unreachable"
           message="Swarm computer commands need an MCPJam cloud sandbox, which this inspector can't run."
           detail="Runs without a computer can continue; sandbox-backed sessions would fail. Picking a new sandbox image is disabled — clear an existing one with Computer · default."
+        />
+      ) : null}
+
+      {serverBlock ? (
+        <CloudUnreachableNotice
+          data-testid="new-swarm-server-unreachable"
+          message={serverBlock.message}
+          detail={serverBlock.detail}
         />
       ) : null}
 
