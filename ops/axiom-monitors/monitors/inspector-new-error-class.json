@@ -1,0 +1,47 @@
+{
+  "key": "inspector-new-error-class",
+  "name": "MCPJam Inspector new error class appeared (prod)",
+  "tier": "WARN",
+  "owner": "marcelo",
+  "dataset": "inspector-logs",
+  "notifier": "mcpjam-alerts-warn",
+  "monitor": {
+    "type": "Threshold",
+    "columnName": "Count",
+    "operator": "Above",
+    "threshold": 0,
+    "rangeMinutes": 20160,
+    "intervalMinutes": 60,
+    "notifyByGroup": true,
+    "alertOnNoData": false,
+    "resolvable": false,
+    "notifyEveryRun": false
+  },
+  "aplQuery": [
+    "['inspector-logs']",
+    "| where event in ('http.request.failed','http.request.completed')",
+    "| where toint(statusCode) >= 400",
+    "| where tostring(environment) in ('prod','production')",
+    "| extend fpSource = coalesce(tostring(errorMessage), tostring(errorCode), strcat(tostring(route), ' ', tostring(statusCode)))",
+    "| extend fp = replace_regex(@'[0-9a-z]{20,}', 'ID', substring(fpSource, 0, 100))",
+    "| summarize recent = countif(_time > ago(1h)), baseline = countif(_time <= ago(1h)) by fp",
+    "| where baseline == 0 and recent >= 10",
+    "| summarize Count = count()"
+  ],
+  "description": [
+    "WARN — owner: marcelo. An error class with NO occurrences in the previous 14 days just produced >=10 events in an hour.",
+    "",
+    "WHY THIS IS A DIFFERENT SIGNAL: the spike monitor compares a class against its own history and therefore cannot see a class that has no history. Most deploy regressions arrive as a brand-new message, so novelty is the detector that catches them on the day they ship. Conversely, novelty could NOT have caught 2026-08-06 — that fingerprint already existed and merely exploded — which is exactly why both monitors exist.",
+    "",
+    "WHY resolvable IS false, unlike the other class monitors: novelty is a point-in-time event, not a condition that persists and clears. Once a class is no longer new it simply stops matching, and an auto-resolve message would wrongly imply someone fixed it. The 60-minute interval matches the 1-hour window so each new class notifies once.",
+    "",
+    "FIRST-RUN NOTE: widening the predicate to 4xx gives those fingerprints no history under this key, so the first evaluation after any change to the fingerprint expression can report classes that are not actually new. Measured before enabling — zero rows at the time of writing — but re-check after any fingerprint change, and note the plan's scheduled switch to `slug` on 2026-08-25 is exactly such a change.",
+    "",
+    "NAME THE CLASS (the alert only carries a count):",
+    "['inspector-logs'] | where _time > ago(14d) | where event in ('http.request.failed','http.request.completed') | where toint(statusCode) >= 400 | where tostring(environment) in ('prod','production') | extend fpSource = coalesce(tostring(errorMessage), tostring(errorCode), strcat(tostring(route), ' ', tostring(statusCode))) | extend fp = replace_regex(@'[0-9a-z]{20,}', 'ID', substring(fpSource, 0, 100)) | summarize firstSeen = min(_time), recent = countif(_time > ago(1h)), baseline = countif(_time <= ago(1h)), orgs = dcountif(orgId, _time > ago(1h)), sample = any(errorMessage) by fp | where baseline == 0 and recent >= 10 | sort by recent desc",
+    "",
+    "TRIAGE: (1) Correlate firstSeen with the last deploy — check `release` on those rows. A class born at a deploy boundary is a rollback candidate. (2) Multi-org novelty is ours until proven otherwise: a genuine user-fault class does not appear from nothing across several orgs at once. (3) Single-org novelty is usually one customer's new server and belongs in the dashboard, not the channel — if that dominates, add an org floor here rather than raising the event floor. The rule deliberately carries no org guard today: the plan specifies novelty at >=10/hour, and the measured first-run volume was zero, so a guard would be tuning against noise that has not appeared yet.",
+    "",
+    "ROLLBACK: revert the definition file, then run `node ops/axiom-monitors/apply.mjs --apply --only inspector-new-error-class`. The --apply flag is required: the script defaults to read-only plan mode, so omitting it reports the change and leaves the live monitor untouched."
+  ]
+}
