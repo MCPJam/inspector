@@ -1,3 +1,5 @@
+import type { ErrorOrigin } from "@mcpjam/sdk";
+
 export type Environment =
   | "prod"
   | "staging"
@@ -76,6 +78,19 @@ export type RequestEventMap = {
     statusCode: number;
     errorCode: string;
     errorMessage?: string;
+    /**
+     * Whose fault the failure was, per the SDK error-origin taxonomy, when
+     * the failing route produced a normalized describe-error block.
+     *
+     * This is the measurement half of the error-origin work. Sentry capture is
+     * deliberately restricted to `origin: "mcpjam"`; every other bucket —
+     * above all `ambiguous`, which holds the whole timeout/reset/fetch-failure
+     * family — is counted here instead, at no issue-tracker cost. Promoting a
+     * bucket into the paging path should be argued from this field.
+     */
+    origin?: ErrorOrigin;
+    /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
+    slug?: string;
   };
   "http.stream.opened": { statusCode: number };
   "http.stream.closed": { statusCode: number; durationMs: number };
@@ -162,6 +177,10 @@ export type RequestEventMap = {
   // /swarms/* endpoint answered with a server error. The upstream message is
   // deliberately NOT forwarded to the caller (it carries the deployment URL),
   // so this event is the only record of what the backend actually said.
+  // `errorCode` is the backend envelope's own `code` when it sent one
+  // ("mcpjam_config_error", "provider_error", …) and "upstream_server_error"
+  // otherwise. The caller sees the envelope's `requestId` in the masked copy,
+  // so a screenshot of the error resolves to this row.
   "swarm.generation.upstream_failed": {
     statusCode: number;
     errorCode: string;
@@ -188,6 +207,24 @@ export type SystemEventMap = {
   };
   "process.unhandled_rejection": { errorCode: string };
   "process.uncaught_exception": { errorCode: string };
+  /**
+   * Aggregated socket-level failure counters, one line per flush interval
+   * (see utils/socket-diagnostics.ts). These are connections that died before
+   * Node parsed a request line, so they produce NO `http.request.*` event —
+   * this is the only signal that they happened at all. Buckets are a fixed
+   * set, so cardinality cannot grow with traffic. Never emitted per socket:
+   * a reset storm must cost one row per interval, not one row per connection.
+   */
+  "http.socket.client_error": {
+    total: number;
+    econnreset: number;
+    epipe: number;
+    etimedout: number;
+    econnaborted: number;
+    parseError: number;
+    headerOverflow: number;
+    other: number;
+  };
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.

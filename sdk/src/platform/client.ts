@@ -39,6 +39,8 @@ import type {
   PlatformMe,
   PlatformModel,
   PlatformPage,
+  PlatformPlugin,
+  PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
   PlatformTunnelClosed,
@@ -554,6 +556,41 @@ export class PlatformApiClient {
         params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/restore`,
       { body: { expectedRevision: params.expectedRevision } },
+      options
+    );
+  }
+
+  // ── Agent Plugins ────────────────────────────────────────────────────
+  //
+  // Read-only: the live plugins installed in a project, and one imported
+  // version's detail. Import/enable/disable/uninstall stay in the app.
+
+  listProjectPlugins(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformPlugin>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/plugins`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * One imported plugin version with its component projections. Addressed by
+   * the version id alone — access is the version's own project membership,
+   * and historical versions of uninstalled plugins stay readable (eval
+   * snapshots and stale environment pins reference them).
+   */
+  getPluginVersion(
+    params: { pluginVersionId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPluginVersion> {
+    return this.request(
+      "GET",
+      `/plugin-versions/${encodeURIComponent(params.pluginVersionId)}`,
+      {},
       options
     );
   }

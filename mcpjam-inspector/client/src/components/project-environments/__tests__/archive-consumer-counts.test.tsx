@@ -132,12 +132,12 @@ describe("archive-confirm consumer counts", () => {
     expect(screen.getByText(/checking references/i)).toBeInTheDocument();
   });
 
-  it("warns that a published chatbox link stops working immediately (Phase 5)", () => {
+  it("warns that a published tester link stops working immediately (Phase 5)", () => {
     mockConsumers.value = { suiteCount: 0, journeyCount: 0, chatboxCount: 1 };
     renderAndOpenArchiveConfirm();
 
     expect(
-      screen.getByText(/chatbox link stops working immediately/i)
+      screen.getByText(/tester link stops working immediately/i)
     ).toBeInTheDocument();
   });
 });

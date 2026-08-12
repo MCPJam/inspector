@@ -54,6 +54,7 @@ import {
   ErrorCode,
   WebRouteError,
   webError,
+  webErrorFromRoute,
   mapRuntimeError,
   extractMcpInitializeOptions,
 } from "./auth.js";
@@ -89,7 +90,10 @@ import {
   runtimeSkills as environmentRuntimeSkills,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
-import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  fetchPluginRuntimeAttribution,
+  type PluginRuntimeAttribution,
+} from "../../services/environments/plugin-attribution.js";
 import {
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
@@ -374,6 +378,11 @@ chatV2.post("/", async (c) => {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
         bearer: bearerToken,
+        // Opt this turn into backend version enforcement. A caller whose
+        // cached version is behind the row's is running against a config
+        // that has since moved (rebind, mode change, republish); it must
+        // re-redeem rather than have its stale view honored.
+        accessVersion,
       });
       if (runtime.ok) {
         // Environment-backed chatbox (live-follow): the backend resolved the
@@ -396,15 +405,65 @@ chatV2.post("/", async (c) => {
         }
         if (environmentRead.kind === "present") {
           chatboxEnvironment = environmentRead.environment;
+          // Phase 6.1: attribution for chatbox turns, from the payload's own
+          // pinned plugin versions. Guarded on their presence — a backend
+          // that predates `pluginVersions` (or an environment pinning none)
+          // costs zero extra reads — and FAIL-OPEN like the environment
+          // target's probe: this turn is guest-reachable, and the probe is
+          // member-gated backend-side, so a guest (or any probe failure)
+          // degrades to "origin unknown" rather than stopping the send.
+          let attribution: PluginRuntimeAttribution | null = null;
+          const pinnedVersionIds = (
+            chatboxEnvironment.pluginVersions ?? []
+          ).map((plugin) => plugin.pluginVersionId);
+          if (pinnedVersionIds.length > 0) {
+            try {
+              attribution = await fetchPluginRuntimeAttribution(
+                createConvexClient(await getConvexBearerForRequest(c)),
+                {
+                  projectId: hostedBody.projectId,
+                  pluginVersionIds: pinnedVersionIds,
+                }
+              );
+            } catch (error) {
+              // `fetchPluginRuntimeAttribution` already swallows probe
+              // failures; this catches client construction (missing
+              // CONVEX_URL on a deployment that never configured it).
+              logger.warn(
+                "[chat-v2] chatbox attribution unavailable; running without plugin origin",
+                {
+                  chatboxId,
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                }
+              );
+            }
+          }
           // Same projection the environment target uses, so the EMULATED
           // engine advertises the environment's skills (skillsSource:
-          // "resolved") instead of silently delivering zero. Attribution is
-          // null on purpose: the payload pins no plugin versions (the backend
-          // already re-gated plugins before serving it), so there is nothing
-          // to attribute and no probe to degrade on a guest-reachable turn.
+          // "resolved") instead of silently delivering zero.
           effectiveCapabilities = resolveEffectiveCapabilities(
             chatboxEnvironment,
-            null
+            attribution
+          );
+          if (effectiveCapabilities.problems.length > 0) {
+            // Codes and ids only — same redaction rationale as the
+            // environment-target log above.
+            logger.warn("[chat-v2] effective capability problems", {
+              environmentId: chatboxEnvironment.environmentRef.environmentId,
+              codes: effectiveCapabilities.problems.map(
+                (problem) => problem.code
+              ),
+              skillIds: effectiveCapabilities.problems.flatMap((problem) =>
+                "skillId" in problem ? [problem.skillId] : []
+              ),
+            });
+          }
+          // Plugin origin on this turn's RPC frames, exactly as the
+          // environment target stamps it. Empty (no-op) until the backend
+          // serves `pluginVersions` and the probe attributes them.
+          rpcCollector?.setPluginOriginByServerId(
+            pluginOriginByServerId(effectiveCapabilities)
           );
         }
         hostRuntimeConfig = runtime.config as unknown as Record<
@@ -425,10 +484,25 @@ chatV2.post("/", async (c) => {
           status: runtime.status,
           error: runtime.error,
         });
+        // Two ACCESS verdicts, neither an internal fault, each with its own
+        // recovery: STALE means "re-redeem and replay" (the client does it
+        // transparently), DENIED means "you cannot run this turn".
+        // Everything else keeps the generic classification (>=500 collapses
+        // to a 502 upstream failure).
+        const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+        if (runtime.code === "CHATBOX_ACCESS_STALE") {
+          throw new WebRouteError(
+            409,
+            ErrorCode.CHATBOX_ACCESS_STALE,
+            failClosedMessage
+          );
+        }
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
-          ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
+          runtime.status === 403
+            ? ErrorCode.CHATBOX_ACCESS_DENIED
+            : ErrorCode.INTERNAL_ERROR,
+          failClosedMessage
         );
       }
     } else if (executionTarget.kind === "host") {
@@ -979,6 +1053,10 @@ chatV2.post("/", async (c) => {
                 mrtrBridge.mrtrInputCollectorForServer,
             }
           : {}),
+        // Same scope the bash tool reserves under, so a plugin's stdio
+        // component colocates into THIS turn's machine rather than waking the
+        // member's personal one alongside it.
+        ...(executionScope ? { executionScope } : {}),
       }
     );
     oauthServerUrls = urls;
@@ -1549,13 +1627,16 @@ chatV2.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
-    const routeError = mapRuntimeError(error);
-    return webError(
+    // `webErrorFromRoute`, not `webError` — this call dropped
+    // `routeError.normalized`, so the envelope carried no `origin` and no
+    // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,
+    // the one the client actually selects, and the client's reporter has
+    // nothing but the status by the time it runs: without the verdict it
+    // guesses `mcpjam` from the 500 and pages us for the user's own MCP
+    // server.
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      mapRuntimeError(error),
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }

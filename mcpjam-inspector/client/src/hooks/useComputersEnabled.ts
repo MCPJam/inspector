@@ -28,3 +28,24 @@ export function useComputersEnabledState(): boolean | undefined {
 export function useComputersEnabled(): boolean {
   return useComputersEnabledState() === true;
 }
+
+/**
+ * Dark-launch gate for the LOCAL computer engine ("This machine")
+ * specifically — a second, narrower flag inside the `computers-enabled`
+ * surface. It gates local-engine CANDIDACY in `useComputerEngine` (which
+ * hides the Computer tab's Local⇄Cloud toggle and local face, the playground
+ * rail's local shell body, the consent gate, and the local chat
+ * transmission in one place) plus the bash run-location pill. Flag off ⇒ a
+ * local inspector looks and behaves exactly as before the local engine
+ * shipped. The server keeps the capability (`MCPJAM_LOCAL_COMPUTER_ENABLED`
+ * remains the emergency stop), so flagging a user in needs no env var and
+ * launching needs no release — just the PostHog rollout.
+ *
+ * `undefined` while flags load ⇒ off (`=== true`): fail-closed, same as
+ * `useComputersEnabled`.
+ */
+export const LOCAL_COMPUTER_FEATURE_FLAG = "local-computer-enabled";
+
+export function useLocalComputerEnabled(): boolean {
+  return useFeatureFlagEnabled(LOCAL_COMPUTER_FEATURE_FLAG) === true;
+}

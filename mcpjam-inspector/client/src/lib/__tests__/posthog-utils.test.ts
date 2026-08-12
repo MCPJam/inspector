@@ -45,6 +45,29 @@ describe("PosthogUtils", () => {
     });
   });
 
+  it("sets deployment + platform as FLAG person properties, not just super properties", () => {
+    const posthog = {
+      register: vi.fn(),
+      setPersonPropertiesForFlags: vi.fn(),
+    };
+    options.loaded(posthog);
+
+    // `register` feeds EVENTS; `/flags` evaluates PERSON properties. Without
+    // this call a `deployment = self_hosted` flag rule matches nobody.
+    expect(posthog.setPersonPropertiesForFlags).toHaveBeenCalledWith({
+      deployment: "self_hosted",
+      platform: expect.any(String),
+    });
+  });
+
+  it("does not throw when posthog-js has no setPersonPropertiesForFlags", () => {
+    // A partial stand-in (or a host pinning an older posthog-js): flag
+    // targeting degrades, analytics init must still complete.
+    const posthog = { register: vi.fn() };
+    expect(() => options.loaded(posthog)).not.toThrow();
+    expect(posthog.register).toHaveBeenCalled();
+  });
+
   it("registers deployment: hosted when built for hosted mode", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.resetModules();

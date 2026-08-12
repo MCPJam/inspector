@@ -92,6 +92,21 @@ function matchesAllowedOrigin(
 }
 
 /**
+ * Is this `Origin` header value on the allowlist?
+ *
+ * Exported for handlers that must re-check the origin THEMSELVES rather than
+ * rely on the middleware — currently the local computer terminal WebSocket,
+ * which tightens the rule: an ABSENT Origin is allowed through by the
+ * middleware below (curl, same-origin non-browser clients), but a browser
+ * always sends one on a WS handshake, so the local PTY route treats "absent"
+ * as a reject. Defense-in-depth only; the single-use nonce is the real gate.
+ */
+export function isAllowedRequestOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  return matchesAllowedOrigin(origin, getAllowedOrigins());
+}
+
+/**
  * Origin validation middleware.
  * Blocks requests from non-localhost origins.
  */
