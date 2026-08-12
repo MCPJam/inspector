@@ -64,7 +64,7 @@ ${SHARED_FILTERS}
 ${FP}
 | summarize recent = countif(_time > datetime(${from})), baseline = countif(_time <= datetime(${from})), orgs = dcountif(orgId, _time > datetime(${from})), maxStatus = maxif(toint(statusCode), _time > datetime(${from})) by fp
 | extend baseHourly = baseline / 335.0
-| where (maxStatus >= 500 and recent > 100) or (recent >= 20 and orgs >= 3 and recent > 20 * baseHourly)
+| where recent > 1000 or (maxStatus >= 500 and recent > 100) or (recent >= 20 and orgs >= 3 and recent > 20 * baseHourly)
 | project fp, recent, baseHourly, orgs, maxStatus
 | sort by recent desc`;
 }
@@ -240,6 +240,31 @@ for (const c of CASES) {
     );
   }
 }
+
+// The status-agnostic 1,000/hr rule exists because reclassifying a class from
+// 5xx to 4xx must not make it invisible — which is exactly what happened when
+// PR #3948 moved upstream auth rejections from 500 to 403 and left the 08-06
+// incident undetectable by the two status/radius-gated rules.
+//
+// This asserts the bar still sits clear of organic 4xx traffic. If real 4xx
+// ever approaches 1,000/hr the bar must be raised BEFORE it starts paging, and
+// learning that here rather than from a false page at 3am is the point.
+const busiest4xx = await run(
+  `['inspector-logs']
+${SHARED_FILTERS}
+| where toint(statusCode) < 500
+${FP}
+| summarize n = count() by fp, bin(_time, 1h)
+| summarize Busiest = max(n)`,
+  new Date().toISOString(),
+);
+const peak4xx = busiest4xx[0]?.Busiest ?? 0;
+const headroomOk = peak4xx < 1000;
+if (!headroomOk) failures++;
+console.log(
+  `${headroomOk ? "PASS" : "FAIL"}  organic 4xx stays clear of the 1,000/hr absolute rule`,
+);
+console.log(`      busiest 4xx class-hour: ${peak4xx} (must be < 1000)`);
 
 console.log(
   `\n${failures === 0 ? "ALL CASES PASS" : `${failures} CASE(S) FAILED`}`,
