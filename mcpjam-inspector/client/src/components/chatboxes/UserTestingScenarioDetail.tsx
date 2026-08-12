@@ -344,13 +344,21 @@ export function UserTestingScenarioDetail({
   // Prefer hiding the header strip until Insights reports a filled cohort —
   // the empty panel already carries share, and a flash of both reads as a
   // duplicate. Sessions always shows the strip (see render below).
-  // Reset when the scenario changes so a filled cohort's "not empty" state
-  // cannot leak onto the next (possibly empty) scenario before the workbench
-  // reports.
-  const [insightsEmpty, setInsightsEmpty] = useState(true);
-  useEffect(() => {
-    setInsightsEmpty(true);
-  }, [chatbox.chatboxId]);
+  //
+  // The report is keyed by chatboxId so a scenario switch does not need a
+  // separate reset effect (which can race the remounted workbench's report
+  // in the same passive-effect flush and leave the strip stuck hidden).
+  const [insightsEmptyReport, setInsightsEmptyReport] = useState<{
+    chatboxId: string;
+    empty: boolean;
+  } | null>(null);
+  const insightsEmpty =
+    insightsEmptyReport?.chatboxId === chatbox.chatboxId
+      ? insightsEmptyReport.empty
+      : true;
+  const handleInsightsEmptyChange = (empty: boolean) => {
+    setInsightsEmptyReport({ chatboxId: chatbox.chatboxId, empty });
+  };
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;
@@ -838,7 +846,7 @@ export function UserTestingScenarioDetail({
                   }
                   autoBackfillTopicMap
                   emptyState={<ChatboxShareEmptyPanel chatbox={chatbox} />}
-                  onEmptyChange={setInsightsEmpty}
+                  onEmptyChange={handleInsightsEmptyChange}
                   className="px-8 py-4"
                   testIdPrefix="chatbox-insights"
                 />
