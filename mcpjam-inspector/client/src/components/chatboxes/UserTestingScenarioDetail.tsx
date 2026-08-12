@@ -341,6 +341,10 @@ export function UserTestingScenarioDetail({
   // above remount this route during a cold boot, so state captured on first
   // mount wouldn't survive to the last one.
   const tab = parseUserTestingDetailTab(location.search);
+  // Prefer hiding the header strip until Insights reports a filled cohort —
+  // the empty panel already carries share, and a flash of both reads as a
+  // duplicate. Sessions always shows the strip (see render below).
+  const [insightsEmpty, setInsightsEmpty] = useState(true);
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;
@@ -711,7 +715,9 @@ export function UserTestingScenarioDetail({
           indicatorId: "user-testing-detail",
         }}
       >
-        <ChatboxShareBanner chatbox={chatbox} />
+        {tab === "insights" && insightsEmpty ? null : (
+          <ChatboxShareBanner chatbox={chatbox} />
+        )}
       </DetailPageHeader>
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -826,6 +832,7 @@ export function UserTestingScenarioDetail({
                   }
                   autoBackfillTopicMap
                   emptyState={<ChatboxShareEmptyPanel chatbox={chatbox} />}
+                  onEmptyChange={setInsightsEmpty}
                   className="px-8 py-4"
                   testIdPrefix="chatbox-insights"
                 />

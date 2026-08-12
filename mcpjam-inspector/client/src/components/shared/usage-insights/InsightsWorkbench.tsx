@@ -85,6 +85,12 @@ interface InsightsWorkbenchProps {
    * surface: Swarms want "sign in", User Testing wants "share the link".
    */
   emptyState?: ReactNode;
+  /**
+   * Fired when the workbench swaps between the empty state and the filled
+   * body. Owning pages use this to hide chrome that the empty panel already
+   * covers (e.g. User Testing's header share strip).
+   */
+  onEmptyChange?: (empty: boolean) => void;
   className?: string;
   /**
    * Prefix for every `data-testid` this renders, so each surface keeps the
@@ -138,6 +144,7 @@ export function InsightsWorkbench({
   checksExtras,
   autoBackfillTopicMap = false,
   emptyState,
+  onEmptyChange,
   className,
   testIdPrefix,
 }: InsightsWorkbenchProps) {
@@ -262,7 +269,11 @@ export function InsightsWorkbench({
     flow.dismissibleChips.length > 0 || flow.flowSelection !== null;
   const nothingToShow =
     scope === null || (!userFiltered && breakdown?.totalSessions === 0);
-  if (emptyState && nothingToShow) {
+  const showingEmpty = Boolean(emptyState && nothingToShow);
+  useEffect(() => {
+    onEmptyChange?.(showingEmpty);
+  }, [showingEmpty, onEmptyChange]);
+  if (showingEmpty) {
     return (
       <div
         className={cn("flex h-full min-h-0 flex-col", className)}

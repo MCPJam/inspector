@@ -70,15 +70,15 @@ describe("ChatboxShareBanner", () => {
 });
 
 describe("ChatboxShareEmptyPanel", () => {
-  it("renders share content as a centered empty-state panel", () => {
+  it("offers both a self-serve run and the share actions", () => {
     render(<ChatboxShareEmptyPanel chatbox={chatbox} />);
 
     expect(screen.getByTestId("user-testing-share-empty")).toBeInTheDocument();
-    expect(screen.getByText(/Share this with customers/i)).toBeInTheDocument();
-    expect(screen.getByText("mcpjam.link/t/tok")).toBeInTheDocument();
     expect(
-      screen.getByText(/open it in the selected client/i),
+      screen.getByText(/Insights start with the first session/i),
     ).toBeInTheDocument();
+    expect(screen.getByText("mcpjam.link/t/tok")).toBeInTheDocument();
+    expect(screen.getByText(/Try it yourself/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Invite by email" }),
     ).toBeInTheDocument();
@@ -90,7 +90,15 @@ describe("ChatboxShareEmptyPanel", () => {
     expect(preview).toHaveAttribute("target", "_blank");
   });
 
-  it("hides Open preview when the environment can't resolve", () => {
+  it("does not restate the header banner's share headline", () => {
+    render(<ChatboxShareEmptyPanel chatbox={chatbox} />);
+
+    expect(
+      screen.queryByText(/Share this with customers/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("replaces the run affordance when the environment can't resolve", () => {
     render(
       <ChatboxShareEmptyPanel
         chatbox={
@@ -108,6 +116,9 @@ describe("ChatboxShareEmptyPanel", () => {
     expect(
       screen.queryByTestId("user-testing-share-empty-preview"),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-share-empty-blocked"),
+    ).toHaveTextContent(/environment isn't resolving/i);
   });
 
   it("still shows the link when unauthenticated, without invite", () => {

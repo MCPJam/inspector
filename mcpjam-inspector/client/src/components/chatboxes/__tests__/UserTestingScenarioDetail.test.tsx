@@ -17,6 +17,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useEffect, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 
@@ -136,6 +137,15 @@ vi.mock("@/components/chatboxes/ChatboxShareBanner", () => ({
   ChatboxShareEmptyPanel: () => <div data-testid="stub-share-empty" />,
 }));
 
+// Provider reads Convex for pattern findings; these specs only care that the
+// workbench mounts under it, not the rail lifecycle.
+vi.mock("@/components/shared/usage-insights/run-insights", () => ({
+  RunInsightsProvider: ({ children }: { children: ReactNode }) => (
+    <>{children}</>
+  ),
+  RunInsightsRecommendations: () => null,
+}));
+
 vi.mock("@/components/chatboxes/ChatboxDeleteConfirmDialog", () => ({
   ChatboxDeleteConfirmDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="stub-delete-dialog" /> : null,
@@ -154,6 +164,13 @@ vi.mock("@/components/chatboxes/ChatboxUsagePanel", () => ({
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
+    // Empty Insights is the default stub: surface the empty panel and tell
+    // the page the cohort is empty so the header share strip stays hidden.
+    useEffect(() => {
+      if (typeof props.onEmptyChange === "function") {
+        (props.onEmptyChange as (empty: boolean) => void)(true);
+      }
+    }, [props.onEmptyChange]);
     return (
       <div data-testid="stub-usage-insights">
         {props.emptyState as never}
@@ -269,8 +286,8 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
     expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
-    expect(screen.getByTestId("stub-share-banner")).toBeInTheDocument();
-    // Empty Insights gets the share panel content, not a second header strip.
+    // Empty Insights owns share; the header strip stays off until there is data.
+    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.

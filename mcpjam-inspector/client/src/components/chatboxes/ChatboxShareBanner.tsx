@@ -2,14 +2,15 @@
  * Share affordances for a User Testing scenario.
  *
  * - {@link ChatboxShareBanner} — compact strip in the detail header.
- * - {@link ChatboxShareEmptyPanel} — centered empty-state panel for Insights
- *   (same copy / invite / copy-link actions, different composition).
+ * - {@link ChatboxShareEmptyPanel} — the Insights empty state, which offers
+ *   the same invite / copy-link actions plus a self-serve run, and does NOT
+ *   restate the banner's headline copy.
  *
  * Full access / invite management lives on the Edit route
  * ({@link ChatboxShareSection}).
  */
 import { useState } from "react";
-import { ExternalLink, Link2, Mail } from "lucide-react";
+import { ArrowUp, Link2, Mail } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -94,7 +95,6 @@ function InviteByEmailControl({
   normalizedEmail,
   emailInvalid,
   handleInvite,
-  triggerClassName,
 }: {
   id: string;
   email: string;
@@ -105,7 +105,6 @@ function InviteByEmailControl({
   normalizedEmail: string;
   emailInvalid: boolean;
   handleInvite: () => void;
-  triggerClassName?: string;
 }) {
   return (
     <Popover open={inviteOpen} onOpenChange={setInviteOpen}>
@@ -114,7 +113,7 @@ function InviteByEmailControl({
           type="button"
           variant="ghost"
           size="sm"
-          className={cn("rounded-lg", triggerClassName)}
+          className="rounded-lg"
           data-testid={`${id}-invite`}
         >
           <Mail className="mr-1.5 size-3.5" />
@@ -172,7 +171,6 @@ function ShareActions({
   handleInvite,
   showInvite,
   className,
-  inviteTriggerClassName,
 }: {
   id: string;
   shareLink: string | null;
@@ -187,7 +185,6 @@ function ShareActions({
   handleInvite: () => void;
   showInvite: boolean;
   className?: string;
-  inviteTriggerClassName?: string;
 }) {
   return (
     <div className={cn("flex shrink-0 flex-wrap items-center gap-2", className)}>
@@ -202,7 +199,6 @@ function ShareActions({
           normalizedEmail={normalizedEmail}
           emailInvalid={emailInvalid}
           handleInvite={handleInvite}
-          triggerClassName={inviteTriggerClassName}
         />
       ) : null}
       <Button
@@ -231,24 +227,39 @@ export function ChatboxShareBanner({
   if (!isAuthenticated) return null;
 
   return (
+    /* Neutral surface, not the primary tint this used to wear. Handing someone
+       a link is routine; a coloured border under an already busy header read as
+       a warning about the scenario rather than a tool for sharing it. */
     <div
-      className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl border border-border/60 bg-muted/30 px-4 py-2.5"
       data-testid="user-testing-share-banner"
     >
-      <div className="min-w-0 space-y-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
-          Share this with customers
-        </p>
-        <p
-          className="truncate font-mono text-sm text-foreground"
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="shrink-0 text-xs font-medium text-muted-foreground">
+          Tester link
+        </span>
+        {/* The URL is this strip's subject, so it is also its affordance:
+            clicking it copies. The explicit button stays — a bare string
+            does not announce itself as clickable, and losing the primary
+            action to a guess would be a worse trade than the redundancy. */}
+        <button
+          type="button"
+          disabled={!share.shareLink}
+          onClick={() => void share.handleCopyLink()}
           title={share.shareLink ?? undefined}
+          aria-label={
+            share.shareLink ? `Copy tester link ${share.displayLink}` : undefined
+          }
+          className={cn(
+            "min-w-0 truncate rounded-md px-1.5 py-0.5 font-mono text-sm text-foreground",
+            "transition-colors hover:bg-foreground/[0.06]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "disabled:pointer-events-none disabled:text-muted-foreground",
+          )}
+          data-testid="user-testing-share-link"
         >
           {share.displayLink ?? "No share link yet."}
-        </p>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          They open it in the selected client and work through tasks against
-          your live server.
-        </p>
+        </button>
       </div>
       <ShareActions id="user-testing-share" showInvite {...share} />
     </div>
@@ -256,8 +267,16 @@ export function ChatboxShareBanner({
 }
 
 /**
- * Insights empty state: the share message as the workbench's main content,
- * not a second header strip.
+ * Insights empty state — the two ways to get a first session, in the order
+ * they cost the reader: run it yourself, or send it to a tester.
+ *
+ * The detail page hides the header share strip while this panel is up, so
+ * share lives here alone until the first session arrives.
+ *
+ * The composer is a LINK dressed as a chat input, not an input. Typing into a
+ * real field whose text we then discard (the guest runtime takes no prefill)
+ * would be a lie the second character exposes; a door shaped like the room
+ * behind it is not.
  */
 export function ChatboxShareEmptyPanel({
   chatbox,
@@ -272,49 +291,90 @@ export function ChatboxShareEmptyPanel({
 
   return (
     <div
-      className="flex h-full flex-col items-center justify-center px-4"
+      className="flex h-full flex-col overflow-y-auto px-6 py-10"
       data-testid="user-testing-share-empty"
     >
-      <div className="w-full max-w-xl rounded-2xl border border-primary/20 bg-gradient-to-b from-primary/[0.07] to-primary/[0.02] px-7 py-9 text-center shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
-          Share this with customers
+      {/* `my-auto` rather than `justify-center`: a centered flex child in a
+          scroll container has its overflow clipped off the TOP, unreachable. */}
+      <div className="mx-auto my-auto w-full max-w-lg animate-in fade-in duration-500">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+          Insights start with the first session.
+        </h2>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+          Once someone runs this scenario, this page maps where they reached
+          their goal, where they stalled, and the themes that repeat across
+          sessions.
         </p>
-        <p
-          className="mt-4 break-all font-mono text-[15px] leading-snug text-foreground sm:text-base"
-          title={share.shareLink ?? undefined}
-        >
-          {share.displayLink ?? "No share link yet."}
-        </p>
-        <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
-          They open it in the selected client and work through tasks against
-          your live server.
-        </p>
-        <div className="mt-7 flex flex-wrap items-center justify-center gap-2">
-          <ShareActions
-            id="user-testing-share-empty"
-            showInvite={isAuthenticated}
-            inviteTriggerClassName="bg-background/60 hover:bg-background"
-            {...share}
-          />
-          {canOpenPreview ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="rounded-lg bg-background/60 hover:bg-background"
-              asChild
-            >
+
+        {canOpenPreview ? (
+          <>
+            <div className="group relative mt-6">
+              {/* Warmth on approach, not at rest — a permanent glow would
+                  just tint the page the way the old panel did. */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -inset-3 rounded-[1.75rem] bg-primary/[0.07] opacity-0 blur-xl transition-opacity duration-300 group-hover:opacity-100"
+              />
               <a
                 href={share.shareLink!}
                 target="_blank"
                 rel="noreferrer"
+                aria-label="Try the scenario yourself — opens the live chatbox in a new tab"
                 data-testid="user-testing-share-empty-preview"
+                className={cn(
+                  "relative flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm",
+                  "transition-all duration-200 hover:border-primary/40 hover:shadow-md",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                )}
               >
-                <ExternalLink className="mr-1.5 size-3.5" />
-                Open preview
+                <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                  Try it yourself — ask it something
+                  <span
+                    aria-hidden
+                    className="ml-1 inline-block h-[1.05em] w-px translate-y-[0.2em] bg-primary animate-[blink_1.15s_ease-in-out_infinite]"
+                  />
+                </span>
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-transform duration-200 group-hover:scale-105">
+                  <ArrowUp className="size-4" />
+                </span>
               </a>
-            </Button>
-          ) : null}
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground/80">
+              Opens the live chatbox in a new tab. Your run lands here like any
+              tester&apos;s.
+            </p>
+          </>
+        ) : (
+          <p
+            className="mt-6 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
+            data-testid="user-testing-share-empty-blocked"
+          >
+            {share.shareLink
+              ? "This scenario can't be opened right now — its environment isn't resolving, so the link won't load for you or a tester."
+              : "No share link yet."}
+          </p>
+        )}
+
+        <div className="my-7 flex items-center gap-3">
+          <span className="h-px flex-1 bg-border/60" />
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+            or send it to a tester
+          </span>
+          <span className="h-px flex-1 bg-border/60" />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="min-w-0 flex-1 basis-full truncate rounded-lg border border-border/60 bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground sm:basis-0"
+            title={share.shareLink ?? undefined}
+          >
+            {share.displayLink ?? "No share link yet."}
+          </span>
+          <ShareActions
+            id="user-testing-share-empty"
+            showInvite={isAuthenticated}
+            {...share}
+          />
         </div>
       </div>
     </div>
