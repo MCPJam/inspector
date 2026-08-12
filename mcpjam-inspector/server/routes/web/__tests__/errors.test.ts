@@ -1,7 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+
+vi.mock("@sentry/node", () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
+import * as Sentry from "@sentry/node";
+const captureException = vi.mocked(Sentry.captureException);
+import { originOf } from "@mcpjam/sdk";
 import { InsufficientScopeError } from "@modelcontextprotocol/client";
 
-import { ErrorCode, WebRouteError, mapRuntimeError } from "../errors.js";
+import {
+  ErrorCode,
+  WebRouteError,
+  mapRuntimeError,
+  webErrorFromRoute,
+} from "../errors.js";
+import { isOriginCaptureHandled } from "../../../utils/error-origin-capture.js";
 
 describe("mapRuntimeError", () => {
   it("passes WebRouteError through unchanged", () => {
@@ -132,6 +147,94 @@ describe("mapRuntimeError", () => {
     expect(mapped.code).toBe(ErrorCode.FORBIDDEN);
     expect((mapped.details?.insufficientScope as any)?.requiredScope).toBe(
       "read:tickets",
+    );
+  });
+
+  it("stamps the ORIGINAL error, not only the WebRouteError it built", () => {
+    // The mapper constructs a fresh `WebRouteError` and links the original as
+    // its `cause`, but the dedupe walk only goes that direction. Several
+    // handlers keep their own reference and call `logger.error(error)` after
+    // returning the envelope; without a stamp on the original that is a second
+    // Sentry event for one failure.
+    const original = new Error("kaboom");
+    mapRuntimeError(original);
+
+    expect(isOriginCaptureHandled(original)).toBe(true);
+  });
+
+  it("keeps the stamp non-enumerable so it never reaches a JSON body", () => {
+    const original = new Error("kaboom");
+    mapRuntimeError(original);
+
+    expect(Object.keys(original)).not.toContain("cause");
+    expect(
+      Object.getOwnPropertySymbols(original).filter(
+        (s) => original.propertyIsEnumerable(s),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("ownership inference", () => {
+  beforeEach(() => captureException.mockClear());
+
+  it("does NOT infer MCPJam ownership from a native error type", () => {
+    // Tempting, and wrong here. This mapper is a SHARED envelope: a TypeError
+    // raised while reading a malformed tool result from somebody else's MCP
+    // server is indistinguishable from one raised by our own bug, and paging
+    // on the pair is the failure mode this change removes. Ownership is
+    // DECLARED by a catch-site that knows the hop, never inferred here.
+    mapRuntimeError(
+      new TypeError("Cannot read properties of undefined (reading 'id')"),
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("leaves an ordinary user-server failure uncaptured", () => {
+    mapRuntimeError(new Error("Request timed out"));
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("still measures the declined failure's origin on the envelope", () => {
+    // Not paging is not the same as not recording: the `ambiguous` bucket
+    // stays visible in Axiom, which is what makes promoting it later a data
+    // decision rather than another guess.
+    const mapped = mapRuntimeError(new TypeError("fetch failed"));
+
+    expect(mapped.normalized?.slug).toBe("transport/fetch_failed");
+    expect(originOf(mapped.normalized)).toBe("ambiguous");
+  });
+});
+
+describe("webError origin header", () => {
+  function respondWith(error: unknown) {
+    const app = new Hono();
+    app.get("/boom", (c) => webErrorFromRoute(c, mapRuntimeError(error)));
+    return app.request("/boom");
+  }
+
+  it("emits the origin as a header, not only in the body", async () => {
+    // The chat client's reporter runs AFTER the AI SDK has consumed the
+    // Response into `new Error(await response.text())`. Only the status
+    // survives to it, and from a bare 5xx it would guess `mcpjam` and page us
+    // for a user's own MCP server.
+    const res = await respondWith(
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), {
+        code: "ECONNREFUSED",
+      }),
+    );
+
+    expect(res.headers.get("x-mcpjam-error-origin")).toBe("user_config");
+    expect((await res.json()).origin).toBe("user_config");
+  });
+
+  it("agrees with the body on every envelope that carries one", async () => {
+    const res = await respondWith(new Error("kaboom"));
+
+    expect(res.headers.get("x-mcpjam-error-origin")).toBe(
+      (await res.json()).origin,
     );
   });
 });

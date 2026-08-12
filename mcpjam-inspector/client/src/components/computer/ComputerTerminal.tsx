@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  LOCAL_TERMINAL_WS_PATH,
   openTerminalConnection,
   uploadFilesToComputer,
   type TerminalConnection,
@@ -124,6 +125,8 @@ export function ComputerTerminal({
   className,
   baseUrl,
   cwd,
+  wsPath,
+  uploadEnabled: uploadEnabledProp = true,
 }: {
   mintToken: () => Promise<string>;
   themeMode: "light" | "dark";
@@ -140,7 +143,30 @@ export function ComputerTerminal({
    * To re-target an already-open terminal, remount with a new `key`.
    */
   cwd?: string;
+  /**
+   * WebSocket route. Defaults to the cloud terminal; the local ("This machine")
+   * pane passes `LOCAL_TERMINAL_WS_PATH`.
+   */
+  wsPath?: string;
+  /**
+   * Whether drag-and-drop upload is offered. The upload targets the CLOUD box's
+   * upload route, so the LOCAL pane must pass `false`: there it would burn its
+   * single-use nonce against the wrong route and toast "Upload failed". When
+   * false the upload and the overlay copy are suppressed, so there is no
+   * affordance suggesting a capability that isn't there.
+   *
+   * The drop handlers STAY attached either way — they must still cancel the
+   * browser's default file-drop navigation, which would otherwise unload the
+   * inspector and lose the session. Do not condition them on this flag.
+   */
+  uploadEnabled?: boolean;
 }) {
+  // The upload posts to the CLOUD box's route, so it is structurally
+  // incompatible with the local terminal — enforced here rather than left to
+  // caller discipline, since the failure mode (burning the pane's single-use
+  // nonce against the wrong endpoint) is silent from the call site.
+  const uploadEnabled = uploadEnabledProp && wsPath !== LOCAL_TERMINAL_WS_PATH;
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -209,6 +235,7 @@ export function ComputerTerminal({
       rows: term.rows,
       ...(baseUrl ? { baseUrl } : {}),
       ...(cwd ? { cwd } : {}),
+      ...(wsPath ? { path: wsPath } : {}),
       onOutput: (bytes) => {
         if (isStale()) return;
         term.write(bytes);
@@ -239,7 +266,7 @@ export function ComputerTerminal({
       if (isStale()) return;
       conn.ping();
     }, PING_INTERVAL_MS);
-  }, [mintToken, teardownConnection, baseUrl, cwd]);
+  }, [mintToken, teardownConnection, baseUrl, cwd, wsPath]);
 
   const handleCopy = useCallback(() => {
     const sel = termRef.current?.getSelection();
@@ -257,29 +284,51 @@ export function ComputerTerminal({
   const hasDraggedFiles = (e: React.DragEvent) =>
     Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    if (!hasDraggedFiles(e)) return;
-    e.preventDefault();
-    dragDepthRef.current += 1;
-    setDragActive(true);
-  }, []);
+  const handleDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      if (!hasDraggedFiles(e)) return;
+      // Cancel the browser default even when uploads are OFF (see handleDrop);
+      // only the overlay state is upload-specific.
+      e.preventDefault();
+      if (!uploadEnabled) return;
+      dragDepthRef.current += 1;
+      setDragActive(true);
+    },
+    [uploadEnabled]
+  );
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!hasDraggedFiles(e)) return;
-    // Required for the drop event to fire.
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-  }, []);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!hasDraggedFiles(e)) return;
+      // Required for the drop event to fire — and required on the
+      // uploads-disabled pane too, so `drop` reaches our handler instead of
+      // the browser's default navigation.
+      e.preventDefault();
+      if (!uploadEnabled) return;
+      e.dataTransfer.dropEffect = "copy";
+    },
+    [uploadEnabled]
+  );
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (!hasDraggedFiles(e)) return;
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) setDragActive(false);
-  }, []);
+  const handleDragLeave = useCallback(
+    (e: React.DragEvent) => {
+      if (!hasDraggedFiles(e)) return;
+      if (!uploadEnabled) return;
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) setDragActive(false);
+    },
+    [uploadEnabled]
+  );
 
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
+      // ALWAYS cancel the default, uploads enabled or not. A file dropped onto
+      // an element with no drop handler makes the browser NAVIGATE to that
+      // local file, unloading the inspector and losing the session — so the
+      // uploads-disabled pane still has to swallow the event; it just does
+      // nothing with it.
       e.preventDefault();
+      if (!uploadEnabled) return;
       dragDepthRef.current = 0;
       setDragActive(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
@@ -327,7 +376,7 @@ export function ComputerTerminal({
         setUploading(false);
       }
     },
-    [state, mintToken, baseUrl, cwd]
+    [state, mintToken, baseUrl, cwd, uploadEnabled]
   );
 
   // Create the xterm instance once; wire input + resize; auto-connect.
@@ -462,13 +511,14 @@ export function ComputerTerminal({
         {/* Terminal canvas + overlay */}
         <div
           className="relative min-h-0 flex-1"
+          data-testid="terminal-drop-surface"
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
           <div ref={containerRef} className="absolute inset-0 p-1" onClick={() => termRef.current?.focus()} />
-          {dragActive || uploading ? (
+          {uploadEnabled && (dragActive || uploading) ? (
             <div className="pointer-events-none absolute inset-2 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary/60 bg-background/85 text-sm">
               {uploading ? (
                 <span className="inline-flex items-center gap-2 text-muted-foreground">

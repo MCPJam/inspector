@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   SWARM_INTENSITY_ORDER,
   SWARM_INTENSITY_PRESETS,
+  estimateLaunchSessions,
   estimateSwarmJourneys,
   estimateSwarmSessions,
 } from "../swarm-intensity";
@@ -54,5 +55,69 @@ describe("swarm intensity presets", () => {
       estimateSwarmSessions(SWARM_INTENSITY_PRESETS[value], 1)
     );
     expect(sessions).toEqual([...sessions].sort((a, b) => a - b));
+  });
+});
+
+/**
+ * A preset seeds; it never overwrites. Launch stamps the preset's config onto
+ * the journeys it creates and leaves a reused journey's own config alone, so
+ * the quote has to be built the same way — otherwise moving the intensity
+ * control silently re-prices work the control does not size.
+ */
+describe("estimateLaunchSessions", () => {
+  it("prices reused journeys at their own sessions, not the preset's", () => {
+    expect(
+      estimateLaunchSessions({
+        preset: SWARM_INTENSITY_PRESETS.launch, // sessionsPerTarget: 2
+        newJourneyCount: 0,
+        reusedSessionsPerTarget: [4, 1],
+        environmentCount: 1,
+      })
+    ).toBe(5);
+  });
+
+  it("holds a reused journey's sessions steady across an intensity change", () => {
+    const quoteAt = (intensity: "quick" | "launch") =>
+      estimateLaunchSessions({
+        preset: SWARM_INTENSITY_PRESETS[intensity],
+        newJourneyCount: 0,
+        reusedSessionsPerTarget: [4],
+        environmentCount: 2,
+      });
+    expect(quoteAt("quick")).toBe(8);
+    expect(quoteAt("launch")).toBe(8);
+  });
+
+  it("still seeds rows that carry no config of their own", () => {
+    expect(
+      estimateLaunchSessions({
+        preset: SWARM_INTENSITY_PRESETS.standard, // sessionsPerTarget: 2
+        newJourneyCount: 0,
+        reusedSessionsPerTarget: [null],
+        environmentCount: 1,
+      })
+    ).toBe(2);
+  });
+
+  it("sizes newly authored journeys by the preset, and fans both out", () => {
+    expect(
+      estimateLaunchSessions({
+        preset: SWARM_INTENSITY_PRESETS.standard, // sessionsPerTarget: 2
+        newJourneyCount: 3,
+        reusedSessionsPerTarget: [5],
+        environmentCount: 2,
+      })
+    ).toBe(22);
+  });
+
+  it("treats no environment as one, like the preset quote does", () => {
+    expect(
+      estimateLaunchSessions({
+        preset: SWARM_INTENSITY_PRESETS.quick,
+        newJourneyCount: 2,
+        reusedSessionsPerTarget: [],
+        environmentCount: 0,
+      })
+    ).toBe(2);
   });
 });
