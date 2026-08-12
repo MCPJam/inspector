@@ -65,6 +65,20 @@ export type ChatboxEnvironmentRuntime = {
     channels?: RuntimeSkillChannel[];
     files?: Array<{ path: string; size: number; url: string | null }>;
   }>;
+  /**
+   * Phase 6.1: the environment's pinned plugin versions, mirrored from the
+   * resolution the backend already performed for this payload. Same shape as
+   * `ResolvedEnvironmentRuntime.pluginVersions`, so the chatbox branch can
+   * feed the attribution probe the environment target uses. ABSENT on every
+   * backend that predates the field — absence degrades to "no plugin origin
+   * reported", never to a guess from `connectable[].source`.
+   */
+  pluginVersions?: Array<{
+    pluginId: string;
+    pluginVersionId: string;
+    name: string;
+    bundleHash?: string;
+  }>;
 };
 
 export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
@@ -231,7 +245,11 @@ export function planChatboxSandbox(args: {
 
 export type ChatboxRuntimeConfigResult =
   | { ok: true; config: ChatboxRuntimeConfig }
-  | { ok: false; status: number; error: string };
+  // `code` carries the backend's machine-readable denial reason —
+  // CHATBOX_ACCESS_STALE above all, which is the difference between "this
+  // caller must re-redeem and retry" and "this caller is out". Callers that
+  // only render the message can keep ignoring it.
+  | { ok: false; status: number; error: string; code?: string };
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -244,6 +262,13 @@ function getConvexHttpUrl(): string {
 export async function fetchChatboxRuntimeConfig(args: {
   chatboxId: string;
   bearer: string;
+  /**
+   * The caller's cached access version. Sending it opts this request into
+   * backend version enforcement: a value behind the chatbox's current one
+   * comes back 409 CHATBOX_ACCESS_STALE instead of being silently served a
+   * config the caller no longer has a current view of. Omitted ⇒ unchecked.
+   */
+  accessVersion?: number;
   signal?: AbortSignal;
 }): Promise<ChatboxRuntimeConfigResult> {
   const url = new URL(
@@ -262,7 +287,12 @@ export async function fetchChatboxRuntimeConfig(args: {
         "content-type": "application/json",
         authorization,
       },
-      body: JSON.stringify({ chatboxId: args.chatboxId }),
+      body: JSON.stringify({
+        chatboxId: args.chatboxId,
+        ...(typeof args.accessVersion === "number"
+          ? { accessVersion: args.accessVersion }
+          : {}),
+      }),
       signal: args.signal,
     });
   } catch (err) {
@@ -293,6 +323,7 @@ export async function fetchChatboxRuntimeConfig(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Chatbox runtime-config failed (${response.status})`,
+      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
 
@@ -437,6 +468,31 @@ export function readChatboxEnvironment(
       })
     : undefined;
 
+  // Additive like `connectable`/`skills`: a malformed entry (or a torn id)
+  // drops to nothing — losing a provenance LABEL, never a capability.
+  const pluginVersions = Array.isArray(raw.pluginVersions)
+    ? raw.pluginVersions.flatMap((entry) => {
+        if (
+          !isRecord(entry) ||
+          typeof entry.pluginId !== "string" ||
+          typeof entry.pluginVersionId !== "string" ||
+          typeof entry.name !== "string"
+        ) {
+          return [];
+        }
+        return [
+          {
+            pluginId: entry.pluginId,
+            pluginVersionId: entry.pluginVersionId,
+            name: entry.name,
+            ...(typeof entry.bundleHash === "string"
+              ? { bundleHash: entry.bundleHash }
+              : {}),
+          },
+        ];
+      })
+    : undefined;
+
   return {
     kind: "present",
     environment: {
@@ -450,6 +506,7 @@ export function readChatboxEnvironment(
         ...(connectable ? { connectable } : {}),
       },
       ...(skills ? { skills } : {}),
+      ...(pluginVersions ? { pluginVersions } : {}),
     },
   };
 }

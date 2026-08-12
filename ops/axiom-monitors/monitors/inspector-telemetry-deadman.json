@@ -1,0 +1,41 @@
+{
+  "key": "inspector-telemetry-deadman",
+  "name": "MCPJam Inspector typed request telemetry silent (prod)",
+  "tier": "PAGE",
+  "owner": "marcelo",
+  "dataset": "inspector-logs",
+  "notifier": "mcpjam-alerts-page",
+  "monitor": {
+    "type": "Threshold",
+    "columnName": "Count",
+    "operator": "Below",
+    "threshold": 1,
+    "rangeMinutes": 15,
+    "intervalMinutes": 5,
+    "notifyByGroup": false,
+    "alertOnNoData": true,
+    "resolvable": true,
+    "notifyEveryRun": false
+  },
+  "aplQuery": [
+    "['inspector-logs']",
+    "| where _sysTime >= ago(15m)",
+    "| where tostring(environment) in ('prod','production')",
+    "| where event in ('http.request.completed','http.request.failed')",
+    "| summarize Count = count()"
+  ],
+  "description": [
+    "PAGE — owner: marcelo. No typed HTTP request events from prod for 15 minutes. Normal is roughly 200+ per 15 minutes.",
+    "",
+    "WHILE THIS IS FIRING, EVERY OTHER MONITOR IN THIS CHANNEL IS UNRELIABLE. Their silence means unknown, not healthy.",
+    "",
+    "WHY TYPED EVENTS ONLY: this deliberately counts only 'http.request.completed' and 'http.request.failed', not any row in the dataset. Counting arbitrary rows lets a background or free-form log keep the deadman green while the HTTP telemetry pipeline is broken.",
+    "",
+    "TRIAGE — three causes, in order of likelihood:",
+    "1. Process down or crash-looping. Hit https://app.mcpjam.com/health directly; health paths are excluded from request logging, so they answer even when logging is dead. Health OK + logs silent means the pipeline, not the app.",
+    "2. Ingest broken. AXIOM_TOKEN / AXIOM_DATASET missing or changed (the logger constructs its client lazily and silently no-ops when they are absent), or DO_NOT_TRACK is set. A config change alone can cause this.",
+    "3. Traffic not reaching us. Check the Prod canary workflow and Cloudflare before touching the app. Note the canary's real cadence is ~50 min, not the 15 min its cron requests, so a green canary can be up to an hour stale.",
+    "",
+    "ROLLBACK: node ops/axiom-monitors/apply.mjs --apply --only inspector-telemetry-deadman after reverting the definition file. If prod legitimately has 15-minute zero-traffic windows, add an explicit system heartbeat event and deadman that instead of widening this query back to arbitrary rows."
+  ]
+}

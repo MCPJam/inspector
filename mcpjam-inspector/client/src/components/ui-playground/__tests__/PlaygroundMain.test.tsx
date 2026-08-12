@@ -1323,9 +1323,16 @@ describe("PlaygroundMain", () => {
     });
 
     it("withholds edit until a newly selected ordinary host resolves", () => {
+      // Convex-shaped id on purpose: this test drives the REAL `useHost`, which
+      // skips the query for an id that could never name a host document (a
+      // `/hosts/:hostId` URL can carry a catalog slug — see `shouldQueryHostId`).
+      // A `host-…` placeholder would be skipped, so the host could never
+      // "resolve" and the assertion below would be testing the guard, not the
+      // edit affordance.
+      const HOST_ID = "hlk3m9x2q7v5b8n1t4r6s0dc";
       localStorage.setItem(
         "mcp-previewed-host-id",
-        JSON.stringify({ "project-1": "host-loading" })
+        JSON.stringify({ "project-1": HOST_ID })
       );
       mockHostQueryState.result = undefined;
 
@@ -1337,7 +1344,7 @@ describe("PlaygroundMain", () => {
       ).toBeUndefined();
 
       mockHostQueryState.result = {
-        hostId: "host-loading",
+        hostId: HOST_ID,
         name: "Ordinary host",
         config: {
           id: "config-1",

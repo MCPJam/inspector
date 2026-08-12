@@ -5,6 +5,7 @@ import {
   type DeliveredRpcLogEvent,
 } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import {
   executeLocalServerConnect,
   parseLocalConnectRequestBody,
@@ -86,7 +87,12 @@ servers.get("/", async (c) => {
       servers: serverList,
     });
   } catch (error) {
-    logger.error("Error listing servers", error);
+    reportRouteFailure("Error listing servers", error, {
+      // Pure local manager state — no hop into anyone's MCP server. If
+      // enumerating our own summaries throws, that is our bug.
+      source: "mcp.servers.list",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -115,7 +121,13 @@ servers.get("/status/:serverId", async (c) => {
       ping,
     });
   } catch (error) {
-    logger.error("Error getting server status", error, { serverId });
+    reportRouteFailure("Error getting server status", error, {
+      // Pings the user's server when connected; a failure here is usually
+      // their server, not ours.
+      source: "mcp.servers.status",
+      hop: "user_server_hop",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -150,7 +162,12 @@ servers.get("/init-info/:serverId", async (c) => {
       initInfo,
     });
   } catch (error) {
-    logger.error("Error getting initialization info", error, { serverId });
+    reportRouteFailure("Error getting initialization info", error, {
+      // Reads cached init data off our own manager.
+      source: "mcp.servers.init-info",
+      hop: "mcpjam_internal",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -195,7 +212,13 @@ servers.delete("/:serverId", async (c) => {
       message: `Disconnected from server: ${serverId}`,
     });
   } catch (error) {
-    logger.error("Error disconnecting server", error, { serverId });
+    reportRouteFailure("Error disconnecting server", error, {
+      // Closing a transport most often fails because the peer is already
+      // gone.
+      source: "mcp.servers.disconnect",
+      hop: "user_server_hop",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -212,7 +235,7 @@ servers.delete("/:serverId", async (c) => {
 servers.post("/reconnect", async (c) => {
   let body: unknown;
   try {
-    body = await c.req.json();
+    body = await readRequestJson(c);
   } catch (error) {
     return c.json(
       {
