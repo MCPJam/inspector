@@ -140,6 +140,7 @@ import {
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
@@ -228,9 +229,7 @@ import {
   resolveEffectiveWireProtocolVersion,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
-import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
-  getDefaultClientCapabilities,
   isKnownProtocolVersion,
   readTasksPolicy,
   readXaaEnterprisePolicy,
@@ -2940,9 +2939,15 @@ export default function App() {
   // The host is the authoritative source once `activeHost` hydrates; the
   // shadow path only matters during the bootstrap window before
   // `hostConfigsV2:getProjectDefault` returns.
-  const hostedClientCapabilities = (activeHost?.clientCapabilities ??
-    getEffectiveProjectClientCapabilities(activeProject?.clientConfig) ??
-    getDefaultClientCapabilities()) as Record<string, unknown>;
+  // Memoized because this feeds `useApiContext`'s dependency array. Computing
+  // it inline returned a fresh object on every render whenever the host had
+  // not hydrated capabilities — i.e. whenever a server was failing to connect —
+  // which closed a render-speed refetch loop on /api/web/tools/list. See the
+  // hook for the full chain.
+  const hostedClientCapabilities = useHostedClientCapabilities(
+    activeHost?.clientCapabilities,
+    activeProject?.clientConfig,
+  );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
