@@ -35,8 +35,10 @@ vi.mock("node:fs/promises", async () => {
 });
 
 import {
+  getLocalConsentFingerprint,
   grantLocalComputerConsent,
   revokeLocalComputerConsent,
+  verifyAndFingerprintLocalConsent,
   verifyLocalComputerConsent,
 } from "../local-consent.js";
 
@@ -118,5 +120,51 @@ describe("local computer consent capability", () => {
     expect(
       await verifyLocalComputerConsent("definitely-not-the-token-but-long")
     ).toBe(false);
+  });
+});
+
+
+describe("verifyAndFingerprintLocalConsent", () => {
+  it("returns the matched fingerprint for the live token", async () => {
+    const { token } = await grantLocalComputerConsent();
+    const fingerprint = await verifyAndFingerprintLocalConsent(token);
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    // It IS the stored hash, not some other derivation.
+    expect(fingerprint).toBe(await getLocalConsentFingerprint());
+  });
+
+  it("rejects a wrong, empty, or absent token", async () => {
+    await grantLocalComputerConsent();
+    expect(await verifyAndFingerprintLocalConsent("n".repeat(43))).toBeNull();
+    expect(await verifyAndFingerprintLocalConsent("")).toBeNull();
+    expect(await verifyAndFingerprintLocalConsent(null)).toBeNull();
+    expect(await verifyAndFingerprintLocalConsent(undefined)).toBeNull();
+  });
+
+  it("rejects once consent is revoked", async () => {
+    const { token } = await grantLocalComputerConsent();
+    await revokeLocalComputerConsent(token);
+    expect(await verifyAndFingerprintLocalConsent(token)).toBeNull();
+  });
+
+  it("rejects the OLD token after a re-grant rotates the capability", async () => {
+    const first = await grantLocalComputerConsent();
+    const second = await grantLocalComputerConsent();
+
+    // The whole point of pairing verify+fingerprint in one read: the old token
+    // must never come back with the NEW capability's fingerprint.
+    expect(await verifyAndFingerprintLocalConsent(first.token)).toBeNull();
+    const live = await verifyAndFingerprintLocalConsent(second.token);
+    expect(live).toBe(await getLocalConsentFingerprint());
+  });
+
+  it("returns the fingerprint the token was CHECKED against, never a newer one", async () => {
+    const { token } = await grantLocalComputerConsent();
+    const fingerprint = await verifyAndFingerprintLocalConsent(token);
+
+    // After a rotation the old fingerprint is stale — which is exactly what the
+    // WS handler's re-check detects.
+    await grantLocalComputerConsent();
+    expect(await getLocalConsentFingerprint()).not.toBe(fingerprint);
   });
 });

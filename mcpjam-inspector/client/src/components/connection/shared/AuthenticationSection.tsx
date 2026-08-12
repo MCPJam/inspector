@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import {
+  protocolVersionLabel,
   readXaaEnterprisePolicy,
   resolveAuthorizationPlan,
   type McpProtocolVersion,
@@ -29,6 +30,7 @@ import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
 import type { ConfidentialCimdCapabilityStatus } from "@/hooks/use-confidential-cimd-capability";
 import {
   resolveEffectiveOauthProtocolMode,
+  SERVER_FORM_OAUTH_PROTOCOL_MODES,
   type ServerFormAuthType,
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
@@ -122,15 +124,21 @@ interface AuthenticationSectionProps {
   xaaDcrStatus?: "registered" | "registering" | "uncertain";
 }
 
+/**
+ * "Auto" first, then every era newest-first.
+ * `SERVER_FORM_OAUTH_PROTOCOL_MODES` is oldest-first, and the labels come
+ * from the SDK's `protocolVersionLabel`, so adding an era moves the "Latest"
+ * marker here without this file changing.
+ */
 const PROTOCOL_OPTIONS: Array<{
   value: ServerFormOAuthProtocolMode;
   label: string;
 }> = [
   { value: "auto", label: "Auto" },
-  { value: "2026-07-28", label: "2026-07-28 (Draft)" },
-  { value: "2025-11-25", label: "2025-11-25 (Latest)" },
-  { value: "2025-06-18", label: "2025-06-18" },
-  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+  ...[...SERVER_FORM_OAUTH_PROTOCOL_MODES].reverse().map((version) => ({
+    value: version,
+    label: protocolVersionLabel(version),
+  })),
 ];
 
 // Options come from the shared registration-vocabulary label module, so the

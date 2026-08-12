@@ -171,6 +171,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   update_project_environment: "Environment authoring has its own editor.",
   archive_project_environment: "Environment lifecycle has its own controls.",
   restore_project_environment: "Environment lifecycle has its own controls.",
+  list_project_plugins: "Plugin inventory lives in the Plugins surface.",
+  get_plugin_version: "Plugin version detail lives in the Plugins surface.",
 
   // Sandbox images and computers: minutes-long builds and billable compute.
   list_sandbox_images:

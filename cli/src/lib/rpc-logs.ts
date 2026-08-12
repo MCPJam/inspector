@@ -1,5 +1,5 @@
 import type { RpcLogger } from "@mcpjam/sdk";
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./redaction.js";
 
 export interface CliRpcLogEvent {
   serverId: string;
@@ -71,6 +71,6 @@ export function getCliRpcLogEvents(
 function redactCliRpcLogs(logs: CliRpcLogEvent[]): CliRpcLogEvent[] {
   return logs.map((event) => ({
     ...event,
-    message: redactSensitiveValue(event.message),
+    message: redactForTelemetry(event.message),
   }));
 }

@@ -60,6 +60,7 @@ import {
 } from "@/lib/tool-result-utils";
 import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
+import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -456,6 +457,10 @@ export function PartSwitch({
         setEditedOutput(null);
         setEditVersion((v) => v + 1);
       } catch (err) {
+        reportPossiblyOurFailure(err, {
+          source: "widget_tool_run",
+          extra: { toolName: toolInfo.toolName },
+        });
         if (runSeqRef.current === seq) {
           toast.error(err instanceof Error ? err.message : "Execution failed");
         }

@@ -1,4 +1,4 @@
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { ErrorOrigin, MCPClientManager } from "@mcpjam/sdk";
 import type { RequestLogContext } from "../utils/log-events.js";
 
 // Extend Hono's context with our custom variables
@@ -14,8 +14,20 @@ declare module "hono" {
      * Code + message from the last `webError()` on this request. Set so
      * `requestLogContextMiddleware` can record *why* a returned (non-thrown)
      * 5xx failed; without it the middleware only ever sees a status code.
+     *
+     * `origin`/`slug` are present whenever the failing route had a normalized
+     * describe-error block. They make `http.request.failed` sliceable by whose
+     * fault a failure was, which is what lets the Sentry capture policy stay
+     * narrow: `ambiguous` volume stays visible in Axiom without paying for it
+     * in issue-tracker noise.
      */
-    webErrorMeta?: { status: number; code: string; message: string };
+    webErrorMeta?: {
+      status: number;
+      code: string;
+      message: string;
+      origin?: ErrorOrigin;
+      slug?: string;
+    };
     /**
      * Auth method used to resolve the caller. Set by `bearerAuthMiddleware`:
      * - `"workos_api_key"` — caller presented a WorkOS `sk_…` API key

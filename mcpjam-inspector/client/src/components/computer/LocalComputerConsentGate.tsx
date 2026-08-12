@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldQuestion } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { track } from "@/lib/analytics";
 
 /**
  * First-run consent for the local computer engine. Allowing it grants the
@@ -21,17 +22,42 @@ export function LocalComputerConsentGate({
   const [granting, setGranting] = useState(false);
   const [error, setError] = useState(false);
 
+  // Content-free funnel: shown → granted | denied. `cloud_offered` records
+  // whether the decline affordance existed at all, since a pure-local
+  // inspector has no "Use cloud instead" button and its denials are invisible
+  // by construction.
+  const cloudOffered = !!onUseCloud;
+  useEffect(() => {
+    track("local_computer_consent_gate_shown", {
+      location: "computer_tab_local",
+      cloud_offered: cloudOffered,
+    });
+  }, [cloudOffered]);
+
   const handleAllow = async () => {
     setGranting(true);
     setError(false);
     try {
       const ok = await onAllow();
       if (!ok) setError(true);
+      track("local_computer_consent_granted", {
+        location: "computer_tab_local",
+        outcome: ok ? "stored" : "failed",
+      });
     } catch {
       setError(true);
+      track("local_computer_consent_granted", {
+        location: "computer_tab_local",
+        outcome: "failed",
+      });
     } finally {
       setGranting(false);
     }
+  };
+
+  const handleUseCloud = () => {
+    track("local_computer_consent_denied", { location: "computer_tab_local" });
+    onUseCloud?.();
   };
 
   return (
@@ -58,7 +84,7 @@ export function LocalComputerConsentGate({
           <Button
             size="sm"
             variant="outline"
-            onClick={onUseCloud}
+            onClick={handleUseCloud}
             disabled={granting}
           >
             Use cloud instead

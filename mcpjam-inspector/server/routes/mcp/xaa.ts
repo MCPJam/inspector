@@ -53,9 +53,9 @@ import {
 import type {
   ServerClientSecretResult,
 } from "../../utils/server-secrets.js";
-import { logger } from "../../utils/logger.js";
 import { getClientIp as getTrustedClientIp } from "../../utils/client-ip.js";
 import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
@@ -938,7 +938,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     path: "/authenticate" | "/token-exchange" | "/negative-tests"
   ): Promise<Response | null> => {
     if (!options.forwardHostedIssuer) return null;
-    const body = await c.req.json().catch(() => null);
+    const body = await readRequestJson(c).catch(() => null);
     if (
       !body ||
       typeof body !== "object" ||
@@ -1147,7 +1147,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           })
         );
       }
-      logger.error("[XAA Org Issuer] authorization failed", error);
+      reportRouteFailure("[XAA Org Issuer] authorization failed", error, {
+        // Minting against MCPJam's own org issuer.
+        source: "mcp.xaa.org-issuer",
+        hop: "mcpjam_internal",
+      });
       return xaaFailure(
         toJsonError("Couldn't authorize the organization issuer", {
           status: 500,
@@ -1197,7 +1201,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           details: error.details,
         });
       }
-      logger.error("[XAA Confidential CIMD] organization authorization failed", error);
+      reportRouteFailure(
+        "[XAA Confidential CIMD] organization authorization failed",
+        error,
+        { source: "mcp.xaa.cimd", hop: "mcpjam_internal" }
+      );
       return toJsonError("Couldn't authorize the organization", {
         status: 500,
         code: "INTERNAL_ERROR",
@@ -1342,7 +1350,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // response body (which must stay byte-identical for hosted forwarding).
   const handleAuthenticate = async (c: Context, issuer: string) => {
     try {
-      const body = await c.req.json();
+      const body = await readRequestJson(c);
       const parsed = parseRequest(authenticateSchema, body);
       const result = handleXaaAuthenticate({
         issuer,
@@ -1379,7 +1387,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // and maps to the server's 400 shape.
   const handleTokenExchange = async (c: Context, issuer: string) => {
     try {
-      const body = await c.req.json();
+      const body = await readRequestJson(c);
       const parsed = parseRequest(tokenExchangeSchema, body);
       const negativeTestMode = resolveNegativeTestMode(parsed.negativeTestMode);
 
@@ -1418,7 +1426,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   router.post("/proxy/token", async (c) => {
     try {
-      const body = await c.req.json();
+      const body = await readRequestJson(c);
       const parsed = parseRequest(proxyTokenSchema, body);
       const authMethod = parsed.tokenEndpointAuthMethod;
       let resolvedConfidentialCimdProvider = confidentialCimdProvider;
@@ -1559,7 +1567,12 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         });
       }
 
-      logger.error("[XAA Token Proxy] Error", error);
+      reportRouteFailure("[XAA Token Proxy] Error", error, {
+        // Proxies to the RESOURCE server's authorization server, which the
+        // user configured.
+        source: "mcp.xaa.token-proxy",
+        hop: "user_server_hop",
+      });
       return toJsonError(
         error instanceof Error ? error.message : "Unknown proxy error",
         { status: 500, code: "INTERNAL_ERROR" }
@@ -1570,7 +1583,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   router.post("/discover-as", async (c) => {
     let parsed;
     try {
-      parsed = parseRequest(discoverAsSchema, await c.req.json());
+      parsed = parseRequest(discoverAsSchema, await readRequestJson(c));
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid discovery request",
@@ -1626,7 +1639,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           code: "VALIDATION_ERROR",
         });
       }
-      logger.error("[XAA Discover AS] Error", error);
+      reportRouteFailure("[XAA Discover AS] Error", error, {
+        // Discovery against the user's configured issuer.
+        source: "mcp.xaa.discover-as",
+        hop: "user_server_hop",
+      });
       return toJsonError(
         error instanceof Error ? error.message : "Discovery failed",
         { status: 502, code: "SERVER_UNREACHABLE" }
@@ -1637,7 +1654,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   router.post("/health-check", async (c) => {
     let parsed;
     try {
-      parsed = parseRequest(healthCheckSchema, await c.req.json());
+      parsed = parseRequest(healthCheckSchema, await readRequestJson(c));
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid health check request",
@@ -1715,7 +1732,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   ) => {
     let parsed;
     try {
-      parsed = parseRequest(negativeTestsSchema, await c.req.json());
+      parsed = parseRequest(negativeTestsSchema, await readRequestJson(c));
     } catch (error) {
       return toJsonError(
         error instanceof Error
@@ -2085,7 +2102,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   //     the machine.
   //   - not hosted: mint and fire locally.
   router.post("/negative-tests", async (c) => {
-    const body = await c.req.json().catch(() => null);
+    const body = await readRequestJson(c).catch(() => null);
     const isHosted =
       Boolean(options.forwardHostedIssuer) &&
       body &&
