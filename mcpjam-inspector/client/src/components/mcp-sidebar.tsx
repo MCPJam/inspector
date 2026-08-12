@@ -677,7 +677,7 @@ export function MCPSidebar({
                       aria-label={item.title}
                       onClick={() => handleNavClick(item.url)}
                       className={cn(
-                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                         isNavItemActive(item) &&
                           "bg-sidebar-accent text-sidebar-accent-foreground"
                       )}

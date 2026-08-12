@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ALL_OPERATIONS, listProjectsOperation } from "@mcpjam/sdk/platform";
+import {
+  ALL_OPERATIONS,
+  getPluginVersionOperation,
+  listProjectPluginsOperation,
+  listProjectsOperation,
+} from "@mcpjam/sdk/platform";
 import {
   EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
@@ -122,6 +127,9 @@ const PLAIN_TOOLS = [
   "list_project_environments",
   "get_project_environment",
   "resolve_project_environment",
+  // Agent Plugins reads: agent-oriented payloads, no widget view.
+  "list_project_plugins",
+  "get_plugin_version",
   "get_eval_iteration_trace",
   "get_eval_run_steps",
   "cancel_eval_run",
@@ -237,6 +245,8 @@ describe("platform tool registration", () => {
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
+      "list_project_plugins",
+      "get_plugin_version",
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
@@ -371,6 +381,70 @@ describe("widget payload tagging", () => {
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.widget).toBe("servers");
     expect(result.structuredContent?.servers).toEqual([]);
+  });
+});
+
+describe("plugin read tools", () => {
+  it("list_project_plugins resolves the project and returns the live plugins", async () => {
+    const pluginsPage = {
+      items: [
+        {
+          id: "plugin-1",
+          projectId: "project-1",
+          name: "linear-tools",
+          displayName: "Linear Tools",
+          enabled: true,
+          activeVersionId: "pv-1",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    };
+    stubPlatformFetch({
+      "/projects": PROJECTS_PAGE,
+      "/projects/project-1/plugins": pluginsPage,
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectPluginsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      project: { id: "project-1" },
+      items: pluginsPage.items,
+    });
+  });
+
+  it("get_plugin_version returns the version detail by raw id", async () => {
+    const version = {
+      id: "pv-1",
+      pluginId: "plugin-1",
+      bundleHash: "hash-abc",
+      status: "ready",
+      componentCounts: {
+        skills: 1,
+        servers: 1,
+        apps: 0,
+        assets: 0,
+        unsupported: 0,
+      },
+      servers: [],
+      skills: [],
+      createdAt: 1,
+    };
+    stubPlatformFetch({ "/plugin-versions/pv-1": version });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      getPluginVersionOperation,
+      { pluginVersionId: "pv-1" }
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual(version);
   });
 });
 

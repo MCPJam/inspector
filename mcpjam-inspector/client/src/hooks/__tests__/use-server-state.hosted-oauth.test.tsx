@@ -63,6 +63,11 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
+  // Literal rather than the real export: the module under mock is the one
+  // being stubbed out. Drift is caught by the ratchet in
+  // lib/oauth/__tests__/oauth-callback-recovery.test.ts, which pins the
+  // constant to this exact value.
+  OAUTH_PENDING_STORAGE_KEY: "mcp-oauth-pending",
   completeHostedOAuthCallback: mockHandleOAuthCallback,
   handleOAuthCallback: mockHandleOAuthCallback,
   getStoredTokens: vi.fn(),

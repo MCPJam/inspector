@@ -144,11 +144,13 @@ export {
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  extractInsufficientScopeChallenge,
   isMCPAuthError,
   unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./errors.js";
+export type { InsufficientScopeChallenge } from "./errors.js";
 
 export type { RetryPolicy } from "../retry.js";
 export {
@@ -461,6 +463,7 @@ export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
 } from "./mcp-protocol-version.js";
 
 // Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen`

@@ -16,7 +16,7 @@ import {
 import { Command } from "commander";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { cliError, setProcessExitCode, usageError, writeResult } from "../lib/output.js";
-import { redactSensitiveValue } from "../lib/redaction.js";
+import { redactForTelemetry } from "../lib/redaction.js";
 
 type XaaTokenEndpointAuthMethod =
   | "client_secret_post"
@@ -190,7 +190,7 @@ export function printRegistrationNotes(
 
 // Never emit raw bearer credentials. First mask the ID-JAG itself — the SDK's
 // recursive redactor keys on token-ish field names and won't catch a bare
-// `token` field — then run redactSensitiveValue over the whole result to scrub
+// `token` field — then run redactForTelemetry over the whole result to scrub
 // reflected or nested secrets (the AS's access_token/refresh_token/id_token,
 // Bearer strings, etc.) anywhere in the output. The decoded `idJag.claims`, the
 // verify verdict, and the per-step report keep the debug value.
@@ -199,7 +199,7 @@ export function redactXaaResult(result: XaaFlowResult): XaaFlowResult {
   const masked: XaaFlowResult = result.idJag
     ? { ...result, idJag: { ...result.idJag, token: "[REDACTED]" } }
     : result;
-  const scrubbed = redactSensitiveValue(masked) as XaaFlowResult;
+  const scrubbed = redactForTelemetry(masked) as XaaFlowResult;
   // A token endpoint may reflect the submitted `assertion` (the raw ID-JAG) in
   // an error body under a non-secret field name (e.g. `assertion`,
   // `error_description`), which the key-based redactor and the Bearer-string

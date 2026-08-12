@@ -72,6 +72,8 @@ jobs:
       - name: Build app
         run: npm run build -w @mcpjam/inspector
         shell: powershell
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
       # ONLY dist/client here. The packaged app serves its UI from
       # dist/client via the embedded Hono server (server/app.ts
@@ -112,6 +114,11 @@ jobs:
 
       - name: Make Windows installer
         env:
+          # @electron-forge/plugin-vite builds the renderer bundle inside this
+          # step. That build OOMs at node's default ~4GB heap on the Windows
+          # runner (`Ineffective mark-compacts near heap limit`), so raise it —
+          # same value the mac job uses for the equivalent step.
+          NODE_OPTIONS: --max-old-space-size=8192
           WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
           # Actions injects a secret only into steps that name it. The
