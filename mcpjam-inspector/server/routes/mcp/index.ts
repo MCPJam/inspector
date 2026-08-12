@@ -30,6 +30,7 @@ import widgetRender from "./widget-render";
 import widgetSession from "./widget-session";
 import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
+import { buildHealthMeta } from "../../utils/health-payload.js";
 
 const mcp = new Hono();
 
@@ -39,6 +40,7 @@ mcp.get("/health", (c) => {
     service: "MCP API",
     status: "ready",
     timestamp: new Date().toISOString(),
+    ...buildHealthMeta(),
   });
 });
 

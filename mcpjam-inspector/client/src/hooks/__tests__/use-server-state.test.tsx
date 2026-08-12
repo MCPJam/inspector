@@ -1221,7 +1221,7 @@ describe("useServerState OAuth callback failures", () => {
       errorToastMessage(
         "OAuth authorization failed: access_denied: User denied access",
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(window.location.pathname).toBe("/servers");
@@ -1251,7 +1251,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage("Error completing OAuth flow: Token exchange failed"),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
@@ -1797,7 +1797,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(
       dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST")
@@ -1821,7 +1821,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(testConnectionMock).not.toHaveBeenCalled();
     expect(mockCreateServer).not.toHaveBeenCalled();
@@ -1858,7 +1858,7 @@ describe("useServerState OAuth callback failures", () => {
     });
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
@@ -2443,7 +2443,7 @@ describe("useServerState OAuth callback failures", () => {
       errorToastMessage(
         "Network error: Failed to resolve registry OAuth config: registry lookup failed",
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
@@ -2539,7 +2539,7 @@ describe("useServerState OAuth callback failures", () => {
       ...appState.servers["demo-server"],
       oauthFlowProfile: {
         serverUrl: "https://example.com/mcp",
-        resourceUrl: "https://fresh.example.com",
+        resourceUrl: "https://example.com/mcp",
         clientId: "fresh-client-id",
         clientSecret: "",
         scopes: "fresh profile",
@@ -2565,7 +2565,7 @@ describe("useServerState OAuth callback failures", () => {
         serverName: "demo-server",
         serverUrl: "https://example.com/mcp",
         scopes: ["fresh", "profile"],
-        resourceUrl: "https://fresh.example.com",
+        resourceUrl: "https://example.com/mcp",
         customHeaders: { "X-Fresh": "profile" },
         clientId: "fresh-client-id",
         clientSecret: undefined,
@@ -2576,6 +2576,47 @@ describe("useServerState OAuth callback failures", () => {
         protocolVersion: "2025-11-25",
         registrationMode: "preregistered",
         registrationStrategy: "preregistered",
+      })
+    );
+  });
+
+  // Invariant: a connect-like intent cannot opt into a foreign resource
+  // audience. The shared request builder refuses it BEFORE the redirect, so the
+  // user sees a configuration error instead of leaving the page and coming back
+  // to an opaque token rejection.
+  it("refuses a cross-origin configured resource before redirecting", async () => {
+    readStoredOAuthConfigMock.mockReturnValueOnce({});
+
+    const appState = createAppState();
+    const profiledServer = {
+      ...appState.servers["demo-server"],
+      oauthFlowProfile: {
+        serverUrl: "https://example.com/mcp",
+        resourceUrl: "https://attacker.example.com/mcp",
+        clientId: "fresh-client-id",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+    };
+    appState.servers["demo-server"] = profiledServer as any;
+    appState.projects.default.servers["demo-server"] = profiledServer as any;
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "demo-server",
+        error: expect.stringContaining("attacker.example.com"),
       })
     );
   });
@@ -3211,7 +3252,7 @@ describe("syncServerToConvex name-collision recovery", () => {
       errorToastMessage(
         'A server named "taken-name" already exists. Choose a different name.'
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(dispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "REMOVE_SERVER" })

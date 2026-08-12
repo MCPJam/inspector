@@ -86,6 +86,82 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
     });
   });
 
+  it("forwards the recorded failure on authorization_server_unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            success: false,
+            code: "authorization_server_unreachable",
+            message: "Could not reach the authorization server (HTTP 502).",
+            detail: {
+              url: "https://eliya.descope.team/oauth2/v1/apps/token",
+              status: 502,
+              body: '{"title":"Error 502: Bad gateway"}',
+            },
+          }),
+          { status: 503, headers: { "Content-Type": "application/json" } }
+        )
+      )
+    );
+
+    await expect(
+      forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1",
+        { serverName: "Descope" }
+      )
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "authorization_server_unreachable",
+      message: "Could not reach the authorization server (HTTP 502).",
+      details: {
+        authorizationServerUnreachable: true,
+        serverId: "server-1",
+        serverName: "Descope",
+        failure: {
+          url: "https://eliya.descope.team/oauth2/v1/apps/token",
+          status: 502,
+          body: '{"title":"Error 502: Bad gateway"}',
+        },
+      },
+    });
+  });
+
+  it("keeps failure null when the backend recorded nothing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            success: false,
+            code: "authorization_server_unreachable",
+            message: "Could not reach the authorization server.",
+            detail: null,
+          }),
+          { status: 503, headers: { "Content-Type": "application/json" } }
+        )
+      )
+    );
+
+    await expect(
+      forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1"
+      )
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "authorization_server_unreachable",
+      details: {
+        authorizationServerUnreachable: true,
+        failure: null,
+      },
+    });
+  });
+
   it("propagates a non-refresh error code as the WebRouteError code", async () => {
     vi.stubGlobal(
       "fetch",
