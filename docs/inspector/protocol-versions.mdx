@@ -19,7 +19,7 @@ There are three places to set a version, and they layer:
 2. **Add Server modal → Connection overrides → Protocol version** — a _per-server override_ set at add time (available when adding a server to a shared project).
 3. **Server card → Edit → Advanced settings → Protocol version** — a _per-server override_ that wins over the host default.
 
-Use the host default when you want every server in a Client to speak the same version. Use per-server overrides when you're testing a mix — for example, a November server alongside one you're upgrading to Latest.
+Use the host default when you want every server in a Client to speak the same version. Use per-server overrides when you're testing a mix — for example, a server pinned to 2025-11-25 alongside one you're upgrading to Latest.
 
 ## Available versions
 
@@ -29,7 +29,7 @@ Use the host default when you want every server in a Client to speak the same ve
 | ------------------------- | ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Automatic**             | none               | HTTP + stdio: `server/discover`, then legacy fallback | Detect 2026 support from the server; otherwise use the version negotiated by `initialize`. This is the default.                        |
 | **Latest (2026-07-28)**   | `2026-07-28`       | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the newest stateless revision — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
-| **November (2025-11-25)** | `2025-11-25`       | HTTP, STDIO, SSE                                | Pin to the November stateful release. The initialize handshake offers only this version.                                                    |
+| **2025-11-25**            | `2025-11-25`       | HTTP, STDIO, SSE                                | Pin to the 2025-11-25 stateful release. The initialize handshake offers only this version.                                                  |
 | **2025-06-18**            | `2025-06-18`       | HTTP, STDIO, SSE                                | Test against the June 2025 stable revision.                                                                                                 |
 | **2025-03-26**            | `2025-03-26`       | HTTP, STDIO, SSE                                | Test against the March 2025 stable revision.                                                                                                |
 | **Host default** _(per-server only)_ | —     | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
@@ -38,7 +38,7 @@ Use the host default when you want every server in a Client to speak the same ve
 
 When Automatic falls back to the legacy `initialize` handshake, it uses the MCP SDK's complete built-in supported-version list. Persisted per-client accept-lists are ignored in Automatic mode so reconnecting cannot accidentally narrow negotiation; choose an explicit version when you want a strict protocol pin.
 
-**Latest** is derived, not hardcoded: it always labels the newest version in the SDK's known-version list. **November** labels the `2025-11-25` stateful release.
+**Latest** is derived, not hardcoded: it always labels the newest version in the SDK's known-version list. Every other known revision is shown as a bare date.
 
 ### Dropdown options vary by client
 
@@ -62,7 +62,7 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
   <img
     className="block"
     src="/images/protocol-versions/host-default-dropdown.png"
-    alt="Client editor with the MCP Protocol tab open and the Protocol version dropdown showing Automatic, Latest (2026-07-28), November (2025-11-25), 2025-06-18, and 2025-03-26 options"
+    alt="Client editor with the MCP Protocol tab open and the Protocol version dropdown showing Automatic, Latest (2026-07-28), 2025-11-25, 2025-06-18, and 2025-03-26 options"
     width="1000"
   />
 </Frame>
@@ -73,7 +73,7 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
 4. In the **Protocol version** dropdown, pick a version:
    - **Automatic** — no pin stored; the SDK picks the version at connect time (default).
    - **Latest (2026-07-28)** — pin to the newest stateless revision.
-   - **November (2025-11-25)** — pin to the November stateful release.
+   - **2025-11-25** — pin to the 2025-11-25 stateful release.
    - **2025-06-18** or **2025-03-26** — pin to an earlier stable revision.
 5. Save.
 
@@ -90,7 +90,7 @@ When adding a server to a shared project, the **Connection overrides** section o
 1. Click **Add server** in the **Servers** tab.
 2. Fill in the server details.
 3. Expand **Connection overrides**.
-4. Pick **Client default**, **Latest (2026-07-28)**, **November (2025-11-25)**, or an earlier stable revision from the **Protocol version** dropdown.
+4. Pick **Client default**, **Latest (2026-07-28)**, **2025-11-25**, or an earlier stable revision from the **Protocol version** dropdown.
 5. Submit the form.
 
 The pin is applied once the server is created and the connection is established.
@@ -100,7 +100,7 @@ The pin is applied once the server is created and the connection is established.
 1. Go to the **Servers** tab.
 2. Click the three dots on the server card → **Edit** (or open **View server info** → **Edit**).
 3. Expand **Advanced settings**.
-4. Find **Protocol version** and pick **Host default**, **Latest (2026-07-28)**, **November (2025-11-25)**, or an earlier stable revision.
+4. Find **Protocol version** and pick **Host default**, **Latest (2026-07-28)**, **2025-11-25**, or an earlier stable revision.
 5. Save and reconnect the server.
 
 The per-server override is the more specific signal — it wins over whatever the Client's MCP Protocol tab says.
@@ -154,7 +154,7 @@ For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, 
 4. Run a `tools/list` and a `tools/call` from the **Tools** tab.
 5. Watch the **Activity** log for the request `_meta` and the `MCP-Protocol-Version` header.
 6. Try an unsupported version on a second test server to confirm your `-32004` error envelope looks right.
-7. Once your server is happy on Latest, keep one Client on **Automatic** (or pinned to **November (2025-11-25)**) so you can flip between versions without rewriting settings.
+7. Once your server is happy on Latest, keep one Client on **Automatic** (or pinned to **2025-11-25**) so you can flip between versions without rewriting settings.
 
 If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the RC server stays pinned to `2026-07-28`, the rest fall back to the host default.
 

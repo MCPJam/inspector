@@ -67,6 +67,36 @@ export function useHostList({
   };
 }
 
+// Deliberately a HEURISTIC, not a validator: Convex's id format is not a
+// documented syntax to match against, so only the backend's `normalizeId` can
+// answer this for real. It exists to catch the class of value that actually
+// reaches us — a short catalog slug — since host ids travel through the URL
+// (`/hosts/:hostId`) and through per-project persisted storage.
+const CONVEX_HOST_ID_PATTERN = /^[a-z0-9]{20,}$/i;
+
+/**
+ * Whether `hostId` is shaped like a Convex `hosts` document id, and so could
+ * resolve to a host at all.
+ *
+ * `/hosts/:hostId` hands over whatever is in the URL, so a clients-catalog slug
+ * gets here — `/hosts/chatgpt`, whose supported deep link is
+ * `/hosts?template=chatgpt`. Such a value can never resolve to a host, and
+ * querying with it used to throw against `hosts:getHost`'s `v.id("hosts")`
+ * argument, surfacing as an opaque `[CONVEX Q(hosts:getHost)] Server Error`
+ * (the Sentry issue this guard closes). The backend now normalizes the id and
+ * reads a malformed one as not-found, so this is no longer the only thing
+ * standing between a typed URL and a crash — it stays because a value that
+ * cannot resolve should not cost a round-trip, and because `HostsRoute` uses it
+ * to keep such a value OUT of persisted state, where it would outlive the URL.
+ *
+ * Positive shape check rather than `shouldQueryProjectId`'s sentinel blocklist:
+ * a slug looks like a perfectly ordinary id to a blocklist.
+ */
+export function shouldQueryHostId(hostId: string | null | undefined): boolean {
+  const normalized = hostId?.trim();
+  return Boolean(normalized && CONVEX_HOST_ID_PATTERN.test(normalized));
+}
+
 export function useHost({
   isAuthenticated,
   hostId,
@@ -77,14 +107,20 @@ export function useHost({
   host: HostDetail | null;
   isLoading: boolean;
 } {
+  const shouldQuery = isAuthenticated && shouldQueryHostId(hostId);
+  // Trimmed, so a padded id can't pass the guard and then fail validation.
+  const queryHostId = hostId?.trim() ?? "";
+
   const result = useQuery(
     "hosts:getHost" as any,
-    isAuthenticated && hostId ? ({ hostId } as any) : "skip",
+    shouldQuery ? ({ hostId: queryHostId } as any) : "skip",
   ) as HostDetail | null | undefined;
 
   return {
     host: result ?? null,
-    isLoading: result === undefined,
+    // A skipped query never resolves, so reporting it as loading would leave
+    // callers (the Connect canvas, the compare grid) spinning forever.
+    isLoading: shouldQuery && result === undefined,
   };
 }
 
