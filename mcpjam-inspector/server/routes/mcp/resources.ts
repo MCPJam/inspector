@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { logger } from "../../utils/logger";
+import {
+  reportRouteFailure,
+  reportRouteFailureForResponse,
+} from "../../utils/route-error-report.js";
 import { listResources, readResource } from "../../utils/route-handlers.js";
 import { jsonError } from "../../utils/mcp-error-serialize.js";
 import {
@@ -36,11 +39,17 @@ resources.post("/list", async (c) => {
       ...(servedFromCache ? { servedFromCache } : {}),
     });
   } catch (error) {
-    logger.error("Error fetching resources", error, { serverId });
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "Error fetching resources",
+      error,
+      { source: "mcp.resources.list", hop: "user_server_hop", context: { serverId } },
+    );
     return c.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
+        normalized,
+        origin,
       },
       500,
     );
@@ -78,7 +87,13 @@ resources.post("/read", async (c) => {
       ...(servedFromCache ? { servedFromCache } : {}),
     });
   } catch (error) {
-    logger.error("Error reading resource", error, { serverId, uri });
+    // Classify BEFORE `jsonError`: the report stamps the error, so the
+    // envelope's own capture point sees the verdict instead of deciding twice.
+    reportRouteFailure("Error reading resource", error, {
+      source: "mcp.resources.read",
+      hop: "user_server_hop",
+      context: { serverId, uri },
+    });
     // SEP-2350: surface a 403 `insufficient_scope` challenge (on
     // `mcpError.insufficientScope`) so the client can drive the union-scope
     // step-up re-authorization; ordinary errors keep the 500 fallback.

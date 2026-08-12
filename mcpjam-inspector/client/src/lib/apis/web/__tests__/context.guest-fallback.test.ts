@@ -81,6 +81,7 @@ describe("getApiAuthorizationHeader guest fallback", () => {
   });
 
   it("does not fall back to a guest token while an AuthKit session is resolving", async () => {
+    vi.useFakeTimers();
     const getAccessToken = vi.fn().mockResolvedValue(null);
     setApiContext({
       projectId: null,
@@ -92,11 +93,76 @@ describe("getApiAuthorizationHeader guest fallback", () => {
 
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-despite-session");
 
-    const result = await getApiAuthorizationHeader();
+    const pending = getApiAuthorizationHeader();
+    // Past the wait budget: a session whose token never arrives still resolves
+    // to null rather than borrowing a guest bearer.
+    await vi.advanceTimersByTimeAsync(4_000);
 
-    expect(result).toBeNull();
-    expect(getAccessToken).toHaveBeenCalledTimes(1);
+    expect(await pending).toBeNull();
     expect(getGuestBearerToken).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("waits for an AuthKit token that is still resolving instead of firing bearer-less", async () => {
+    // The Describe-step 401: `getAccessToken()` answers null for the first tick
+    // of a bootstrap/refresh, and the old code returned null immediately — so
+    // authFetch sent a `/api/web/*` request with no Authorization header and
+    // `bearerAuthMiddleware` answered "Bearer token required". Nothing retried
+    // it, because a resolving session must not be swapped for a guest bearer.
+    vi.useFakeTimers();
+    const getAccessToken = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("workos-token-late");
+    setApiContext({
+      projectId: null,
+      isAuthenticated: false,
+      hasSession: true,
+      serverIdsByName: {},
+      getAccessToken,
+    });
+
+    const pending = getApiAuthorizationHeader();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(await pending).toBe("Bearer workos-token-late");
+    expect(getGuestBearerToken).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("stops waiting once a throwing session resolves to a guest", async () => {
+    // `getAccessToken` throwing is AuthKit's LoginRequiredError. If the actor
+    // turns out to be a guest while we wait, the wait must hand back rather
+    // than burn its whole budget on a token that is not coming.
+    vi.useFakeTimers();
+    const getAccessToken = vi
+      .fn()
+      .mockRejectedValue(new Error("LoginRequiredError"));
+    setApiContext({
+      projectId: null,
+      isAuthenticated: false,
+      hasSession: true,
+      serverIdsByName: {},
+      getAccessToken,
+    });
+
+    const pending = getApiAuthorizationHeader();
+    await vi.advanceTimersByTimeAsync(150);
+    setApiContext({
+      projectId: null,
+      isAuthenticated: false,
+      hasSession: false,
+      serverIdsByName: {},
+      getAccessToken,
+    });
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(await pending).toBeNull();
+
+    vi.useRealTimers();
   });
 
   it("prefers guest token for guest-owned projects (unauthed + projectId, no share/chatbox)", async () => {

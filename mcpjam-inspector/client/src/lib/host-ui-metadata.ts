@@ -20,7 +20,7 @@ import slackLogo from "/slack_logo.png";
 
 export const DEFAULT_CATALOG_HOST_ID = "mcpjam";
 
-const UNKNOWN_HOST_LOGO = "/mcp.svg";
+export const UNKNOWN_HOST_LOGO = "/mcp.svg";
 
 const LOGO_BY_HOST_ID: Record<string, string> = {
   mcpjam: mcpjamLogo,
