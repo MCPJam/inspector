@@ -23,7 +23,6 @@ import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection"
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
-  RunInsightsBanner,
   RunInsightsProvider,
   RunInsightsRecommendations,
 } from "@/components/shared/usage-insights/run-insights";
@@ -821,7 +820,6 @@ export function UserTestingScenarioDetail({
                       { replace: true },
                     );
                   }}
-                  bannerSlot={<RunInsightsBanner />}
                   recommendationsSlot={<RunInsightsRecommendations />}
                   strugglesSlot={(breakdown) =>
                     hasOutcomeFeedbackCalibration(breakdown) ? (
