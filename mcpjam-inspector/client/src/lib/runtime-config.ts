@@ -1,6 +1,8 @@
 export interface InspectorClientRuntimeConfig {
   convexUrl?: string;
   convexSiteUrl?: string;
+  workosClientId?: string;
+  workosApiHostname?: string;
 }
 
 declare global {
@@ -32,4 +34,22 @@ export function getRuntimeConvexUrl(): string | undefined {
 
 export function getRuntimeConvexSiteUrl(): string | undefined {
   return getNonEmptyString(getRuntimeConfig()?.convexSiteUrl);
+}
+
+/**
+ * WorkOS AuthKit client id, served by the document rather than inlined at build
+ * time. See `getInspectorClientRuntimeConfig` in `server/env.ts` for why this
+ * moved off `import.meta.env`.
+ */
+export function getRuntimeWorkosClientId(): string | undefined {
+  return getNonEmptyString(getRuntimeConfig()?.workosClientId);
+}
+
+/**
+ * Host AuthKit API calls are sent to. Must share a registrable domain with the
+ * app origin, or the WorkOS session cookie is third-party and the refresh call
+ * arrives with no credential.
+ */
+export function getRuntimeWorkosApiHostname(): string | undefined {
+  return getNonEmptyString(getRuntimeConfig()?.workosApiHostname);
 }

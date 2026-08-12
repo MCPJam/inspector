@@ -25,6 +25,7 @@ import evals from "./evals.js";
 import hosts from "./hosts.js";
 import harness from "./harness.js";
 import environments from "./environments.js";
+import plugins from "./plugins.js";
 import journeys from "./journeys.js";
 import scenarios from "./scenarios.js";
 import sandboxImages from "./images.js";
@@ -77,6 +78,10 @@ v1.route("/", harness);
 // OFF the guest allowlist — reads need project membership and every write needs
 // project admin. Distinct from the Computer sandbox images below.
 v1.route("/", environments);
+// Agent Plugins — READ-ONLY (list + version detail). Guest-DENIED by default
+// (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are member-gated
+// anyway, and there is no share-link flow that needs plugin inventory.
+v1.route("/", plugins);
 // Journeys + journey runs — the public API for Swarms. Flag-gated beta
 // (`sandboxes-enabled`, enforced server-side on writes), so these are absent
 // from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
