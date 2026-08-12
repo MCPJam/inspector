@@ -41,6 +41,12 @@ export function MCPJamLimitDialog() {
   const guestImpressionTrackedRef = useRef(false);
   const creditsImpressionTrackedRef = useRef(false);
 
+  // Decide whether either variant is active before wiring billing hooks. This
+  // component is mounted app-wide, so a closed dialog must not keep billing
+  // and owner-member Convex subscriptions alive for the whole session.
+  const showGuestDialog = !user && intent === "guest" && isOpen;
+  const showTopupDialog = !!user && intent === "topup" && isOpen;
+
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
     // Auth flipped to signed-in while the guest variant was open (e.g. user
@@ -62,15 +68,16 @@ export function MCPJamLimitDialog() {
   };
 
   const billingOrgId = resolveBillingOrgId();
+  const openBillingOrgId = showTopupDialog ? billingOrgId : null;
   const creditsUpgrade = useUpgradeCheckout({
-    organizationId: billingOrgId,
+    organizationId: openBillingOrgId,
     origin: "credits",
     limitKind: "credits",
   });
   const {
     recipients: requestRecipients,
     isLoading: isLoadingRequestRecipients,
-  } = useUpgradeRequestRecipients(billingOrgId);
+  } = useUpgradeRequestRecipients(openBillingOrgId);
 
   // Only owners/admins/creators can buy credits (mirrors the backend gate).
   // Members instead see an "ask org admin" hint so they don't dead-end on a
@@ -85,10 +92,6 @@ export function MCPJamLimitDialog() {
     ? !canManageOrgCredits(billingOrg)
     : false;
 
-  // Guest variant — only renders for unauthenticated users.
-  const showGuestDialog = !user && intent === "guest" && isOpen;
-  // Top-up variant — only renders for signed-in users.
-  const showTopupDialog = !!user && intent === "topup" && isOpen;
   // Pitching Team to an org already on Team would be nonsense; those orgs get
   // the buy-credits path only.
   const isFreeEffectivePlan = creditsUpgrade.effectivePlan === "free";
@@ -263,6 +266,11 @@ export function MCPJamLimitDialog() {
     });
   };
 
+  const handleUpgrade = async () => {
+    const result = await creditsUpgrade.start();
+    if (result?.shouldDismiss) close();
+  };
+
   return (
     <>
       {showGuestDialog && (
@@ -311,7 +319,7 @@ export function MCPJamLimitDialog() {
           monthlySupported={creditsUpgrade.monthlySupported}
           teamName={creditsUpgrade.teamName}
           isStarting={creditsUpgrade.isStarting}
-          onUpgrade={() => void creditsUpgrade.start()}
+          onUpgrade={() => void handleUpgrade()}
           onBuyCredits={handleTopUp}
           onUseOwnKey={handleBYOK}
           onDismiss={handleCreditsDismiss}

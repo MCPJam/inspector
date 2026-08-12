@@ -34,10 +34,7 @@ type PreviewVariant = {
   id: string;
   label: string;
   note: string;
-  props: Omit<
-    PlanLimitDialogViewProps,
-    SharedHandlers | "onRequestEnterprise"
-  >;
+  props: Omit<PlanLimitDialogViewProps, SharedHandlers | "onRequestEnterprise">;
 };
 
 type CreditsVariant = {
@@ -72,7 +69,7 @@ const VARIANTS: PreviewVariant[] = [
       ...SHARED,
       title: "You're out of eval iterations today",
       description:
-        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 a month, so evals can run smoothly on every PR instead of limiting your daily quality checks.",
+        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 per seat each month, so evals can run smoothly on every PR instead of limiting your daily quality checks.",
       showUpgrade: true,
       showEnterprise: false,
       requestRecipients: [],
@@ -86,10 +83,12 @@ const VARIANTS: PreviewVariant[] = [
       ...SHARED,
       title: "You're out of eval iterations today",
       description:
-        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 a month, so evals can run smoothly on every PR instead of limiting your daily quality checks. Only an owner can upgrade this organization.",
+        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 per seat each month, so evals can run smoothly on every PR instead of limiting your daily quality checks. Only an owner can upgrade this organization.",
       showUpgrade: false,
       showEnterprise: false,
-      requestRecipients: [{ email: "dana@acmerobotics.com", name: "Dana Ruiz" }],
+      requestRecipients: [
+        { email: "dana@acmerobotics.com", name: "Dana Ruiz" },
+      ],
     },
   },
   {
@@ -153,7 +152,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     note: "Already on Team, so there is no plan to pitch. Credits are the actual answer here.",
     props: {
       ...CREDITS_SHARED,
-      description: "Buy credits to keep your team going, or use your own API key.",
+      description:
+        "Buy credits to keep your team going, or use your own API key.",
       isKnownNonManager: false,
       showUpgrade: false,
       requestRecipients: [],
@@ -169,7 +169,9 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
         "Ask an organization owner or admin to buy credits or upgrade the plan.",
       isKnownNonManager: true,
       showUpgrade: false,
-      requestRecipients: [{ email: "dana@acmerobotics.com", name: "Dana Ruiz" }],
+      requestRecipients: [
+        { email: "dana@acmerobotics.com", name: "Dana Ruiz" },
+      ],
     },
   },
 ];
@@ -183,7 +185,7 @@ export function PlanLimitDialogPreview() {
   const [wall, setWall] = useState<"evals" | "credits">("evals");
   const [variantId, setVariantId] = useState(VARIANTS[0].id);
   const [creditsVariantId, setCreditsVariantId] = useState(
-    CREDITS_VARIANTS[0].id,
+    CREDITS_VARIANTS[0].id
   );
   const [interval, setInterval] = useState<BillingInterval>("annual");
   const [lastAction, setLastAction] = useState<string | null>(null);
@@ -193,7 +195,8 @@ export function PlanLimitDialogPreview() {
     CREDITS_VARIANTS[0];
   const activeVariants = wall === "evals" ? VARIANTS : CREDITS_VARIANTS;
   const activeVariantId = wall === "evals" ? variantId : creditsVariantId;
-  const setActiveVariantId = wall === "evals" ? setVariantId : setCreditsVariantId;
+  const setActiveVariantId =
+    wall === "evals" ? setVariantId : setCreditsVariantId;
   const activeNote = wall === "evals" ? variant.note : creditsVariant.note;
 
   return (
@@ -287,7 +290,9 @@ export function PlanLimitDialogPreview() {
           interval={interval}
           onIntervalChange={setInterval}
           onUpgrade={() => setLastAction(`checkout would start (${interval})`)}
-          onBuyCredits={() => setLastAction("would open the buy-credits dialog")}
+          onBuyCredits={() =>
+            setLastAction("would open the buy-credits dialog")
+          }
           onUseOwnKey={() =>
             setLastAction("would open the model picker's providers tab")
           }

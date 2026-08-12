@@ -129,7 +129,7 @@ describe("PlanLimitDialog", () => {
     // The Team figure comes from the plan catalog, so it tracks what billing
     // enforces rather than a hardcoded marketing string.
     expect(description).toHaveTextContent(
-      /Our Team plan includes 5,000 a month/
+      /Our Team plan includes 5,000 per seat each month/
     );
   });
 
@@ -213,6 +213,17 @@ describe("PlanLimitDialog", () => {
 
     await user.click(screen.getByTestId("upgrade-plan-cta"));
     expect(startMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes after an in-place plan change succeeds", async () => {
+    const user = userEvent.setup();
+    startMock.mockResolvedValue({ redirected: false, shouldDismiss: true });
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    await user.click(screen.getByTestId("upgrade-plan-cta"));
+
+    expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("has no wait-for-reset button; the close control is the only dismissal", () => {

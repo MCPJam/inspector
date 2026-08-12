@@ -7,6 +7,8 @@ import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 const signIn = vi.fn();
 const trackMock = vi.hoisted(() => vi.fn());
+const upgradeHookOrganizationIdMock = vi.hoisted(() => vi.fn());
+const recipientHookOrganizationIdMock = vi.hoisted(() => vi.fn());
 const recipientsState = vi.hoisted(() => ({
   recipients: [{ email: "dana@acme.test", name: "Dana Ruiz" }],
   isLoading: false,
@@ -34,30 +36,40 @@ const upgradeState = {
 // pulling the Convex plan-catalog queries into a mock that only exports
 // useConvexAuth.
 vi.mock("@/hooks/use-upgrade-checkout", () => ({
-  useUpgradeCheckout: () => ({
-    interval: "annual",
-    setInterval: vi.fn(),
-    annualPriceLabel: "$30",
-    monthlyPriceLabel: "$38",
-    annualDiscountPct: 21,
-    annualSupported: true,
-    monthlySupported: true,
-    teamName: "Team",
-    teamEvalIterations: 15000,
-    currentPlan: upgradeState.currentPlan,
-    effectivePlan: upgradeState.effectivePlan,
-    organizationName: "Acme Robotics",
-    canManageBilling: upgradeState.canManageBilling,
-    isLoadingBilling: false,
-    isStarting: false,
-    start: upgradeState.start,
-  }),
+  useUpgradeCheckout: ({
+    organizationId,
+  }: {
+    organizationId: string | null;
+  }) => {
+    upgradeHookOrganizationIdMock(organizationId);
+    return {
+      interval: "annual",
+      setInterval: vi.fn(),
+      annualPriceLabel: "$30",
+      monthlyPriceLabel: "$38",
+      annualDiscountPct: 21,
+      annualSupported: true,
+      monthlySupported: true,
+      teamName: "Team",
+      teamEvalIterations: 15000,
+      currentPlan: upgradeState.currentPlan,
+      effectivePlan: upgradeState.effectivePlan,
+      organizationName: "Acme Robotics",
+      canManageBilling: upgradeState.canManageBilling,
+      isLoadingBilling: false,
+      isStarting: false,
+      start: upgradeState.start,
+    };
+  },
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
-  useUpgradeRequestRecipients: () => recipientsState,
+  useUpgradeRequestRecipients: (organizationId: string | null) => {
+    recipientHookOrganizationIdMock(organizationId);
+    return recipientsState;
+  },
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -94,6 +106,8 @@ const originalHash = window.location.hash;
 beforeEach(() => {
   signIn.mockReset();
   trackMock.mockReset();
+  upgradeHookOrganizationIdMock.mockReset();
+  recipientHookOrganizationIdMock.mockReset();
   upgradeState.start.mockReset();
   upgradeState.currentPlan = "free";
   upgradeState.effectivePlan = "free";
@@ -126,6 +140,16 @@ describe("MCPJamLimitDialog", () => {
   it("renders nothing while closed", () => {
     const { container } = render(<MCPJamLimitDialog />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("does not subscribe to billing or owner members while closed", () => {
+    authState.user = { id: "user-1" };
+    localStorage.setItem("active-organization-id:user-1", "org-active");
+
+    render(<MCPJamLimitDialog />);
+
+    expect(upgradeHookOrganizationIdMock).toHaveBeenLastCalledWith(null);
+    expect(recipientHookOrganizationIdMock).toHaveBeenLastCalledWith(null);
   });
 
   it("renders the dialog with guest copy when the store opens", () => {
@@ -205,6 +229,24 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("button", { name: /use your own API key/i })
     ).toBeInTheDocument();
+    expect(upgradeHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
+    expect(recipientHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
+  });
+
+  it("closes after an in-place plan change succeeds", async () => {
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    upgradeState.start.mockResolvedValue({
+      redirected: false,
+      shouldDismiss: true,
+    });
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(screen.getByTestId("upgrade-plan-cta"));
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("does not pitch Team when a Team trial runs out of credits", () => {

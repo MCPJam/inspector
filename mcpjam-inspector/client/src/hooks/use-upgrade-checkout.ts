@@ -3,7 +3,10 @@ import {
   useOrganizationBilling,
   type BillingInterval,
 } from "@/hooks/useOrganizationBilling";
-import { getAnnualDiscountPercent } from "@/lib/billing-entitlements";
+import {
+  formatPlanName,
+  getAnnualDiscountPercent,
+} from "@/lib/billing-entitlements";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 
@@ -213,18 +216,35 @@ export function useUpgradeCheckout({
         monthly_supported: monthlySupported,
       });
       const result = await resultPromise;
-      const nextUrl =
-        result.kind === "checkout"
-          ? result.checkoutUrl
-          : result.kind === "portal"
-          ? result.portalUrl
-          : null;
-      if (nextUrl) {
+      if (result.kind === "checkout" || result.kind === "portal") {
+        const nextUrl =
+          result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
         // Same tab, so the return URL brings the user back in place.
         window.location.assign(nextUrl);
-        return { redirected: true as const };
+        return { redirected: true as const, shouldDismiss: false as const };
       }
-      return { redirected: false as const };
+
+      if (result.kind === "updated") {
+        toast.success(
+          `Plan updated to ${formatPlanName(
+            result.subscription.plan ?? "team"
+          )}.`
+        );
+      } else {
+        toast.success("Plan change scheduled for renewal.");
+      }
+      track("plan_limit_upgrade_resolved", {
+        location: "plan_limit_dialog",
+        organization_id: organizationId,
+        limit_kind: limitKind,
+        origin,
+        result_kind: result.kind,
+        billing_interval: checkoutInterval,
+        resulting_plan: result.subscription.plan ?? "team",
+        current_plan: currentPlan,
+        effective_plan: effectivePlan,
+      });
+      return { redirected: false as const, shouldDismiss: true as const };
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -269,8 +289,7 @@ export function useUpgradeCheckout({
     monthlySupported,
     teamName: teamEntry?.displayName ?? "Team",
     /** Team's monthly eval cap, straight from the catalog so it can't go stale
-     * in the copy. Whether the catalog itself matches the public pricing page
-     * is a separate question, tracked in the PR. */
+     * in the copy. The backend applies this amount per seat. */
     teamEvalIterations: teamEntry?.limits.maxEvalIterationsPerMonth ?? null,
     // Limit-wall copy and destinations follow the plan whose limits the user
     // is actually receiving. During a Team trial the persisted billing plan is

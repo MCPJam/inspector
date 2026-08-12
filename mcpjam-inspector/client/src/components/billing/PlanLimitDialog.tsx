@@ -283,6 +283,11 @@ export function PlanLimitDialog() {
     upgrade.effectivePlan,
   ]);
 
+  const handleUpgrade = useCallback(async () => {
+    const result = await upgrade.start();
+    if (result?.shouldDismiss) close();
+  }, [close, upgrade]);
+
   if (!isOpen || !limit || limit.kind !== "evalIterations") return null;
 
   const windowLabel = limit.windowKind === "day" ? "today" : "this month";
@@ -316,7 +321,7 @@ export function PlanLimitDialog() {
   const upgradeSentence = isFreePlan
     ? `Our ${upgrade.teamName} plan includes ${
         upgrade.teamEvalIterations
-          ? `${formatCount(upgrade.teamEvalIterations)} a month`
+          ? `${formatCount(upgrade.teamEvalIterations)} per seat each month`
           : "a monthly allowance instead of a daily cap"
       }, so evals can run smoothly on every PR instead of limiting your daily quality checks.`
     : showEnterprise
@@ -347,7 +352,7 @@ export function PlanLimitDialog() {
       monthlySupported={upgrade.monthlySupported}
       teamName={upgrade.teamName}
       isStarting={upgrade.isStarting}
-      onUpgrade={() => void upgrade.start()}
+      onUpgrade={() => void handleUpgrade()}
       onRequestEnterprise={handleRequestEnterprise}
       onDismiss={handleDismiss}
     />
