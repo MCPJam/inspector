@@ -24,6 +24,7 @@ import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel"
 import { InsightsStatline } from "@/components/shared/usage-insights/InsightsStatline";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
+import { CriterionScorecard } from "@/components/shared/usage-insights/CriterionScorecard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
@@ -50,16 +51,26 @@ interface InsightsWorkbenchProps {
   /** Leading statline content supplied by the owning page. */
   personasSlot?: ReactNode;
   /**
-   * Pattern / findings chips supplied by the owning page. A function receives
-   * the breakdown this workbench is already subscribed to: User Testing's
-   * Feedback popover renders FROM the breakdown and must not appear when there
-   * is nothing rated to show, and the workbench owns that subscription — a
-   * plain node would force the page to duplicate the query to decide.
+   * Top-level callout above the scorecard / session flow (e.g. Run insights
+   * banner). Kept separate from the statline so the summary is always visible.
+   */
+  bannerSlot?: ReactNode;
+  /**
+   * Pattern recommendations beside the scorecard (expandable rows). Rendered
+   * under the criterion table when present.
+   */
+  recommendationsSlot?: ReactNode;
+  /**
+   * Statline chips supplied by the owning page. A function receives the
+   * breakdown this workbench is already subscribed to: User Testing's Feedback
+   * popover renders FROM the breakdown and must not appear when there is
+   * nothing rated to show, and the workbench owns that subscription — a plain
+   * node would force the page to duplicate the query to decide.
    */
   strugglesSlot?:
     | ReactNode
     | ((breakdown: UsageBreakdown | null | undefined) => ReactNode);
-  /** Extra content shown below the rubric scorecard in its popover. */
+  /** Extra content shown below the rubric scorecard section (e.g. findings). */
   checksExtras?: ReactNode;
   /**
    * Queue one rebuild when the Clusters view opens on a completed run whose
@@ -104,8 +115,8 @@ interface InsightsWorkbenchProps {
  *    version passed the raw filter, which on a surface with an augment would
  *    have shown rows the list beside it excludes.
  *  - Only the fill-viewport layout survives. The scroll-area path had no
- *    production caller, and with it goes the panel-level criterion scorecard —
- *    the statline already renders that scorecard in a popover.
+ *    production caller. The rubric scorecard and Run insights banner are
+ *    their own sections above the session flow (not chip popovers).
  *  - A topic-map dot click clears the filter on BOTH surfaces before opening
  *    the session: an active cluster chip can otherwise hide the very session
  *    the click asked for.
@@ -121,6 +132,8 @@ export function InsightsWorkbench({
   onOpenSession,
   onOpenSessionsTab,
   personasSlot,
+  bannerSlot,
+  recommendationsSlot,
   strugglesSlot,
   checksExtras,
   autoBackfillTopicMap = false,
@@ -268,12 +281,32 @@ export function InsightsWorkbench({
       ? scope.journeyRunIds
       : undefined;
 
-  const viewToggle = (
-    <InsightsViewToggle
-      view={flow.view}
-      onChange={handleViewChange}
-      testId={`${testIdPrefix}-view-toggle`}
-    />
+  // Freshness + Session flow | Clusters sit in the chart header (next to the
+  // Sankey legend / topic-map toolbar), not the statline — that row is for
+  // cohort chips only.
+  const viewChrome = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {/* The chip reads `getWindowSignals` for its staleness watermark, and
+          that query ships with the backend PR — `useQuery` against an
+          undeployed function THROWS, which without this boundary would take
+          the whole Insights tab down rather than one chip. Keyed on the
+          cohort so a boundary tripped against the undeployed backend re-arms
+          on the next scenario the user opens. */}
+      <ErrorBoundary key={cohortKey} fallback={null}>
+        <InsightsFreshnessChip
+          scope={scope}
+          latestRun={breakdown?.latestRun}
+          onRebuild={handleRebuild}
+          rebuildBusy={rebuildBusy}
+          testId={`${testIdPrefix}-freshness-chip`}
+        />
+      </ErrorBoundary>
+      <InsightsViewToggle
+        view={flow.view}
+        onChange={handleViewChange}
+        testId={`${testIdPrefix}-view-toggle`}
+      />
+    </div>
   );
 
   const chipRow =
@@ -313,6 +346,7 @@ export function InsightsWorkbench({
           onApplyTuning={handleApplyTuning}
           showLinkThreshold
           fillHeight
+          headerActions={viewChrome}
         />
       </div>
       {chipRow}
@@ -342,12 +376,16 @@ export function InsightsWorkbench({
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
           onOpenSession={handleOpenSessionFromMap}
+          headerActions={viewChrome}
         />
       </div>
     </div>
   );
 
   const selectionOpen = flow.flowSelection !== null;
+  const criterionFacets = breakdown?.criterionBreakdown ?? [];
+  const hasScorecard =
+    criterionFacets.length > 0 || Boolean(checksExtras);
 
   return (
     <div
@@ -359,44 +397,40 @@ export function InsightsWorkbench({
     >
       <InsightsStatline
         breakdown={breakdown}
-        filter={flow.filter}
         flowSelection={flow.flowSelection}
         onSelectFlow={flow.handleSelectFlow}
-        onToggleChip={flow.handleToggleChip}
-        onOpenSessionsTab={onOpenSessionsTab}
         leadingSlot={personasSlot}
         strugglesSlot={
           typeof strugglesSlot === "function"
             ? strugglesSlot(breakdown)
             : strugglesSlot
         }
-        checksExtras={checksExtras}
-        trailing={
-          <>
-            {/* The chip reads `getWindowSignals` for its staleness watermark,
-                and that query ships with the backend PR — `useQuery` against an
-                undeployed function THROWS, which without this boundary would
-                take the whole Insights tab down rather than one chip. Same
-                reason the findings rail is wrapped at its mount.
-                Keyed on the cohort so a boundary tripped against the
-                undeployed backend re-arms on the next scenario the user
-                opens, rather than staying latched for the life of the mount;
-                a tab left open on ONE cohort across the deploy still needs a
-                navigation to pick the chip up. */}
-            <ErrorBoundary key={cohortKey} fallback={null}>
-              <InsightsFreshnessChip
-                scope={scope}
-                latestRun={breakdown?.latestRun}
-                onRebuild={handleRebuild}
-                rebuildBusy={rebuildBusy}
-                testId={`${testIdPrefix}-freshness-chip`}
-              />
-            </ErrorBoundary>
-            {viewToggle}
-          </>
-        }
         testId={`${testIdPrefix}-statline`}
       />
+      {bannerSlot ? (
+        <div className="shrink-0" data-testid={`${testIdPrefix}-banner`}>
+          {bannerSlot}
+        </div>
+      ) : null}
+      {hasScorecard ? (
+        <div
+          className="max-h-[42%] shrink-0 overflow-y-auto"
+          data-testid={`${testIdPrefix}-scorecard`}
+          aria-label="Scorecard"
+        >
+          <CriterionScorecard
+            facets={criterionFacets}
+            filter={flow.filter}
+            onToggleChip={flow.handleToggleChip}
+          />
+          {checksExtras}
+          {recommendationsSlot}
+        </div>
+      ) : recommendationsSlot ? (
+        <div className="max-h-[42%] shrink-0 overflow-y-auto">
+          {recommendationsSlot}
+        </div>
+      ) : null}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {flow.view === "clusters" ? clustersBlock : sankeyBlock}

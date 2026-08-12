@@ -1416,8 +1416,9 @@ export function ChatboxesRoute() {
   // a router (the legacy hash path), where `useParams` yields {} — fall back
   // to the pathname there. Deliberately NOT `useLocation`: that throws its
   // router invariant on the no-router path.
+  const pathname = getRouteFallbackPathname();
   const rawScenarioId =
-    params.scenarioId ?? scenarioIdFromPathname(getRouteFallbackPathname());
+    params.scenarioId ?? scenarioIdFromPathname(pathname);
   // `new` is the create route, never a scenario id. The dedicated
   // `user-testing/new` route already keeps it out of `params.scenarioId`, but
   // reserving the word here means route-ordering can't quietly turn the create
@@ -1433,7 +1434,8 @@ export function ChatboxesRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       scenarioId={scenarioId}
-      createOpen={isUserTestingCreatePath(getRouteFallbackPathname())}
+      createOpen={isUserTestingCreatePath(pathname)}
+      editOpen={isUserTestingEditPath(pathname)}
     />
   );
 }
@@ -1442,16 +1444,24 @@ function isUserTestingCreatePath(pathname: string): boolean {
   return pathname.replace(/\/+$/, "") === "/user-testing/new";
 }
 
+function isUserTestingEditPath(pathname: string): boolean {
+  return /^\/user-testing\/[^/]+\/edit$/.test(pathname.replace(/\/+$/, ""));
+}
+
 function getRouteFallbackPathname(): string {
   return typeof window === "undefined" ? "" : window.location.pathname;
 }
 
 /**
- * `/user-testing/<id>` → `<id>`. `/user-testing/new` is the create route, not
- * a scenario — it must never reach the chatbox query as an id.
+ * `/user-testing/<id>` or `/user-testing/<id>/edit` → `<id>`.
+ * `/user-testing/new` is the create route, not a scenario — it must never
+ * reach the chatbox query as an id.
  */
 function scenarioIdFromPathname(pathname: string): string | null {
-  const match = pathname.match(/^\/user-testing\/([^/]+)\/?$/);
+  const normalized = pathname.replace(/\/+$/, "");
+  const editMatch = normalized.match(/^\/user-testing\/([^/]+)\/edit$/);
+  if (editMatch?.[1] && editMatch[1] !== "new") return editMatch[1];
+  const match = normalized.match(/^\/user-testing\/([^/]+)$/);
   const segment = match?.[1];
   if (!segment || segment === "new") return null;
   return segment;

@@ -59,13 +59,14 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     );
   });
 
-  it("parses known tabs and defaults unknown / legacy tabs to insights", () => {
+  it("parses known tabs, maps legacy aliases to insights, defaults to insights", () => {
     expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
     expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
     expect(parseSwarmDetailTab("")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
+    expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
   });
 });
 
