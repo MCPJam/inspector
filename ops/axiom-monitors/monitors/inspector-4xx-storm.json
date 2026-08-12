@@ -39,6 +39,6 @@
     "2. Wide (many orgs) 401 = credential/session expiry wave, likely ours or an upstream identity provider. Narrow (few orgs) = one tenant's automation; check for a client loop.",
     "3. 429 concentrated on one route means we are rate-limiting ourselves; confirm against the self-inflicted-load guard before blaming a customer.",
     "",
-    "ROLLBACK: node ops/axiom-monitors/apply.mjs --only inspector-4xx-storm after reverting the definition file."
+    "ROLLBACK: node ops/axiom-monitors/apply.mjs --apply --only inspector-4xx-storm after reverting the definition file."
   ]
 }
