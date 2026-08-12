@@ -41,7 +41,13 @@ import {
   initiateOAuth,
   isElectronMcpCallbackState,
   readStoredOAuthConfig,
+  OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
+import {
+  buildOAuthRequest,
+  selectStoredResourceUrl,
+  type BuiltOAuthRequest,
+} from "@/lib/oauth/oauth-request";
 import {
   importHostedOAuthTokens,
   normalizeImportHostedOAuthTokens,
@@ -957,7 +963,7 @@ export function useServerState({
 
   const failPendingOAuthConnection = useCallback(
     (errorMessage: string, oauthTrace?: OAuthTrace) => {
-      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       if (pendingServerName) {
         dispatch({
           type: "CONNECT_FAILURE",
@@ -969,7 +975,7 @@ export function useServerState({
 
       clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-return-hash");
-      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
 
       return pendingServerName;
     },
@@ -2601,7 +2607,7 @@ export function useServerState({
       iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>
     ) => {
-      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
         HOSTED_MODE &&
         isAuthenticated &&
@@ -2638,7 +2644,7 @@ export function useServerState({
           clearHostedOAuthPendingState();
         }
         if (result.success) {
-          localStorage.removeItem("mcp-oauth-pending");
+          localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
         if (result.success && result.serverConfig && result.serverName) {
@@ -2927,7 +2933,7 @@ export function useServerState({
       // fall back to the legacy localStorage key.
       const earlyPendingName =
         hostedOAuthCallbackContext?.serverName ??
-        localStorage.getItem("mcp-oauth-pending");
+        localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       if (earlyPendingName) {
         const earlyServer = effectiveServers[earlyPendingName];
         if (earlyServer) {
@@ -3174,6 +3180,13 @@ export function useServerState({
         }
       }
 
+      // Capture provenance before saving: saveOAuthConfigToLocalStorage updates
+      // the server URL first, so reading it afterward would make a stale
+      // resource indicator look like it belonged to the edited endpoint.
+      const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
+      const storedServerUrlBeforeSave = HOSTED_MODE
+        ? undefined
+        : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
       saveOAuthConfigToLocalStorage(formData);
 
       try {
@@ -3316,35 +3329,73 @@ export function useServerState({
             formData.registrationMode ??
             existingOAuthProfile?.registrationStrategy ??
             "auto";
-          const oauthOptions: any = {
-            serverName: formData.name,
-            serverUrl: formData.url,
-            clientId: oauthInputs.clientId,
-            clientSecret: oauthInputs.clientSecret,
-            hasClientSecret: oauthInputs.hasClientSecret,
-            registryServerId: oauthInputs.registryServerId,
-            useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-            customHeaders: mergeWithProjectHeaders(formData.headers),
-            // Same per-server opt-in the OAuth Debugger honors: Connect runs the
-            // same state machine, so without this a path-scoped authorization
-            // server is rejected here even with the toggle on.
-            allowPathScopedIssuer:
-              (formData.oauthAllowPathScopedIssuer ??
-                existingServer?.oauthAllowPathScopedIssuer) === true,
-            protocolMode: protocolSelection.mode,
-            registrationMode,
-            protocolVersion: protocolSelection.protocolVersion,
-            protocolResolutionSource: protocolSelection.source,
-            registrationStrategy:
-              registrationMode !== "auto"
-                ? registrationMode
-                : existingOAuthProfile?.registrationStrategy,
-            onTraceUpdate: (oauthTrace: OAuthTrace) => {
-              updateServerOAuthTrace(formData.name, oauthTrace);
+          // The builder refuses a configured resource indicator that is not
+          // this server's, BEFORE the redirect. Handle it here as the sibling
+          // entry points do: without a local catch it falls to the outer
+          // handler and is reported as "Network error: …", which is the one
+          // label it definitely is not. The escalation marker has to be
+          // cleared too — `markPending` already ran above, and leaving it set
+          // makes the next 401 read as a completed-but-failed OAuth attempt
+          // and refuse to offer authorization at all.
+          let oauthOptions: BuiltOAuthRequest;
+          try {
+            oauthOptions = buildOAuthRequest(
+            {
+              serverName: formData.name,
+              serverUrl: formData.url,
+              scopes: oauthInputs.scopes,
+              // Previously omitted here while every other entry point sent it,
+              // so a server with a configured resource indicator authorized
+              // against a different audience on first connect than on
+              // reconnect. Both candidates are gated on still belonging to
+              // THIS url — editing a server's endpoint must not carry the old
+              // endpoint's audience forward.
+              resourceUrl: selectStoredResourceUrl(formData.url, [
+                {
+                  resourceUrl: existingOAuthProfile?.resourceUrl,
+                  capturedForServerUrl: existingOAuthProfile?.serverUrl,
+                },
+                {
+                  resourceUrl: storedOAuthConfigBeforeSave.resourceUrl,
+                  capturedForServerUrl: storedServerUrlBeforeSave,
+                },
+              ]),
+              clientId: oauthInputs.clientId,
+              clientSecret: oauthInputs.clientSecret,
+              hasClientSecret: oauthInputs.hasClientSecret,
+              registryServerId: oauthInputs.registryServerId,
+              useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+              customHeaders: mergeWithProjectHeaders(formData.headers),
+              // Same per-server opt-in the OAuth Debugger honors: Connect runs
+              // the same state machine, so without this a path-scoped
+              // authorization server is rejected here even with the toggle on.
+              allowPathScopedIssuer:
+                (formData.oauthAllowPathScopedIssuer ??
+                  existingServer?.oauthAllowPathScopedIssuer) === true,
+              protocolMode: protocolSelection.mode,
+              registrationMode,
+              protocolVersion: protocolSelection.protocolVersion,
+              protocolResolutionSource: protocolSelection.source,
+              registrationStrategy: existingOAuthProfile?.registrationStrategy,
+              onTraceUpdate: (oauthTrace: OAuthTrace) => {
+                updateServerOAuthTrace(formData.name, oauthTrace);
+              },
             },
-          };
-          if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
-            oauthOptions.scopes = oauthInputs.scopes;
+            { intent: "connect" },
+            );
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error
+                ? error.message
+                : "Failed to build the OAuth request";
+            autoOAuthEscalation.markFailed(escalationIdentity);
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: formData.name,
+              error: errorMessage,
+            });
+            toast.error(errorMessage);
+            return;
           }
           prepareHostedProjectOAuthRedirect({
             serverId: hostedServerId,
@@ -4560,44 +4611,76 @@ export function useServerState({
           server.oauthFlowProfile?.registrationStrategy ??
           storedOAuthConfig.registrationMode ??
           "auto";
-        const oauthOptions = {
-          serverName,
-          serverUrl,
-          scopes: profileScopes ?? storedOAuthConfig.scopes,
-          resourceUrl:
-            server.oauthFlowProfile?.resourceUrl ??
-            storedOAuthConfig.resourceUrl,
-          clientId:
-            server.oauthTokens?.client_id ??
-            server.oauthFlowProfile?.clientId ??
-            storedClientCredentials.clientId,
-          clientSecret: undefined,
-          hasClientSecret: Boolean(server.hasClientSecret),
-          customHeaders: mergeWithProjectHeaders(
-            profileHeaders ??
-              ("requestInit" in server.config
-                ? extractRequestHeaders(server.config.requestInit)
-                : undefined) ??
-              storedOAuthConfig.customHeaders
-          ),
-          registryServerId: storedOAuthConfig.registryServerId,
-          useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
-          // See the initial-connect path: the reconnect flow must honor the
-          // same per-server opt-in, or a reconnect fails where connect worked.
-          allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
-          protocolMode: protocolSelection.mode,
-          registrationMode,
-          protocolVersion: protocolSelection.protocolVersion,
-          protocolResolutionSource: protocolSelection.source,
-          registrationStrategy:
-            registrationMode !== "auto"
-              ? registrationMode
-              : server.oauthFlowProfile?.registrationStrategy ??
-                storedOAuthConfig.registrationStrategy,
-          onTraceUpdate: (oauthTrace: OAuthTrace) => {
-            updateServerOAuthTrace(serverName, oauthTrace);
+        // A rejected configured resource indicator has to read as a
+        // configuration failure, not an unhandled throw — the builder refuses
+        // it BEFORE the redirect, which is the point, but the user still needs
+        // to be told why.
+        let oauthOptions: BuiltOAuthRequest;
+        try {
+          oauthOptions = buildOAuthRequest(
+          {
+            serverName,
+            serverUrl,
+            scopes: profileScopes ?? storedOAuthConfig.scopes,
+            // Same staleness gate as the connect path: a stored resource
+            // belongs to the endpoint it was captured for.
+            resourceUrl: selectStoredResourceUrl(serverUrl, [
+              {
+                resourceUrl: server.oauthFlowProfile?.resourceUrl,
+                capturedForServerUrl: server.oauthFlowProfile?.serverUrl,
+              },
+              {
+                resourceUrl: storedOAuthConfig.resourceUrl,
+                capturedForServerUrl:
+                  localStorage.getItem(`mcp-serverUrl-${serverName}`) ??
+                  undefined,
+              },
+            ]),
+            clientId:
+              server.oauthTokens?.client_id ??
+              server.oauthFlowProfile?.clientId ??
+              storedClientCredentials.clientId,
+            clientSecret: undefined,
+            hasClientSecret: Boolean(server.hasClientSecret),
+            customHeaders: mergeWithProjectHeaders(
+              profileHeaders ??
+                ("requestInit" in server.config
+                  ? extractRequestHeaders(server.config.requestInit)
+                  : undefined) ??
+                storedOAuthConfig.customHeaders
+            ),
+            registryServerId: storedOAuthConfig.registryServerId,
+            useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+            // See the initial-connect path: the reconnect flow must honor the
+            // same per-server opt-in, or a reconnect fails where connect
+            // worked.
+            allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
+            protocolMode: protocolSelection.mode,
+            registrationMode,
+            protocolVersion: protocolSelection.protocolVersion,
+            protocolResolutionSource: protocolSelection.source,
+            registrationStrategy:
+              server.oauthFlowProfile?.registrationStrategy ??
+              storedOAuthConfig.registrationStrategy,
+            onTraceUpdate: (oauthTrace: OAuthTrace) => {
+              updateServerOAuthTrace(serverName, oauthTrace);
+            },
           },
-        };
+          { intent: "reconnect" },
+          );
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "Failed to build the OAuth request";
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
+          reportError(errorMessage);
+          return { status: "failed", error: errorMessage };
+        }
 
         clearOAuthData(serverName);
         dispatch({

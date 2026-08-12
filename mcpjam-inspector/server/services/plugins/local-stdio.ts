@@ -180,7 +180,12 @@ export type PluginStdioPreparation =
   | {
       ok: true;
       origin: PluginServerOrigin;
-      /** Absolute cache path the placeholders were substituted with. */
+      /**
+       * Absolute path of the VERIFIED local materialization — normally also
+       * what the placeholders expanded to. Under `remotePlacement` the launch
+       * spec points at the box instead and this stays the local copy, which is
+       * what the caller reads the bytes to upload from.
+       */
       pluginRoot: string;
       launch: ReturnType<typeof resolvePluginStdioLaunch>;
       /** Call on disconnect: releases the GC lease on the cache entry. */
@@ -209,6 +214,23 @@ export async function preparePluginStdioLaunch(args: {
   source?: PluginFileSource;
   /** Test seam for the `${PLUGIN_DATA}` root; defaults to `~/.mcpjam/plugin-data`. */
   dataRoot?: string;
+  /**
+   * Where the child will actually RUN, when that is not this machine.
+   *
+   * Hosted execution verifies the bundle here (this is the only place that
+   * holds the SDK parser and the pinned hash) but spawns the child inside the
+   * user's sandbox, so `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` must expand to
+   * in-box paths — substituting local ones would hand the child directories
+   * that do not exist at its destination. Verification, the unsupported-
+   * placeholder guard and the GC lease are unchanged: only the substitution
+   * targets move, and `pluginRoot` still reports the LOCAL materialization the
+   * caller copies from.
+   *
+   * Supplying this also skips the local `${PLUGIN_DATA}` mkdir — the writable
+   * directory belongs to the box, and creating an empty one here would claim
+   * state lives somewhere it does not.
+   */
+  remotePlacement?: { pluginRoot: string; dataDir: string };
 }): Promise<PluginStdioPreparation> {
   const origin = await resolvePluginOriginForServer(args.client, {
     projectId: args.projectId,
@@ -260,19 +282,25 @@ export async function preparePluginStdioLaunch(args: {
   // reclaim the just-verified entry. Creation failure is a launch failure
   // with its own reason — a filesystem problem, not a bundle problem.
   let dataDir: string;
-  try {
-    dataDir = await ensurePluginDataDir({
-      projectId: args.projectId,
-      pluginId: origin.pluginId,
-      ...(args.dataRoot !== undefined ? { rootDir: args.dataRoot } : {}),
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      reason: "plugin_data_unavailable",
-      origin,
-      message: error instanceof Error ? error.message : String(error),
-    };
+  if (args.remotePlacement) {
+    // The box owns this directory and created it there; nothing on this
+    // machine may stand in for it.
+    dataDir = args.remotePlacement.dataDir;
+  } else {
+    try {
+      dataDir = await ensurePluginDataDir({
+        projectId: args.projectId,
+        pluginId: origin.pluginId,
+        ...(args.dataRoot !== undefined ? { rootDir: args.dataRoot } : {}),
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "plugin_data_unavailable",
+        origin,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   const identity: PluginBundleIdentity = {
@@ -334,7 +362,11 @@ export async function preparePluginStdioLaunch(args: {
     }
   }
 
-  const launch = resolvePluginStdioLaunch(args.spec, root, { dataDir });
+  const launch = resolvePluginStdioLaunch(
+    args.spec,
+    args.remotePlacement?.pluginRoot ?? root,
+    { dataDir }
+  );
 
   // Unique per call, not just per server: a reconnect acquires the new lease
   // BEFORE releasing the old one, and two holders sharing an id would make

@@ -81,9 +81,17 @@ import {
   getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
 import {
+  classifyChatboxAccessResponse,
+  patchBodyAccessVersion,
+} from "@/lib/chatbox-access-errors";
+import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
+import {
+  reportChatFailure,
+  type ChatResponseMeta,
+} from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
@@ -1543,6 +1551,8 @@ export function useChatSession(
   const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
+  const hostedRefreshAccessSession = hostedContext?.refreshAccessSession;
+  const hostedOnAccessRevoked = hostedContext?.onAccessRevoked;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
@@ -2303,15 +2313,88 @@ export function useChatSession(
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
 
+  // Last thing `chatFetch` saw. This is the ONLY place the Response object
+  // still exists — the AI SDK turns a non-ok response into
+  // `new Error(await response.text())` and the status, content type, and
+  // request id are gone by the time `handleChatError` runs.
+  const lastChatResponseRef = useRef<ChatResponseMeta | null>(null);
+
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
+      // Clear BEFORE awaiting, not just on the way out. If this turn's fetch
+      // rejects outright — DNS failure, connection refused, offline — no
+      // Response is ever produced and the ref would still hold the PREVIOUS
+      // turn's values, so `handleChatError` would report a fresh network
+      // failure under the last turn's status and, worse, under a request id
+      // belonging to a different request.
+      lastChatResponseRef.current = null;
+
       // authFetch owns auth resolution (WorkOS bearer / guest bearer via
       // the chatbox-installed apiContext) wherever the web engine is in
       // play — hosted builds, and chatbox runtime sessions on any platform.
       const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
-      const response = useAuthedFetch
+      let response = useAuthedFetch
         ? await authFetch(input, init)
         : await fetch(input, init);
+
+      // Chatbox access recovery. A chatbox turn re-resolves its authoritative
+      // config server-side on every send, so an open tab can lose access
+      // between one send and the next — a rebind, a mode round-trip, a
+      // rotated guest identity. The refusal lands here PRE-STREAM (the route
+      // fails closed during turn setup, before a single token reaches the
+      // parser and while `useChat` is still awaiting this promise), which is
+      // the one place a re-redeem + replay is invisible to the tester.
+      //
+      // DENIED is retried as well as STALE: /redeem re-mints the grant for an
+      // `anyone_with_link` chatbox, so most "denied" verdicts are recoverable
+      // identity drift rather than a real refusal. Exactly ONE recovery per
+      // send — the replay's own verdict is final.
+      if (
+        !response.ok &&
+        useAuthedFetch &&
+        hostedChatboxId &&
+        typeof init?.body === "string" &&
+        hostedRefreshAccessSession
+      ) {
+        const accessError = await classifyChatboxAccessResponse(response);
+        if (accessError) {
+          const recovery = await hostedRefreshAccessSession();
+          if (recovery.ok) {
+            // Byte-identical replay except for the field that went stale.
+            // `init.signal` rides along in the spread, so Stop still aborts.
+            response = await authFetch(input, {
+              ...init,
+              body: patchBodyAccessVersion(init.body, recovery.accessVersion),
+            });
+            if (!response.ok) {
+              const replayError =
+                await classifyChatboxAccessResponse(response);
+              if (replayError?.kind === "denied") {
+                hostedOnAccessRevoked?.(replayError);
+              }
+            }
+          } else if (recovery.reason === "denied") {
+            hostedOnAccessRevoked?.(recovery.error);
+          }
+          // "transient" / "no_token" fall through deliberately: the original
+          // error surfaces in the normal banner and the next send is a fresh
+          // chatFetch that gets to recover again.
+        }
+      }
+
+      // Stash on every outcome, including ok: a stream that fails partway
+      // through still wants the request id that opened it.
+      lastChatResponseRef.current = {
+        ok: response.ok,
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? undefined,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+        // The route's own verdict on whose fault this was, when it had the
+        // error object in hand. Read from a header because the body is
+        // consumed by the AI SDK before the reporter ever runs.
+        origin: response.headers.get("x-mcpjam-error-origin") ?? undefined,
+      };
+
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
         if (useAuthedFetch) {
@@ -2320,10 +2403,21 @@ export function useChatSession(
       }
       return response;
     },
-    [hostedRequiresWebChatApi]
+    [
+      hostedRequiresWebChatApi,
+      hostedChatboxId,
+      hostedRefreshAccessSession,
+      hostedOnAccessRevoked,
+    ]
   );
 
   const handleChatError = useCallback((chatError: Error) => {
+    // Every chat failure used to end here and go no further: this handler
+    // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
+    // that no-ops everything else. A hosted 502 produced zero client
+    // telemetry — the failure a user reported was one we had no record of.
+    reportChatFailure(chatError, lastChatResponseRef.current);
+
     // Try to recover a structured limitKind from a JSON-shaped error message
     // so the concurrency carve-out is honored on the SSE error path. Best
     // effort: untouched if the message isn't JSON.

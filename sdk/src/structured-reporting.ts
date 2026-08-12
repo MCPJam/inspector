@@ -1,4 +1,4 @@
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./telemetry-redaction.js";
 
 export type StructuredCaseClassification =
   | "breaking"
@@ -89,7 +89,7 @@ export function summarizeStructuredCases(
 export function renderStructuredRunJson(
   report: StructuredRunReport
 ): StructuredRunReport {
-  return redactSensitiveValue(report) as StructuredRunReport;
+  return redactForTelemetry(report) as StructuredRunReport;
 }
 
 export function renderStructuredRunJUnitXml(

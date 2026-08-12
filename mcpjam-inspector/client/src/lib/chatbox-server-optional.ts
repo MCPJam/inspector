@@ -14,6 +14,14 @@ export function bootstrapServerToHostedOAuthDescriptor(
     oauthProtocolMode: s.oauthProtocolMode,
     oauthProtocolVersion: s.oauthProtocolVersion,
     wireProtocolVersion: s.wireProtocolVersion,
+    // Threaded rather than dropped: the hosted authorization builds the same
+    // request as a local connect, and silently omitting these is what made the
+    // two disagree.
+    oauthResourceUrl: s.oauthResourceUrl,
+    hasClientSecret: s.hasClientSecret,
+    oauthCustomHeaders: s.oauthCustomHeaders,
+    oauthAllowPathScopedIssuer: s.oauthAllowPathScopedIssuer,
+    registrationMode: s.registrationMode,
     optional: Boolean(s.optional),
   };
 }

@@ -25,6 +25,12 @@ import type {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import {
+  describeAsSlug,
+  describeError,
+  type NormalizedError,
+} from "@mcpjam/sdk";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
@@ -401,6 +407,62 @@ export interface MCPJamEngineErrorEvent {
   promptIndex: number;
   /** Step index when fired inside `processOneStep`; omitted for site (3). */
   stepIndex?: number;
+  /**
+   * Classified form of this failure, including its `origin` — whose fault the
+   * turn dying was.
+   *
+   * The hosted 502 that started this work fires at site (1), which has NO
+   * Error object at all: just a non-OK `Response` from our own `/stream`
+   * endpoint. `describeError` has nothing to classify there, so site (1)
+   * classifies from the HTTP status and body shape instead (see
+   * {@link describeBackendStreamFailure}). Sites (2) and (3) hold a real
+   * error and go through the normal describer.
+   */
+  normalized?: NormalizedError;
+}
+
+/**
+ * Classify a non-OK response from MCPJam's own `/stream` backend.
+ *
+ * There is no error object at this site — the failure IS an HTTP response —
+ * so nothing in the describer can reach it. Without this, a hosted 502 on a
+ * chat turn produced a raw string and no attribution, which is exactly the
+ * failure a user cannot tell apart from their own server dying.
+ *
+ * Status drives the verdict:
+ *
+ * - 401/403 and 429 are the provider walls. They keep the catalog's default
+ *   `user_config` origin because the common case is a BYO key that expired or
+ *   ran out of credit. A managed-key failure IS ours, but the key's owner is
+ *   not plumbed to this layer yet; defaulting to the non-paging reading is the
+ *   safe direction to be wrong in, and the fix is to pass `credentialOwner`
+ *   once that context exists.
+ * - Any other 5xx is OUR backend answering badly, and the origin is set
+ *   explicitly rather than taken from the slug. `internal/unknown` is
+ *   `ambiguous` by design — it is where unrecognized failures from arbitrary
+ *   user servers land — but this call site knows something the slug cannot:
+ *   the hop was to MCPJam's own Convex deployment. That is precisely the
+ *   "callers that know the failure happened on an internal boundary escalate
+ *   it themselves" case the catalog documents.
+ */
+export function describeBackendStreamFailure(
+  status: number | undefined,
+  rawText: string,
+): NormalizedError {
+  const detail = new Error(
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+  );
+
+  if (status === 401 || status === 403) {
+    return describeAsSlug("provider/auth_error", detail);
+  }
+  if (status === 429) {
+    return describeAsSlug("provider/quota", detail);
+  }
+  if (status !== undefined && status >= 500) {
+    return { ...describeAsSlug("internal/unknown", detail), origin: "mcpjam" };
+  }
+  return describeAsSlug("internal/unknown", detail);
 }
 
 export interface MCPJamHandlerOptions {
@@ -1145,6 +1207,36 @@ function safelyEmitLiveTextDelta(
   safelyInvoke("[mcpjam-stream-handler] onLiveTextDelta", () =>
     onLiveTextDelta(delta)
   );
+}
+
+/**
+ * Backend denial codes that name the USER as the responsible party.
+ *
+ * Only relevant at HTTP 200: the spend precheck answers `{ok:false,
+ * code:"user_rate_limit"}` with a 200 status, so without this the whole
+ * category would either page on every routine spend-limit rejection or, with a
+ * looser "any code counts" rule, silently exempt the backend's own
+ * `mcpjam_rate_limit` / `mcpjam_api_error` / `mcpjam_config_error` codes —
+ * which are the opposite of user-owned.
+ *
+ * An unrecognized code at 200 from our own backend is therefore treated as a
+ * fault, not a refusal. That direction is chosen deliberately: a missing entry
+ * here costs one investigated alert, while a permissive rule costs the
+ * blindness this work exists to remove. Add codes as the backend adds them.
+ */
+const USER_OWNED_DENIAL_CODES = new Set<string>([
+  // convex `stream/routes.ts` + `lib/llmCallShell.ts` spend precheck
+  "user_rate_limit",
+  "wallet_locked",
+  "org_rate_limit",
+  // convex billing guard
+  "billing_limit_reached",
+  "billing_feature_not_included",
+]);
+
+/** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
+export function isUserOwnedDenialCode(code: string | undefined): boolean {
+  return USER_OWNED_DENIAL_CODES.has(code ?? "");
 }
 
 /**
@@ -2268,6 +2360,44 @@ async function processOneStep(
     // 429 reason on its SSE error event instead of the generic
     // "Backend stream failed during iteration" fallback.
     const parsed = parseEngineErrorBody(res.status, errorText);
+    // Site (1): no Error object exists here, so classify from the response
+    // itself. A 5xx from our own backend is the hosted-502 class — capture it,
+    // because nothing downstream of this point ever will.
+    const normalized = describeBackendStreamFailure(res.status, errorText);
+    // `isJsonDenial` proves only that the body was JSON — NOT that it was the
+    // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
+    // is not enough either. The backend's error-code union includes
+    // `mcpjam_rate_limit`, `mcpjam_api_error`, and `mcpjam_config_error`,
+    // which name US as the responsible party; exempting them because they
+    // happen to carry a code would silence exactly the failures worth paging
+    // on. Only the codes below are user-owned refusals from a backend that is
+    // working correctly, so only they skip the boundary.
+    const isRecognizedDenial =
+      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
+    maybeCaptureOriginError(new Error(parsed.message), normalized, {
+      source: "route:mcp.chat-v2.backend-stream",
+      // The boundary is declared for a genuine TRANSPORT failure only, and
+      // NOT for `isJsonDenial`. A denial is an HTTP 200 carrying a structured
+      // refusal (`{ok:false, code:"user_rate_limit"}`) — the backend working
+      // correctly, and a routine, user-owned outcome. Promoting it would page
+      // the team on every ordinary spend-limit rejection, which is precisely
+      // the noise class this work removes.
+      //
+      // On a real failure the declaration earns its place twice: it tags the
+      // event with the boundary the rest of the codebase triages on, and it
+      // escalates an unrecognized status from our own backend, which
+      // `describeBackendStreamFailure` leaves `ambiguous` because it
+      // classifies the response alone and cannot know whose backend answered.
+      ...(isRecognizedDenial
+        ? {}
+        : { boundary: "mcpjam_internal" as const }),
+      extra: {
+        httpStatus: res.status,
+        code: parsed.code,
+        isJsonDenial,
+        isRecognizedDenial,
+      },
+    });
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,
       ...(parsed.code ? { code: parsed.code } : {}),
@@ -2276,6 +2406,7 @@ async function processOneStep(
       rawText: errorText,
       promptIndex: traceTurn.promptIndex,
       stepIndex,
+      normalized,
     });
     return { shouldContinue: false, didEmitFinish: false };
   }
@@ -2744,6 +2875,9 @@ async function processOneStep(
         rawText: errorText,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
+        // Site (2) holds a real error — no capture here, the chat route's
+        // stream `onError` owns that decision for this path.
+        normalized: describeError(error),
       });
       return { shouldContinue: false, didEmitFinish: false };
     }
@@ -3337,6 +3471,7 @@ export async function runChatEngineLoop(
           message: errorText,
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
+          normalized: describeError(error),
         });
       }
     } finally {

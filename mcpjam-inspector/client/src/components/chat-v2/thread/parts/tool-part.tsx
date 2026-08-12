@@ -26,6 +26,7 @@ import {
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
 import { track } from "@/lib/analytics";
+import { useLocalComputerEnabled } from "@/hooks/useComputersEnabled";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -209,6 +210,17 @@ export function ToolPart({
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const rawResultData = rawOutput ?? outputData;
+  // Where this bash call actually ran. Read from the RAW output (the frozen
+  // server value) rather than `resultDisplayData` — the latter is the editable
+  // Raw-tab value, which a user can rewrite, and provenance must not be
+  // editable. Absent on old transcripts, hosted turns, and the ephemeral
+  // sandbox-bash tool, which is why nothing renders in that case. The pill is
+  // part of the local-engine dark launch: users outside the
+  // `local-computer-enabled` rollout see no run-location UI at all.
+  const localComputerEnabled = useLocalComputerEnabled();
+  const runLocation = localComputerEnabled
+    ? readToolRunLocation(label, rawResultData)
+    : null;
   const resultDisplayData =
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;
@@ -935,6 +947,19 @@ export function ToolPart({
                 from {appToolAttribution.appName}
               </span>
             )}
+            {runLocation && (
+              <span
+                data-testid="tool-run-location"
+                title={
+                  runLocation === "local"
+                    ? "This command ran on the computer running the inspector."
+                    : "This command ran in your cloud computer."
+                }
+                className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0"
+              >
+                {runLocation === "local" ? "this machine" : "cloud"}
+              </span>
+            )}
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground">
@@ -1121,4 +1146,29 @@ export function ToolPart({
       )}
     </div>
   );
+}
+
+/**
+ * Run-location provenance for the computer `bash` tool.
+ *
+ * Non-hosted bash turns stamp `engine: "local" | "cloud"` onto the tool result
+ * (success AND error) so the transcript can say which machine the command
+ * actually ran on — the one thing a user cannot infer from the output. The
+ * field is absent everywhere else (old transcripts, hosted servers, the
+ * ephemeral sandbox-bash tool), and an absent/unknown value renders nothing
+ * rather than guessing.
+ *
+ * Kept local to this file on purpose: `thread-helpers` is a pure re-export of
+ * `@mcpjam/chat-ui` and is not a home for inspector-specific display logic.
+ */
+export function readToolRunLocation(
+  toolName: string | undefined,
+  rawResult: unknown,
+): "local" | "cloud" | null {
+  if (toolName !== "bash") return null;
+  if (!rawResult || typeof rawResult !== "object") return null;
+  const engine = (rawResult as { engine?: unknown }).engine;
+  if (engine === "local") return "local";
+  if (engine === "cloud") return "cloud";
+  return null;
 }
