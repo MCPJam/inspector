@@ -499,15 +499,17 @@ export function LoggerView({
 
   // Precomputed, lowercased search text per item — the same four fields the
   // search used to concatenate inline (server label, method, direction, and
-  // the stringified payload). Keyed by item id and memoized over `allItems`,
-  // so JSON.stringify runs once per row when the log set changes, not for
-  // every row on every keystroke. (This is the caniuse "precomputed keywords"
-  // idea: a row's search text is something you BUILD, not its raw contents.)
+  // the stringified payload). Keyed by `source:id` (not bare id) because
+  // mcpServerItems and mcpAppsItems generate ids independently — a hosted
+  // eventId or a `${timestamp}-${random}` id could collide across the two
+  // arrays and silently overwrite an entry. Memoized over `allItems`, so
+  // JSON.stringify runs once per row when the log set changes, not for
+  // every row on every keystroke.
   const searchIndex = useMemo(() => {
     const index = new Map<string, string>();
     for (const item of allItems) {
       index.set(
-        item.id,
+        `${item.source}:${item.id}`,
         [
           getDisplayServerLabel(item),
           item.method,
@@ -553,7 +555,9 @@ export function LoggerView({
     const queryLower = searchQuery.trim().toLowerCase();
     if (queryLower) {
       result = result.filter((item) =>
-        (searchIndex.get(item.id) ?? "").includes(queryLower)
+        (searchIndex.get(`${item.source}:${item.id}`) ?? "").includes(
+          queryLower
+        )
       );
     }
 
@@ -897,7 +901,7 @@ export function LoggerView({
         )}
         {filteredItemCount === 0 ? (
           <div className="text-center py-8">
-            {searchQuery.trim() && totalItemCount > 0 ? (
+            {totalItemCount > 0 ? (
               <>
                 <div className="text-xs text-muted-foreground">
                   {"No matches in this view"}
@@ -905,7 +909,9 @@ export function LoggerView({
                 <div className="text-[10px] text-muted-foreground mt-1">
                   {matchesHiddenBySourceFilter > 0
                     ? "Clear the source filter to see hidden matches"
-                    : "Try a different search term"}
+                    : searchQuery.trim()
+                      ? "Try a different search term"
+                      : "Adjust the active filters"}
                 </div>
               </>
             ) : (
