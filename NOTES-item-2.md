@@ -114,6 +114,29 @@ its own entry the specifier rewrote to `sdk/src/index.ts/oauth/node` and failed 
 other SDK subpath the server imports already has the same pair of entries. No existing test's
 expectations were changed.
 
+## Gates
+
+```
+npm run build -w @mcpjam/sdk              # clean
+cd mcpjam-inspector && npx vitest run --project server
+                                          # 369 files passed | 1 skipped
+                                          # 5259 tests passed | 22 skipped  ← 0 failures
+```
+
+Prettier (v2, `--trailing-comma all`) was run on only the files this branch creates or edits.
+
+**`npm test` — the whole workspace — is RED, and it is red on `origin/main` too.** Three client
+tests fail; this diff touches only `mcpjam-inspector/server/**` and two root markdown files, and
+the `client` vitest project is rooted at `./client`, so nothing here can reach them. Verified
+directly rather than assumed: `SwarmsTab.perClientEnvLaunch.test.tsx` ("refuses the whole launch
+when one of the two environments is gone") fails identically at `8cedc9e`, i.e. `origin/main`
+with this branch's commit absent. The other two surface only under full-suite parallel load and
+pass when their files are run alone, which is the signature of flake rather than breakage.
+
+Not fixed here. They are unrelated client component tests, and making them pass would mean
+editing existing tests' expectations — a §7 stop condition in its own right. Flagged so the red
+is not mistaken for something this branch did.
+
 ## What is left for whoever picks this up
 
 1. Backend: expose the state machine over `/internal/v1/server-connections/*` (lease acquire and
