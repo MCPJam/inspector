@@ -203,6 +203,24 @@ export type SystemEventMap = {
   };
   "process.unhandled_rejection": { errorCode: string };
   "process.uncaught_exception": { errorCode: string };
+  /**
+   * Aggregated socket-level failure counters, one line per flush interval
+   * (see utils/socket-diagnostics.ts). These are connections that died before
+   * Node parsed a request line, so they produce NO `http.request.*` event —
+   * this is the only signal that they happened at all. Buckets are a fixed
+   * set, so cardinality cannot grow with traffic. Never emitted per socket:
+   * a reset storm must cost one row per interval, not one row per connection.
+   */
+  "http.socket.client_error": {
+    total: number;
+    econnreset: number;
+    epipe: number;
+    etimedout: number;
+    econnaborted: number;
+    parseError: number;
+    headerOverflow: number;
+    other: number;
+  };
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
