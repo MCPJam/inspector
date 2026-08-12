@@ -6,12 +6,16 @@ export function chatboxIntroDismissedStorageKey(chatboxId: string): string {
 }
 
 export interface PendingOAuthEntry {
+  server: { serverId: string };
   state: { status: string };
 }
 
 export interface UseChatboxHostIntroGateArgs {
   chatboxId: string;
-  servers: Pick<HostedOAuthServerDescriptor, "useOAuth">[];
+  servers: Pick<
+    HostedOAuthServerDescriptor,
+    "useOAuth" | "authorizationRequiredUpfront"
+  >[];
   oauthPending: boolean;
   /** True while OAuth is launching, resuming, or verifying — welcome waits behind this. */
   hasBusyOAuth: boolean;
@@ -42,8 +46,15 @@ export function useChatboxHostIntroGate({
 }: UseChatboxHostIntroGateArgs) {
   const storageKey = chatboxIntroDismissedStorageKey(chatboxId);
 
+  // Servers that actually gate this session, not servers that merely COULD use
+  // OAuth: `useOAuth` is a compat mirror that is true for discover rows too, so
+  // counting it treated a no-auth chatbox as an OAuth one and skipped the
+  // welcome overlay it should have shown.
   const oauthServerCount = useMemo(
-    () => servers.filter((s) => s.useOAuth).length,
+    () =>
+      servers.filter(
+        (s) => s.useOAuth && s.authorizationRequiredUpfront !== false,
+      ).length,
     [servers],
   );
 
@@ -87,9 +98,34 @@ export function useChatboxHostIntroGate({
     !hasBusyOAuth &&
     (nonOAuthFirstVisit || (oauthServerCount > 0 && onlyNeedsAuthIdle));
 
-  const showAuthPanel = oauthPending && !showWelcome;
+  /**
+   * The recipient's way out of an authorization that cannot succeed.
+   *
+   * Even with the requirement resolved server-side, an authorization can still
+   * fail for reasons the recipient cannot fix (a misconfigured authorization
+   * server, a revoked client). "Authorize again" is then the only offered
+   * action behind a disabled composer, and the session dead-ends. Dismissing
+   * releases the composer and lets them talk to whatever the model can already
+   * reach.
+   *
+   * Deliberately NOT persisted, and reset below whenever the pending set
+   * changes: a fresh authorization requirement (a different server, or the same
+   * one escalating again from a runtime 401) is new information and must be
+   * shown, not silently swallowed by an earlier dismissal.
+   */
+  const [authPanelDismissed, setAuthPanelDismissed] = useState(false);
 
-  const composerBlocked = oauthPending || showWelcome;
+  const pendingSignature = pendingOAuthServers
+    .map(({ server, state }) => `${server.serverId}:${state.status}`)
+    .join("|");
+
+  useEffect(() => {
+    setAuthPanelDismissed(false);
+  }, [pendingSignature]);
+
+  const showAuthPanel = oauthPending && !showWelcome && !authPanelDismissed;
+
+  const composerBlocked = (oauthPending && !authPanelDismissed) || showWelcome;
 
   const dismissIntro = () => {
     try {
@@ -100,10 +136,15 @@ export function useChatboxHostIntroGate({
     setIntroDismissed(true);
   };
 
+  const dismissAuthPanel = () => {
+    setAuthPanelDismissed(true);
+  };
+
   return {
     showWelcome,
     showAuthPanel,
     composerBlocked,
     dismissIntro,
+    dismissAuthPanel,
   };
 }

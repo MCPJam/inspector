@@ -8,7 +8,7 @@ import type {
   MrtrInputCollector,
   MrtrOperationState,
 } from "@mcpjam/sdk";
-import { logger } from "../../utils/logger";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 /**
  * `mrtr.ts` — the LOCAL Inspector bridge for the modern multi-round-trip
@@ -330,7 +330,13 @@ export function registerLocalMrtrCollector(
   } catch (err) {
     // Pass the original error as the 2nd (error) arg so Sentry captures a stack
     // and Axiom serializes the real message; serverId is the context (3rd) arg.
-    logger.error("[mrtr] Failed to register MRTR collector", err, { serverId });
+    reportRouteFailure("[mrtr] Failed to register MRTR collector", err, {
+      // A Map write on our own manager. Nothing leaves the process, so a
+      // failure here cannot be the user's server.
+      source: "mcp.mrtr.register-collector",
+      hop: "mcpjam_internal",
+      context: { serverId },
+    });
   }
 }
 
@@ -481,7 +487,7 @@ mrtr.get("/stream", async (c) => {
 // Submit a whole round's responses (all keys together).
 mrtr.post("/respond", async (c) => {
   try {
-    const body = (await c.req.json()) as {
+    const body = (await readRequestJson(c)) as {
       opId?: string;
       responses?: Record<
         string,
