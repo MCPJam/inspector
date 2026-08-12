@@ -62,15 +62,42 @@ before (every existing use sends the header outbound). A deliberate mirror of th
 
 ### `server/services/server-connection-discovery.ts`
 
-The bounded, unauthenticated preflight and its classification, using the SDK's `runServerDoctor`
-(the Inspector's house entry, which wraps `http-server-doctor.ts` / `server-doctor-core.ts`) —
-no new prober.
+The bounded, unauthenticated preflight and its classification, using the SDK's `probeMcpServer` —
+the same prober the server doctor runs, so no new prober.
 
-The SSRF guard runs **before any socket exists**, via `assertOutboundOAuthUrlAllowed` from
-`@mcpjam/sdk/oauth/node`. A refusal is classified `terminal`, not `retryable`: the address a URL
-names is not going to become public on the next attempt.
+The prober rather than the whole doctor. Classification reads `probe` and nothing else, so the
+doctor's tool/resource/prompt enumeration is work discovery never looks at — and the doctor's
+connect step dials through MCPClientManager's own transport, which takes no `fetchFn` and is
+therefore the one outbound path the egress guard cannot reach (the same scope limit documented on
+`routes/shared/conformance.ts`). Dropping it removes an unguarded socket.
 
-Classification, mapped off the doctor's probe status:
+**SSRF defence is two layers, and the first one alone is not enough.** This was wrong in the
+original version of this branch and is worth spelling out:
+
+1. `assertOutboundOAuthUrlAllowed` from `@mcpjam/sdk/oauth/node` is a pure RFC 6890 classifier over
+   the URL's **hostname string**. It refuses literal private/loopback/link-local/CGNAT/multicast/
+   documentation/NAT64-private/IPv4-mapped-private targets and non-http(s) schemes before any
+   socket exists. What it cannot do — as `oauth/node.ts` says of it in as many words — is judge a
+   bare public hostname: `evil.example` passes and can still resolve to `169.254.169.254`.
+2. The probe therefore dials through `createGuardedFetch` (`server/utils/hosted-egress-guard.ts`,
+   the same helper `routes/shared/conformance.ts` uses), which resolves the hostname, refuses
+   private answers, and re-checks **every redirect hop**. The redirect half is not optional: a
+   caller need not name the address they want reached — they can name a host they control and have
+   it answer `302 Location: http://169.254.169.254/`.
+
+One wrinkle worth knowing: `probeMcpServer` **catches** whatever `fetchFn` throws and reports it as
+`status: "error"`, which classifies as retryable. Correct for a timeout, wrong for an egress
+refusal — it would put an SSRF attempt on a retry schedule. So the guard's verdict is recorded as
+it passes and consulted before the probe's own account. A blocked target is `terminal`; a resolver
+**outage** is `retryable`, because DNS blipping is our infrastructure trouble and not a verdict
+about the user's server.
+
+Residual gap, accepted repo-wide rather than invented here: the guard validates the DNS answer and
+the HTTP client then resolves again, leaving a check-vs-connect (TOCTOU) window.
+`hosted-egress-guard.ts` documents that punt for every egress path in this server; closing it needs
+connection pinning at the infra layer, not a second private copy here.
+
+Classification, mapped off the probe status:
 
 | probe | outcome |
 | --- | --- |
@@ -84,7 +111,8 @@ The `error` → `retryable` arm is the one that matters most and has an explicit
 `unsupported` for a server that was down for a minute would permanently mislabel a server that
 works.
 
-14 tests.
+20 tests, including a public hostname whose DNS answer is private, a target that only turns private
+on a redirect, a resolver outage staying retryable, and empty/null URLs.
 
 ## Open question a human needs to settle: XAA
 
@@ -116,7 +144,7 @@ expectations were changed.
 
 ## Gates
 
-```
+```sh
 npm run build -w @mcpjam/sdk              # clean
 cd mcpjam-inspector && npx vitest run --project server
                                           # 369 files passed | 1 skipped

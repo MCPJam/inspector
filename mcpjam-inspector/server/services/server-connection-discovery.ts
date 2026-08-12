@@ -7,10 +7,20 @@
  * to a consent screen? That is all discovery answers. It creates nothing,
  * stores nothing, and carries no credential.
  *
- * The probing itself is the SDK's `runServerDoctor`, not a second prober
- * written here. Discovery classification and the Inspector's own diagnostics
- * must agree about what "this server needs OAuth" means, and the only way to
- * guarantee that is for both to ask the same code.
+ * The probing itself is the SDK's `probeMcpServer` — the same prober the
+ * server doctor runs — not a second one written here. Discovery classification
+ * and the Inspector's own diagnostics must agree about what "this server needs
+ * OAuth" means, and the only way to guarantee that is for both to ask the same
+ * code.
+ *
+ * The prober rather than the whole doctor, for two reasons. Classification
+ * reads `probe` and nothing else — the doctor's tool/resource/prompt
+ * enumeration is work discovery never looks at. And the doctor's connect step
+ * dials through MCPClientManager's own transport, which takes no `fetchFn`, so
+ * it is the one outbound path the egress guard below cannot reach (the same
+ * scope limit documented on `routes/shared/conformance.ts`). Dropping it
+ * removes an unguarded socket rather than leaving one we would have to
+ * apologise for.
  *
  * WHAT THIS MODULE IS NOT. It does not acquire a work lease and it does not
  * report anything to the backend, because at the time of writing there is no
@@ -23,8 +33,13 @@ import {
   assertOutboundOAuthUrlAllowed,
   OAuthOutboundUrlBlockedError,
 } from "@mcpjam/sdk/oauth/node";
-import { runServerDoctor } from "@mcpjam/sdk";
-import type { ServerDoctorResult } from "@mcpjam/sdk";
+import { probeMcpServer } from "@mcpjam/sdk";
+import type { ProbeMcpServerResult } from "@mcpjam/sdk";
+import {
+  BlockedEgressTargetError,
+  createGuardedFetch,
+  EgressResolutionError,
+} from "../utils/hosted-egress-guard.js";
 
 /** The three values the backend's `reportDiscovery` accepts. */
 export type DiscoveredAuthMethod = "none" | "oauth" | "unsupported";
@@ -75,9 +90,7 @@ export const DISCOVERY_TIMEOUT_MS = 15_000;
  * NOTES-item-2.md. Deliberately left misclassified rather than guessed at: a
  * wrong detector would refuse servers that do work.
  */
-function isActionableOAuthChallenge(
-  probe: NonNullable<ServerDoctorResult["probe"]>,
-): boolean {
+function isActionableOAuthChallenge(probe: ProbeMcpServerResult): boolean {
   const { oauth } = probe;
   if (!oauth.required) {
     return false;
@@ -100,18 +113,8 @@ function isActionableOAuthChallenge(
  * whether the request survives, or whether it dies.
  */
 export function classifyDiscoveryResult(
-  result: ServerDoctorResult,
+  probe: ProbeMcpServerResult,
 ): DiscoveryOutcome {
-  const probe = result.probe;
-
-  // No probe at all means the doctor threw before reaching the target.
-  if (!probe) {
-    return {
-      kind: "retryable",
-      detail: result.error?.message ?? "Discovery probe did not complete",
-    };
-  }
-
   switch (probe.status) {
     // `initialize` succeeded without credentials: the server is open.
     case "ready":
@@ -175,18 +178,41 @@ export interface RunDiscoveryPreflightInput {
 }
 
 export interface RunDiscoveryPreflightDependencies {
-  runDoctor?: typeof runServerDoctor;
+  probeServer?: typeof probeMcpServer;
+  /** Overridable so tests can drive the guard's verdicts without DNS. */
+  fetchFn?: typeof fetch;
 }
 
 /**
  * Run one bounded, unauthenticated preflight and classify it.
  *
- * The SSRF guard runs FIRST, before any socket exists. The URL came from a
- * caller on an untrusted surface, and a hosted Inspector sits inside a network
- * where "http://169.254.169.254/" is a credential endpoint — so the cheapest
- * possible moment to refuse is before we have connected to anything. A refusal
- * is terminal rather than retryable: the address a URL names is not going to
- * become public on the next attempt.
+ * SSRF DEFENCE IS TWO LAYERS, AND ONE ALONE IS NOT ENOUGH.
+ *
+ * `assertOutboundOAuthUrlAllowed` is a pure RFC 6890 classifier over the URL's
+ * hostname. It refuses a literal private, loopback, link-local, CGNAT,
+ * multicast, documentation, NAT64-private or IPv4-mapped-private target, and a
+ * non-http(s) scheme, before any socket exists. What it CANNOT do — as
+ * `@mcpjam/sdk/oauth/node` says of it in as many words — is judge a bare public
+ * hostname: `evil.example` passes the classifier and can still resolve to
+ * 169.254.169.254. Classification alone leaves the rebinding window open.
+ *
+ * So the probe dials through `createGuardedFetch`, which resolves the hostname,
+ * refuses private answers, and re-checks EVERY redirect hop against the same
+ * rules. The redirect half is not optional: a caller does not have to name the
+ * address they want reached — they can name a host they control and have it
+ * answer `302 Location: http://169.254.169.254/`, and a guard that inspects
+ * only the first URL is a guard against typos.
+ *
+ * Known residual gap, accepted repo-wide rather than invented here: the guard
+ * validates the DNS answer and the HTTP client then resolves again, so a
+ * check-vs-connect (TOCTOU) window remains. `hosted-egress-guard.ts` documents
+ * that punt for every egress path in this server; closing it needs connection
+ * pinning at the infra layer, not a second private copy here.
+ *
+ * A blocked target is TERMINAL, not retryable — the address a URL names will
+ * not become public on the next attempt. A resolver OUTAGE is retryable: DNS
+ * blipping is not a verdict about the user's server, and treating it as one
+ * would permanently fail a request over our own infrastructure trouble.
  *
  * No credential is ever attached. Discovery asks what a stranger sees.
  */
@@ -194,7 +220,7 @@ export async function runDiscoveryPreflight(
   input: RunDiscoveryPreflightInput,
   dependencies: RunDiscoveryPreflightDependencies = {},
 ): Promise<DiscoveryOutcome> {
-  const runDoctor = dependencies.runDoctor ?? runServerDoctor;
+  const probeServer = dependencies.probeServer ?? probeMcpServer;
 
   try {
     assertOutboundOAuthUrlAllowed(input.serverUrl, {
@@ -214,11 +240,59 @@ export async function runDiscoveryPreflight(
     throw error;
   }
 
-  const result = await runDoctor({
-    config: { url: input.serverUrl },
-    target: null,
-    timeout: input.timeoutMs ?? DISCOVERY_TIMEOUT_MS,
-  });
+  // The prober CATCHES whatever `fetchFn` throws and reports it as
+  // `status: "error"`, which classifies as retryable. That is right for a
+  // timeout and wrong for an egress refusal — it would put an SSRF attempt on
+  // a retry schedule. So the guard's verdict is recorded on the way past and
+  // consulted before the probe's own account of what happened.
+  const refusal: { blocked: BlockedEgressTargetError | null } = {
+    blocked: null,
+  };
+  const guarded = dependencies.fetchFn ?? createGuardedFetch();
+  const fetchFn: typeof fetch = async (target, init) => {
+    try {
+      return await guarded(target, init);
+    } catch (error) {
+      if (error instanceof BlockedEgressTargetError) {
+        refusal.blocked = error;
+      }
+      throw error;
+    }
+  };
 
-  return classifyDiscoveryResult(result);
+  let probe: ProbeMcpServerResult;
+  try {
+    probe = await probeServer({
+      url: input.serverUrl,
+      timeoutMs: input.timeoutMs ?? DISCOVERY_TIMEOUT_MS,
+      fetchFn,
+    });
+  } catch (error) {
+    if (error instanceof BlockedEgressTargetError) {
+      return {
+        kind: "terminal",
+        errorCode: "URL_NOT_ALLOWED",
+        detail: error.message,
+      };
+    }
+    if (error instanceof EgressResolutionError) {
+      return { kind: "retryable", detail: error.message };
+    }
+    // An unexpected throw means we learned nothing about the target, which is
+    // the definition of retryable here — never a discovery result.
+    return {
+      kind: "retryable",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  if (refusal.blocked !== null) {
+    return {
+      kind: "terminal",
+      errorCode: "URL_NOT_ALLOWED",
+      detail: refusal.blocked.message,
+    };
+  }
+
+  return classifyDiscoveryResult(probe);
 }
