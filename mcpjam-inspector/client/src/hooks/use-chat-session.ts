@@ -69,7 +69,8 @@ import {
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
-import { isBedrockModelId, isMCPJamGuestAllowedModel } from "@/shared/types";
+import { isMCPJamGuestAllowedModel } from "@/shared/types";
+import { providerForModelId } from "@/shared/model-provider";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
@@ -626,38 +627,22 @@ export interface UseChatSessionReturn {
   inputDisabled: boolean;
 }
 
+/**
+ * Provider for a locked (guest / host-pinned) model id.
+ *
+ * Delegates to the shared classifier so this fallback agrees with the
+ * synthetic-model builder, the public eval API, and the backend mirror.
+ *
+ * TWO INTENTIONAL BEHAVIOR CHANGES from the switch this replaced: a bare
+ * unrecognized id now classifies as `ollama` rather than `openrouter` (bare
+ * ids are the Ollama BYOK shape everywhere else in the app, and no catalog id
+ * is bare), and `mistralai/...` resolves to `mistral` instead of falling
+ * through. `ollama` is also the last-resort answer for a blank id here — the
+ * locked model is display-only, and a null provider would have to be rendered
+ * as something regardless.
+ */
 function inferModelProviderFromId(modelId: string): ModelProvider {
-  // Org Bedrock models persist bare inference-profile ids (no "bedrock/"
-  // prefix), so recognize the id shape before prefix matching.
-  if (isBedrockModelId(modelId)) {
-    return "bedrock";
-  }
-
-  const providerPrefix = modelId.split("/")[0];
-
-  switch (providerPrefix) {
-    case "anthropic":
-    case "azure":
-    case "bedrock":
-    case "openai":
-    case "ollama":
-    case "deepseek":
-    case "google":
-    case "mistral":
-    case "moonshotai":
-    case "openrouter":
-    case "z-ai":
-    case "minimax":
-    case "qwen":
-    case "custom":
-      return providerPrefix;
-    case "x-ai":
-      return "xai";
-    case "meta-llama":
-      return "meta";
-    default:
-      return "openrouter";
-  }
+  return providerForModelId(modelId) ?? "ollama";
 }
 
 function createLockedInitialModel(modelId: string): ModelDefinition {

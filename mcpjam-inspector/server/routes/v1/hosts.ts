@@ -109,6 +109,18 @@ async function resolveHostTemplateInput(
   }
 
   const input = cloneJson(template) as Record<string, unknown>;
+  // The forward-client invariant applies to the template branch too. Templates
+  // carry their OWN model (each is tuned to the client it emulates), so this is
+  // a guard, never a substitution — a catalog entry that lost its model is a
+  // catalog bug, and minting a modelless host from it would surface as an
+  // `ENV_MODEL_REQUIRED` launch refusal much later.
+  if (!hostConfigPinsAModel(input)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Host template "${templateId}" does not pin a model; pass an explicit \`config\` instead.`
+    );
+  }
   if (theme !== undefined) {
     const hostContext =
       input.hostContext &&
@@ -179,6 +191,31 @@ async function readHostDetail(
 // ── Schemas ─────────────────────────────────────────────────────────────────
 const hostConfigSchema = z.record(z.string(), z.unknown());
 
+/**
+ * FORWARD-CLIENT INVARIANT: a host created through this route must pin a
+ * model.
+ *
+ * An environment resolves its execution model from its own override, else from
+ * the host it selects, else nowhere — and "nowhere" is a hard launch refusal
+ * (`ENV_MODEL_REQUIRED`). A host minted with `modelId: ""` is therefore a host
+ * that cannot back a headless environment, and the failure would surface at
+ * launch rather than at creation.
+ *
+ * Deliberately a REFINEMENT over the passthrough record rather than a full
+ * config schema: every other config field stays untyped here on purpose (the
+ * authoritative validator is `ensureHostConfigV2` in the backend), and this
+ * route should not acquire a second copy of it that can drift. Legacy rows with
+ * an empty model are untouched — they still read, and unrelated edits still
+ * apply; only NEW hosts are held to the invariant.
+ *
+ * Applied in the outer `superRefine` rather than on the field, so the XOR
+ * message still wins for a degenerate `config: {}` — that body's real problem
+ * is that it picked neither branch, not that it forgot a model.
+ */
+function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
+  return typeof config.modelId === "string" && config.modelId.trim().length > 0;
+}
+
 const createHostSchema = z
   .object({
     name: z.string().trim().min(1),
@@ -186,17 +223,28 @@ const createHostSchema = z
     theme: z.enum(["light", "dark"]).optional(),
     config: hostConfigSchema.optional(),
   })
-  .refine(
-    (value) => {
-      // An empty `{}` is a truthy object but not a usable host config; count
-      // config only when it actually carries fields so `--json '{}'` can't
-      // satisfy the XOR and mint a degenerate host.
-      const hasConfig =
-        value.config !== undefined && Object.keys(value.config).length > 0;
-      return (value.template ? 1 : 0) + (hasConfig ? 1 : 0) === 1;
-    },
-    { message: "Provide exactly one of `template` or a non-empty `config`." }
-  );
+  .superRefine((value, ctx) => {
+    // An empty `{}` is a truthy object but not a usable host config; count
+    // config only when it actually carries fields so `--json '{}'` can't
+    // satisfy the XOR and mint a degenerate host.
+    const hasConfig =
+      value.config !== undefined && Object.keys(value.config).length > 0;
+    if ((value.template ? 1 : 0) + (hasConfig ? 1 : 0) !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide exactly one of `template` or a non-empty `config`.",
+      });
+      return;
+    }
+    if (hasConfig && !hostConfigPinsAModel(value.config!)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config", "modelId"],
+        message:
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+      });
+    }
+  });
 
 const updateHostSchema = z
   .object({

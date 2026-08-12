@@ -78,6 +78,7 @@ import {
   hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
 } from "@/shared/types";
+import { classifyModelIdProvider } from "@/shared/model-provider";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 // BYOK statics + the hosted snapshot — hosted display rows were removed from
@@ -1292,17 +1293,25 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
 }
 
 /**
- * Resolve a model id's provider. Handles a `provider/model` prefix directly,
- * and looks a BARE id (e.g. "claude-sonnet-4-5") up in the model catalog —
- * suite execution configs store bare ids, so a slash check alone would fail to
- * derive a provider and leave new cases model-less.
+ * Resolve a model id's provider.
+ *
+ * The catalog is consulted FIRST for bare ids (suite execution configs store
+ * bare ids like "claude-sonnet-4-5", and the catalog knows their real vendor);
+ * everything else goes through the shared classifier, so this route agrees with
+ * `buildSyntheticModelDefinition`, the chat-session fallback, and the backend
+ * mirror on prefixes and aliases — `meta-llama/...` is `meta`, not
+ * `meta-llama`, and `mistralai/...` is `mistral`.
+ *
+ * `undefined` only for a blank id.
  */
 function providerForModelId(modelId: string): string | undefined {
-  if (modelId.includes("/")) return modelId.split("/")[0];
-  const match = MODEL_LOOKUP.find(
-    (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
-  );
-  return match ? String(match.provider) : undefined;
+  if (!modelId.includes("/")) {
+    const match = MODEL_LOOKUP.find(
+      (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
+    );
+    if (match) return String(match.provider);
+  }
+  return classifyModelIdProvider(modelId)?.provider;
 }
 
 function deriveProvider(model: string, explicit: string | undefined): string {
