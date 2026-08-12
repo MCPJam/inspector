@@ -1,14 +1,9 @@
 /**
- * Marketing compare-plans table: product rows mirror `mcpjam_pricing_page.html`;
- * eval caps and enterprise security features carry the commercial
- * distinctions.
- *
- * These strings are hand-maintained and have drifted from mcpjam.com/pricing
- * before (eval iterations read 75/day and 15,000/mo here while the site said
- * 25/day and 5,000/mo). Values below now match the public page. The durable fix
- * is to read the credit and eval rows from the plan catalog the way
- * `PlanLimitDialog` does, which needs credits added to `BillingLimitName`
- * first.
+ * Marketing compare-plans table skeleton. Eval allowance values are replaced
+ * from the backend plan catalog by `buildComparePlanSectionsFromCatalog`, so
+ * this file cannot drift from the limits billing actually enforces.
+ * Included credits remain marketing copy until credits are represented in the
+ * plan catalog.
  */
 
 export type ComparePlanCell =
@@ -63,8 +58,8 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     rows: [
       {
         label: "Eval iterations",
-        free: t("25 / day"),
-        team: t("5,000 / mo", true),
+        free: t("—"),
+        team: t("—", true),
         enterprise: t("Custom", true),
       },
       {
