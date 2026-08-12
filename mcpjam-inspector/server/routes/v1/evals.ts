@@ -2347,12 +2347,19 @@ async function defaultCaseModels(
     const cfg: any = await convex.query("hostConfigsV2:getSuiteConfig" as any, {
       suiteId,
     });
-    const modelId = cfg?.modelId;
-    if (typeof modelId === "string" && modelId.length > 0) {
+    // Trim BEFORE the emptiness test, not after: a whitespace-only config id is
+    // no id. It cannot currently reach the return (`providerForModelId` also
+    // rejects blanks, so the provider lookup fails first and this falls through
+    // to "no default"), but that makes the guard here correct only by way of
+    // another function's behaviour. Testing the value actually returned keeps it
+    // true locally.
+    const modelId =
+      typeof cfg?.modelId === "string" ? (cfg.modelId as string).trim() : "";
+    if (modelId) {
       // Suite configs store bare ids (e.g. "claude-sonnet-4-5"); resolve the
       // provider via the catalog so the new case isn't persisted model-less.
       const provider = providerForModelId(modelId);
-      if (provider) return [{ model: modelId.trim(), provider }];
+      if (provider) return [{ model: modelId, provider }];
     }
   } catch {
     // No resolvable suite model — the case inherits the suite default at run.
