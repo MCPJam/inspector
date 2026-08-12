@@ -36,6 +36,6 @@
     "2. Check concentration. Few orgs with huge per-org volume = an amplification loop on our side (see the 08-06 precedent). Many orgs, thin each = third-party servers are down and this is the product working; consider whether the threshold or a route needs revisiting rather than treating it as an outage.",
     "3. Check deploy. Compare `release` on the failing rows against the previous hour. A version change at the boundary is your answer; roll back.",
     "",
-    "ROLLBACK: node ops/axiom-monitors/apply.mjs --only inspector-5xx-rate after reverting the definition file, or disable in the Axiom UI. Do not raise the threshold to silence a real regression."
+    "ROLLBACK: node ops/axiom-monitors/apply.mjs --apply --only inspector-5xx-rate after reverting the definition file, or disable in the Axiom UI. Do not raise the threshold to silence a real regression."
   ]
 }

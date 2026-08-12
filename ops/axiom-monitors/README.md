@@ -20,6 +20,26 @@ Plan mode runs every query read-only against the real API and asserts it
 produces the declared `columnName`. A monitor whose APL does not compile, or
 whose query cannot produce the column the threshold reads, is never written.
 
+## Replay before changing thresholds
+
+```bash
+AXIOM_TOKEN=... AXIOM_ORG_ID=mcpjam-b35r node ops/axiom-monitors/replay.mjs
+```
+
+Asserts both directions against real history: the class monitors must **fire**
+on the 2026-08-06 incident and stay **silent** on ordinary traffic and on broad
+third-party downtime. Exits non-zero on regression. Run it after any threshold
+or fingerprint change — a monitor that stops firing on 08-06 has been broken,
+and one that starts firing on the 147-org "Couldn't reach" class has become
+noise.
+
+When writing a case, express the monitor's *real* predicate rather than a proxy
+for it. An earlier noise case tested an intensity heuristic the monitor does not
+implement and reported a failure against a rule that was never shipped.
+
+Retention caveat: cases reference dated incidents. If one starts reporting no
+data, treat it as expired rather than as a passing SILENT.
+
 ## Environment
 
 | Variable | Purpose |

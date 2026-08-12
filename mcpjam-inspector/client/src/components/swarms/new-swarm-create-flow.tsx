@@ -53,6 +53,7 @@ import {
   isAdhocUnavailable,
 } from "@/components/environment-composer/resolve-stacks";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useCloudServerReadiness } from "@/components/environment-composer/use-cloud-server-readiness";
 import { MAX_PERSONAS_PER_PROJECT } from "@/components/swarms/GenerateSwarmDialog";
 import {
   PersonaPixelAvatar,
@@ -100,6 +101,7 @@ import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
 import { environmentLabel } from "@/lib/environment-label";
 import { ErrorCard } from "@/components/ui/error-card";
 import { cn } from "@/lib/utils";
@@ -527,6 +529,21 @@ export function NewSwarmCreateFlow({
     (!composeMode && targetState.environmentIds.length > 0) ||
     (composeMode && targetState.stack.hostIds.length > 0);
 
+  /**
+   * Swarm sessions run in MCPJam's cloud, so a target whose servers are absent
+   * or unreachable from there cannot produce a run — the resolver rejects it
+   * with `ENV_NO_SERVERS`, and only AFTER this flow has written personas, goals
+   * and (in compose mode) an ad-hoc environment row. Blocking here keeps that
+   * failure in front of the pickers that fix it. `null` = nothing measurable is
+   * wrong; the resolver stays the backstop for what we cannot see.
+   */
+  const serverReadiness = useCloudServerReadiness({
+    projectId,
+    state: targetState,
+    environments: envList,
+  });
+  const serverBlock = describeCloudServerBlock(serverReadiness);
+
   // Generating and reusing are two independent doors into Confirm, and they
   // compose. Writing anything in the box asks for a generation (which needs
   // targets to ground on); selecting personas alone is a complete swarm on
@@ -536,7 +553,7 @@ export function NewSwarmCreateFlow({
   const canGenerate =
     wantsGenerate && hasGenerateTargets && !generating && !materializing;
   const canContinue =
-    generating || materializing
+    generating || materializing || serverBlock !== null
       ? false
       : wantsGenerate
         ? canGenerate
@@ -546,6 +563,9 @@ export function NewSwarmCreateFlow({
   const continueHint = (() => {
     if (generating || materializing) return null;
     if (!canContinue) {
+      // The notice above carries the finding and the fix; repeating it here
+      // would put the same two sentences on screen twice.
+      if (serverBlock) return "Fix where it runs to continue.";
       if (wantsGenerate) {
         return environmentsEnabled
           ? "Pick an environment or clients to generate against."
@@ -1350,6 +1370,19 @@ export function NewSwarmCreateFlow({
                 We infer the goals, the clients and a scoring rubric — you
                 confirm all of it next.
               </p>
+              {/* The requirement belongs here, once, above the pair: neither
+                  source is optional on its own — `canContinue` needs one of
+                  them — so labelling each panel "Optional" made the disabled
+                  button read as a bug. */}
+              {personaList.length > 0 ? (
+                <p
+                  className="text-sm font-medium text-foreground"
+                  data-testid="new-swarm-source-requirement"
+                >
+                  Pick at least one: personas you already have, new ones you
+                  describe, or both.
+                </p>
+              ) : null}
             </div>
 
             {/* Sources: choose existing and/or describe new. Shared setup
@@ -1368,7 +1401,7 @@ export function NewSwarmCreateFlow({
                   <div className="shrink-0 space-y-1">
                     <Label>Choose personas</Label>
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                      Optional. They keep their own goals and environments.
+                      They keep their own goals and environments.
                     </p>
                   </div>
                   <div
@@ -1431,9 +1464,7 @@ export function NewSwarmCreateFlow({
                       : "Describe your users"}
                   </Label>
                   <p className="text-sm leading-relaxed text-muted-foreground">
-                    {personaList.length > 0
-                      ? "Optional. We’ll propose personas and goals for you to confirm."
-                      : "We’ll propose personas and goals for you to confirm."}
+                    We’ll propose personas and goals for you to confirm.
                   </p>
                 </div>
                 <McpjamAgentComposer
@@ -1475,6 +1506,7 @@ export function NewSwarmCreateFlow({
                   onChange={setTargetState}
                   draftNameHint={draft.trim() || undefined}
                   disabled={generating || materializing}
+                  serverBlock={serverBlock}
                 />
                 {groundingEnvironmentId ? (
                   <ErrorBoundary fallback={null}>
@@ -1568,6 +1600,12 @@ export function NewSwarmCreateFlow({
                 type="button"
                 disabled={!canContinue}
                 data-testid="new-swarm-continue"
+                // Tie the reason to the control it blocks: a disabled button
+                // is skipped by most screen readers, so the sentence beside
+                // it is the only account of what's missing.
+                aria-describedby={
+                  continueHint ? "new-swarm-continue-hint" : undefined
+                }
                 onClick={handleContinue}
               >
                 {generating || materializing ? (
@@ -1582,7 +1620,17 @@ export function NewSwarmCreateFlow({
                 )}
               </Button>
               {continueHint ? (
-                <p className="text-sm leading-relaxed text-muted-foreground">
+                <p
+                  id="new-swarm-continue-hint"
+                  data-testid="new-swarm-continue-hint"
+                  // One slot, two jobs. As a summary it stays muted; as the
+                  // only on-screen account of why Continue won't move it
+                  // shouldn't read like incidental helper text.
+                  className={cn(
+                    "text-sm leading-relaxed",
+                    canContinue ? "text-muted-foreground" : "text-foreground"
+                  )}
+                >
                   {continueHint}
                 </p>
               ) : null}
