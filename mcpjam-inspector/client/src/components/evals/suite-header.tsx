@@ -924,7 +924,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   return (
     <div
       data-testid="suite-overview-header"
-      className="mb-4 flex min-w-0 items-center justify-between gap-x-3"
+      className="mb-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2"
     >
       <div className="flex min-w-0 items-center gap-2">
         <div className="min-w-0 max-w-[20rem] shrink overflow-hidden sm:max-w-md">
@@ -973,7 +973,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       {overviewHasRightActions ? (
         <div
           data-testid="suite-overview-actions"
-          className="flex shrink-0 flex-nowrap items-center gap-2"
+          className="ml-auto flex shrink-0 flex-nowrap items-center gap-2"
         >
           {overviewSetupSdkButton}
           {overviewLegacyRunActions}

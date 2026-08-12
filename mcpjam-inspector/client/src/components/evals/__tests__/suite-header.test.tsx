@@ -451,7 +451,7 @@ describe("SuiteHeader", () => {
 
     const header = screen.getByTestId("suite-overview-header");
     expect(header).toHaveClass("flex");
-    expect(header).toHaveClass("justify-between");
+    expect(header).toHaveClass("flex-wrap");
     expect(header).toHaveClass("min-w-0");
 
     const leftCluster = header.children[0] as HTMLElement;
@@ -463,6 +463,7 @@ describe("SuiteHeader", () => {
     ).toBe(true);
 
     const actions = screen.getByTestId("suite-overview-actions");
+    expect(actions).toHaveClass("ml-auto");
     expect(actions).toHaveClass("shrink-0");
     expect(actions).toHaveClass("flex-nowrap");
 
