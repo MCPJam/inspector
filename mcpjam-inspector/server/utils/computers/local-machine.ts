@@ -182,10 +182,16 @@ export async function getLocalComputerWorkspaceDir(
  * Never fails the command; rotates at ~10MB by renaming to `.1` (one
  * generation — this is an audit convenience, not a log pipeline). Lines may
  * contain sensitive command text; the directory is 0700 for that reason.
+ *
+ * Exported so the local terminal WS route can journal its own open/close
+ * (`source:"terminal"`, `action:"open"|"close"`) through the SAME writer —
+ * a second journal file would split the audit trail. PTY keystrokes are
+ * deliberately never journaled: unlike a discrete approved `bash` command,
+ * an interactive session's bytes include passwords typed at prompts.
  */
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024;
 
-async function appendLocalCommandLog(entry: {
+export async function appendLocalCommandLog(entry: {
   ts: string;
   projectId: string;
   commandId: string;

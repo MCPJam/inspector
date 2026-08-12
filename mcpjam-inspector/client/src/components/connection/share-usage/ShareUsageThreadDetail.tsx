@@ -32,7 +32,7 @@ import {
 } from "@/hooks/useSharedChatThreads";
 import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
@@ -421,14 +421,9 @@ export function ShareUsageThreadDetail({
         return;
       }
       // Land the user on the artifact they just created; a toast alone gives
-      // them no way back to it.
-      navigateApp(
-        buildEvalsPath({
-          type: "test-edit",
-          suiteId: result.suiteId,
-          testId: result.testCaseId,
-        })
-      );
+      // them no way back to it. Shared with the per-turn promote action so
+      // every surface lands in the same place.
+      navigateToPromotedTestCase(result);
     },
     [promote]
   );
