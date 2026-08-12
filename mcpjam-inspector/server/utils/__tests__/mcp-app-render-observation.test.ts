@@ -26,6 +26,18 @@ describe("isRenderableMcpAppTool", () => {
     expect(isRenderableMcpAppTool({ ui: {} })).toBe(false);
     expect(isRenderableMcpAppTool(undefined)).toBe(false);
   });
+
+  // INSPECTOR-CLIENT-227: `_meta` is whatever the connected server sent, so a
+  // malformed resourceUri has to read as "not renderable" rather than throw
+  // out of the eval render-check path.
+  it.each([
+    ["the empty string", ""],
+    ["a non-ui:// string", "https://example.com/app.html"],
+    ["a number", 42],
+    ["null", null],
+  ])("rejects metadata declaring %s", (_label, resourceUri) => {
+    expect(isRenderableMcpAppTool({ ui: { resourceUri } })).toBe(false);
+  });
 });
 
 describe("renderMcpAppToolResult — short-circuits", () => {
@@ -43,6 +55,30 @@ describe("renderMcpAppToolResult — short-circuits", () => {
       harness,
     });
     expect(obs.status).toBe("no_ui_resource");
+    expect(
+      harness.renderWidget as ReturnType<typeof vi.fn>
+    ).not.toHaveBeenCalled();
+  });
+
+  it("returns no_ui_resource for a malformed resourceUri without reading it", async () => {
+    const harness = stubHarness();
+    const mcpClientManager = {
+      readResource: vi.fn(),
+    } as unknown as MCPClientManager;
+
+    const obs = await renderMcpAppToolResult({
+      toolCallId: "tc",
+      toolName: "t",
+      serverId: "s",
+      toolMetadata: { ui: { resourceUri: "" } },
+      mcpClientManager,
+      harness,
+    });
+
+    expect(obs.status).toBe("no_ui_resource");
+    expect(
+      mcpClientManager.readResource as ReturnType<typeof vi.fn>
+    ).not.toHaveBeenCalled();
     expect(
       harness.renderWidget as ReturnType<typeof vi.fn>
     ).not.toHaveBeenCalled();

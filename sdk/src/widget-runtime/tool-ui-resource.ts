@@ -15,18 +15,37 @@
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 /**
+ * Upstream signals a malformed URI with a plain `Error` carrying this prefix —
+ * it has no error subclass or code to match on, so the message is the only
+ * discriminator available. `tool-ui-resource.test.ts` pins the real dependency
+ * against this prefix, so an ext-apps upgrade that reworded it fails there
+ * rather than silently turning every detection surface into "no app UI".
+ */
+const MALFORMED_URI_MESSAGE_PREFIX = "Invalid UI resource URI:";
+
+function isMalformedUriError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith(MALFORMED_URI_MESSAGE_PREFIX)
+  );
+}
+
+/**
  * The tool's declared `ui://` resource URI, or `null` when it declares none or
  * declares one that is malformed. Resolves both the nested
  * `_meta.ui.resourceUri` and the deprecated flat `_meta["ui/resourceUri"]`.
+ *
+ * Only the malformed-URI throw is absorbed. Anything else upstream raises is a
+ * real fault — a changed contract, a bug in `app-bridge` — and propagates, so
+ * a detection regression stays visible instead of reading as "no app UI".
  */
 export function resolveToolUiResourceUri(
   toolMeta: Record<string, unknown> | undefined,
 ): string | null {
   try {
     return getToolUiResourceUri({ _meta: toolMeta }) ?? null;
-  } catch {
-    // Upstream owns the definition of a valid URI. Whatever it rejects is not
-    // something any caller here can render, so it is simply "no app UI".
-    return null;
+  } catch (error) {
+    if (isMalformedUriError(error)) return null;
+    throw error;
   }
 }
