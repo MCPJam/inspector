@@ -50,6 +50,7 @@ import {
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
+import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
 import {
   getLocalConfidentialCimdProvider,
   withSkillsExtensionCapability,
@@ -1289,18 +1290,20 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    const xaaFailureTarget = {
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      ...(sc.url ? { serverUrl: sc.url } : {}),
+    };
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
+    // Framed for this surface (the stored sentence is written for the server's
+    // auth form and names neither the server nor where to fix it).
     if (sc.xaaIdentityError) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        sc.xaaIdentityError,
-        {
-          serverId,
-          serverName: options?.serverDisplayName ?? null,
-        }
+      throw toXaaConnectFailure(
+        new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError),
+        xaaFailureTarget
       );
     }
     const mintArgs = buildXaaMintArgs({
@@ -1336,7 +1339,10 @@ export async function resolveLocalServerForConnect(
           resource: sc.url,
         });
       }
-      throw error;
+      // Re-framed AFTER the log above: the debugger-worded original still
+      // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
+      // names this server and the action that fixes it.
+      throw toXaaConnectFailure(error, xaaFailureTarget);
     }
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
     // 401 surfaces to the caller rather than looping mint→401→mint.
@@ -1352,8 +1358,12 @@ export async function resolveLocalServerForConnect(
         );
       }
       reMinted = true;
-      const minted = await mintXaaAccessToken(mintArgs);
-      return { accessToken: minted.accessToken };
+      try {
+        const minted = await mintXaaAccessToken(mintArgs);
+        return { accessToken: minted.accessToken };
+      } catch (error) {
+        throw toXaaConnectFailure(error, xaaFailureTarget);
+      }
     };
   }
 

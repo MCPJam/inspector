@@ -854,7 +854,13 @@ export function NewSwarmRunningStep({
               <div
                 className={cn(
                   "rounded-md border px-3 py-2 text-sm",
-                  runFailure.kind === "rate_limited"
+                  // Calm (amber) for the two outcomes whose fix is "do it
+                  // again": a provider refusal, and an authorization handshake
+                  // that needs re-running. Destructive red stays for failures
+                  // the user has to go and repair — an expired sign-in in front
+                  // of an XAA-protected server is not an incident.
+                  runFailure.kind === "rate_limited" ||
+                    runFailure.info.rerunnable
                     ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
                     : "border-destructive/40 bg-destructive/10 text-destructive"
                 )}
@@ -864,6 +870,8 @@ export function NewSwarmRunningStep({
                 <p className="font-medium">
                   {runFailure.kind === "rate_limited"
                     ? "No sessions ran — the model provider refused the request."
+                    : runFailure.info.rerunnable
+                    ? "No sessions ran — this run's authorization needs re-running."
                     : "No sessions ran."}
                 </p>
                 <p className="mt-0.5">{runFailure.info.message}</p>

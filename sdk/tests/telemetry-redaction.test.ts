@@ -69,6 +69,22 @@ describe("redactForTelemetry", () => {
     });
   });
 
+  it("keeps the scheme word's own sentence while still redacting credentials", () => {
+    // "Bearer token required" is the hosted 401's copy, not a header: the old
+    // rule rewrote the noun after `Bearer` and published "Bearer [REDACTED]
+    // required" into the error banner. Both halves in one case so a future
+    // loosening of the prose check has to keep the credential covered.
+    expect(
+      redactForTelemetry({
+        serverMessage: "Bearer token required",
+        clientMessage: "request failed: Bearer eyJhbGciOi.J9.sig rejected",
+      })
+    ).toEqual({
+      serverMessage: "Bearer token required",
+      clientMessage: "request failed: Bearer [REDACTED] rejected",
+    });
+  });
+
   it("preserves boolean token summary fields while redacting actual token strings", () => {
     expect(
       redactForTelemetry({
