@@ -30,6 +30,10 @@
       "description": "Project environments: named, live-editable execution bundles (one host, an optional standalone server group, optionally pinned skills and plugin versions) that eval suites and journeys run against. Distinct from Sandbox images, which are Computer base images. Reads require project membership; every write requires project admin."
     },
     {
+      "name": "Plugins",
+      "description": "Agent Plugins imported into a project — read-only inventory and version detail."
+    },
+    {
       "name": "Sandbox images",
       "description": "Custom Computer images: a digest-pinned Dockerfile built into an immutable image your project's computers boot from."
     },
@@ -4019,6 +4023,102 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/plugins": {
+      "get": {
+        "operationId": "listProjectPlugins",
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "List a project's plugins",
+        "description": "The live (installed, non-uninstalled) Agent Plugins in the project, disabled ones included (marked `enabled: false`). Read-only: import, activation, enable/disable and uninstall are app flows, not API operations.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project's plugins.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/plugin-versions/{pluginVersionId}": {
+      "get": {
+        "operationId": "getPluginVersion",
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "Get a plugin version",
+        "description": "One imported plugin version with its component projections: declared MCP servers (placement, auth timing, materialized server id) and declared skills (namespaced model refs). Addressed by the version id alone — access is membership of the version's own project, and historical versions of uninstalled plugins stay readable because eval snapshots and stale environment pins reference them.",
+        "parameters": [
+          {
+            "name": "pluginVersionId",
+            "in": "path",
+            "required": true,
+            "description": "A plugin's `activeVersionId` from the list endpoint, or a pinned id from an environment's `pluginVersionIds`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plugin version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginVersion"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -8499,6 +8599,216 @@
             "items": {
               "$ref": "#/components/schemas/ProjectEnvironment"
             }
+          }
+        }
+      },
+      "Plugin": {
+        "type": "object",
+        "description": "An Agent Plugin (agent-plugins.org bundle) imported into a project. Versions materialize MCP servers and skills; environments pin version ids to run them.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "enabled",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Normalized plugin name — the namespace its skills load under."
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Disabled plugins keep their versions but resolve for no run."
+          },
+          "activeVersionId": {
+            "type": "string",
+            "description": "The version environment pins default to. Absent before the first activation."
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "PluginPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Plugin"
+            }
+          }
+        }
+      },
+      "PluginVersion": {
+        "type": "object",
+        "description": "One immutable imported plugin version with its component projections.",
+        "required": [
+          "id",
+          "pluginId",
+          "bundleHash",
+          "status",
+          "componentCounts",
+          "servers",
+          "skills",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "pluginId": {
+            "type": "string"
+          },
+          "declaredVersion": {
+            "type": "string",
+            "description": "`manifest.version` — metadata only; `bundleHash` is the identity."
+          },
+          "bundleHash": {
+            "type": "string"
+          },
+          "manifestHash": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "staging",
+              "ready",
+              "invalid"
+            ],
+            "description": "Only `ready` versions resolve at runtime."
+          },
+          "componentCounts": {
+            "type": "object",
+            "description": "Per-component tallies. `apps` counts preserved `.app.json` metadata entries only (no runtime effect).",
+            "required": [
+              "skills",
+              "servers",
+              "apps",
+              "assets",
+              "unsupported"
+            ],
+            "properties": {
+              "skills": {
+                "type": "number"
+              },
+              "servers": {
+                "type": "number"
+              },
+              "apps": {
+                "type": "number"
+              },
+              "assets": {
+                "type": "number"
+              },
+              "unsupported": {
+                "type": "number"
+              }
+            }
+          },
+          "servers": {
+            "type": "array",
+            "description": "Declared MCP server components, with the project server row each one materialized as.",
+            "items": {
+              "type": "object",
+              "required": [
+                "componentId",
+                "componentKey",
+                "declaredName",
+                "placement",
+                "authenticationPolicy",
+                "materializedServerId"
+              ],
+              "properties": {
+                "componentId": {
+                  "type": "string"
+                },
+                "componentKey": {
+                  "type": "string"
+                },
+                "declaredName": {
+                  "type": "string"
+                },
+                "placement": {
+                  "type": "string",
+                  "enum": [
+                    "remote",
+                    "local",
+                    "computer"
+                  ],
+                  "description": "Where the component can execute; `local`/`computer` components never run on MCPJam hosted servers."
+                },
+                "authenticationPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "on_install",
+                    "on_use"
+                  ]
+                },
+                "materializedServerId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "skills": {
+            "type": "array",
+            "description": "Declared skill components, with the project skill row each one materialized as.",
+            "items": {
+              "type": "object",
+              "required": [
+                "componentId",
+                "componentKey",
+                "declaredName",
+                "modelRef",
+                "materializedSkillId"
+              ],
+              "properties": {
+                "componentId": {
+                  "type": "string"
+                },
+                "componentKey": {
+                  "type": "string"
+                },
+                "declaredName": {
+                  "type": "string"
+                },
+                "modelRef": {
+                  "type": "string",
+                  "description": "Namespaced model-facing reference: `<plugin-name>/<skill-name>`."
+                },
+                "materializedSkillId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "readyAt": {
+            "type": "number"
           }
         }
       },

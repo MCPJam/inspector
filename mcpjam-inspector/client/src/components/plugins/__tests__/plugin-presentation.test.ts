@@ -4,6 +4,7 @@ import {
   PLUGIN_UNSUPPORTED_EXPLANATION,
   describePluginHealth,
   describePluginReadiness,
+  describeSkippedComponentKind,
   rollUpPluginHealth,
 } from "../plugin-presentation";
 
@@ -49,6 +50,18 @@ describe("rollUpPluginHealth", () => {
     ).toEqual({ kind: "needs_attention", readiness: "needs_auth" });
   });
 
+  it("never reports ready while one component needs configuration", () => {
+    expect(
+      rollUpPluginHealth(installed, status(["ready", "needs_setup"])),
+    ).toEqual({ kind: "needs_attention", readiness: "needs_setup" });
+    expect(
+      rollUpPluginHealth(
+        installed,
+        status(["local_runtime_required", "needs_setup"]),
+      ),
+    ).toEqual({ kind: "needs_attention", readiness: "needs_setup" });
+  });
+
   it("treats a component-less ready version as ready", () => {
     expect(rollUpPluginHealth(installed, status([]))).toEqual({
       kind: "ready",
@@ -85,6 +98,27 @@ describe("rollUpPluginHealth", () => {
 });
 
 describe("describePluginHealth", () => {
+  it("carries a detail for every rollup so badge-only surfaces can explain it", () => {
+    const healths = [
+      { kind: "disabled" },
+      { kind: "not_activated" },
+      { kind: "unknown" },
+      { kind: "ready", componentCount: 1 },
+      { kind: "needs_attention", readiness: "needs_auth" },
+    ] as const;
+    for (const health of healths) {
+      expect(describePluginHealth(health).detail.length).toBeGreaterThan(0);
+    }
+    // An unrecognized backend state keeps its raw code in the detail — the
+    // only place a card rendering just the badge can surface it.
+    expect(
+      describePluginHealth({
+        kind: "needs_attention",
+        readiness: "some_future_state",
+      }).detail,
+    ).toContain("some_future_state");
+  });
+
   it("only ever says Ready for the ready rollup", () => {
     const labels = (
       [
@@ -111,13 +145,28 @@ describe("unsupported component wording", () => {
 });
 
 describe("describePluginReadiness", () => {
-  it("reports an unknown readiness code without claiming it is ready", () => {
-    const described = describePluginReadiness(
-      "some_future_state" as unknown as Parameters<
-        typeof describePluginReadiness
-      >[0],
-    );
+  it("describes needs_setup as needing configuration", () => {
+    const described = describePluginReadiness("needs_setup");
+    expect(described.label).toBe("Needs configuration");
     expect(described.tone).toBe("attention");
-    expect(described.label).toBe("some_future_state");
+  });
+
+  it("reports an unknown readiness code as neutral setup-required, never ready", () => {
+    const described = describePluginReadiness("some_future_state");
+    expect(described.tone).toBe("attention");
+    expect(described.label).toBe("Setup required");
+    // The raw code stays diagnosable in the detail line.
+    expect(described.detail).toContain("some_future_state");
+  });
+});
+
+describe("describeSkippedComponentKind", () => {
+  it("labels the parser's failure-isolation kinds and echoes unknown ones", () => {
+    expect(describeSkippedComponentKind("server")).toBe("MCP server");
+    expect(describeSkippedComponentKind("skill")).toBe("Skill");
+    expect(describeSkippedComponentKind("mcp-config")).toBe(
+      "MCP configuration",
+    );
+    expect(describeSkippedComponentKind("future-kind")).toBe("future-kind");
   });
 });

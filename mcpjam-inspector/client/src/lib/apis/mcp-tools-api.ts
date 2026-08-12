@@ -20,6 +20,7 @@ import {
   parseInsufficientScopeChallenge,
   type InsufficientScopeChallenge,
 } from "@/lib/apis/insufficient-scope";
+import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
 /** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
 export type ServedFromCache = { ageMs: number };
@@ -160,6 +161,12 @@ export async function executeToolApi(
         })) as ToolExecutionResponse;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        // This catch swallows the throw into a `{error}` result, so nothing
+        // downstream ever reports it.
+        reportPossiblyOurFailure(error, {
+          source: "execute_tool_hosted",
+          extra: { toolName },
+        });
         // Validate the WebApiError-attached block with the shared SDK
         // shape guard before forwarding it. Without this a partial
         // payload (older server, schema drift, proxy mangling) would
