@@ -304,6 +304,9 @@ function describeAcrossBothClients() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The flow mirrors its resumable state into sessionStorage, so a leftover
+  // draft would otherwise resume the previous case's slate.
+  sessionStorage.clear();
   environmentsRef.current = perClientEnvironments();
   let personaSeq = 0;
   let journeySeq = 0;
