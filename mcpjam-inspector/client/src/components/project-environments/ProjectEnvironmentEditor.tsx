@@ -234,6 +234,9 @@ export function ProjectEnvironmentEditor({
       }
       if (baseRevision === null) return;
       const updated = await updateEnvironment({
+        // Scopes the admin check and the row lookup on the backend; the update
+        // is not addressable by environment id alone.
+        projectId,
         environmentId: environment.environmentId,
         // The revision captured at draft init — NOT environment.revision,
         // which may have moved under a dirty draft.
