@@ -537,6 +537,46 @@ describe("ChatboxChatPage", () => {
     );
   });
 
+  /**
+   * SUTB-6. The author's Preview embed must never be told to sign in: the
+   * only sign-in the frame can perform returns to `/oauth/callback`, outside
+   * the `main.tsx` self-embed exemption, so the frame lands on
+   * `IframeRouterError`. The denial itself still shows — it's the honest
+   * answer — minus the CTA that cannot work.
+   */
+  it("offers no sign-in CTA when the denial lands inside the preview embed", async () => {
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    window.history.replaceState(
+      {},
+      "",
+      "/chatbox/test/token-denied?surface=preview"
+    );
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-denied" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in App" })
+    ).toBeInTheDocument();
+  });
+
   it("shows the sign-in CTA for guest-blocked links only after bootstrap denies access", async () => {
     mockConvexAuthState.isAuthenticated = false;
     mockWorkOsAuthState.user = null;

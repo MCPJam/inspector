@@ -68,8 +68,6 @@ export function ChatboxHostOnboardingOverlays({
     pendingOAuthServers.length > 0 &&
     pendingOAuthServers.every(({ server }) => server.optional);
 
-  // "chatbox servers" is internal naming leaking to a recipient (SUTB-8 owns
-  // the wider sweep; this card is the one the task calls out).
   const authSubtitle = onlyOptionalOAuthPending
     ? "Authorize below to connect optional servers to this chat."
     : "Authorize the required servers to continue.";

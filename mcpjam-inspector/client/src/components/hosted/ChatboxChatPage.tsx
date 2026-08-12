@@ -992,7 +992,15 @@ export function ChatboxChatPage({
               {displayError.message}
             </p>
             <div className="mt-4 flex items-center justify-center gap-2">
-              {!isAuthenticated && (isAccessDenied || guestBlocked) ? (
+              {/* No sign-in CTA inside the author's Preview embed. `signIn()`
+                  navigates THIS frame to WorkOS and returns to
+                  `/oauth/callback`, outside the `main.tsx` self-embed
+                  exemption, so the frame lands on `IframeRouterError` — the
+                  author is offered a button that cannot complete. Standalone
+                  visitors keep it; it works there. */}
+              {!isAuthenticated &&
+              (isAccessDenied || guestBlocked) &&
+              !isEmbeddedPreview() ? (
                 <Button onClick={handleSignIn}>Sign in</Button>
               ) : null}
               <Button variant="outline" onClick={handleOpenMcpJam}>
