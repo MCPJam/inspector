@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { logger } from "../../utils/logger";
+import { reportRouteFailureForResponse } from "../../utils/route-error-report.js";
 import {
   toServedFromCache,
   withCacheEventCapture,
@@ -44,11 +44,21 @@ resourceTemplates.post("/list", async (c) => {
       ...(servedFromCache ? { servedFromCache } : {}),
     });
   } catch (error) {
-    logger.error("Error fetching resource templates", error, { serverId });
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "Error fetching resource templates",
+      error,
+      {
+        source: "mcp.resource-templates.list",
+        hop: "user_server_hop",
+        context: { serverId },
+      },
+    );
     return c.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
+        normalized,
+        origin,
       },
       500,
     );

@@ -906,7 +906,7 @@ describe("OrganizationsTab billing", () => {
       errorToastMessage(
         "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
