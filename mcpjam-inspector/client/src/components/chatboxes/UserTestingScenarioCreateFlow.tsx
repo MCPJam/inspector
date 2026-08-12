@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import { RequiredMark } from "@/components/shared/required-mark";
 import {
   emptyComposerState,
   isComposeMode,
@@ -57,6 +58,15 @@ import { cn } from "@/lib/utils";
  * **Nothing is written until Save.** Every choice is local state; the single
  * write is `onCreateScenario`, injected by the parent — the same inversion
  * `new-swarm-create-flow` and the legacy flow both use.
+ *
+ * **The environment is REQUIRED, and now says so.** A scenario is a link handed
+ * to a person, and without an environment there is nothing behind that link —
+ * the tester is the one who finds out. Save has always been gated on a target,
+ * but silently: a disabled button that never explains itself reads as "I can
+ * create a scenario without an environment", which is how this was reported.
+ * The gate names itself here (marked labels, plus the hint under the strip), and
+ * `ChatboxShareSection` holds the other end — a scenario whose environment stops
+ * resolving issues no tester link.
  */
 interface UserTestingScenarioCreateFlowProps {
   projectId: string;
@@ -221,7 +231,10 @@ export function UserTestingScenarioCreateFlow({
 
         <div className="mt-6 space-y-5">
           <div className="space-y-2">
-            <Label>Environment</Label>
+            <Label>
+              Environment
+              <RequiredMark />
+            </Label>
             {/* No empty state any more: a project with zero environments is not
                 a dead end, because the strip can build the one this scenario
                 needs. The handoff below still covers curating a named one. */}
@@ -246,6 +259,19 @@ export function UserTestingScenarioCreateFlow({
                 </button>
               </>
             }
+            {/* Why Save is inert, said where the choice is made. Only once the
+                list has SETTLED: before that the loading line below is the
+                honest answer, and two hints would contradict each other. */}
+            {environmentsSettled && !hasTarget ? (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid="user-testing-create-environment-required"
+              >
+                Required — pick a saved environment or compose one. A scenario
+                without one has nothing for a tester to run, so it isn&apos;t
+                created and no tester link is issued.
+              </p>
+            ) : null}
             {!environmentsSettled ? (
               <p
                 className="text-xs text-muted-foreground"
@@ -266,10 +292,14 @@ export function UserTestingScenarioCreateFlow({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="user-testing-create-name">Scenario name</Label>
+            <Label htmlFor="user-testing-create-name">
+              Scenario name
+              <RequiredMark />
+            </Label>
             <Input
               id="user-testing-create-name"
               data-testid="user-testing-create-name"
+              aria-required
               value={name}
               disabled={isSaving}
               placeholder={

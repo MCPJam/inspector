@@ -11,12 +11,18 @@ const state = vi.hoisted(() => ({
   hosted: false,
   config: undefined as unknown,
   consentGranted: false,
+  // Dark-launch flag. Defaults ON here so the resolution-rule rows stay
+  // about the rule; the flag-off rows flip it explicitly.
+  localFlagEnabled: true,
 }));
 
 vi.mock("@/lib/config", () => ({
   get HOSTED_MODE() {
     return state.hosted;
   },
+}));
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useLocalComputerEnabled: () => state.localFlagEnabled,
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useComputersDataPlaneConfig: () => state.config,
@@ -62,6 +68,7 @@ describe("useComputerEngine", () => {
     state.hosted = false;
     state.config = config({});
     state.consentGranted = false;
+    state.localFlagEnabled = true;
   });
 
   it("hosted: always cloud, toggle hidden, storage untouched", () => {
@@ -176,5 +183,27 @@ describe("useComputerEngine", () => {
     state.config = config({});
     const { result } = renderHook(() => useComputerEngine("p1"));
     expect(result.current.toggleVisible).toBe(true);
+  });
+
+  it("flag off: local never qualifies — even with consent + a stored 'local' pref", () => {
+    // Dark launch: the server advertises the engine, the user granted consent,
+    // and a preference is stored — the UI must still look pre-feature.
+    state.localFlagEnabled = false;
+    state.consentGranted = true;
+    saveComputerEngine("p1", "local");
+    const { result } = renderHook(() => useComputerEngine("p1"));
+    expect(result.current.engine).toBe("cloud");
+    expect(result.current.selectedEngine).toBe("cloud");
+    expect(result.current.localAvailable).toBe(false);
+    expect(result.current.localTerminalAvailable).toBe(false);
+    expect(result.current.toggleVisible).toBe(false);
+  });
+
+  it("flag off + server default 'local': resolution falls through to cloud", () => {
+    state.localFlagEnabled = false;
+    state.config = config({ defaultEngine: "local", terminalAvailable: true });
+    const { result } = renderHook(() => useComputerEngine("p1"));
+    expect(result.current.selectedEngine).toBe("cloud");
+    expect(result.current.localTerminalAvailable).toBe(false);
   });
 });

@@ -157,4 +157,85 @@ describe("ChatboxPreviewPane", () => {
 
     expect(screen.getByTestId("user-testing-preview-frame")).toBeInTheDocument();
   });
+
+  describe("remountKey", () => {
+    // A rebind keeps the share link — same token, same slug — so `src` alone
+    // can't tell the frame its configuration moved. The frame would go on
+    // testing the pre-rebind setup with the bootstrap already in memory.
+    // A key change is observable as a new DOM node: React tears the old
+    // iframe down instead of reusing it, and the embed re-redeems on mount.
+    it("remounts the frame when the bound environment changes", () => {
+      const { rerender } = render(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_a"
+        />,
+      );
+      const before = screen.getByTestId("user-testing-preview-frame");
+
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_b"
+        />,
+      );
+
+      expect(screen.getByTestId("user-testing-preview-frame")).not.toBe(before);
+    });
+
+    it("does NOT remount on unrelated prop churn", () => {
+      const { rerender } = render(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_a"
+        />,
+      );
+      const before = screen.getByTestId("user-testing-preview-frame");
+
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+          remountKey="env_a"
+          emptyTitle="a different empty-state title"
+        />,
+      );
+
+      expect(screen.getByTestId("user-testing-preview-frame")).toBe(before);
+    });
+
+    it("omitting remountKey keeps the pre-existing src-keyed behavior", () => {
+      const { rerender } = render(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+        />,
+      );
+      const before = screen.getByTestId("user-testing-preview-frame");
+
+      // Same link → same frame.
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={sameOriginLink}
+          mcpProfile={undefined}
+        />,
+      );
+      expect(screen.getByTestId("user-testing-preview-frame")).toBe(before);
+
+      // A rotated link still remounts without any remountKey — the original
+      // src-keyed behavior this prop must not regress.
+      rerender(
+        <ChatboxPreviewPane
+          publishLink={`${window.location.origin}/chatbox/payments-beta/tok-2`}
+          mcpProfile={undefined}
+        />,
+      );
+      expect(screen.getByTestId("user-testing-preview-frame")).not.toBe(
+        before,
+      );
+    });
+  });
 });

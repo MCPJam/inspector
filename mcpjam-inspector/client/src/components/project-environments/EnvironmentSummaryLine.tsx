@@ -56,7 +56,7 @@ export function EnvironmentSummaryLine({
             blank. */}
         {imageLabel ? (
           <span
-            title="Sandbox image for eval runs and published chatboxes in this environment — Playground and swarms don't use it yet."
+            title="Sandbox image for eval runs and published user testing scenarios in this environment — Playground and swarms don't use it yet."
             {...(testIdPrefix
               ? {
                   "data-testid": `${testIdPrefix}-${environment.environmentId}`,

@@ -22,6 +22,7 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import {
   parseXaaPolicyValue,
   resolveEffectiveAuthMethod,
@@ -49,6 +50,7 @@ import {
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
+import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
 import {
   getLocalConfidentialCimdProvider,
   withSkillsExtensionCapability,
@@ -59,11 +61,17 @@ import {
   materializePluginStdioForConnect,
   releasePluginLease,
 } from "../services/plugins/local-stdio.js";
+import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
 
 type LocalAuthorizeServerConfig =
   | {
       transportType: "http";
       url: string;
+      // Declared wire transport from a plugin manifest (parser
+      // `httpVariant`), once the backend persists + serves it. Absent on
+      // every ordinary row and on older backends — absence means "no
+      // declaration", never a default.
+      httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
       timeout?: number;
@@ -724,6 +732,22 @@ export function toMCPServerConfig(
     url,
     requestInit: { headers },
   };
+  // Plugin-declared transports are authoritative: `sse` skips the Streamable
+  // HTTP attempt, `streamable-http` rules out the silent SSE downgrade. Rows
+  // without a declaration keep the SDK's URL-heuristic + fallback behavior.
+  //
+  // `preferSSE: false` is load-bearing on the streamable-http branch: the SDK
+  // resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`, so a
+  // DECLARED streamable-http server served at a `/sse` path would otherwise
+  // be routed straight to SSE by the URL heuristic and never attempt
+  // Streamable HTTP at all — `disableSseFallback` only guards the fallback
+  // AFTER an attempt, so it cannot rescue that case.
+  if (serverConfig.httpVariant === "sse") {
+    http.preferSSE = true;
+  } else if (serverConfig.httpVariant === "streamable-http") {
+    http.preferSSE = false;
+    http.disableSseFallback = true;
+  }
   if (typeof timeout === "number") http.timeout = timeout;
   if (clientCapabilities) {
     http.capabilities = clientCapabilities;
@@ -936,6 +960,77 @@ async function applyLocalRuntimeResolution<
   }
 
   return result;
+}
+
+/**
+ * The stdio launch spec exactly as CONFIGURED — full command/args/env with
+ * runtime secrets applied, placeholders still verbatim.
+ *
+ * Same re-read and same trust model as {@link resolveLocalStdioServerConfig}
+ * (`/web/authorize-batch-local` with the caller's own bearer, so authorization
+ * is re-checked rather than assumed), stopping one step earlier: no plugin
+ * materialization and no SDK config. Hosted plugin execution needs precisely
+ * this, because it substitutes the placeholders for paths inside a SANDBOX and
+ * never builds a local spawn config at all.
+ *
+ * Refuses an http row for the same reason the local resolver does: a transport
+ * mismatch between the two authorize reads means the row changed mid-request.
+ *
+ * Takes NO delegated-identity (WorkOS API key) option, unlike its siblings: the
+ * one caller refuses those callers outright before reaching here, because the
+ * plugin-runtime reads that follow ride the Convex query protocol and cannot be
+ * authenticated by the service-token exchange. A threaded-but-unreachable knob
+ * would only suggest otherwise.
+ */
+export async function readAuthorizedStdioLaunchSpec(args: {
+  bearerToken: string;
+  projectId: string;
+  serverId: string;
+  serverDisplayName?: string;
+  accessScope?: "project_member" | "chat_v2";
+  chatboxId?: string;
+  accessVersion?: number;
+}): Promise<PluginStdioLaunchSpec> {
+  const result = await authorizeServerLocal(
+    null,
+    args.bearerToken,
+    args.projectId,
+    args.serverId
+  );
+  if (result.serverConfig.transportType !== "stdio") {
+    throw new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      `Server "${
+        args.serverDisplayName ?? args.serverId
+      }" changed transport while the request was in flight. Retry the request.`,
+      { serverId: args.serverId }
+    );
+  }
+  const config = result.serverConfig;
+  // Same redaction rule the local path applies: the authorize read returns
+  // `hasEnv` with no values when the env is secret-backed, and the reveal is
+  // what fills it in.
+  const env =
+    config.hasEnv === true && !hasNonEmptyStringRecord(config.env)
+      ? (
+          await fetchRuntimeServerSecrets({
+            bearerToken: args.bearerToken,
+            projectId: args.projectId,
+            serverId: args.serverId,
+            accessScope: args.accessScope,
+            chatboxId: args.chatboxId,
+            accessVersion: args.accessVersion,
+          })
+        ).env ?? config.env ?? {}
+      : config.env ?? {};
+
+  return {
+    command: config.command,
+    args: config.args ?? [],
+    env,
+    ...(config.cwd !== undefined ? { workingDirectory: config.cwd } : {}),
+  };
 }
 
 /**
@@ -1195,18 +1290,20 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    const xaaFailureTarget = {
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      ...(sc.url ? { serverUrl: sc.url } : {}),
+    };
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
+    // Framed for this surface (the stored sentence is written for the server's
+    // auth form and names neither the server nor where to fix it).
     if (sc.xaaIdentityError) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        sc.xaaIdentityError,
-        {
-          serverId,
-          serverName: options?.serverDisplayName ?? null,
-        }
+      throw toXaaConnectFailure(
+        new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError),
+        xaaFailureTarget
       );
     }
     const mintArgs = buildXaaMintArgs({
@@ -1242,7 +1339,10 @@ export async function resolveLocalServerForConnect(
           resource: sc.url,
         });
       }
-      throw error;
+      // Re-framed AFTER the log above: the debugger-worded original still
+      // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
+      // names this server and the action that fixes it.
+      throw toXaaConnectFailure(error, xaaFailureTarget);
     }
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
     // 401 surfaces to the caller rather than looping mint→401→mint.
@@ -1258,8 +1358,12 @@ export async function resolveLocalServerForConnect(
         );
       }
       reMinted = true;
-      const minted = await mintXaaAccessToken(mintArgs);
-      return { accessToken: minted.accessToken };
+      try {
+        const minted = await mintXaaAccessToken(mintArgs);
+        return { accessToken: minted.accessToken };
+      } catch (error) {
+        throw toXaaConnectFailure(error, xaaFailureTarget);
+      }
     };
   }
 
@@ -1442,12 +1546,29 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
   const normalized = error.normalized ?? describeError(error);
+  // Skip-if-stamped by construction: most callers reach here holding a
+  // `WebRouteError` that `mapRuntimeError` already ruled on, and the helper
+  // short-circuits on the stamp. The call is still made so the local-mode
+  // paths that build a `WebRouteError` by hand — never passing through the
+  // mapper — are classified too.
+  const { origin } = maybeCaptureOriginError(error, normalized, {
+    source: "mcp.localRouteError",
+    extra: { status: error.status, code: error.code },
+  });
+  c.set("webErrorMeta", {
+    status: error.status,
+    code: error.code,
+    message: error.message,
+    origin,
+    slug: normalized.slug,
+  });
   return c.json(
     {
       success: false,
       error: error.message,
       ...(error.details ?? {}),
       normalized,
+      origin,
     },
     error.status as any
   );
@@ -1667,7 +1788,9 @@ export async function executeLocalServerConnect(
  * attribution). Same bearer the authorize call used — plugin reads are
  * project-scoped and re-authorized backend-side on every query.
  */
-function createPluginRuntimeConvexClient(bearerToken: string): ConvexHttpClient {
+export function createPluginRuntimeConvexClient(
+  bearerToken: string
+): ConvexHttpClient {
   const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl) {
     throw new WebRouteError(
