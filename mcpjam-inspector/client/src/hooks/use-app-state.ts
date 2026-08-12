@@ -133,7 +133,10 @@ function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | nu
   } catch {
     // ignore
   }
-  const serverName = localStorage.getItem("mcp-oauth-pending");
+  const serverName = // Mirrors OAUTH_PENDING_STORAGE_KEY in lib/oauth/mcp-oauth.ts; the
+    // literal avoids a module edge here and is pinned by
+    // lib/oauth/__tests__/oauth-callback-recovery.test.ts.
+    localStorage.getItem("mcp-oauth-pending");
   if (!serverName) return null;
   return {
     serverName,

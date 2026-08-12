@@ -475,6 +475,80 @@ export interface PlatformEnvironmentResolved {
   sandboxImageId?: string;
 }
 
+// ── Agent Plugins ────────────────────────────────────────────────────────────
+//
+// A plugin bundle (agent-plugins.org format) imported into a project. Each
+// immutable VERSION materializes MCP servers and skills as ordinary project
+// rows; environments pin `pluginVersionIds` to run them. This surface is
+// READ-ONLY — import, activate, enable/disable and uninstall stay in the app.
+
+/** One live (installed, non-uninstalled) plugin in a project. */
+export interface PlatformPlugin {
+  id: string;
+  projectId: string;
+  /** Normalized plugin name — the namespace its skills load under. */
+  name: string;
+  displayName?: string;
+  description?: string;
+  /** Disabled plugins keep their versions but resolve for no run. */
+  enabled: boolean;
+  /** The version environment pins default to; absent before first activate. */
+  activeVersionId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Per-component tallies of one imported version. `apps` counts preserved
+ *  `.app.json` metadata entries only (no runtime effect). */
+export interface PlatformPluginComponentCounts {
+  skills: number;
+  servers: number;
+  apps: number;
+  assets: number;
+  unsupported: number;
+}
+
+/** One MCP server a plugin version declares, with its materialized row. */
+export interface PlatformPluginServerComponent {
+  componentId: string;
+  /** Stable key within the version (normalized server map key). */
+  componentKey: string;
+  declaredName: string;
+  /** Where the component can execute; `local`/`computer` never run hosted. */
+  placement: "remote" | "local" | "computer";
+  /** Declared auth timing: setup right after import, or on first use. */
+  authenticationPolicy: "on_install" | "on_use";
+  /** The project server row this component materialized as. */
+  materializedServerId: string;
+}
+
+/** One skill a plugin version declares, with its materialized row. */
+export interface PlatformPluginSkillComponent {
+  componentId: string;
+  componentKey: string;
+  declaredName: string;
+  /** Namespaced model-facing reference: `<plugin-name>/<skill-name>`. */
+  modelRef: string;
+  materializedSkillId: string;
+}
+
+/** One immutable imported version with its component projections. */
+export interface PlatformPluginVersion {
+  id: string;
+  pluginId: string;
+  /** `manifest.version` — metadata only; `bundleHash` is the identity. */
+  declaredVersion?: string;
+  bundleHash: string;
+  manifestHash?: string;
+  /** Only `ready` versions resolve at runtime or serve bundle bytes. */
+  status: "staging" | "ready" | "invalid";
+  componentCounts: PlatformPluginComponentCounts;
+  servers: PlatformPluginServerComponent[];
+  skills: PlatformPluginSkillComponent[];
+  createdAt: number;
+  readyAt?: number;
+}
+
 // ── Sandbox images ───────────────────────────────────────────────────────────
 //
 // A project's custom Computer base image: a blueprint plus its builds. Named

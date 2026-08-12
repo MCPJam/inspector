@@ -12,7 +12,7 @@ The OAuth implementation uses:
 - **CORS proxy server** for metadata discovery and SSE handling
 - **localStorage** for persistence
 - **MCP SDK** for OAuth operations
-- **Multi-protocol support** for 2025-03-26, 2025-06-18, and 2025-11-25 specifications
+- **Multi-protocol support** for 2025-03-26, 2025-06-18, 2025-11-25, and 2026-07-28 specifications
 
 The canonical home for the date-versioned OAuth debug state machines is now `sdk/src/oauth/state-machines/**`. The Inspector consumes those browser-safe SDK exports through `@mcpjam/sdk/browser` plus a small adapter in `client/src/lib/oauth/debug-state-machine-adapter.ts`.
 
@@ -218,7 +218,7 @@ graph LR
 
 ## Protocol Versions
 
-The OAuth debugger supports three MCP OAuth protocol versions:
+The OAuth debugger supports four MCP OAuth protocol versions:
 
 ### 2025-03-26 (Original)
 
@@ -235,12 +235,18 @@ The OAuth debugger supports three MCP OAuth protocol versions:
 - PKCE recommended but not strictly enforced
 - Registration: DCR (SHOULD) or pre-registered
 
-### 2025-11-25 (Latest)
+### 2025-11-25 (November)
 
 - Client ID Metadata Documents (CIMD) support
 - RFC8414 or OIDC discovery without root fallback
 - PKCE strictly required and enforced
 - Registration: CIMD (SHOULD), DCR, or pre-registered
+
+### 2026-07-28 (Latest)
+
+- Everything in 2025-11-25, plus:
+- SEP-837: OIDC `application_type` sent on Dynamic Client Registration
+- RFC9207 `iss` validation on the authorization callback, enforced as a hard block
 
 ## Key Components
 
@@ -272,7 +278,7 @@ Step metadata is defined in `sdk/src/oauth/state-machines/shared/step-metadata.t
 Modal dialog for configuring OAuth test profiles:
 
 - Server name and URL configuration
-- Protocol version selection (2025-03-26, 2025-06-18, 2025-11-25)
+- Protocol version selection (2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28)
 - Registration strategy selection (CIMD, DCR, Pre-registered)
 - Advanced settings accordion for optional configuration
 - Custom headers management with add/remove functionality

@@ -71,6 +71,7 @@ import type { ToolQualityInfo } from "./tools/ToolItem";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -876,6 +877,13 @@ export function ToolsTab({
       logger.error("Tool execution network error", {
         toolName: selectedTool,
         error: message,
+      });
+      // The console line was the only trace this left. Gated and
+      // origin-filtered: a tool call failing because the user's server is down
+      // is not ours to hear about.
+      reportPossiblyOurFailure(err, {
+        source: "tools_tab_execute",
+        extra: { toolName: selectedTool },
       });
       setError(message);
     } finally {

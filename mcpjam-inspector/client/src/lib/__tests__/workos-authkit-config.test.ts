@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveWorkosClientOptions,
-  resolveWorkosDevMode,
+  WORKOS_DEV_MODE,
 } from "../workos-authkit-config";
 
 describe("workos authkit config", () => {
-  it("uses cookie mode by default, including local dev", () => {
-    expect(resolveWorkosDevMode({ DEV: true })).toBe(false);
-    expect(resolveWorkosDevMode({ DEV: false })).toBe(false);
-  });
-
-  it("keeps the explicit dev mode escape hatch", () => {
-    expect(resolveWorkosDevMode({ VITE_WORKOS_DEV_MODE: "true" })).toBe(true);
-    expect(resolveWorkosDevMode({ VITE_WORKOS_DEV_MODE: "false" })).toBe(false);
+  // Not a tautology: authkit-js defaults `devMode` to true on localhost, so
+  // this constant has to stay false and stay explicitly passed, or local dev
+  // silently moves the refresh token to localStorage while every deployed
+  // environment keeps it in memory behind the AuthKit session cookie.
+  it("uses cookie mode on every surface, including local dev", () => {
+    expect(WORKOS_DEV_MODE).toBe(false);
   });
 
   it("proxies AuthKit calls through the local origin on localhost", () => {

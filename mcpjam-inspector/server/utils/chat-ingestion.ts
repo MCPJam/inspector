@@ -179,7 +179,6 @@ interface PersistChatSessionOptions {
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   chatboxId?: string;
-  accessVersion?: number;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -413,9 +412,11 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.chatboxId ? { chatboxId: options.chatboxId } : {}),
-        ...(options.chatboxId && Number.isFinite(options.accessVersion)
-          ? { accessVersion: options.accessVersion }
-          : {}),
+        // `accessVersion` is deliberately NOT sent: the backend's ingest
+        // query never reads it, and ingestion is deliberately NOT version
+        // enforced — it persists a turn that ALREADY ran, so a rebind
+        // landing mid-turn must not cost the transcript. Auth here stays the
+        // grant check (resolveHostedSessionAccess by chatboxId).
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }

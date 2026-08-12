@@ -45,6 +45,14 @@ export default defineConfig({
     rollupOptions: {
       external: [
         "electron",
+        // `src/main.ts` dynamically imports the WHOLE server, so the server's
+        // optional native dep is in this bundle's graph. node-pty must stay
+        // external or the main-process build fails outright; at runtime the
+        // packaged app has no node_modules (electron-forge's vite plugin packs
+        // only `.vite`), so the require fails and the local terminal degrades
+        // off by design. Real Electron terminal support (extraResource +
+        // custom resolution) is a scoped follow-up.
+        "node-pty",
         ...builtinModules,
         ...builtinModules.map((m) => `node:${m}`),
       ],

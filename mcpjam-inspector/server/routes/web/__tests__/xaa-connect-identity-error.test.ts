@@ -70,6 +70,7 @@ vi.mock("../../../services/xaa-mint.js", async (importOriginal) => {
 });
 
 import { createAuthorizedManager, callerContextFromHono } from "../auth.js";
+import { ErrorCode, WebRouteError } from "../errors.js";
 
 const baseContext: RequestLogContext = {
   event: "http.request.completed",
@@ -160,7 +161,14 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
-      message: identityError,
+      // Framed for the connecting surface: the backend's actionable sentence
+      // survives as the reason clause, the server is named, and the classified
+      // reason rides in `details` for the surface that renders it.
+      message: expect.stringContaining(identityError),
+      details: expect.objectContaining({
+        reason: "xaa_configuration_invalid",
+        serverId: "srv-xaa",
+      }),
     });
 
     // The configuration error surfaces as a distinct failure BEFORE any mint
@@ -216,7 +224,14 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
-      message: identityError,
+      // Framed for the connecting surface: the backend's actionable sentence
+      // survives as the reason clause, the server is named, and the classified
+      // reason rides in `details` for the surface that renders it.
+      message: expect.stringContaining(identityError),
+      details: expect.objectContaining({
+        reason: "xaa_configuration_invalid",
+        serverId: "srv-xaa",
+      }),
     });
 
     expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
@@ -691,5 +706,71 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     );
 
     expect(mintXaaAccessTokenMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The reachable trigger for "Swarm failed with an odd XAA authorization
+  // error": both identity legs of the mint (the secret reveal and the scoped
+  // issuer gate) authenticate with the CALLER's bearer, so a stale session
+  // fails there with the backend's own "Missing or invalid bearer token" —
+  // a sentence that reads as a server fault and names no server, no surface,
+  // and no action.
+  it("reframes a stale-session mint 401 as a named, re-runnable re-auth ask", async () => {
+    batchOf({
+      "srv-configured": {
+        ...okBase,
+        serverConfig: {
+          transportType: "http",
+          url: "https://configured.example.com/mcp",
+          authMethod: "auto",
+          authServerMode: "mcpjam",
+          clientId: "client-1",
+        },
+      },
+    });
+    mintXaaAccessTokenMock.mockRejectedValue(
+      new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Missing or invalid bearer token"
+      )
+    );
+
+    const failure = await createAuthorizedManager(
+      callerContextFromHono(makeContext()),
+      "stale-bearer",
+      "ws-1",
+      ["srv-configured"],
+      30_000,
+      undefined,
+      undefined,
+      {
+        serverNames: ["Billing MCP"],
+        xaaIssuer: "https://app.mcpjam.com/api/web",
+        xaaPolicy: { idp: "mcpjam" },
+      }
+    ).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(failure).toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      details: expect.objectContaining({
+        reason: "xaa_reauth_required",
+        serverId: "srv-configured",
+        serverName: "Billing MCP",
+        xaaReauthRequired: true,
+      }),
+    });
+    const message = (failure as Error).message;
+    // One sentence: the server, what failed, and the single action.
+    expect(message).toContain("Billing MCP");
+    expect(message).toContain("sign in again");
+    expect(message).not.toContain("Missing or invalid bearer token");
+    // The debugger-worded original is preserved for Sentry/Axiom, not shown.
+    expect((failure as { cause?: unknown }).cause).toMatchObject({
+      message: "Missing or invalid bearer token",
+    });
   });
 });
