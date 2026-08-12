@@ -526,15 +526,17 @@ When a visitor opens a chatbox shared link and the scenario's environment is arc
 
 `ENV_NO_SERVERS`
 
-This environment has no servers.
+This environment has no servers to run against.
 
 **Likely causes**
 - The client this environment points at has no servers connected.
 - The attached server group is empty.
 - Every server contributed by a pinned plugin has been removed.
+- The only servers are local — stdio, or a localhost/private-address URL — and a cloud run can't reach them.
 
 **Next steps**
 - Connect a server to the client, or attach a server group.
+- For a local server, expose it over HTTPS (use **Create tunnel** on its card) and point the client at that URL — or run this from a local surface instead.
 - Check the environment's pinned plugins if it relied on one for servers.
 
 ### Archived
