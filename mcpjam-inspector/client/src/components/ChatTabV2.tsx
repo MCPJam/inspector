@@ -70,6 +70,7 @@ import {
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
   extractUserMessageText,
+  UPSTREAM_ERROR_PAGE_CODE,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
@@ -1805,11 +1806,12 @@ export function ChatTabV2({
     }
   }, []);
 
-  // Concurrency-throttle retry: re-submit the user's last typed message via
-  // the same source-tracking ref the topup CTA uses. The retry button only
-  // ever surfaces on the concurrency banner (see `onRetry` gate below), so
-  // we don't risk firing this on unrelated retryable errors.
-  const handleRetryConcurrencyMessage = useCallback(() => {
+  // Transient-failure retry: re-submit the user's last typed message via the
+  // same source-tracking ref the topup CTA uses. The retry button only ever
+  // surfaces on failures where resending is the whole fix (see the
+  // `canRetryLastMessage` gate below), so we don't risk firing this on
+  // unrelated retryable errors.
+  const handleRetryLastMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
     sendMessage({ text, metadata: outgoingSenderMetadata });
@@ -1898,7 +1900,7 @@ export function ChatTabV2({
       // in the gap after `ensureThreadReadyForSend`'s network round trip, or
       // the message is gone. Nothing branched, so say nothing — and don't
       // touch bookkeeping either: `lastSentUserMessageRef` is shared with
-      // `handleRetryConcurrencyMessage` and `handleOpenTopupDialog`, both of
+      // `handleRetryLastMessage` and `handleOpenTopupDialog`, both of
       // which resend whatever text currently sits in it, and `edit_message`
       // has no server twin to reconcile a phantom count against. Stomping
       // either one here for an edit that never sent would corrupt state for
@@ -1933,6 +1935,19 @@ export function ChatTabV2({
   const isConcurrencyThrottle =
     errorMessage?.code === "user_rate_limit" &&
     errorMessage?.limitKind === "concurrency";
+
+  // An upstream hop returning an error page (a gateway 502 in front of
+  // MCPJam) is transient, and resending is the entire fix. Without this the
+  // banner offered `Reset chat` alone, which on the chatbox surfaces throws
+  // away the session the tester's whole run exists to collect.
+  //
+  // Gated on the formatter's own code, not on `isRetryable`: the server sets
+  // that flag on failures a blind resend cannot help with.
+  const canRetryLastMessage =
+    isConcurrencyThrottle || errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE;
+  const errorRetryHandler = canRetryLastMessage
+    ? handleRetryLastMessage
+    : undefined;
 
   useCreditTopupReturnFlow({ chatSessionId, sendMessage });
 
@@ -2395,11 +2410,7 @@ export function ChatTabV2({
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
-                            onRetry={
-                              isConcurrencyThrottle
-                                ? handleRetryConcurrencyMessage
-                                : undefined
-                            }
+                            onRetry={errorRetryHandler}
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2665,11 +2676,7 @@ export function ChatTabV2({
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
-                              onRetry={
-                                isConcurrencyThrottle
-                                  ? handleRetryConcurrencyMessage
-                                  : undefined
-                              }
+                              onRetry={errorRetryHandler}
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2796,11 +2803,7 @@ export function ChatTabV2({
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
-                            onRetry={
-                              isConcurrencyThrottle
-                                ? handleRetryConcurrencyMessage
-                                : undefined
-                            }
+                            onRetry={errorRetryHandler}
                             onResetChat={baseResetChat}
                           />
                         </div>

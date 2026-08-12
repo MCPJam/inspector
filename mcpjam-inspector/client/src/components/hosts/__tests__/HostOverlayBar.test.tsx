@@ -134,6 +134,138 @@ describe("HostOverlayBar", () => {
     expect(screen.getByTestId("host-overlay-save-as-new")).toBeVisible();
   });
 
+  it("renders a client logo on every dropdown row", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
+
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Client used for preview" })
+    );
+
+    const logoA = await screen.findByTestId("host-overlay-logo-host-a");
+    expect(logoA).toHaveAttribute("src", expect.stringContaining("mcp_jam"));
+    expect(screen.getByTestId("host-overlay-logo-host-b")).toHaveAttribute(
+      "src",
+      expect.stringContaining("claude")
+    );
+  });
+
+  it("falls back to the generic MCP mark for a client it cannot place", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...oneHost[0], name: "Acme Internal Bot" }],
+      isLoading: false,
+    });
+
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Client used for preview" })
+    );
+
+    // Not an empty circle — HostCanvasSelector shows /mcp.svg for the same
+    // unknown-name case, and the two pickers must agree.
+    const logo = await screen.findByTestId("host-overlay-logo-host-a");
+    expect(logo.tagName).toBe("IMG");
+    expect(logo).toHaveAttribute("src", "/mcp.svg");
+  });
+
+  it("places a decorated client name the exact-match resolver would miss", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...oneHost[0], name: "Cursor (staging)" }],
+      isLoading: false,
+    });
+
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Client used for preview" })
+    );
+
+    expect(await screen.findByTestId("host-overlay-logo-host-a")).toHaveAttribute(
+      "src",
+      expect.stringContaining("cursor")
+    );
+  });
+
+  it("marks the selected row with a single primary-colored dot", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
+
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Client used for preview" })
+    );
+
+    // Only the previewed host gets a dot, so the design-system's built-in
+    // left-gutter indicator must be gone — two dots would read as two
+    // selections.
+    const dots = await screen.findAllByTestId(/^host-overlay-selected-dot-/);
+    expect(dots).toHaveLength(1);
+    expect(dots[0]).toHaveAttribute(
+      "data-testid",
+      "host-overlay-selected-dot-host-a"
+    );
+    expect(dots[0]).toHaveClass("bg-primary");
+
+    const row = screen.getByRole("menuitemradio", { name: /MCPJam/ });
+    expect(row.querySelector("span.absolute")).toBeNull();
+  });
+
+  it("places the selected dot after the client name so logos own the left edge", async () => {
+    const user = userEvent.setup();
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Client used for preview" })
+    );
+
+    const label = await screen.findByTestId("host-overlay-label-host-a");
+    const dot = screen.getByTestId("host-overlay-selected-dot-host-a");
+    expect(
+      label.compareDocumentPosition(dot) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
   it("cycles to the next host when the right arrow is clicked", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

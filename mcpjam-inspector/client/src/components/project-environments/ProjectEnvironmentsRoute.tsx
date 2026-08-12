@@ -527,7 +527,7 @@ function EnvironmentDetail({
           // is live for outsiders and starts failing the moment this archives.
           const chatboxPart =
             chatboxCount > 0
-              ? " Its published chatbox link stops working immediately."
+              ? " Its published tester link stops working immediately."
               : "";
           return suiteCount + journeyCount > 0
             ? `${suitePart} and ${journeyPart} reference it (count may be incomplete).${chatboxPart}`
@@ -540,6 +540,7 @@ function EnvironmentDetail({
       // Archive is actioned on the row as currently shown (no draft), so the
       // reactive revision IS the base revision here.
       await archiveEnvironment({
+        projectId,
         environmentId: environment.environmentId,
         expectedRevision: environment.revision,
       });
@@ -556,6 +557,7 @@ function EnvironmentDetail({
     setBusy(true);
     try {
       await restoreEnvironment({
+        projectId,
         environmentId: environment.environmentId,
         expectedRevision: environment.revision,
       });

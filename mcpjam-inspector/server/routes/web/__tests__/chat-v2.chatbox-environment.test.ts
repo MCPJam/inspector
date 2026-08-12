@@ -371,4 +371,105 @@ describe("web chat-v2 — environment-backed chatbox", () => {
     expect(response.status).toBe(502);
     expect(prepareChatV2Mock).not.toHaveBeenCalled();
   });
+
+  // ── Phase 6.1: plugin provenance from the payload's pinned versions ──────
+
+  /** The pinned version the payload carries once mcpjam-backend serves it. */
+  const PINNED_VERSION = {
+    pluginId: "pl_1",
+    pluginVersionId: "pv_1",
+    name: "linear-tools",
+    bundleHash: "hash_1",
+  };
+
+  it("attributes plugin origin when the payload pins versions and the probe answers", async () => {
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        ...CHATBOX_CONFIG,
+        environment: {
+          ...ENVIRONMENT_PAYLOAD,
+          pluginVersions: [PINNED_VERSION],
+        },
+      },
+    });
+    convexQueryMock.mockImplementation(async (ref: string) => {
+      if (ref === "plugins:resolvePluginRuntimePreview") {
+        return {
+          pluginVersions: [PINNED_VERSION],
+          effectiveServerIds: ["env-server-2"],
+          serverComponents: [
+            {
+              pluginVersionId: "pv_1",
+              componentKey: "server:asana",
+              placement: "remote",
+              authenticationPolicy: "on_use",
+              materializedServerId: "env-server-2",
+            },
+          ],
+          pluginSkills: [],
+          unavailableComponents: [],
+        };
+      }
+      throw new Error(`Unexpected convex query: ${ref}`);
+    });
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "plugins:resolvePluginRuntimePreview",
+      { projectId: "project-1", pluginVersionIds: ["pv_1"] }
+    );
+
+    const capabilities =
+      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+    expect(capabilities.problems).toEqual([]);
+    expect(
+      capabilities.servers.find(
+        (server: { serverId: string }) => server.serverId === "env-server-2"
+      ).plugin
+    ).toEqual(PINNED_VERSION);
+  });
+
+  it("degrades to no origin when the probe fails — the turn still runs", async () => {
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        ...CHATBOX_CONFIG,
+        environment: {
+          ...ENVIRONMENT_PAYLOAD,
+          pluginVersions: [PINNED_VERSION],
+        },
+      },
+    });
+    // The member-gated probe rejecting is exactly what a guest turn sees.
+    convexQueryMock.mockRejectedValue(new Error("Not a member of this project"));
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    const capabilities =
+      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+    expect(
+      capabilities.problems.map((problem: { code: string }) => problem.code)
+    ).toEqual(["plugin_origin_unavailable"]);
+    // Classification survives (`source: "plugin"`); only the version label is
+    // unreported.
+    expect(capabilities.pluginServerIds).toEqual(["env-server-2"]);
+    expect(
+      capabilities.servers.find(
+        (server: { serverId: string }) => server.serverId === "env-server-2"
+      ).plugin
+    ).toBeUndefined();
+  });
+
+  it("adds no probe read when the payload pins no versions", async () => {
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+    expect(convexQueryMock).not.toHaveBeenCalled();
+  });
 });

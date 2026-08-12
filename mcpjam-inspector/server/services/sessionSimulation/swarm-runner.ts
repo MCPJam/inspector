@@ -250,10 +250,18 @@ export async function startJourneyRun(
   }
 }
 
-/** Map a shared-core session outcome to the attempt terminal state + error. */
+/** Map a shared-core session outcome to the attempt terminal state + error.
+ *
+ * `errorReason` is the structured tag the thrown route error carried
+ * (`details.reason` — e.g. an XAA failure classified by
+ * `toXaaConnectFailure`). It becomes the attempt's `errorCode` in place of the
+ * generic `session_failed`, which is what lets the run banner choose a tone:
+ * a stale sign-in that needs re-running is not the same event as a session
+ * that crashed, and only the producer still knows which one this was. */
 function terminalForOutcome(
   outcome: "succeeded" | "failed" | "rate_limited",
-  errorMessage: string | undefined
+  errorMessage: string | undefined,
+  errorReason?: string
 ): { status: SwarmAttemptStatus; errorCode?: string; errorMessage?: string } {
   if (outcome === "succeeded") {
     return { status: "succeeded" };
@@ -280,7 +288,7 @@ function terminalForOutcome(
   // `succeeded` terminal, which must carry the claim's chatSessionId).
   return {
     status: "failed",
-    errorCode: "session_failed",
+    errorCode: errorReason ?? "session_failed",
     ...(safeMessage ? { errorMessage: safeMessage } : {}),
   };
 }
@@ -953,7 +961,7 @@ async function runJourneyFanOut(
           // failure classification, and NEVER throws (returns a SessionResult).
           // Because it persists per-turn and returns only after the last persist,
           // the transcript is durable before we report the terminal below.
-          const { outcome, errorMessage } = await runSyntheticHostSession({
+          const sessionResult = await runSyntheticHostSession({
             runId,
             projectId,
             chatSessionId,
@@ -1053,6 +1061,7 @@ async function runJourneyFanOut(
               });
             },
           });
+          const { outcome, errorMessage, errorReason } = sessionResult;
 
           // Report the terminal with the SAME chatSessionId ONLY after the
           // transcript is persisted. Best-effort: a terminal write failure is
@@ -1083,7 +1092,7 @@ async function runJourneyFanOut(
                     }
                   : {}),
               }
-            : terminalForOutcome(outcome, errorMessage);
+            : terminalForOutcome(outcome, errorMessage, errorReason);
           emit({
             type: "attempt_status",
             status: terminal.status,

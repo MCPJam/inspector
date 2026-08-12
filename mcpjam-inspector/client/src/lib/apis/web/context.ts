@@ -86,6 +86,28 @@ const apiContextListeners = new Set<() => void>();
 
 const TOKEN_CACHE_TTL_MS = 30_000;
 
+/**
+ * How long a request may wait for a WorkOS access token that has not resolved
+ * yet, and how often to re-ask for it.
+ *
+ * AuthKit answers `null` (or throws `LoginRequiredError`) while it is
+ * bootstrapping or refreshing a session, and every `/api/web/*` route is gated
+ * by `bearerAuthMiddleware`, so dispatching inside that window is a request
+ * that cannot succeed. The budget is short enough that a genuinely expired
+ * session still fails fast — the 401 it produces is classified as
+ * `auth/missing_bearer` and reads as a sign-in problem — and long enough to
+ * cover an ordinary token refresh.
+ */
+const SESSION_BEARER_WAIT_MS = 3_000;
+const SESSION_BEARER_POLL_MS = 100;
+
+/**
+ * The single in-flight wait, shared by every caller that lands in the same
+ * window. Three requests racing one bootstrap should poll once, not three
+ * times.
+ */
+let pendingSessionBearer: Promise<string | null> | null = null;
+
 export function resetTokenCache() {
   cachedBearerToken = null;
 }
@@ -674,6 +696,36 @@ export function buildHostedOAuthTokensMap(
   return Object.keys(map).length > 0 ? map : undefined;
 }
 
+function awaitSessionBearerToken(): Promise<string | null> {
+  pendingSessionBearer ??= pollForSessionBearerToken().finally(() => {
+    pendingSessionBearer = null;
+  });
+  return pendingSessionBearer;
+}
+
+async function pollForSessionBearerToken(): Promise<string | null> {
+  const deadline = Date.now() + SESSION_BEARER_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, SESSION_BEARER_POLL_MS));
+
+    // The actor can resolve to a guest while we wait — AuthKit deciding there
+    // was no session after all, or a sign-out. Hand back to the guest path
+    // instead of waiting out a token that is never coming.
+    if (hasHostedGuestAccess()) return null;
+
+    const getAccessToken = apiContext.getAccessToken;
+    if (!getAccessToken) continue;
+    try {
+      const token = await getAccessToken();
+      if (token) return token;
+    } catch {
+      // Still resolving (LoginRequiredError) — keep asking until the deadline.
+    }
+  }
+
+  return null;
+}
+
 export async function getApiAuthorizationHeader(): Promise<string | null> {
   // Single bearer-resolution path for hosted and local. authFetch decides
   // whether to attach the result based on the request's loopback/origin and
@@ -712,6 +764,21 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   }
 
   if (!hasHostedGuestAccess()) {
+    // A WorkOS session exists, but its access token was not available above.
+    // That is usually timing, not absence: AuthKit is mid-bootstrap or
+    // mid-refresh. Returning null here let the request go out with NO
+    // `Authorization` header, and the hosted routes answer that with their own
+    // 401 ("Bearer token required") — which nothing retries, because
+    // `shouldRetryApiAuth401` deliberately refuses to swap a resolving session
+    // for a guest bearer. Wait for the token rather than firing and failing.
+    const sessionToken = await awaitSessionBearerToken();
+    if (sessionToken) {
+      cachedBearerToken = {
+        token: sessionToken,
+        expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+      };
+      return `Bearer ${sessionToken}`;
+    }
     return null;
   }
 

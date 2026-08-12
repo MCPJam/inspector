@@ -28,12 +28,13 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 
 `-32700 — jsonrpc/parse_error`
 
-The server returned a payload the client could not parse as JSON-RPC.
+The MCP wire contained JSON the inspector could not parse as JSON-RPC.
 
 **Likely causes**
-- Server emitted invalid JSON on the response channel.
+- The server emitted invalid JSON on the response channel.
 - A proxy or middleware mangled the response body.
-- The STDIO server emitted log output on stdout instead of stderr.
+- Server emitted log output on stdout instead of stderr (STDIO transport).
+- The inspector sent malformed JSON and the server returned a parse error.
 
 **Next steps**
 - Check the server's stdout/stderr for unintended log output.
