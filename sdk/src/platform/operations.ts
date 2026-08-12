@@ -64,6 +64,8 @@ import type {
   PlatformPage,
   PlatformMe,
   PlatformModel,
+  PlatformPlugin,
+  PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
   PlatformTunnelGrant,
@@ -3728,6 +3730,84 @@ export const restoreEnvironmentOperation: PlatformOperation<
   },
 };
 
+// ── Agent Plugins ────────────────────────────────────────────────────────────
+//
+// Read-only. Import, activate, enable/disable and uninstall stay in the app —
+// no plugin write belongs on an unattended surface.
+
+const listProjectPluginsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListProjectPluginsInput = z.infer<typeof listProjectPluginsInput>;
+
+export type ListProjectPluginsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformPlugin[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listProjectPluginsOperation: PlatformOperation<
+  ListProjectPluginsInput,
+  ListProjectPluginsResult
+> = {
+  name: "list_project_plugins",
+  title: "List MCPJam project plugins",
+  description:
+    "List the live (installed, non-uninstalled) Agent Plugins in an MCPJam project. Each plugin names its active version id — pass that to get_plugin_version for the version's servers and skills. Disabled plugins are listed too, marked `enabled: false`.",
+  readOnly: true,
+  inputSchema: listProjectPluginsInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listProjectPlugins(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const getPluginVersionInput = z.object({
+  pluginVersionId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Plugin version ID — a plugin's `activeVersionId` from list_project_plugins, or a pinned id from an environment's `pluginVersionIds`."
+    ),
+});
+export type GetPluginVersionInput = z.infer<typeof getPluginVersionInput>;
+
+export const getPluginVersionOperation: PlatformOperation<
+  GetPluginVersionInput,
+  PlatformPluginVersion
+> = {
+  name: "get_plugin_version",
+  title: "Show an MCPJam plugin version",
+  description:
+    "Show one imported Agent Plugin version: its status, component counts, and per-component summaries (declared MCP servers with placement and auth timing, declared skills with their namespaced model refs). Requires membership of the version's project; historical versions of uninstalled plugins stay readable.",
+  readOnly: true,
+  inputSchema: getPluginVersionInput,
+  async execute(input, { client, signal }) {
+    return client.getPluginVersion(
+      { pluginVersionId: input.pluginVersionId },
+      { signal }
+    );
+  },
+};
+
 // ── Sandbox images ───────────────────────────────────────────────────────────
 
 const IMAGE_SELECTOR_DESCRIPTION = "Sandbox image name or ID.";
@@ -4719,6 +4799,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   updateEnvironmentOperation,
   archiveEnvironmentOperation,
   restoreEnvironmentOperation,
+  listProjectPluginsOperation,
+  getPluginVersionOperation,
   listImagesOperation,
   getImageOperation,
   createImageOperation,

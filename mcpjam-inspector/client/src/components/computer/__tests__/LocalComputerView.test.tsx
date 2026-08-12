@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 // The agent bridge is exercised in LocalComputerView.agent.test — here it's a
 // no-op so these render tests don't touch the global command registry.
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (sel: (s: { themeMode: string }) => unknown) =>
+    sel({ themeMode: "dark" }),
+}));
+
 vi.mock("@/lib/webmcp/use-surface-agent-bridge", () => ({
   useSurfaceAgentBridge: () => {},
 }));

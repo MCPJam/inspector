@@ -34,6 +34,7 @@ import {
   type HostAttachmentDraft,
 } from "@/components/evals/client-attachments-editor";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -190,8 +191,22 @@ export function SaveAsTestCaseAction({
                 : {}),
             }),
       })) as
-        | { addedServers?: string[]; updatedSuiteEnvironment?: boolean }
+        | {
+            suiteId?: string;
+            testCaseId?: string;
+            addedServers?: string[];
+            updatedSuiteEnvironment?: boolean;
+          }
         | undefined;
+      setOpen(false);
+      // Navigating is the primary follow-through (see
+      // `navigateToPromotedTestCase`); the toast stays for the environment
+      // note, which the destination doesn't show, and as the only feedback
+      // when the target can't be resolved.
+      const navigated = navigateToPromotedTestCase({
+        suiteId: result?.suiteId,
+        testCaseId: result?.testCaseId,
+      });
       const added = result?.addedServers ?? [];
       if (
         destinationMode === "existing" &&
@@ -201,10 +216,9 @@ export function SaveAsTestCaseAction({
         toast.success(
           `Saved as test case. Added ${added.join(", ")} to the suite.`,
         );
-      } else {
+      } else if (!navigated) {
         toast.success("Saved as test case");
       }
-      setOpen(false);
     } catch (error) {
       const message = getBillingErrorMessage(
         error,

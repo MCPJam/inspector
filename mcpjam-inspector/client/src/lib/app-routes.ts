@@ -67,7 +67,6 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "resources", kind: "screen", surfaceId: "resources" },
   { path: "prompts", kind: "screen", surfaceId: "prompts" },
   { path: "tasks", kind: "screen", surfaceId: "tasks" },
-  { path: "auth", kind: "screen", surfaceId: "auth" },
   { path: "skills", kind: "screen", surfaceId: "skills" },
   { path: "learning", kind: "screen", surfaceId: "learning" },
   { path: "conformance", kind: "screen", surfaceId: "conformance" },

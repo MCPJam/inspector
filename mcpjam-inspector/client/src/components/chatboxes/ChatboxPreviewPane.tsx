@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ExternalLink, Inbox } from "lucide-react";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
+import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "@/lib/tester-link-path";
 
 /**
  * The live published chatbox, embedded, so a scenario can be spot-checked
@@ -11,8 +12,9 @@ import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
  * Two things make the embed work at all, and both are easy to break:
  *
  *  - The self-embed is a deliberate exception to the misrouted-pushState
- *    guard in `main.tsx`, which matches on the `/chatbox/<slug>/<token>`
- *    PATHNAME. Query params are fine; a shape change is not.
+ *    guard in `main.tsx`, which matches on the tester-link PATHNAME shape
+ *    (`lib/tester-link-path.ts`). Query params are fine; a shape change is
+ *    not — change it there, where every matcher reads it from.
  *  - `isEmbeddedPreview()` (`lib/embedded-preview.ts`) makes the embedded
  *    runtime skip its sessionStorage writes. Without it the guest session
  *    leaks into the dashboard's own storage and the next reload boots the
@@ -43,11 +45,20 @@ import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
 export function ChatboxPreviewPane({
   publishLink,
   mcpProfile,
+  remountKey = "",
   emptyTitle = "No share link yet",
   emptyBody = "Publish this scenario to get a share link, then come back here to preview it.",
 }: {
   publishLink: string | null;
   mcpProfile: HostConfigMcpProfileV1 | undefined;
+  /**
+   * Extra discriminator folded into the iframe key. The share link survives a
+   * rebind by design — same token, same slug — so `src` alone cannot tell the
+   * frame its configuration moved, and it would keep testing the pre-rebind
+   * setup with the bootstrap it already holds. Callers pass whatever
+   * identifies the configuration behind the link (the bound environment id).
+   */
+  remountKey?: string;
   emptyTitle?: string;
   emptyBody?: string;
 }) {
@@ -63,13 +74,24 @@ export function ChatboxPreviewPane({
     return (
       <PreviewEmptyState
         title="Preview isn't available here"
-        body="This build serves share links from another origin, so the chatbox can't be embedded. Open it in a new tab instead."
+        body="This build serves share links from another origin, so the scenario can't be embedded. Open it in a new tab instead."
         link={publishLink}
       />
     );
   }
 
-  return <PreviewFrame src={src} link={publishLink} mcpProfile={mcpProfile} />;
+  return (
+    <PreviewFrame
+      // Remount the whole frame — iframe AND its hand-off state — whenever
+      // the src or the configuration behind the link changes. The embedded
+      // runtime re-redeems on every mount by design, so a remount is a fresh
+      // bootstrap of the CURRENT setup.
+      key={`${src}|${remountKey}`}
+      src={src}
+      link={publishLink}
+      mcpProfile={mcpProfile}
+    />
+  );
 }
 
 function PreviewFrame({
@@ -91,7 +113,7 @@ function PreviewFrame({
   const handleLoad = () => {
     try {
       const path = frameRef.current?.contentWindow?.location.pathname;
-      setNavigatedAway(!path || !PUBLIC_CHATBOX_RUNTIME_PATH.test(path));
+      setNavigatedAway(!path || !TESTER_LINK_RUNTIME_PATH_PATTERN.test(path));
     } catch {
       setNavigatedAway(true);
     }
@@ -101,7 +123,7 @@ function PreviewFrame({
     return (
       <PreviewEmptyState
         title="This flow can't finish inside the preview"
-        body="The scenario navigated away from the chatbox — an OAuth sign-in does this. Open it in a real browser tab to complete the flow."
+        body="The preview navigated away from the scenario — an OAuth sign-in does this. Open it in a real browser tab to complete the flow."
         link={link}
         onRetry={() => setNavigatedAway(false)}
       />
@@ -112,7 +134,9 @@ function PreviewFrame({
     <div className="flex h-full min-h-0 flex-col bg-muted/10">
       <iframe
         // Keyed on the src so a rotated link remounts the runtime rather than
-        // leaving the previous token's session on screen.
+        // leaving the previous token's session on screen. Changes the link
+        // SURVIVES (a rebind keeps the token) are caught one level up, by the
+        // key on this component.
         key={src}
         ref={frameRef}
         src={src}
@@ -130,8 +154,6 @@ function PreviewFrame({
     </div>
   );
 }
-
-const PUBLIC_CHATBOX_RUNTIME_PATH = /^\/chatbox\/[^/]+\/[^/]+\/?$/;
 
 /**
  * Tag the embedded run as `preview` traffic. The chatbox runtime reads
