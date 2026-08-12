@@ -12,6 +12,7 @@ import type {
   SwarmOverviewRun,
 } from "@/lib/swarm-api";
 import {
+  SWARM_COLUMN_HEADER,
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
 } from "../swarm-overview-panel";
@@ -519,6 +520,36 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
     expect(screen.getByTestId("swarm-overview-sort")).toBeTruthy();
     expect(screen.getByTestId("swarm-overview-client-filter")).toBeTruthy();
     expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
+  });
+
+  /**
+   * Asserted on classes rather than pixels because the regression is invisible
+   * to jsdom layout: the filtering headers kept `SelectTrigger`'s
+   * `dark:bg-input/30` (tailwind-merge won't drop it for an unprefixed
+   * `bg-transparent`), so in dark mode Client and Score sat in form-field
+   * boxes while the inert Model label stayed flat.
+   */
+  it("gives every column header the same ghost treatment, dark mode included", async () => {
+    renderTab();
+    await screen.findByTestId("swarm-overview-filters");
+
+    const headers = [
+      screen.getByTestId("swarm-overview-env-filter"),
+      screen.getByTestId("swarm-overview-client-filter"),
+      screen.getByTestId("swarm-overview-model-label"),
+      screen.getByTestId("swarm-overview-sort"),
+    ];
+
+    for (const header of headers) {
+      for (const className of SWARM_COLUMN_HEADER.split(" ")) {
+        expect(header.classList.contains(className)).toBe(true);
+      }
+      expect(
+        [...header.classList].filter((className) =>
+          /(^|:)bg-(?!transparent)/.test(className)
+        )
+      ).toEqual([]);
+    }
   });
 
   it("filterAndSortSwarmWaves filters by client / env and sorts by lowest score", () => {

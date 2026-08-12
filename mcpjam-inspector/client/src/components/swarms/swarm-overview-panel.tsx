@@ -514,11 +514,27 @@ function SwarmOverviewPanelBody({
 /** Shared with row buttons so Env / Client / Model / Score line up. */
 const SWARM_RUN_ROW_PAD = "flex w-full items-center gap-3 px-4";
 
-/** Ghost select — reads as a column label / inline control, not a form field. */
+/**
+ * One treatment for every column header, whether it filters or is inert, so
+ * Env / Client / Model / Score read as a single row of column labels rather
+ * than a mix of labels and form fields.
+ */
+export const SWARM_COLUMN_HEADER =
+  "flex w-full min-w-0 items-center justify-end gap-1 text-sm font-medium text-muted-foreground";
+
+/**
+ * Ghost select — a column label that happens to open a menu. The `dark:`
+ * resets are not redundant with `bg-transparent`: tailwind-merge only drops
+ * base classes carrying the same modifiers, so `SelectTrigger`'s
+ * `dark:bg-input/30` / `dark:hover:bg-input/50` survive an unprefixed override
+ * and painted a form-field block behind the filtering headers — and only those
+ * — in dark mode.
+ */
 const SWARM_INLINE_SELECT_TRIGGER = cn(
-  "h-auto min-h-0 gap-1 border-0 bg-transparent p-0 shadow-none",
-  "text-sm font-medium text-muted-foreground hover:text-foreground",
-  "focus:ring-0 focus-visible:ring-0 data-[state=open]:text-foreground",
+  SWARM_COLUMN_HEADER,
+  "h-auto min-h-0 max-w-full border-0 bg-transparent p-0 shadow-none",
+  "dark:bg-transparent dark:hover:bg-transparent",
+  "hover:text-foreground focus:ring-0 focus-visible:ring-0 data-[state=open]:text-foreground",
   "[&_svg]:size-3.5 [&_svg]:opacity-50"
 );
 
@@ -527,7 +543,6 @@ function SwarmInlineSelect({
   onValueChange,
   ariaLabel,
   testId,
-  className,
   children,
   triggerLabel,
 }: {
@@ -535,7 +550,6 @@ function SwarmInlineSelect({
   onValueChange: (value: string) => void;
   ariaLabel: string;
   testId: string;
-  className?: string;
   children: ReactNode;
   /** Shown in the trigger (column noun or selected value). */
   triggerLabel: string;
@@ -545,12 +559,31 @@ function SwarmInlineSelect({
       <SelectTrigger
         data-testid={testId}
         aria-label={ariaLabel}
-        className={cn(SWARM_INLINE_SELECT_TRIGGER, className)}
+        className={SWARM_INLINE_SELECT_TRIGGER}
       >
         <span className="truncate">{triggerLabel}</span>
       </SelectTrigger>
       <SelectContent>{children}</SelectContent>
     </Select>
+  );
+}
+
+/**
+ * Inert column header. Keeps the chevron's slot as empty space so a column
+ * with no filter still lines its label up with the ones that have one.
+ */
+function SwarmColumnLabel({
+  children,
+  testId,
+}: {
+  children: ReactNode;
+  testId: string;
+}) {
+  return (
+    <span className={SWARM_COLUMN_HEADER} data-testid={testId}>
+      <span className="truncate">{children}</span>
+      <span className="size-3.5 shrink-0" aria-hidden />
+    </span>
   );
 }
 
@@ -634,7 +667,6 @@ function SwarmRunsList({
                   }
                   ariaLabel="Filter by environment"
                   testId="swarm-overview-env-filter"
-                  className="w-full max-w-full justify-end"
                   triggerLabel={envFilter ?? "Env"}
                 >
                   <SelectItem value="all">All envs</SelectItem>
@@ -646,9 +678,11 @@ function SwarmRunsList({
                 </SwarmInlineSelect>
               </div>
             ) : (
-              <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
-                Env
-              </span>
+              <div className="flex w-24 shrink-0 justify-end">
+                <SwarmColumnLabel testId="swarm-overview-env-label">
+                  Env
+                </SwarmColumnLabel>
+              </div>
             )
           ) : null}
 
@@ -661,7 +695,6 @@ function SwarmRunsList({
                 }
                 ariaLabel="Filter by client"
                 testId="swarm-overview-client-filter"
-                className="w-full max-w-full justify-end"
                 triggerLabel={clientFilter ?? "Client"}
               >
                 <SelectItem value="all">All clients</SelectItem>
@@ -673,14 +706,18 @@ function SwarmRunsList({
               </SwarmInlineSelect>
             </div>
           ) : (
-            <span className="w-28 shrink-0 text-right text-sm font-medium text-muted-foreground">
-              Client
-            </span>
+            <div className="flex w-28 shrink-0 justify-end">
+              <SwarmColumnLabel testId="swarm-overview-client-label">
+                Client
+              </SwarmColumnLabel>
+            </div>
           )}
 
-          <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
-            Model
-          </span>
+          <div className="flex w-24 shrink-0 justify-end">
+            <SwarmColumnLabel testId="swarm-overview-model-label">
+              Model
+            </SwarmColumnLabel>
+          </div>
           <div className="flex w-20 shrink-0 justify-end">
             <SwarmInlineSelect
               value={sort}
@@ -691,10 +728,7 @@ function SwarmRunsList({
               }}
               ariaLabel="Sort swarm runs"
               testId="swarm-overview-sort"
-              className="w-full max-w-full justify-end"
-              triggerLabel={
-                sort === "lowest-score" ? "Lowest" : "Score"
-              }
+              triggerLabel={sort === "lowest-score" ? "Lowest" : "Score"}
             >
               <SelectItem value="newest">Newest</SelectItem>
               <SelectItem value="lowest-score">Lowest score</SelectItem>
