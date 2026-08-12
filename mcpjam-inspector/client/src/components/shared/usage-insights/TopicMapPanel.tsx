@@ -1428,7 +1428,7 @@ export function TopicMapPanel({
               <div className="max-w-xl rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
                 Showing a stable 10,000-session sample of{" "}
                 {snapshot.stats.mappedSessionCount.toLocaleString()} mapped
-                sessions for this chatbox.
+                sessions.
               </div>
             ) : null}
           </div>

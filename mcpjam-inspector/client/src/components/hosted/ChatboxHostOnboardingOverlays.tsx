@@ -63,7 +63,7 @@ export function ChatboxHostOnboardingOverlays({
 
   const authSubtitle = onlyOptionalOAuthPending
     ? "Authorize below to connect optional servers to this chat."
-    : "Authorize the required chatbox servers to continue.";
+    : "Authorize the required servers to continue.";
 
   return (
     <>
@@ -100,7 +100,7 @@ export function ChatboxHostOnboardingOverlays({
             <p className="mt-2 text-sm text-muted-foreground">
               {onlyOptionalOAuthPending
                 ? "Finishing authorization for optional servers."
-                : "Finishing authorization for the required chatbox servers."}
+                : "Finishing authorization for the required servers."}
             </p>
             {!finishingTimedOut ? (
               <div className="mt-6 flex justify-center">
