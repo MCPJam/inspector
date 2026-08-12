@@ -105,6 +105,21 @@ describe("getBillingErrorMessage", () => {
     expect(message).toMatch(
       /^This organization has reached its eval iteration limit \(25\)\. Resets /
     );
+    expect(message).toMatch(/Upgrade to continue now\.$/);
+  });
+
+  it("points members to an owner after naming the eval reset", () => {
+    const message = formatBillingLimitReachedMessage(
+      "maxEvalIterationsPerMonth",
+      25,
+      false,
+      { resetsAt: Date.UTC(2026, 5, 2), windowKind: "day" }
+    );
+
+    expect(message).toMatch(/Resets /);
+    expect(message).toMatch(
+      /Ask an organization owner to upgrade to continue now\.$/
+    );
   });
 
   it("ignores invalid eval reset timestamps", () => {

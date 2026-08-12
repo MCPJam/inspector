@@ -5,14 +5,14 @@ import {
   useUpgradeCheckout,
 } from "../use-upgrade-checkout";
 
-const { billingState, startPlanChange, toastError, trackMock } = vi.hoisted(
-  () => ({
+const { billingState, startPlanChange, toastError, toastSuccess, trackMock } =
+  vi.hoisted(() => ({
     billingState: { planCatalog: undefined as unknown },
     startPlanChange: vi.fn(),
     toastError: vi.fn(),
+    toastSuccess: vi.fn(),
     trackMock: vi.fn(),
-  })
-);
+  }));
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
   useOrganizationBilling: () => ({
@@ -30,7 +30,9 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
-vi.mock("@/lib/toast", () => ({ toast: { error: toastError } }));
+vi.mock("@/lib/toast", () => ({
+  toast: { error: toastError, success: toastSuccess },
+}));
 
 function planCatalog(supportedIntervals: Array<"monthly" | "annual">) {
   return {
@@ -51,6 +53,7 @@ beforeEach(() => {
   startPlanChange.mockReset();
   startPlanChange.mockResolvedValue({ kind: "updated", subscription: {} });
   toastError.mockReset();
+  toastSuccess.mockReset();
   trackMock.mockReset();
   window.history.replaceState(null, "", "/evals");
 });
@@ -119,6 +122,61 @@ describe("useUpgradeCheckout", () => {
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_upgrade_failed",
       expect.objectContaining({ error_kind: "no_supported_interval" })
+    );
+  });
+
+  it("reports an in-place plan update and tells the dialog to close", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockResolvedValue({
+      kind: "updated",
+      subscription: { plan: "team" },
+    });
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "evals",
+        limitKind: "evalIterations",
+      })
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!).toEqual({ redirected: false, shouldDismiss: true });
+    expect(toastSuccess).toHaveBeenCalledWith("Plan updated to Team.");
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_upgrade_resolved",
+      expect.objectContaining({
+        result_kind: "updated",
+        resulting_plan: "team",
+      })
+    );
+  });
+
+  it("reports a scheduled plan change and tells the dialog to close", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockResolvedValue({
+      kind: "scheduled",
+      subscription: { plan: "team" },
+    });
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "credits",
+        limitKind: "credits",
+      })
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!).toEqual({ redirected: false, shouldDismiss: true });
+    expect(toastSuccess).toHaveBeenCalledWith(
+      "Plan change scheduled for renewal."
     );
   });
 

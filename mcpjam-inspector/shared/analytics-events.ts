@@ -231,6 +231,7 @@ export const ANALYTICS_EVENTS = {
   plan_limit_interval_selected: { source: "client" },
   plan_limit_upgrade_clicked: { source: "client" },
   plan_limit_upgrade_failed: { source: "client" },
+  plan_limit_upgrade_resolved: { source: "client" },
   plan_limit_upgrade_returned: { source: "client" },
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
