@@ -712,3 +712,40 @@ describe("authorize/complete", () => {
     expect(backendCalls.completeAuthorizationAttempt).not.toHaveBeenCalled();
   });
 });
+
+describe("authorize/complete accepts the callback's own spelling", () => {
+  it("takes error_description as the authorization server writes it", async () => {
+    backendCalls.completeAuthorizationAttempt.mockResolvedValue({
+      requestId: "scr_1",
+      status: "awaiting_authorization",
+    });
+
+    const res = await post(
+      "/authorize/complete",
+      { state: "state-abc", error: "access_denied", error_description: "No." },
+      withCookie
+    );
+
+    // `error_description` is what actually arrives in the query string, and
+    // forwarding the callback's own parameters is the obvious way to call this
+    // route. Rejecting the spec's spelling as an unknown key would turn every
+    // declined consent into a 400 — a user pressing "no" would get an error
+    // page instead of the offer to try again.
+    expect(res.status).toBe(200);
+    expect(backendCalls.completeAuthorizationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ errorDescription: "No." })
+    );
+  });
+
+  it("still refuses a body that tries to supply its own continuation token", async () => {
+    const res = await post(
+      "/authorize/complete",
+      { state: "state-abc", code: "c", continuationToken: "attacker" },
+      withCookie
+    );
+
+    // Widening the schema by one known key must not have widened it generally:
+    // the cookie stays the only source of that token.
+    expect(res.status).toBe(400);
+  });
+});

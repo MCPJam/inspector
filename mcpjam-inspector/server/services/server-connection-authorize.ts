@@ -26,6 +26,7 @@
 
 import {
   discoverOAuthServerInfo,
+  evaluateResourceIndicator,
   registerClient,
   startAuthorization,
 } from "@mcpjam/sdk/browser";
@@ -44,6 +45,7 @@ export class AuthorizationPrepareError extends Error {
     readonly code:
       | "URL_NOT_ALLOWED"
       | "NO_AUTHORIZATION_SERVER"
+      | "UNTRUSTWORTHY_METADATA"
       | "REGISTRATION_FAILED"
       | "UNREACHABLE"
   ) {
@@ -97,29 +99,51 @@ function mintState(): string {
  * time still adds up to a page that never answers.
  */
 async function withDeadline<T>(
-  work: Promise<T>,
+  start: (signal: AbortSignal) => Promise<T>,
   deadlineMs: number
 ): Promise<T> {
+  // Racing alone would only stop the CALLER waiting. The work behind the race
+  // keeps going, and one of the things it does is register an OAuth client with
+  // a third party — so a timed-out attempt could still leave a client record
+  // behind for an authorization nobody is waiting for. Aborting the transport
+  // is what actually ends it.
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      work,
+      start(controller.signal),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new AuthorizationPrepareError(
-                `Preparing authorization took longer than ${deadlineMs}ms.`,
-                "UNREACHABLE"
-              )
-            ),
-          deadlineMs
-        );
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(
+            new AuthorizationPrepareError(
+              `Preparing authorization took longer than ${deadlineMs}ms.`,
+              "UNREACHABLE"
+            )
+          );
+        }, deadlineMs);
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    // Also covers the ordinary path: nothing should still be in flight once
+    // this function has answered, however it answered.
+    controller.abort();
   }
+}
+
+/** Attach the deadline's signal to every request the SDK makes.
+ *
+ * The discovery and registration helpers take a `fetchFn` but no signal of
+ * their own, so this is the only seam where one can be threaded through. A
+ * caller-supplied `signal` still wins — nothing here overrides an abort the
+ * SDK asked for. */
+function withSignal(fetchFn: typeof fetch, signal: AbortSignal): typeof fetch {
+  return (async (input: URL | RequestInfo, init?: RequestInit) =>
+    await fetchFn(input as RequestInfo, {
+      ...init,
+      signal: init?.signal ?? signal,
+    })) as unknown as typeof fetch;
 }
 
 export async function prepareAuthorization(
@@ -132,7 +156,78 @@ export async function prepareAuthorization(
       timeoutMs: AUTHORIZE_TIMEOUT_MS,
     });
 
-  return await withDeadline(prepare(input, fetchFn), AUTHORIZE_DEADLINE_MS);
+  return await withDeadline(
+    (signal) => prepare(input, withSignal(fetchFn, signal)),
+    AUTHORIZE_DEADLINE_MS
+  );
+}
+
+/**
+ * Hold the authorization server to RFC 8414's own rule about its identity.
+ *
+ * `issuer` becomes the trust anchor for the callback's RFC 9207 `iss` check —
+ * the value the redemption step compares against. Recording whatever the
+ * metadata claims would make that check compare an attacker's assertion with
+ * itself: a document that names any issuer it likes would validate perfectly.
+ *
+ * RFC 8414 §3.3 requires the issuer identifier to be the URL the metadata was
+ * retrieved from, minus the well-known suffix. That is exactly
+ * `authorizationServerUrl`, so this is a comparison we can actually make, and
+ * refusing on mismatch is the only way the later check means anything.
+ */
+function requireTrustworthyIssuer(
+  issuer: string | undefined,
+  authorizationServerUrl: string
+): string {
+  const claimed = issuer?.trim();
+  if (!claimed) {
+    throw new AuthorizationPrepareError(
+      "That authorization server's metadata does not identify an issuer.",
+      "UNTRUSTWORTHY_METADATA"
+    );
+  }
+  const normalize = (value: string) => {
+    const url = new URL(value);
+    // A trailing slash is not a different issuer. Query and fragment are not
+    // part of an issuer identifier at all (RFC 8414 §2).
+    return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+  };
+  try {
+    if (normalize(claimed) !== normalize(authorizationServerUrl)) {
+      throw new AuthorizationPrepareError(
+        `That authorization server's metadata claims a different issuer (${claimed}) than the address it was published at.`,
+        "UNTRUSTWORTHY_METADATA"
+      );
+    }
+  } catch (error) {
+    if (error instanceof AuthorizationPrepareError) throw error;
+    throw new AuthorizationPrepareError(
+      "That authorization server's metadata has an unreadable issuer.",
+      "UNTRUSTWORTHY_METADATA"
+    );
+  }
+  return claimed;
+}
+
+/**
+ * Which `token_endpoint_auth_method` to register with.
+ *
+ * Naming one the server does not support gets the registration rejected, and
+ * naming one unconditionally is the same bet made blindly. When the metadata
+ * says what it accepts, pick from that list in the order we prefer; when it
+ * says nothing, send nothing and let the server apply its own default rather
+ * than asserting a capability on its behalf.
+ */
+function pickAuthMethod(supported: string[] | undefined): string | undefined {
+  if (!supported?.length) return undefined;
+  for (const preferred of [
+    "client_secret_post",
+    "client_secret_basic",
+    "none",
+  ]) {
+    if (supported.includes(preferred)) return preferred;
+  }
+  return supported[0];
 }
 
 async function prepare(
@@ -176,6 +271,20 @@ async function prepare(
     );
   }
 
+  // Established BEFORE the client is registered: if the server's identity does
+  // not check out there is no point creating a client record with it, and the
+  // user should not be sent to a consent screen we cannot later verify the
+  // return trip from.
+  const issuer = requireTrustworthyIssuer(
+    (metadata as { issuer?: string }).issuer,
+    info.authorizationServerUrl
+  );
+
+  const authMethod = pickAuthMethod(
+    (metadata as { token_endpoint_auth_methods_supported?: string[] })
+      .token_endpoint_auth_methods_supported
+  );
+
   let clientId: string;
   let clientSecret: string | undefined;
   try {
@@ -188,7 +297,7 @@ async function prepare(
         redirect_uris: [input.redirectUri],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
-        token_endpoint_auth_method: "client_secret_post",
+        ...(authMethod ? { token_endpoint_auth_method: authMethod } : {}),
       },
       fetchFn,
     });
@@ -207,7 +316,24 @@ async function prepare(
   }
 
   const state = mintState();
-  const resource = info.resourceMetadata?.resource;
+  // RFC 8707's `resource` binds the token to one server. Taking the advertised
+  // value on trust would let a target's own metadata point the indicator at a
+  // DIFFERENT resource, and the provider would happily issue a token that works
+  // against that one instead of the server the user just approved. The SDK's
+  // policy is the strict binding (origin plus path prefix), so it is used here
+  // rather than re-derived — a second copy of this rule is a second chance to
+  // get it wrong.
+  const decision = evaluateResourceIndicator({
+    serverUrl: input.serverUrl,
+    prmResource: info.resourceMetadata?.resource,
+  });
+  if (info.resourceMetadata?.resource && !decision.strictClientCompatible) {
+    throw new AuthorizationPrepareError(
+      `That server advertises a resource identifier (${info.resourceMetadata.resource}) that does not match its own address.`,
+      "UNTRUSTWORTHY_METADATA"
+    );
+  }
+  const resource = decision.value;
   const { authorizationUrl, codeVerifier } = await startAuthorization(
     info.authorizationServerUrl,
     {
@@ -225,7 +351,7 @@ async function prepare(
     state,
     clientId,
     clientSecret,
-    issuer: metadata.issuer,
+    issuer,
     oauthResourceUrl: resource ? String(resource) : undefined,
   };
 }

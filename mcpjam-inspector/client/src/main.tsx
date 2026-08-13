@@ -31,6 +31,12 @@ import {
 } from "./lib/app-navigation";
 import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
+import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
+import {
+  matchHandoffRoute,
+  readCallbackParams,
+  readPendingAuthorization,
+} from "./lib/server-connection-handoff";
 import {
   getInitialThemeMode,
   getInitialThemePreset,
@@ -78,8 +84,7 @@ initSentry();
  * nothing and it is what a developer looking at THIS page load will see.
  */
 const sandboxOriginFault =
-  HOSTED_MODE &&
-  (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
+  HOSTED_MODE && (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
 if (sandboxOriginFault) {
   const message = SANDBOX_ORIGIN
     ? `VITE_MCPJAM_SANDBOX_ORIGIN is set to this app's own origin (${SANDBOX_ORIGIN}). MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.`
@@ -152,12 +157,46 @@ const isInIframe = (() => {
   }
 })();
 
+/**
+ * Whether this load belongs to the connection handoff page.
+ *
+ * Two ways in. The handoff paths are unambiguous. The third case is
+ * `/oauth/callback`, which is SHARED with the Inspector's own OAuth flow — so
+ * it is claimed only when this tab actually started a connection
+ * authorization, and only when the query carries an authorization server's
+ * answer. Claiming it on the marker alone would swallow the Inspector's own
+ * callbacks in the same tab.
+ */
+function isServerConnectionHandoff(): boolean {
+  if (matchHandoffRoute(window.location.pathname)) return true;
+  if (window.location.pathname !== "/oauth/callback") return false;
+  return Boolean(
+    readPendingAuthorization() && readCallbackParams(window.location.search)
+  );
+}
+
 // If we're in an iframe, render a helpful error message instead of the full Inspector
 if (isInIframe) {
   const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
       <IframeRouterError />
+    </StrictMode>
+  );
+} else if (isServerConnectionHandoff()) {
+  // Rendered WITHOUT <AuthKitProvider>/Convex, and that is the point rather
+  // than an optimization: this page's visitor may be signed out or a guest,
+  // and it authenticates every call with an HttpOnly cookie it cannot read.
+  // Mounting the authenticated shell around it would start a WorkOS refresh
+  // for a user who does not exist, to obtain a credential the page has no use
+  // for. App's theme bootstrap does not run here, so apply the stored theme
+  // directly — same as the debug callback below.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <ServerConnectionHandoff />
     </StrictMode>
   );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {
@@ -185,7 +224,8 @@ if (isInIframe) {
   // Coerced to "" rather than typed as `string`: the previous `as string` cast
   // claimed a value that may not exist, and AuthKit already fails loudly on a
   // falsy client id. The warning below is the one that should fire first.
-  const workosClientId = getRuntimeWorkosClientId() ?? buildWorkosClientId ?? "";
+  const workosClientId =
+    getRuntimeWorkosClientId() ?? buildWorkosClientId ?? "";
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {

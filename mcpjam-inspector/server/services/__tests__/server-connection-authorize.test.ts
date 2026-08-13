@@ -222,3 +222,151 @@ describe("prepareAuthorization", () => {
     expect(seen[0]?.client_name).toBe("MCPJam - Target");
   });
 });
+
+/**
+ * Metadata is a document fetched from a host the user named, and three fields
+ * in it decide something security-relevant. Each is checked rather than
+ * believed, and each check is here because believing it produces a flow that
+ * looks completely normal while proving nothing.
+ */
+describe("what it refuses to believe about the metadata", () => {
+  it("refuses an issuer that is not the address the metadata came from", async () => {
+    const lying = fakeFetch({
+      authorizationServer: () =>
+        jsonResponse({ ...AS_METADATA, issuer: "https://attacker.example" }),
+    });
+
+    // `issuer` becomes the trust anchor for the callback's RFC 9207 `iss`
+    // check. Recording the claim verbatim would have that check compare an
+    // assertion with itself — a document naming any issuer it likes would
+    // validate perfectly. RFC 8414 §3.3 says the issuer IS the address the
+    // metadata was published at, so it is a comparison we can actually make.
+    await expect(prepare(lying)).rejects.toMatchObject({
+      code: "UNTRUSTWORTHY_METADATA",
+    });
+  });
+
+  it("refuses metadata with no issuer at all", async () => {
+    const anonymous = fakeFetch({
+      authorizationServer: () => {
+        const { issuer: _dropped, ...rest } = AS_METADATA;
+        return jsonResponse(rest);
+      },
+    });
+
+    await expect(prepare(anonymous)).rejects.toMatchObject({
+      code: "UNTRUSTWORTHY_METADATA",
+    });
+  });
+
+  it("accepts an issuer that differs only by a trailing slash", async () => {
+    const trailing = fakeFetch({
+      authorizationServer: () =>
+        jsonResponse({ ...AS_METADATA, issuer: "https://auth.example.com/" }),
+    });
+
+    // A trailing slash is not a different issuer, and refusing over one would
+    // reject a large share of real providers.
+    await expect(prepare(trailing)).resolves.toMatchObject({
+      issuer: "https://auth.example.com/",
+    });
+  });
+
+  it("refuses a resource indicator pointing somewhere else", async () => {
+    const misdirecting = fakeFetch({
+      resource: () =>
+        jsonResponse({
+          resource: "https://other.example.com/mcp",
+          authorization_servers: ["https://auth.example.com"],
+        }),
+    });
+
+    // RFC 8707's `resource` binds the token to one server. Passing an
+    // advertised value through on trust would let a target's own metadata
+    // obtain a token valid against a DIFFERENT resource than the one the user
+    // approved.
+    await expect(prepare(misdirecting)).rejects.toMatchObject({
+      code: "UNTRUSTWORTHY_METADATA",
+    });
+  });
+});
+
+describe("registering the client", () => {
+  async function registrationBody(metadataOverride: Record<string, unknown>) {
+    const seen: Array<Record<string, unknown>> = [];
+    const base = fakeFetch({
+      authorizationServer: () =>
+        jsonResponse({ ...AS_METADATA, ...metadataOverride }),
+    });
+    const capturing = (async (input: URL | RequestInfo, init?: RequestInit) => {
+      if (init?.method === "POST" && String(input).includes("/register")) {
+        seen.push(JSON.parse(String(init.body)));
+      }
+      return await base(input as RequestInfo, init);
+    }) as unknown as typeof fetch;
+    await prepare(capturing);
+    return seen[0];
+  }
+
+  it("asks for an auth method the server says it supports", async () => {
+    const body = await registrationBody({
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+    });
+
+    // Naming a method the server does not accept gets the registration
+    // rejected outright, which reads to the user as "this server refused you".
+    expect(body?.token_endpoint_auth_method).toBe("client_secret_basic");
+  });
+
+  it("prefers client_secret_post when the server offers it", async () => {
+    const body = await registrationBody({
+      token_endpoint_auth_methods_supported: [
+        "client_secret_basic",
+        "client_secret_post",
+      ],
+    });
+
+    expect(body?.token_endpoint_auth_method).toBe("client_secret_post");
+  });
+
+  it("says nothing when the server advertises nothing", async () => {
+    const body = await registrationBody({
+      token_endpoint_auth_methods_supported: undefined,
+    });
+
+    // Asserting a capability on the server's behalf is a guess. Omitting the
+    // field lets it apply its own default, which it actually knows.
+    expect(body).not.toHaveProperty("token_endpoint_auth_method");
+  });
+});
+
+describe("the deadline", () => {
+  it("aborts the work instead of only abandoning it", async () => {
+    const seen: AbortSignal[] = [];
+    const hanging = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      if (init?.signal) seen.push(init.signal);
+      return await new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new Error("aborted"))
+        );
+      });
+    }) as unknown as typeof fetch;
+
+    vi.useFakeTimers();
+    try {
+      const pending = prepare(hanging);
+      const assertion = expect(pending).rejects.toMatchObject({
+        code: "UNREACHABLE",
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // Racing alone leaves the work running, and one of the things it does is
+    // register an OAuth client with a third party — a side effect for an
+    // attempt nobody is waiting for any more.
+    expect(seen[0]?.aborted).toBe(true);
+  });
+});

@@ -286,20 +286,44 @@ function callbackUriFor(c: { req: { url: string } }): string {
   return new URL("/oauth/callback", c.req.url).toString();
 }
 
-const completeAuthorizationSchema = z.strictObject({
-  state: z.string().trim().min(1),
-  code: z.string().trim().min(1).optional(),
-  iss: z.string().trim().min(1).optional(),
-  error: z.string().trim().min(1).optional(),
-  errorDescription: z.string().trim().min(1).max(300).optional(),
-});
+/**
+ * The callback's fields.
+ *
+ * `error_description` is accepted alongside `errorDescription` because the
+ * former is what an authorization server actually puts in the query string,
+ * and the obvious way to call this route is to forward the callback's own
+ * parameters. Rejecting the spec's spelling as an unknown key would turn every
+ * declined consent into a 400 — a user pressing "no" would get an error page
+ * instead of the offer to try again. Strictness is kept for everything else:
+ * the point of it is that `continuationToken` cannot be smuggled in through
+ * the body.
+ */
+const completeAuthorizationSchema = z
+  .strictObject({
+    state: z.string().trim().min(1),
+    code: z.string().trim().min(1).optional(),
+    iss: z.string().trim().min(1).optional(),
+    error: z.string().trim().min(1).optional(),
+    errorDescription: z.string().trim().min(1).max(300).optional(),
+    error_description: z.string().trim().min(1).max(300).optional(),
+  })
+  .transform(({ error_description: snake, ...rest }) => ({
+    ...rest,
+    errorDescription: rest.errorDescription ?? snake,
+  }));
 
 /** Map a preparation failure onto something the page can say out loud. The
  * distinction that matters is refusal versus outage: a blocked target will
  * never work and a "try again" button would be a lie. */
 function translatePrepare(error: unknown): WebRouteError {
   if (error instanceof AuthorizationPrepareError) {
-    if (error.code === "URL_NOT_ALLOWED") {
+    // A refusal is about the target and will not clear on its own; only an
+    // outage earns a 5xx and the "try again" it implies.
+    if (
+      error.code === "URL_NOT_ALLOWED" ||
+      error.code === "UNTRUSTWORTHY_METADATA" ||
+      error.code === "NO_AUTHORIZATION_SERVER"
+    ) {
       return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
     }
     return new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, error.message);
