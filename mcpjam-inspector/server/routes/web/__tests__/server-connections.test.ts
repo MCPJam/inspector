@@ -426,14 +426,30 @@ describe("the steps after the claim", () => {
     expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
-  it("reports an expired continuation as 401, not 500", async () => {
+  it("reports an expired continuation as gone", async () => {
+    // The backend answers 404 REQUEST_NOT_FOUND for a continuation it does not
+    // recognize — expired, or consumed by a cancel.
     backendCalls.fetchHandoffState.mockRejectedValue(
-      new ServerConnectionBackendError("no such continuation", 401)
+      new ServerConnectionBackendError("not found", 404, "REQUEST_NOT_FOUND")
     );
 
     const res = await get("/state", withCookie);
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(404);
+  });
+
+  it("does not dress a service-token failure up as an expired session", async () => {
+    // A 401 on this channel can only be `requireInspector` refusing OUR service
+    // token — a deployment misconfiguration affecting every user. Reporting it
+    // as "your link expired" would send everyone to re-open a link that works
+    // while the real fault went unreported.
+    backendCalls.fetchHandoffState.mockRejectedValue(
+      new ServerConnectionBackendError("unauthorized", 401)
+    );
+
+    const res = await get("/state", withCookie);
+
+    expect(res.status).toBe(500);
   });
 
   it("preserves the backend's conflict and gone distinctions", async () => {

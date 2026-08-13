@@ -106,17 +106,14 @@ function translate(error: unknown): WebRouteError {
     if (error.isGone) {
       return new WebRouteError(404, ErrorCode.NOT_FOUND, error.message);
     }
-    // A continuation token the backend no longer recognizes — expired, or
-    // consumed by a cancel. Without this arm it surfaced as a 500, which tells
-    // the user something broke when the honest answer is that their session
-    // ended and re-opening the link fixes it.
-    if (error.status === 401) {
-      return new WebRouteError(
-        401,
-        ErrorCode.UNAUTHORIZED,
-        "This authorization session has ended. Open the link again to continue."
-      );
-    }
+    // NO 401 ARM, DELIBERATELY. A continuation token the backend does not
+    // recognize — expired, or consumed by a cancel — comes back 404
+    // `REQUEST_NOT_FOUND`, which `isGone` already turns into "that link is
+    // gone". The only thing that produces a 401 on this channel is
+    // `requireInspector` refusing our SERVICE token, which is a deployment
+    // misconfiguration affecting everyone. Translating it to "your
+    // authorization session has ended" would tell every user their link
+    // expired while the real fault sat unreported, so it stays a 500.
     if (error.status === 403) {
       return new WebRouteError(403, ErrorCode.FORBIDDEN, error.message);
     }
