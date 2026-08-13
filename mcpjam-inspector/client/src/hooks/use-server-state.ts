@@ -1733,10 +1733,12 @@ export function useServerState({
       // `owned` is a row this project may write. `workspaceTwin` is a live row
       // with the same name owned by ANOTHER project in the same workspace:
       // `servers:getProjectServers` returns those (the list is workspace-wide,
-      // by design) but `remoteServerBelongsToProject` reads them as absent, so
-      // without this the save falls through to a create — and server names are
-      // unique per WORKSPACE, so that create can only ever resolve back to the
-      // very row we just decided to ignore.
+      // by design) but `remoteServerBelongsToProject` reads them as absent.
+      // That only breaks the secret path, whose create runs through
+      // `servers:createServer` and is rejected per WORKSPACE — the action then
+      // resolves the conflict back to the twin and returns it with this payload
+      // never applied. `servers:createServerIfMissing` matches per PROJECT, so
+      // the no-secret path still creates our own row and is left to run.
       const resolveExistingServer = async (
         snapshot: RemoteServer[] | undefined
       ): Promise<{ owned?: RemoteServer; workspaceTwin?: RemoteServer }> => {
@@ -1789,10 +1791,14 @@ export function useServerState({
         }
       };
 
-      // The name is taken by another project in this workspace. Creating would
-      // hand back that same row without applying this payload, so report which
-      // row the save resolved to instead of writing.
-      const reuseWorkspaceTwin = (twin: RemoteServer): string => {
+      // The name is taken by another project in this workspace, and on the
+      // secret path the create can only hand that row back unwritten. Never
+      // return its id: callers bind whatever id they get to this project's
+      // server — the hosted send mapping and the pinned OAuth redirect target —
+      // and `servers:updateServer` authorizes by workspace role, so a later
+      // pinned re-sync would write this payload onto the sibling project's
+      // server. Report the collision and fail the save instead.
+      const logWorkspaceTwinConflict = (twin: RemoteServer): void => {
         logger.warn(
           "Server name already belongs to another project in this workspace",
           {
@@ -1802,7 +1808,6 @@ export function useServerState({
             existingProjectId: twin.projectId,
           }
         );
-        return twin._id;
       };
 
       // Existing-server edits from a hosted UI carry the exact authorized row
@@ -1924,8 +1929,9 @@ export function useServerState({
           return serverIdToUpdate;
         }
 
-        if (existing.workspaceTwin) {
-          return reuseWorkspaceTwin(existing.workspaceTwin);
+        if (existing.workspaceTwin && hasSecretOperation) {
+          logWorkspaceTwinConflict(existing.workspaceTwin);
+          return undefined;
         }
 
         const createPayload = {
@@ -1989,9 +1995,10 @@ export function useServerState({
           }
           // A twin can surface here even when the first resolve missed it —
           // a concurrent create in a sibling project is exactly the race the
-          // primary write just lost. Creating again would only return it.
-          if (retry.workspaceTwin) {
-            return reuseWorkspaceTwin(retry.workspaceTwin);
+          // primary write just lost. Retrying would only resolve back to it.
+          if (retry.workspaceTwin && hasSecretOperation) {
+            logWorkspaceTwinConflict(retry.workspaceTwin);
+            return undefined;
           }
           const createPayload = {
             projectId: latestProjectId,

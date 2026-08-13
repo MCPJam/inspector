@@ -17,6 +17,7 @@ import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { authFetch } from "@/lib/session-token";
 import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
+import { injectHostedServerMapping } from "@/lib/apis/web/context";
 
 const {
   toastError,
@@ -599,53 +600,48 @@ describe("useServerState CLI config import", () => {
   });
 
   // `servers:getProjectServers` is workspace-wide, so a row owned by a sibling
-  // project comes back in this project's list. It is not ours to write, but
-  // names are unique per workspace, so creating over it can only resolve back
-  // to it — which is how one CLI re-import re-attempted the same doomed create
-  // on every launch (Sentry CONVEX-1R / CONVEX-1NG).
+  // project comes back in this project's list. It is not ours to write, and on
+  // the secret path `servers:createServer` rejects the name per workspace, so
+  // the action resolves the conflict back to that row and returns it with this
+  // payload never applied — which is how one CLI re-import re-attempted the
+  // same doomed create on every launch (Sentry CONVEX-1R / CONVEX-1NG).
   //
-  // Both branches that can spot the twin are covered: the local snapshot, and
-  // the fresh `servers:getProjectServers` query the resolver falls back to when
-  // the snapshot has nothing.
+  // Both branches that can spot the twin are covered: the local snapshot, which
+  // is all the resolver has until the workspace user is ready, and the fresh
+  // `servers:getProjectServers` query it falls back to once it is.
   describe.each([
     {
-      label: "from the local snapshot",
+      label: "from the local snapshot, before the workspace user is ready",
+      isUserReady: false,
       snapshotHasTwin: true,
-      cliServer: {
-        name: "cli-http",
-        type: "http",
-        url: "https://example.com/mcp",
-        headers: { Authorization: "Bearer secret" },
-      },
+      queryHasTwin: false,
     },
     {
-      label: "from the fresh workspace query, with secrets",
+      label: "from the fresh workspace query",
+      isUserReady: true,
       snapshotHasTwin: false,
-      cliServer: {
-        name: "cli-http",
-        type: "http",
-        url: "https://example.com/mcp",
-        headers: { Authorization: "Bearer secret" },
-      },
-    },
-    {
-      // No env and no headers, so the save takes the create-if-missing path
-      // rather than the client-secret action.
-      label: "from the fresh workspace query, without secrets",
-      snapshotHasTwin: false,
-      cliServer: {
-        name: "cli-http",
-        type: "http",
-        url: "https://example.com/mcp",
-      },
+      queryHasTwin: true,
     },
   ])(
     "a same-name server owned by a sibling project ($label)",
-    ({ snapshotHasTwin, cliServer }) => {
-      it("is reused instead of re-created", async () => {
-        mockUseDbUserReady.mockReturnValue(true);
+    ({ isUserReady, snapshotHasTwin, queryHasTwin }) => {
+      it("fails the save instead of binding this project to the sibling row", async () => {
+        mockUseDbUserReady.mockReturnValue(isUserReady);
         vi.mocked(authFetch).mockResolvedValueOnce({
-          json: async () => ({ config: { servers: [cliServer] } }),
+          json: async () => ({
+            config: {
+              servers: [
+                {
+                  name: "cli-http",
+                  type: "http",
+                  url: "https://example.com/mcp",
+                  // Headers route the save through the client-secret action,
+                  // the only create that resolves back to the twin.
+                  headers: { Authorization: "Bearer secret" },
+                },
+              ],
+            },
+          }),
         } as Response);
         const siblingRow = {
           _id: "srv_sibling",
@@ -655,7 +651,7 @@ describe("useServerState CLI config import", () => {
           transportType: "http" as const,
           url: "https://example.com/mcp",
         };
-        mockConvexQuery.mockResolvedValue([siblingRow]);
+        mockConvexQuery.mockResolvedValue(queryHasTwin ? [siblingRow] : []);
         const appState = createCloudCliAppState();
         const logger = {
           info: vi.fn(),
@@ -691,6 +687,20 @@ describe("useServerState CLI config import", () => {
             })
           );
         });
+        if (!isUserReady) {
+          // Proof the twin came from the snapshot: the resolver never reached
+          // the workspace query, which here would have reported no twin.
+          expect(mockConvexQuery).not.toHaveBeenCalledWith(
+            "servers:getProjectServers",
+            expect.anything()
+          );
+        }
+        // The sibling's id must never reach the caller as this project's saved
+        // server. It would become the hosted send mapping and the pinned OAuth
+        // redirect target, and `servers:updateServer` authorizes by workspace
+        // role, so a pinned re-sync would write this payload onto the sibling
+        // row.
+        expect(injectHostedServerMapping).not.toHaveBeenCalled();
         expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
         expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
         expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
@@ -699,16 +709,84 @@ describe("useServerState CLI config import", () => {
     }
   );
 
-  it("does not retry the create when the twin only appears after the first attempt fails", async () => {
-    // A sibling project can win the name between the resolve and the write.
-    // The retry re-resolves, so it sees the twin the first pass missed — and a
-    // second create would resolve to that same row.
+  // `servers:createServerIfMissing` matches by project, not workspace, so
+  // without secrets the create still makes this project its own row. Skipping
+  // it would strand the import on a server the project does not have.
+  it("still creates its own row when a sibling project holds the name and the save carries no secrets", async () => {
     mockUseDbUserReady.mockReturnValue(true);
     vi.mocked(authFetch).mockResolvedValueOnce({
       json: async () => ({
         config: {
           servers: [
             { name: "cli-http", type: "http", url: "https://example.com/mcp" },
+          ],
+        },
+      }),
+    } as Response);
+    mockConvexQuery.mockResolvedValue([
+      {
+        _id: "srv_sibling",
+        projectId: "proj_sibling",
+        name: "cli-http",
+        enabled: true,
+        transportType: "http" as const,
+        url: "https://example.com/mcp",
+      },
+    ]);
+    mockCreateServerIfMissing.mockResolvedValue("srv_own");
+    const appState = createCloudCliAppState();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger,
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "proj_cloud",
+          name: "cli-http",
+          url: "https://example.com/mcp",
+        })
+      );
+    });
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
+  });
+
+  it("does not retry the create when the twin only appears after the first attempt fails", async () => {
+    // A sibling project can win the name between the resolve and the write.
+    // The retry re-resolves, so it sees the twin the first pass missed — and on
+    // the secret path a second create would resolve to that same row.
+    mockUseDbUserReady.mockReturnValue(true);
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          servers: [
+            {
+              name: "cli-http",
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: { Authorization: "Bearer secret" },
+            },
           ],
         },
       }),
@@ -722,8 +800,8 @@ describe("useServerState CLI config import", () => {
       url: "https://example.com/mcp",
     };
     mockConvexQuery.mockResolvedValueOnce([]).mockResolvedValue([siblingRow]);
-    mockCreateServerIfMissing.mockRejectedValueOnce(
-      new Error(`Server with name "cli-http" already exists in this workspace`)
+    mockCreateServerWithClientSecret.mockRejectedValueOnce(
+      new Error("Network error")
     );
     const appState = createCloudCliAppState();
     const logger = {
@@ -757,8 +835,8 @@ describe("useServerState CLI config import", () => {
       );
     });
     // The failed first attempt only.
-    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
-    expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    expect(mockCreateServerWithClientSecret).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
     expect(mockUpdateServer).not.toHaveBeenCalled();
     expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
   });
