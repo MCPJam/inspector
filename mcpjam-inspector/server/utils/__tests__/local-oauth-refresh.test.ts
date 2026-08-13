@@ -129,10 +129,16 @@ describe("refreshTokensAgainstPrivateAuthorizationServer", () => {
     const params = new URLSearchParams(tokenRequestBody ?? "");
     expect(params.get("grant_type")).toBe("refresh_token");
     expect(params.get("refresh_token")).toBe("stored-refresh-token");
-    // Every request went to the private address and nowhere else.
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
     for (const call of fetchMock.mock.calls) {
       const url = String(call[0] instanceof Request ? call[0].url : call[0]);
+      // Every request went to the private address and nowhere else.
       expect(url.startsWith("http://localhost:8001")).toBe(true);
+      // ...and none of them may follow a redirect off it. The per-request URL
+      // check above only sees the URL we ASK for; without this, a 302 from the
+      // token endpoint would carry the refresh token anywhere, and nothing
+      // here would notice the option being dropped.
+      expect((call[1] as RequestInit | undefined)?.redirect).toBe("error");
     }
   });
 });
