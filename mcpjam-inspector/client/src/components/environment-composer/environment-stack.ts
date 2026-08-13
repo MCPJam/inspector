@@ -67,6 +67,51 @@ export function emptyComposerState(): EnvironmentComposerState {
   };
 }
 
+/**
+ * One-shot default for a blank composer (e.g. New Swarm open).
+ *
+ * Prefers a named saved environment (previewed if still live, else first),
+ * which fills client / server group / skills / computer from that row. With no
+ * named environments — or when the environments flag is off — falls back to
+ * compose mode on the previewed/first host plus the first server attachment.
+ * Returns `null` when nothing can be seeded.
+ */
+export function defaultComposerState(args: {
+  environments: ProjectEnvironmentView[];
+  hosts: ReadonlyArray<{ hostId: string }>;
+  preferredHostId?: string | null;
+  preferredEnvironmentId?: string | null;
+  serverAttachments: ReadonlyArray<{ _id: string }>;
+  environmentsEnabled: boolean;
+}): EnvironmentComposerState | null {
+  const liveNamed = args.environments.filter(
+    (env) => !env.archivedAt && isNamedEnvironment(env)
+  );
+  if (args.environmentsEnabled && liveNamed.length > 0) {
+    const preferred =
+      (args.preferredEnvironmentId
+        ? liveNamed.find(
+            (env) => env.environmentId === args.preferredEnvironmentId
+          )
+        : undefined) ?? liveNamed[0];
+    return composerStateFromEnvironments([preferred]);
+  }
+
+  if (args.hosts.length === 0) return null;
+  const preferredHost =
+    args.hosts.find((host) => host.hostId === args.preferredHostId) ??
+    args.hosts[0];
+  return {
+    environmentIds: [],
+    stack: {
+      ...emptyEnvironmentStack(),
+      hostIds: [preferredHost.hostId],
+      serverAttachmentId: args.serverAttachments[0]?._id ?? null,
+    },
+    customized: true,
+  };
+}
+
 /** The slots of a saved environment, as a loose stack the user can now edit. */
 export function stackFromEnvironment(
   env: ProjectEnvironmentView
