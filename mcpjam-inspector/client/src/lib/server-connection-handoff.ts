@@ -117,11 +117,15 @@ export function readPendingAuthorization(
     if (
       typeof parsed?.requestId !== "string" ||
       typeof parsed?.state !== "string" ||
-      typeof parsed?.expiresAt !== "number"
+      // `Number.isFinite`, not just `typeof === "number"`. `Infinity` and `NaN`
+      // are both numbers and both survive the comparison below — `Infinity` is
+      // never `<= now`, and every comparison with `NaN` is false — so either one
+      // produces a marker that outlives the TTL this function exists to enforce.
+      !Number.isFinite(parsed?.expiresAt)
     ) {
       return null;
     }
-    if (parsed.expiresAt <= now) return null;
+    if (parsed.expiresAt! <= now) return null;
     return parsed as PendingAuthorization;
   } catch {
     // Unreadable storage, or a marker written by an older build. Either way it

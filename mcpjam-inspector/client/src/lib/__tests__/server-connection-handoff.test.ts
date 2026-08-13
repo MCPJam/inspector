@@ -120,6 +120,23 @@ describe("the pending-authorization marker", () => {
     expect(readPendingAuthorization()).toBeNull();
   });
 
+  it("rejects an expiry that would never arrive", () => {
+    // Written as raw JSON, and it has to be. `JSON.stringify(Infinity)` is
+    // `null`, so building this marker through the object form would store an
+    // expiry the type check already rejects and prove nothing. `1e999` is
+    // valid JSON that OVERFLOWS to `Infinity` on parse — the one way this
+    // value can actually reach the guard.
+    sessionStorage.setItem(
+      "mcpjam-server-connection-pending",
+      '{"requestId":"scr_abc","state":"st-abc","expiresAt":1e999}'
+    );
+
+    // `Infinity` is a number and nothing is ever `<= Infinity`, so without a
+    // finiteness check the marker outlives the TTL entirely and keeps claiming
+    // callbacks — which is what the expiry exists to stop.
+    expect(readPendingAuthorization()).toBeNull();
+  });
+
   it("survives an unreadable marker rather than throwing", () => {
     sessionStorage.setItem("mcpjam-server-connection-pending", "scr_legacy");
     expect(readPendingAuthorization()).toBeNull();
