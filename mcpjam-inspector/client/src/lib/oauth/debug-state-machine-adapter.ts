@@ -272,16 +272,23 @@ function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
   context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
 ): InspectorOAuthStateMachineConfig["updateState"] {
-  let lastReportedError: string | undefined;
+  let lastReportedKey: string | undefined;
 
   return (updates) => {
     const error = updates.error;
-    if (typeof error === "string" && error !== "" && error !== lastReportedError) {
-      lastReportedError = error;
+    if (typeof error === "string" && error !== "") {
       // Prefer the step this update moves TO, or an update that both advances
       // and carries an error gets attributed to the PREVIOUS step.
       const step =
         (updates as { currentStep?: string }).currentStep ?? context.getStep();
+      // The memo keys on the step as well, because the fingerprint does: the
+      // same message at a later step is a different issue, not a duplicate.
+      const key = `${step} ${error}`;
+      if (key === lastReportedKey) {
+        updateState(updates);
+        return;
+      }
+      lastReportedKey = key;
       const message = sanitizeStepError(error);
       reportCaught(new Error(message), {
         source: "oauth_debugger_step",
@@ -300,7 +307,7 @@ function withStepFailureReporting(
       });
     } else if (!error && "error" in updates) {
       // Cleared: the next occurrence of the same message is a new failure.
-      lastReportedError = undefined;
+      lastReportedKey = undefined;
     }
     updateState(updates);
   };

@@ -195,15 +195,17 @@ describe("OAuth debugger step-failure grouping", () => {
   });
 
   it("separates the same message raised at different steps", () => {
+    // No intervening clear: the dedupe memo has to key on the step too, or the
+    // second report — a distinct issue under this fingerprint — is swallowed.
     const { wrapped } = wrappedUpdateState();
 
     wrapped({ error: "Authenticated request failed: 400 Bad Request" });
-    wrapped({ error: undefined });
     wrapped({
       error: "Authenticated request failed: 400 Bad Request",
       currentStep: "token_request",
     });
 
+    expect(reportCaught).toHaveBeenCalledTimes(2);
     const [first, second] = reportCaught.mock.calls.map(
       ([, o]) => (o as { fingerprint?: string[] }).fingerprint,
     );
