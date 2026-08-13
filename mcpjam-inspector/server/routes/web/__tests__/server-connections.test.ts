@@ -84,6 +84,13 @@ const { mapRuntimeError, webError } = await import("../errors.js");
 const ORIGIN = "https://app.mcpjam.test";
 const COOKIE = "__Host-mcpjam_server_connection";
 
+// The routes validate the browser's `Origin` against the deployment allowlist
+// — the same one the global origin middleware enforces — rather than against
+// `c.req.url`, whose scheme/host are wrong behind the TLS edge and the dev
+// proxy. The test origin has to be on that list, exactly as a deployment's
+// public origin has to be.
+process.env.ALLOWED_ORIGINS = ORIGIN;
+
 /** Mirrors `routes/web/index.ts`: the router plus that file's `onError`, which
  * is what turns a thrown `WebRouteError` into the status the route intended. */
 function createApp(): Hono {
@@ -276,6 +283,25 @@ describe("claim", () => {
       "/claim",
       { handoffToken: "handoff-1" },
       { origin: "https://evil.example" }
+    );
+
+    expect(res.status).toBe(403);
+    expect(backendCalls.claimHandoff).not.toHaveBeenCalled();
+  });
+
+  it("rejects a POST with no Origin header at all", async () => {
+    // These are browser-only routes and a browser attaches `Origin` to every
+    // POST, same-origin included — the only senders that omit it are
+    // non-browser clients, which have no business on a cookie-authenticated
+    // route. Absent-means-allow would also quietly disable the CSRF check for
+    // any client that can strip a header.
+    const res = await createApp().request(
+      `${ORIGIN}/api/web/server-connections/claim`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ handoffToken: "handoff-1" }),
+      }
     );
 
     expect(res.status).toBe(403);

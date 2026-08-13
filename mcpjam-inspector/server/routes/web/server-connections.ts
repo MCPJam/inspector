@@ -42,7 +42,13 @@ import {
 import { ErrorCode, WebRouteError, parseWithSchema } from "./errors.js";
 import { readCookie, setCookie, clearCookie } from "./shared/cookies.js";
 import { resolveOptionalActor } from "../../middleware/optional-actor.js";
-import { serverConnectionClaimRateLimitMiddleware } from "../../middleware/server-connection-claim-rate-limit.js";
+import {
+  serverConnectionAuthorizeRateLimitMiddleware,
+  serverConnectionClaimRateLimitMiddleware,
+  serverConnectionStateRateLimitMiddleware,
+} from "../../middleware/server-connection-claim-rate-limit.js";
+import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
+import { getClientIp } from "../../utils/client-ip.js";
 
 const serverConnections = new Hono();
 
@@ -66,31 +72,53 @@ const selectProjectSchema = z.strictObject({
 });
 
 /**
- * Reject a cross-site POST.
+ * Reject a cross-site POST, and return the page's real origin.
  *
  * These routes authenticate with a `SameSite=Lax` cookie, which is NOT sent on
- * a cross-site POST — so this is belt-and-braces rather than the only defence.
- * It is here because the cost is one header comparison and the failure it
- * guards against (a page on another origin advancing someone's connection
- * request) is silent.
+ * a cross-site POST — so the rejection is belt-and-braces rather than the only
+ * defence. The check is against the deployment's origin ALLOWLIST, not against
+ * `c.req.url`: behind the hosted TLS edge `c.req.url`'s scheme is the plain
+ * `http` of the internal socket, and behind the dev proxy its host is the
+ * server's port rather than the page's — comparing against either would 403
+ * every legitimate POST. The allowlist is the same one the global origin
+ * middleware enforces, so a value that passes here is one the deployment
+ * already vouches for.
+ *
+ * The header is REQUIRED, not optional. Every route in this family is
+ * browser-only — the page's own `fetch` calls — and a browser attaches
+ * `Origin` to every POST, same-origin included. The only senders that omit it
+ * are non-browser clients, which have no business on a cookie-authenticated
+ * route. (The local-PTY WebSocket takes the same absent-means-reject posture.)
+ *
+ * The returned value doubles as the page's public origin — the exact origin
+ * the `__Host-` continuation cookie lives on — which is what the OAuth
+ * redirect URI must be built from.
  */
-function assertSameOrigin(c: {
-  req: { header: (name: string) => string | undefined; url: string };
-}): void {
+function requireBrowserOrigin(c: {
+  req: { header: (name: string) => string | undefined };
+}): string {
   const origin = c.req.header("origin");
-  if (!origin) return; // Same-origin fetches may omit it entirely.
+  if (!origin) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "This endpoint only accepts requests from the connection page."
+    );
+  }
+  let normalized: string;
   try {
-    if (new URL(origin).origin !== new URL(c.req.url).origin) {
-      throw new WebRouteError(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Cross-origin requests are not allowed here."
-      );
-    }
-  } catch (error) {
-    if (error instanceof WebRouteError) throw error;
+    normalized = new URL(origin).origin;
+  } catch {
     throw new WebRouteError(403, ErrorCode.FORBIDDEN, "Invalid origin.");
   }
+  if (normalized === "null" || !isAllowedRequestOrigin(normalized)) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "Cross-origin requests are not allowed here."
+    );
+  }
+  return normalized;
 }
 
 function requireContinuation(c: Parameters<typeof readCookie>[0]): string {
@@ -169,9 +197,19 @@ serverConnections.use(
   resolveOptionalActor()
 );
 
+/** `/state` spends a backend round trip per poll; `/authorize` spends outbound
+ * discovery + DCR against the target BEFORE the backend's attempt budget can
+ * refuse. Both get their own per-IP window so a loop cannot spend either cost
+ * freely; the backend budgets remain the durable cap. */
+serverConnections.use("/state", serverConnectionStateRateLimitMiddleware);
+serverConnections.use(
+  "/authorize",
+  serverConnectionAuthorizeRateLimitMiddleware
+);
+
 // POST /api/web/server-connections/claim
 serverConnections.post("/claim", async (c) => {
-  assertSameOrigin(c);
+  requireBrowserOrigin(c);
   const body = parseWithSchema(
     claimSchema,
     await c.req.json().catch(() => {
@@ -195,6 +233,10 @@ serverConnections.post("/claim", async (c) => {
       // single-use token is the capability — which is exactly why the chat
       // adapters never put that URL in a shared channel.
       actorUserId: c.get("mcpjamUserId") ?? undefined,
+      // For the backend's own per-IP claim budget. This process is the
+      // service-token-authenticated caller, so unlike the public create path
+      // the backend can trust the attribution.
+      clientIpKey: getClientIp(c) ?? undefined,
     });
 
     setCookie(c, CONTINUATION_COOKIE, continuationToken, {
@@ -233,7 +275,7 @@ serverConnections.get("/state", async (c) => {
 
 // POST /api/web/server-connections/select-project
 serverConnections.post("/select-project", async (c) => {
-  assertSameOrigin(c);
+  requireBrowserOrigin(c);
   const token = requireContinuation(c);
   const body = parseWithSchema(
     selectProjectSchema,
@@ -262,7 +304,7 @@ serverConnections.post("/select-project", async (c) => {
  * project.
  */
 serverConnections.post("/create-project", async (c) => {
-  assertSameOrigin(c);
+  requireBrowserOrigin(c);
   const token = requireContinuation(c);
   try {
     const result = await ensureDefaultProject(token);
@@ -275,15 +317,19 @@ serverConnections.post("/create-project", async (c) => {
 /**
  * The redirect URI this deployment hands to an authorization server.
  *
- * Derived from the request's own origin rather than from configuration, and
- * that is load-bearing: the callback has to land somewhere the `__Host-`
- * continuation cookie will be sent, and `__Host-` pins the cookie to exactly
- * one origin. A configured value that disagreed with the origin the user is
- * actually on would send them back to a page with no cookie and no way to
- * explain why.
+ * Derived from the page's own `Origin` header rather than from configuration
+ * or from `c.req.url`, and that is load-bearing twice over: the callback has
+ * to land somewhere the `__Host-` continuation cookie will be sent, and
+ * `__Host-` pins the cookie to exactly one origin — which is precisely the
+ * origin the browser names in the header. `c.req.url` would NOT do: behind the
+ * hosted TLS edge its scheme is the internal socket's `http`, which registers
+ * a cleartext redirect URI, and behind the dev proxy its host is the server's
+ * port, which strands the callback on an origin the cookie never lived on. The
+ * header is allowlist-checked before use, so it cannot point at an attacker's
+ * host.
  */
-function callbackUriFor(c: { req: { url: string } }): string {
-  return new URL("/oauth/callback", c.req.url).toString();
+function callbackUriFor(origin: string): string {
+  return new URL("/oauth/callback", origin).toString();
 }
 
 /**
@@ -348,11 +394,11 @@ function translatePrepare(error: unknown): WebRouteError {
  * stolen code, which is the whole property PKCE exists to provide.
  */
 serverConnections.post("/authorize", async (c) => {
-  assertSameOrigin(c);
+  const origin = requireBrowserOrigin(c);
   const token = requireContinuation(c);
   try {
     const context = await fetchAuthorizationContext(token);
-    const redirectUri = callbackUriFor(c);
+    const redirectUri = callbackUriFor(origin);
     const prepared = await prepareAuthorization({
       serverUrl: context.serverUrl,
       redirectUri,
@@ -386,7 +432,7 @@ serverConnections.post("/authorize", async (c) => {
  * are, so no token for the target server ever passes through this process.
  */
 serverConnections.post("/authorize/complete", async (c) => {
-  assertSameOrigin(c);
+  requireBrowserOrigin(c);
   const token = requireContinuation(c);
   const body = parseWithSchema(
     completeAuthorizationSchema,
@@ -411,7 +457,7 @@ serverConnections.post("/authorize/complete", async (c) => {
 
 // POST /api/web/server-connections/cancel
 serverConnections.post("/cancel", async (c) => {
-  assertSameOrigin(c);
+  requireBrowserOrigin(c);
   const token = requireContinuation(c);
   try {
     const result = await cancelFromHandoff(token);

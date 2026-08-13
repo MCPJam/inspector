@@ -98,12 +98,11 @@ export async function runConnectionJob(
       // discovery arm — which permanently tells someone their URL was refused
       // when the truth is that the backend handed us a row with nothing in it.
       if (!lease.serverUrl) {
-        // There is no legal report from `discovering` — `reportValidation` is
-        // only accepted from `validating` — so releasing the lease IS the
-        // remedy. Calling the report first and treating its inevitable refusal
-        // as the trigger would spend an authenticated round trip and a recorded
-        // 4xx to arrive at the same place, and would swallow a genuine backend
-        // outage along the way.
+        // Releasing the lease IS the remedy. A retryable report would be
+        // accepted from `discovering`, but it would spend an authenticated
+        // round trip to record OUR broken contract as the server's failure and
+        // burn one of the request's attempts doing it. Let the retry cron
+        // bring the row back around once the backend has something in it.
         logger.warn("Connection lease in `discovering` carried no server URL", {
           event: "server_connections.lease_missing_url",
           requestId,
@@ -162,18 +161,19 @@ async function runDiscoveryStep(
 
   // Retryable: the machine keeps the request in place and schedules another
   // attempt. Reported through the validation channel because that is where the
-  // retry taxonomy lives.
+  // retry taxonomy lives — and a `retryable` report is legal from
+  // `discovering`: the backend's retryable arm leaves the status alone and
+  // only schedules the next attempt. NO catch here, deliberately. An earlier
+  // revision swallowed every failure of this call on the belief that the
+  // backend would refuse it, which also swallowed a genuine backend outage —
+  // the caller's error path releases the lease and surfaces the failure, which
+  // is where a 500 belongs.
   await reportValidation({
     requestId,
     leaseId,
     outcome: "retryable",
     errorCode: "VALIDATION_FAILED",
     errorMessage: outcome.detail,
-  }).catch(async () => {
-    // `reportValidation` is only legal from `validating`. A request still in
-    // `discovering` cannot take it, so release the lease and let the retry cron
-    // bring the request back around.
-    await releaseLease(requestId, leaseId).catch(() => {});
   });
 }
 

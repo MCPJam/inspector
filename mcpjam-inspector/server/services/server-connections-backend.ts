@@ -224,6 +224,10 @@ export async function claimHandoff(input: {
   handoffToken: string;
   continuationToken: string;
   actorUserId?: string;
+  /** Client IP for the backend's per-IP claim budget. Trustworthy because this
+   * process authenticates with the service token; optional because a missing
+   * forwarding header must not fail a legitimate claim. */
+  clientIpKey?: string;
 }): Promise<{ requestId: string; status: string }> {
   return await callBackend("/claim", { ...input });
 }

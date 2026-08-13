@@ -30,6 +30,7 @@ import {
   registerClient,
   startAuthorization,
 } from "@mcpjam/sdk/browser";
+import { isLoopbackOAuthUrl } from "@mcpjam/sdk/oauth/node";
 import { createPinnedFetch } from "../utils/pinned-fetch.js";
 import { BlockedEgressTargetError } from "../utils/hosted-egress-guard.js";
 
@@ -214,6 +215,34 @@ function requireTrustworthyIssuer(
 }
 
 /**
+ * The URL the user's browser will actually be navigated to.
+ *
+ * Scheme check, not an origin check: providers legitimately host the consent
+ * screen on a different origin than the issuer (login subdomains, shared
+ * identity hosts), so pinning the origin would refuse real servers. What is
+ * never legitimate is a non-`https:` endpoint — except loopback `http:`, which
+ * is how a local authorization server presents itself.
+ */
+function requireNavigableAuthorizationEndpoint(endpoint: unknown): void {
+  const value = typeof endpoint === "string" ? endpoint.trim() : "";
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new AuthorizationPrepareError(
+      "That authorization server's metadata has an unreadable authorization endpoint.",
+      "UNTRUSTWORTHY_METADATA"
+    );
+  }
+  if (url.protocol === "https:") return;
+  if (url.protocol === "http:" && isLoopbackOAuthUrl(url.toString())) return;
+  throw new AuthorizationPrepareError(
+    `That authorization server's metadata names an authorization endpoint this flow will not navigate to (${url.protocol}//…).`,
+    "UNTRUSTWORTHY_METADATA"
+  );
+}
+
+/**
  * Which `token_endpoint_auth_method` to register with.
  *
  * Naming one the server does not support gets the registration rejected, and
@@ -292,6 +321,19 @@ async function prepare(
   const issuer = requireTrustworthyIssuer(
     (metadata as { issuer?: string }).issuer,
     info.authorizationServerUrl
+  );
+
+  // The issuer check above binds one field; this binds the one the BROWSER is
+  // sent to. `authorization_endpoint` comes out of the same attacker-authored
+  // document, flows into `window.location.assign` on the handoff origin, and a
+  // `javascript:` or `data:` value there would execute next to the
+  // continuation cookie's routes. Browsers block script-initiated top-frame
+  // navigation to those schemes, but "the browser will save us" is not a
+  // property this module gets to assume. `https:` only — with the same
+  // loopback carve-out the transport itself makes, so a local authorization
+  // server keeps working in local mode.
+  requireNavigableAuthorizationEndpoint(
+    (metadata as { authorization_endpoint?: unknown }).authorization_endpoint
   );
 
   // BEFORE registration, deliberately. RFC 8707's `resource` binds the token to

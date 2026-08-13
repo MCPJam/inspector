@@ -336,3 +336,101 @@ describe("a refusal does not describe the internal network", () => {
     expect(message).not.toMatch(/resolves to|resolved/i);
   });
 });
+
+describe("null-body statuses come back as responses, not errors", () => {
+  // The regression: `new Response("", { status: 204 })` THROWS — an empty
+  // string is still a body, and 204/205/304 forbid one. A non-MCP endpoint
+  // answering 204 therefore surfaced as a transport error, which discovery
+  // classified as retryable and churned on, instead of the terminal "not an
+  // MCP server" the actual answer already proved.
+  let server: Server;
+  let origin: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve)
+    );
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  });
+
+  it("returns a 204 as a Response", async () => {
+    const res = await createPinnedFetch({
+      allowLoopback: true,
+      timeoutMs: 5_000,
+    })(`${origin}/mcp`);
+
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+});
+
+describe("the caller's AbortSignal actually ends the request", () => {
+  // The regression: the adapter accepted a fetch-shaped `init` and ignored
+  // `init.signal` entirely, so `withDeadline` in the authorize service — whose
+  // comment says aborting the transport "is what actually ends it" — was
+  // racing a promise while the request it meant to kill ran to completion. A
+  // DCR registration could finish at the provider after the caller had already
+  // reported failure.
+  let server: Server;
+  let origin: string;
+
+  beforeAll(async () => {
+    server = createServer(() => {
+      // Never answer. The only way this test finishes fast is the abort.
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve)
+    );
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  });
+
+  it("aborts in-flight, well before the timeout, as an AbortError", async () => {
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    setTimeout(() => controller.abort(), 50);
+
+    const outcome = await createPinnedFetch({
+      allowLoopback: true,
+      timeoutMs: 10_000,
+    })(`${origin}/hang`, { signal: controller.signal }).catch(
+      (e: unknown) => e
+    );
+
+    // Well under the 10s transport timeout: the signal did the ending.
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect((outcome as Error).name).toBe("AbortError");
+    // A cancellation must never look like an outage — `retryable` would put
+    // an abandoned attempt back on a schedule.
+    expect(outcome).not.toBeInstanceOf(EgressResolutionError);
+  });
+
+  it("refuses immediately when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const outcome = await createPinnedFetch({
+      allowLoopback: true,
+      timeoutMs: 10_000,
+    })(`${origin}/hang`, { signal: controller.signal }).catch(
+      (e: unknown) => e
+    );
+
+    expect((outcome as Error).name).toBe("AbortError");
+  });
+});

@@ -125,19 +125,21 @@ describe("agent op registry", () => {
     expect(spurious).toEqual([]);
   });
 
-  it("keeps the idempotency set at exactly today's five writes", () => {
+  it("keeps the idempotency set at exactly today's four writes", () => {
     // A regression pin on the derivation's OUTPUT, not just its shape: if a
     // read op ever flips `readOnly`, or a write lands in the direct tier
     // unnoticed, that is a change worth seeing in a diff.
+    //
+    // `connect_project_server` left this set when it moved to the gated tier:
+    // its auth-method-`none` path connects a server with no human step, which
+    // is the registry's own definition of a gated action. Gated ops key their
+    // idempotency off the approval's action id instead.
     expect([...WRITE_OPERATION_NAMES].sort()).toEqual(
       [
         createEvalSuiteOperation.name,
         createEvalCaseOperation.name,
         updateEvalCaseOperation.name,
         updateEvalSuiteOperation.name,
-        // Direct + not readOnly: it creates a connection request, so a retried
-        // call must land on the same one rather than opening a second.
-        connectProjectServerOperation.name,
       ].sort()
     );
   });

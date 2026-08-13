@@ -394,24 +394,49 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // project and one that guesses at it.
   { operation: listProjectServersOperation, tier: "direct" },
   {
-    // DIRECT, not gated, and the reasoning matters because the registry's own
-    // rule says anything reaching outside MCPJam is gated.
+    // GATED, because the registry's own rule says anything reaching outside
+    // MCPJam is gated — and this one genuinely does. An earlier revision
+    // argued itself into `direct` on the theory that the handoff page is the
+    // real approval: the operation "cannot connect anything on its own". That
+    // is true for the OAuth path and FALSE for the other one. A server whose
+    // discovered auth method is `none`, named alongside a project, runs
+    // discovering → validating → ready with no handoff page and no human step
+    // — the server lands in the project, enabled, on nothing but the model's
+    // say-so. Prompt-injected content plus a project name learned from
+    // `list_projects` is all that takes. The dial at the target also fires the
+    // moment the model calls, human or no human. In-app chat already requires
+    // approval for this operation (`APPROVAL_REQUIRED_IDS`); the tier now
+    // agrees with it.
     //
-    // What gating buys is a human deciding before the effect happens. This flow
-    // already has that, and has it in a strictly better place: the operation
-    // cannot connect anything on its own. It produces a request and a private
-    // link, and the person who opens that link sees the hostname, the project,
-    // and who the credential will belong to, then chooses — the handoff page
-    // never auto-redirects. A second approval in the channel would ask someone
-    // to confirm the same action twice, on less information the first time,
-    // and would train them to click through the one that actually matters.
+    // The OAuth path does end up asking twice. That is the acceptable cost:
+    // the first click authorizes "start probing this URL as me", the second
+    // authorizes the credential — different questions, and only the flow
+    // itself knows in advance whether the second one will exist.
     //
-    // What DOES need enforcing is that the link stays private. That is the
-    // adapter's job, not the tier's: the agent adapter strips `handoffUrl` from
-    // model-visible text and moves it into a structured part, so the surfaces
-    // deliver it ephemerally instead of a model pasting it into a thread.
+    // The link staying private remains the adapter's job, not the tier's: the
+    // agent adapter strips `handoffUrl` from model-visible text and moves it
+    // into a structured part, so the surfaces deliver it ephemerally instead
+    // of a model pasting it into a thread.
     operation: connectProjectServerOperation,
-    tier: "direct",
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const url = named(input, "url");
+        let host: string | undefined;
+        try {
+          host = url ? new URL(url).host : undefined;
+        } catch {
+          host = undefined;
+        }
+        const project = named(input, "project");
+        return `Connect MCP server ${host ?? "(unparseable url)"}${
+          project ? ` to project ${project}` : ""
+        }`;
+      },
+      buttonLabel: "Start the connection",
+      kind: "external",
+      confirmSeverity: "external",
+    },
     promptNotes: [
       "- `connect_project_server` starts a connection and usually cannot finish it: an OAuth server needs the person to authorize in a browser. Say that a private authorization button will be shown, and NEVER write the authorization URL into your reply — the surface delivers it privately, and repeating it in a channel would let anyone there authorize on the requester's behalf.",
       "- After connecting, poll `get_project_server_connection_status` rather than assuming success. `ready` means the server was validated with real credentials; `awaiting_authorization` means the person has not finished yet.",

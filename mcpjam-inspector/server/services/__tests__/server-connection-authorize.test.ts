@@ -289,6 +289,43 @@ describe("what it refuses to believe about the metadata", () => {
       code: "UNTRUSTWORTHY_METADATA",
     });
   });
+
+  it.each(["javascript:alert(document.domain)", "data:text/html,<h1>hi</h1>"])(
+    "refuses an authorization endpoint the browser must never be sent to (%s)",
+    async (endpoint) => {
+      // `authorization_endpoint` comes out of the same attacker-authored
+      // document as the issuer, and it flows into `window.location.assign` on
+      // the handoff origin — next to the continuation cookie's routes. The
+      // issuer check does nothing for this field, and "the browser blocks
+      // script-initiated javascript: navigation" is the browser's mitigation,
+      // not this module's excuse.
+      const hostile = fakeFetch({
+        authorizationServer: () =>
+          jsonResponse({ ...AS_METADATA, authorization_endpoint: endpoint }),
+      });
+
+      await expect(prepare(hostile)).rejects.toMatchObject({
+        code: "UNTRUSTWORTHY_METADATA",
+      });
+    }
+  );
+
+  it("refuses a plaintext authorization endpoint on a public host", async () => {
+    // An http:// consent page would carry the authorization code back over
+    // cleartext. Loopback is the one legitimate http: authorization server —
+    // the same carve-out the transport itself makes.
+    const plaintext = fakeFetch({
+      authorizationServer: () =>
+        jsonResponse({
+          ...AS_METADATA,
+          authorization_endpoint: "http://auth.example.com/authorize",
+        }),
+    });
+
+    await expect(prepare(plaintext)).rejects.toMatchObject({
+      code: "UNTRUSTWORTHY_METADATA",
+    });
+  });
 });
 
 describe("registering the client", () => {

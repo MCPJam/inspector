@@ -186,8 +186,15 @@ function assertSchemeAllowed(url: string, allowLoopback: boolean): void {
  * The transport parses JSON when it can, so a JSON response arrives as an
  * object and has to be re-serialized for a caller that expects to call
  * `.json()` itself. Anything else passes through as text.
+ *
+ * `null` for the null-body statuses, and that is load-bearing: `new
+ * Response("", { status: 204 })` THROWS — empty string is still a body — so
+ * without the carve-out a 204 from a non-MCP endpoint became a transport
+ * error, which discovery then classified as retryable and churned on, instead
+ * of the terminal "not an MCP server" the actual answer warrants.
  */
-function toBodyInit(body: unknown): string {
+function toBodyInit(status: number, body: unknown): string | null {
+  if (status === 204 || status === 205 || status === 304) return null;
   if (body === null || body === undefined) return "";
   if (typeof body === "string") return body;
   try {
@@ -201,9 +208,10 @@ function toBodyInit(body: unknown): string {
  * Build a `fetch`-compatible function backed by the pinned transport.
  *
  * The returned function accepts the subset of `fetch`'s surface the MCP probe
- * actually uses — a URL, a method, headers, and a body. It does NOT support
- * streaming, `AbortSignal` composition beyond the timeout, or credentials, and
- * a caller who needs those is a caller who should not be using this.
+ * actually uses — a URL, a method, headers, a body, and an `AbortSignal`,
+ * which is composed with the timeout and aborts the socket itself. It does NOT
+ * support streaming or credentials, and a caller who needs those is a caller
+ * who should not be using this.
  */
 export function createPinnedFetch(
   options: PinnedFetchOptions = {}
@@ -227,6 +235,15 @@ export function createPinnedFetch(
       });
     }
 
+    // The caller's signal, threaded into every hop. Without this the
+    // `withDeadline` machinery in `server-connection-authorize.ts` — whose
+    // comment says aborting the transport "is what actually ends it" — was
+    // racing a promise while the request it meant to kill ran to completion,
+    // able to finish a client registration at the provider after the caller
+    // had already reported failure.
+    const signal = init?.signal ?? (input as Request)?.signal ?? undefined;
+    signal?.throwIfAborted();
+
     // LOOPBACK IS GATED HERE, BECAUSE THE TRANSPORT CANNOT BE TOLD.
     // `OAuthProxyRequest` has no loopback field — the SDK derives permission
     // from the URL itself (`allowLoopbackFlow = !httpsOnly &&
@@ -234,17 +251,23 @@ export function createPinnedFetch(
     // loopback dev target is plaintext by nature, and that alone made
     // `http://127.0.0.1:…` reachable in production: the `allowLoopback` option
     // below was declared, documented, and enforced by nobody.
-    //
-    // Only the INITIAL url needs this particular check. `allowLoopbackFlow` is
-    // computed by the transport once per call, from the url it was given, and
-    // the loop below gives it every hop separately — so a public target that
-    // redirects to loopback is refused by the transport's own classifier on the
-    // hop that names it.
     if (options.allowLoopback !== true && isLoopbackOAuthUrl(url)) {
       throw new BlockedEgressTargetError(
         `Refusing a connection to loopback address "${new URL(url).hostname}".`
       );
     }
+
+    // The allowance belongs to the CHAIN, decided by where it started — the
+    // SDK's own contract on `isLoopbackOAuthUrl` ("a public/remote server must
+    // never be allowed to steer one at the user's own loopback"). Deriving it
+    // per hop from the flag alone meant that with the opt-in set, a PUBLIC
+    // target could answer `302 Location: http://127.0.0.1:11434/…` and have
+    // the hop dialled: attacker-chosen path, plaintext, on the user's own
+    // machine. A chain that STARTED at loopback may keep redirecting within
+    // loopback (a local AS bouncing between ports is normal); a chain that
+    // started public may not arrive there.
+    const chainAllowsLoopback =
+      options.allowLoopback === true && isLoopbackOAuthUrl(url);
 
     try {
       // REDIRECTS ARE FOLLOWED HERE, ONE HOP AT A TIME, so every hop's scheme
@@ -278,25 +301,28 @@ export function createPinnedFetch(
           throw new Error(`Too many redirects (more than ${MAX_REDIRECT_HOPS}).`);
         }
 
+        signal?.throwIfAborted();
         const hopAllowsLoopback =
-          options.allowLoopback === true && isLoopbackOAuthUrl(currentUrl);
-        assertSchemeAllowed(currentUrl, options.allowLoopback === true);
+          chainAllowsLoopback && isLoopbackOAuthUrl(currentUrl);
+        assertSchemeAllowed(currentUrl, chainAllowsLoopback);
 
         result = await executeOAuthProxy({
           url: currentUrl,
           method: currentMethod,
           headers: currentHeaders,
           body: currentBody,
-          // PER HOP, AND THIS IS THE LOAD-BEARING LINE. The transport derives
-          // `allowLoopbackFlow = !httpsOnly && isLoopbackOAuthUrl(url)` from
-          // whatever url it is handed — so passing `false` unconditionally
-          // would let a public https target redirect to `https://127.0.0.1`
-          // and have the transport permit it, because that HOP is loopback.
-          // Loopback permission has to be re-derived for the hop being dialled,
-          // not inherited from the call that started the chain.
+          // PER HOP. The transport derives `allowLoopbackFlow = !httpsOnly &&
+          // isLoopbackOAuthUrl(url)` from whatever url it is handed — so
+          // passing `false` unconditionally would refuse a loopback dev
+          // chain's later hops, and passing "the flag said so" would let a
+          // public https target redirect to `https://127.0.0.1` and have the
+          // transport permit it because that HOP is loopback. The permission
+          // is the CHAIN's (see `chainAllowsLoopback` above) re-checked
+          // against the hop being dialled.
           httpsOnly: !hopAllowsLoopback,
           redirect: "manual",
           timeoutMs: remainingTimeout(options.timeoutMs, startedAt),
+          signal,
         });
 
         const location = result.headers["location"] ?? result.headers["Location"];
@@ -344,7 +370,7 @@ export function createPinnedFetch(
         currentUrl = nextUrl.toString();
       }
 
-      return new Response(toBodyInit(result.body), {
+      return new Response(toBodyInit(result.status, result.body), {
         status: result.status,
         statusText: result.statusText,
         headers: result.headers,
