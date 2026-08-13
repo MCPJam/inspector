@@ -30,6 +30,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_project: { command: "projects delete" },
   list_project_servers: { command: "projects servers" },
   create_project_server: { command: "projects server add" },
+  connect_project_server: { command: "projects server connect" },
+  get_project_server_connection_status: {
+    command: "projects server connect",
+  },
   get_project_server: { command: "projects server get" },
   update_project_server: { command: "projects server update" },
   delete_project_server: { command: "projects server remove" },

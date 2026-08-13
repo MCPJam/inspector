@@ -31,7 +31,9 @@
 import { tool, type ToolSet } from "ai";
 import {
   callServerToolOperation,
+  connectProjectServerOperation,
   diagnoseServerOperation,
+  getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
@@ -69,6 +71,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Connecting a server from in-app chat produces a private link the user
+  // opens in the same browser they are already signed into.
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,

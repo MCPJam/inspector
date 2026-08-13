@@ -134,6 +134,8 @@ describe("workspace tool catalog", () => {
       "get_project_server",
       "update_project_server",
       "delete_project_server",
+      "connect_project_server",
+      "get_project_server_connection_status",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",

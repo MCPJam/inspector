@@ -55,6 +55,8 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   listHostsOperation,
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -391,6 +393,31 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // ── READ — free, and the difference between an agent that inspects the
   // project and one that guesses at it.
   { operation: listProjectServersOperation, tier: "direct" },
+  {
+    // DIRECT, not gated, and the reasoning matters because the registry's own
+    // rule says anything reaching outside MCPJam is gated.
+    //
+    // What gating buys is a human deciding before the effect happens. This flow
+    // already has that, and has it in a strictly better place: the operation
+    // cannot connect anything on its own. It produces a request and a private
+    // link, and the person who opens that link sees the hostname, the project,
+    // and who the credential will belong to, then chooses — the handoff page
+    // never auto-redirects. A second approval in the channel would ask someone
+    // to confirm the same action twice, on less information the first time,
+    // and would train them to click through the one that actually matters.
+    //
+    // What DOES need enforcing is that the link stays private. That is the
+    // adapter's job, not the tier's: the agent adapter strips `handoffUrl` from
+    // model-visible text and moves it into a structured part, so the surfaces
+    // deliver it ephemerally instead of a model pasting it into a thread.
+    operation: connectProjectServerOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `connect_project_server` starts a connection and usually cannot finish it: an OAuth server needs the person to authorize in a browser. Say that a private authorization button will be shown, and NEVER write the authorization URL into your reply — the surface delivers it privately, and repeating it in a channel would let anyone there authorize on the requester's behalf.",
+      "- After connecting, poll `get_project_server_connection_status` rather than assuming success. `ready` means the server was validated with real credentials; `awaiting_authorization` means the person has not finished yet.",
+    ],
+  },
+  { operation: getProjectServerConnectionStatusOperation, tier: "direct" },
   {
     operation: diagnoseServerOperation,
     tier: "direct",

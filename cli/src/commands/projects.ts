@@ -1,5 +1,7 @@
 import type { Command } from "commander";
 import {
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   createProjectOperation,
   deleteProjectOperation,
   listProjectsOperation,
@@ -20,6 +22,7 @@ import {
 import { writeResult } from "../lib/output.js";
 import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions } from "../lib/server-config.js";
+import { openUrlInBrowser } from "@mcpjam/sdk";
 
 type PlatformOptions = {
   apiKey?: string;
@@ -332,6 +335,82 @@ export function registerProjectsCommands(program: Command): void {
   });
 
   addPlatformOptions(
+    servers
+      .command("connect")
+      .description(
+        "Connect an MCP server URL to a project, authorizing in a browser if needed"
+      )
+      .requiredOption("--url <url>", "MCP server URL to connect")
+      .option("--project <id-or-name>", "Project name or ID")
+      .option(
+        "--server <id>",
+        "Existing server ID, when the project has several on this URL"
+      )
+      .option("--name <name>", "Name for the server, if one is created")
+      .option("--reauthorize", "Force a fresh authorization")
+      .option("--no-browser", "Print the authorization link instead of opening it")
+      .option("--no-wait", "Return as soon as the request is created")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        url: string;
+        server?: string;
+        name?: string;
+        reauthorize?: boolean;
+        browser?: boolean;
+        wait?: boolean;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+
+      const created = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          connectProjectServerOperation.execute(
+            {
+              url: options.url,
+              project: options.project,
+              serverId: options.server,
+              name: options.name,
+              reauthorize: options.reauthorize,
+            },
+            { client, signal }
+          )
+      );
+
+      if (created.handoffUrl) {
+        // Printed even when we open it: a browser that fails to launch, or
+        // launches on the wrong machine over SSH, otherwise leaves the user
+        // with a request they cannot finish and no link to finish it with.
+        process.stderr.write(
+          `Open this link to finish connecting:\n  ${created.handoffUrl}\n`
+        );
+        if (options.browser !== false) {
+          await openUrlInBrowser(created.handoffUrl).catch(() => {
+            process.stderr.write(
+              "Could not open a browser automatically — open the link above.\n"
+            );
+          });
+        }
+      }
+
+      if (options.wait === false || isTerminalConnectionStatus(created.status)) {
+        writeResult(created, globalOptions.format);
+        return;
+      }
+
+      const settled = await pollConnection(
+        options,
+        globalOptions.timeout,
+        created.connectionRequestId
+      );
+      writeResult(settled, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
     projects
       .command("status")
       .description(
@@ -361,4 +440,54 @@ export function registerProjectsCommands(program: Command): void {
     // Exit 0 even with unreachable servers: this is a status report, not an
     // assertion. CI gating can parse the summary from the JSON payload.
   });
+}
+
+const TERMINAL_CONNECTION_STATUSES = new Set([
+  "ready",
+  "failed",
+  "expired",
+  "cancelled",
+]);
+
+function isTerminalConnectionStatus(status: string): boolean {
+  return TERMINAL_CONNECTION_STATUSES.has(status);
+}
+
+/**
+ * Poll until the request settles.
+ *
+ * Backs off from 2s to 10s: the first few seconds are when discovery finishes
+ * for an unauthenticated server, and after that the flow is waiting on a human
+ * at a browser, where a tighter interval buys nothing.
+ *
+ * Ctrl-C STOPS THE POLLING, NOT THE REQUEST. The request lives in the cloud
+ * with its own 60-minute deadline, so a user who gives up on watching can still
+ * open the link and finish — which is why the message says so rather than
+ * letting them assume they cancelled it.
+ */
+async function pollConnection(
+  options: PlatformOptions,
+  timeoutMs: number,
+  connectionRequestId: string
+) {
+  let delayMs = 2_000;
+  const deadline = Date.now() + 60 * 60 * 1000;
+
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    delayMs = Math.min(delayMs * 1.5, 10_000);
+
+    const current = await runPlatformCommand(
+      options,
+      timeoutMs,
+      ({ client, signal }) =>
+        getProjectServerConnectionStatusOperation.execute(
+          { connectionRequestId },
+          { client, signal }
+        )
+    );
+
+    if (isTerminalConnectionStatus(current.status)) return current;
+    if (Date.now() > deadline) return current;
+  }
 }
