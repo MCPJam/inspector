@@ -375,4 +375,28 @@ describe("XAAFlowLogger request/response cards", () => {
     expect(screen.getByText("Request Body")).toBeInTheDocument();
     expect(screen.getByText("Response Body")).toBeInTheDocument();
   });
+
+  it("copies a shift-selected range of steps together, in flow order", async () => {
+    const user = userEvent.setup();
+    renderWithExchange();
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(2);
+
+    await user.click(checkboxes[0]);
+    await user.keyboard("{Shift>}");
+    await user.click(checkboxes[1]);
+    await user.keyboard("{/Shift}");
+
+    await user.click(screen.getByRole("button", { name: "Copy 2 steps" }));
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    const jwtIndex = copied.indexOf("[jwt_bearer_request]");
+    const receivedIndex = copied.indexOf("[received_access_token]");
+    expect(jwtIndex).toBeGreaterThan(-1);
+    expect(receivedIndex).toBeGreaterThan(jwtIndex);
+  });
 });

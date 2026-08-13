@@ -199,4 +199,39 @@ describe("OAuthFlowLogger request/response card split", () => {
     );
     expect(copied).not.toContain("401 Unauthorized");
   });
+
+  it("copies a shift-selected range of steps together, in flow order", async () => {
+    const user = userEvent.setup();
+    copyToClipboard.mockClear();
+    renderLogger({
+      currentStep: "received_401_unauthorized",
+      httpHistory: [INITIAL_EXCHANGE],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+
+    const firstCheckbox = screen.getByRole("checkbox", {
+      name: /Initial MCP Request/i,
+    });
+    const secondCheckbox = screen.getByRole("checkbox", {
+      name: /401 Unauthorized Received/i,
+    });
+
+    await user.click(firstCheckbox);
+    await user.keyboard("{Shift>}");
+    await user.click(secondCheckbox);
+    await user.keyboard("{/Shift}");
+
+    const copyRangeButton = screen.getByRole("button", {
+      name: "Copy 2 steps",
+    });
+    await user.click(copyRangeButton);
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    const requestIndex = copied.indexOf("Initial MCP Request");
+    const receivedIndex = copied.indexOf("401 Unauthorized Received");
+    expect(requestIndex).toBeGreaterThan(-1);
+    expect(receivedIndex).toBeGreaterThan(requestIndex);
+  });
 });
