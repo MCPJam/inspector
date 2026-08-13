@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -4644,6 +4645,7 @@ export default function App() {
           >
             <Toaster />
             <MCPJamLimitDialog />
+            <PlanLimitDialog />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}

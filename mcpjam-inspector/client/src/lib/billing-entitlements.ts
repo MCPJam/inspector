@@ -300,7 +300,10 @@ export function formatBillingLimitReachedMessage(
         hour: "numeric",
         minute: "2-digit",
       }).format(new Date(options.resetsAt));
-      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}.`;
+      const nextStep = canManageBilling
+        ? "Upgrade to continue now."
+        : "Ask an organization owner to upgrade to continue now.";
+      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}. ${nextStep}`;
     }
     return canManageBilling
       ? `This organization has reached its eval iteration limit (${allowedValue}). Upgrade to continue.`
