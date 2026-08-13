@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   describeError,
+  isAuthError,
   isUnauthorized401,
   originOf,
   type ErrorOrigin,
@@ -76,6 +77,25 @@ export const ErrorCode = {
   // token and replay the turn. Emitted once the backend enforces the
   // version it already advertises.
   CHATBOX_ACCESS_STALE: "CHATBOX_ACCESS_STALE",
+  // The USER'S MCP server refused the credentials MCPJam presented. Their
+  // failure, not ours — it was the single largest error class on
+  // `/api/web/tools/list` (3,706 events in 30 days) and every one of them
+  // logged as INTERNAL_ERROR, spending the 5xx budget and hiding real internal
+  // faults behind them.
+  //
+  // Served at 403, deliberately NOT 401. `authFetch` retries any 401 from an
+  // `/api/web/*` path when the actor has no WorkOS session
+  // (`shouldRetryApiAuth401`: `!isAuthenticated && !hasSession`) by clearing
+  // the bearer cache, force-refreshing the guest session and replaying the
+  // request; the hosted `webError` envelope has no way to set the
+  // `X-MCP-Auth-Required: oauth` header that suppresses it (only the LOCAL
+  // `respondWithLocalRouteError` does). Mapping thousands of upstream auth
+  // rejections onto 401 would therefore make every guest burn a guest-token
+  // refresh and a replay on a failure the replay cannot fix. 403 is also the
+  // honest HTTP answer: the CALLER's credentials are not the problem, so
+  // re-authenticating with MCPJam will not change the outcome — the user has
+  // to reconnect the upstream server.
+  UPSTREAM_AUTH_FAILED: "UPSTREAM_AUTH_FAILED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -383,6 +403,43 @@ function classifyRuntimeError(error: unknown): WebRouteError {
       ErrorCode.UNAUTHORIZED,
       message,
       undefined,
+      normalized
+    );
+  }
+
+  // Every OTHER upstream auth rejection. The branch above only recognizes a
+  // clean numeric 401, but the MCP authorization spec's own error table — byte
+  // identical in every version that defines authorization (2025-03-26,
+  // 2025-06-18, 2025-11-25, 2026-07-28, draft) — lists 401 (authorization
+  // required / token invalid), 403 (invalid scopes or insufficient
+  // permissions) AND 400 (malformed authorization request). So a 403 or 400
+  // rejection, or an `MCPAuthError` carrying no status at all, used to fall all
+  // the way through to the 500 fallback and be reported as an MCPJam internal
+  // error. Because every version's table agrees, one shared branch is correct
+  // and no per-era gating applies. (2024-11-05 defines no authorization at all;
+  // an auth failure there is not spec-governed, which is another reason this
+  // keys off the ERROR rather than the negotiated protocol version.)
+  //
+  // Sits ahead of the timeout/connection branches on purpose: an `MCPAuthError`
+  // raised after the Streamable HTTP + SSE fallback pair quotes BOTH transport
+  // failures in one message, so a message-substring match on "fetch failed" or
+  // "timed out" would otherwise outrank the auth classification the SDK already
+  // made from the status codes.
+  //
+  // `isAuthError` rather than `instanceof MCPAuthError`: it matches by class
+  // NAME (the SDK's own convention for this reason) and sees through the
+  // era-negotiation wrapper, so recognition survives the server resolving
+  // `@mcpjam/sdk` to `dist` while another copy resolves to `src`.
+  if (isAuthError(error).isAuth) {
+    return new WebRouteError(
+      403,
+      ErrorCode.UPSTREAM_AUTH_FAILED,
+      message,
+      // Established flag: "the UPSTREAM server demands auth; refreshing an
+      // MCPJam session or guest token cannot change that." The local envelope
+      // already turns it into `X-MCP-Auth-Required: oauth`, which is exactly
+      // the retry suppression this classification wants.
+      { upstreamAuthRequired: true },
       normalized
     );
   }

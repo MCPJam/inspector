@@ -543,9 +543,20 @@ function findUserMessageIndexForRange(
     return inRangeIndex;
   }
 
-  if (range && range.startIndex > 0) {
+  // Span indices are recorded against the server's transcript, which can be
+  // longer than the one the browser holds (rehydrated sessions rebuild it from
+  // the UI, dropping transient messages and incomplete tool calls). A range
+  // starting past the end describes messages this transcript doesn't have, so
+  // there is no "preceding" user message to walk back to — anything found
+  // there would belong to an unrelated turn.
+  if (range.startIndex >= messages.length) {
+    return undefined;
+  }
+
+  if (range.startIndex > 0) {
     for (let index = range.startIndex - 1; index >= 0; index -= 1) {
-      const message = messages[index]!;
+      const message = messages[index];
+      if (!message) continue;
       if (message.role === "user") {
         return index;
       }
