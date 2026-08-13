@@ -37,6 +37,7 @@ import {
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   describePkceMetadataNonConformance,
   selectAuthorizationServerFromResourceMetadata,
 } from "./shared/required-metadata.js";
@@ -1129,7 +1130,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields per RFC 8414
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field"
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER
               );
             }
 
