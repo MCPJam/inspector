@@ -53,6 +53,13 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /models": "listModels",
   "get /chat-sessions": "listChatSessions",
 
+  // Server connections
+  "post /server-connections": "createServerConnection",
+  "get /server-connections/{requestId}": "getServerConnection",
+  "post /server-connections/{requestId}/cancel": "cancelServerConnection",
+  "post /server-connections/{requestId}/retry-validation":
+    "retryServerConnectionValidation",
+
   // Projects
   "get /projects": "listProjects",
   "post /projects": "createProject",

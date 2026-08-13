@@ -42,6 +42,8 @@ import type {
   PlatformPlugin,
   PlatformPluginVersion,
   PlatformProject,
+  PlatformServerConnection,
+  PlatformServerConnectionCreateBody,
   PlatformProjectServer,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
@@ -163,6 +165,76 @@ export class PlatformApiClient {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
+      {},
+      options
+    );
+  }
+
+  // ── Server connections ───────────────────────────────────────────────────
+  //
+  // The handoff-first flow: creating a request may answer with a `handoffUrl`
+  // the user must open, rather than with a finished connection. Callers poll
+  // `getServerConnection` until the status is terminal.
+
+  /**
+   * Start connecting an MCP server URL to a project.
+   *
+   * The response is the ONLY place a `handoffUrl` ever appears — the raw token
+   * behind it is minted once and never stored, so it cannot be re-fetched.
+   * Treat it as a private, single-person capability.
+   */
+  createServerConnection(
+    params: { body: PlatformServerConnectionCreateBody },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      "/server-connections",
+      { body: params.body },
+      options
+    );
+  }
+
+  /** Poll one request. Safe to call on a short interval — this path is not
+   * rate-limited, so a caller need not choose between responsiveness and
+   * tripping a budget. */
+  getServerConnection(
+    params: { connectionRequestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "GET",
+      `/server-connections/${encodeURIComponent(params.connectionRequestId)}`,
+      {},
+      options
+    );
+  }
+
+  cancelServerConnection(
+    params: { connectionRequestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      `/server-connections/${encodeURIComponent(params.connectionRequestId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Ask for another validation attempt now instead of waiting out the backoff.
+   *
+   * Does not revive a terminal request: after `failed`, `expired`, or
+   * `cancelled`, the way forward is a new request.
+   */
+  retryServerConnectionValidation(
+    params: { connectionRequestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      `/server-connections/${encodeURIComponent(params.connectionRequestId)}/retry-validation`,
       {},
       options
     );
