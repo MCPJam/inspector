@@ -15,6 +15,8 @@ vi.mock("@mcpjam/sdk/browser", async (importOriginal) => {
   return { ...actual, createOAuthStateMachine };
 });
 
+import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "@mcpjam/sdk/browser";
+
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
 
 /**
@@ -107,6 +109,58 @@ describe("OAuth debugger step-failure reporting", () => {
     wrapped({ error: "" });
 
     expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("ignores advisory warnings the flow recovers from", () => {
+    const { wrapped, updateState } = wrappedUpdateState();
+
+    const advisory = {
+      error: "Warning: Authorization server may not support S256 PKCE method",
+    };
+    wrapped(advisory);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(advisory);
+  });
+
+  it("ignores a metadata document missing the RFC 8414 issuer", () => {
+    // Stops the flow, but it is the server under test violating RFC 8414 and
+    // nothing we act on — it must stay on screen without reaching Sentry.
+    // The message comes from the SDK export the machines throw, so a rephrasing
+    // there cannot leave the adapter matching on stale text.
+    const { wrapped, updateState } = wrappedUpdateState();
+
+    const serverFault = {
+      error: AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+    };
+    wrapped(serverFault);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFault);
+  });
+
+  it("still reports a real failure that follows a warning", () => {
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "Warning: Authorization server may not support S256" });
+    wrapped({ error: "token exchange failed: 401" });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    expect((reportCaught.mock.calls[0][0] as Error).message).toBe(
+      "token exchange failed: 401",
+    );
+  });
+
+  it("reports the same failure again when a warning came between", () => {
+    // The warning replaced the message on screen, so the recurrence is a new
+    // failure — not the duplicate update the dedup guard exists to swallow.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "token exchange failed: 401" });
+    wrapped({ error: "Warning: Authorization server may not support S256" });
+    wrapped({ error: "token exchange failed: 401" });
+
+    expect(reportCaught).toHaveBeenCalledTimes(2);
   });
 
   it("still forwards every update to the caller's updateState", () => {
