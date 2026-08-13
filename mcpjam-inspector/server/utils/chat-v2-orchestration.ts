@@ -47,7 +47,7 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
-import { isGPT5Model, type ModelDefinition } from "@/shared/types";
+import { modelSupportsTemperature, type ModelDefinition } from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
@@ -1303,9 +1303,9 @@ export async function prepareChatV2(
     .join("\n\n");
 
   // 4. Temperature resolution
-  const resolvedTemperature = isGPT5Model(modelDefinition.id)
-    ? undefined
-    : temperature ?? DEFAULT_TEMPERATURE;
+  const resolvedTemperature = modelSupportsTemperature(modelDefinition.id)
+    ? temperature ?? DEFAULT_TEMPERATURE
+    : undefined;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>
