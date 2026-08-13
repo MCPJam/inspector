@@ -176,10 +176,14 @@ export async function prepareAuthorization(
  * refusing on mismatch is the only way the later check means anything.
  */
 function requireTrustworthyIssuer(
-  issuer: string | undefined,
+  issuer: unknown,
   authorizationServerUrl: string
 ): string {
-  const claimed = issuer?.trim();
+  // `unknown`, not `string | undefined`, because this value came out of a JSON
+  // document fetched from a host the user named. A number here would make
+  // `.trim()` a TypeError, and the whole point of this function is to answer
+  // "is that metadata trustworthy" — crashing is not an answer.
+  const claimed = typeof issuer === "string" ? issuer.trim() : "";
   if (!claimed) {
     throw new AuthorizationPrepareError(
       "That authorization server's metadata does not identify an issuer.",
@@ -218,16 +222,26 @@ function requireTrustworthyIssuer(
  * says nothing, send nothing and let the server apply its own default rather
  * than asserting a capability on its behalf.
  */
-function pickAuthMethod(supported: string[] | undefined): string | undefined {
-  if (!supported?.length) return undefined;
+function pickAuthMethod(supported: unknown): string | undefined {
+  const advertised = Array.isArray(supported)
+    ? supported.filter((value): value is string => typeof value === "string")
+    : [];
+  if (!advertised.length) return undefined;
   for (const preferred of [
     "client_secret_post",
     "client_secret_basic",
     "none",
   ]) {
-    if (supported.includes(preferred)) return preferred;
+    if (advertised.includes(preferred)) return preferred;
   }
-  return supported[0];
+  // Registering with a method we cannot actually perform buys a client record
+  // and a failure one step later, at the token exchange, with an error about
+  // credentials rather than about capability. Refusing here says the true
+  // thing at the point where it is still cheap.
+  throw new AuthorizationPrepareError(
+    "That authorization server does not accept any client authentication method this flow can use.",
+    "REGISTRATION_FAILED"
+  );
 }
 
 async function prepare(
@@ -280,6 +294,29 @@ async function prepare(
     info.authorizationServerUrl
   );
 
+  // BEFORE registration, deliberately. RFC 8707's `resource` binds the token to
+  // one server, and taking the advertised value on trust would let a target's
+  // own metadata point the indicator at a DIFFERENT resource — the provider
+  // would happily issue a token that works against that one instead of the
+  // server the user just approved. The SDK's policy is the strict binding
+  // (origin plus path prefix), used here rather than re-derived: a second copy
+  // of this rule is a second chance to get it wrong.
+  //
+  // Checked here rather than just before the redirect because registration
+  // CREATES something. Rejecting afterwards would leave a client record on the
+  // provider for an authorization that was refused.
+  const decision = evaluateResourceIndicator({
+    serverUrl: input.serverUrl,
+    prmResource: info.resourceMetadata?.resource,
+  });
+  if (info.resourceMetadata?.resource && !decision.strictClientCompatible) {
+    throw new AuthorizationPrepareError(
+      `That server advertises a resource identifier (${info.resourceMetadata.resource}) that does not match its own address.`,
+      "UNTRUSTWORTHY_METADATA"
+    );
+  }
+  const resource = decision.value;
+
   const authMethod = pickAuthMethod(
     (metadata as { token_endpoint_auth_methods_supported?: string[] })
       .token_endpoint_auth_methods_supported
@@ -316,24 +353,6 @@ async function prepare(
   }
 
   const state = mintState();
-  // RFC 8707's `resource` binds the token to one server. Taking the advertised
-  // value on trust would let a target's own metadata point the indicator at a
-  // DIFFERENT resource, and the provider would happily issue a token that works
-  // against that one instead of the server the user just approved. The SDK's
-  // policy is the strict binding (origin plus path prefix), so it is used here
-  // rather than re-derived — a second copy of this rule is a second chance to
-  // get it wrong.
-  const decision = evaluateResourceIndicator({
-    serverUrl: input.serverUrl,
-    prmResource: info.resourceMetadata?.resource,
-  });
-  if (info.resourceMetadata?.resource && !decision.strictClientCompatible) {
-    throw new AuthorizationPrepareError(
-      `That server advertises a resource identifier (${info.resourceMetadata.resource}) that does not match its own address.`,
-      "UNTRUSTWORTHY_METADATA"
-    );
-  }
-  const resource = decision.value;
   const { authorizationUrl, codeVerifier } = await startAuthorization(
     info.authorizationServerUrl,
     {

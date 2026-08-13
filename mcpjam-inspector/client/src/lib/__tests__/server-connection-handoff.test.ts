@@ -11,6 +11,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  callbackMatchesPending,
   clearPendingAuthorization,
   handoffRequestPath,
   isTerminalHandoffStatus,
@@ -71,23 +72,80 @@ describe("matchHandoffRoute", () => {
   });
 });
 
+const AUTH_URL = "https://auth.example.com/authorize?client_id=c&state=st-abc";
+
 describe("the pending-authorization marker", () => {
-  it("remembers and forgets a request id", () => {
+  it("remembers and forgets an attempt", () => {
     expect(readPendingAuthorization()).toBeNull();
-    rememberPendingAuthorization("scr_abc");
-    expect(readPendingAuthorization()).toBe("scr_abc");
+    rememberPendingAuthorization("scr_abc", AUTH_URL);
+    expect(readPendingAuthorization()).toMatchObject({
+      requestId: "scr_abc",
+      state: "st-abc",
+    });
     clearPendingAuthorization();
     expect(readPendingAuthorization()).toBeNull();
   });
 
-  it("holds nothing but the request id", () => {
-    rememberPendingAuthorization("scr_abc");
-    // The request id is printable by design; the AUTHORITY is the HttpOnly
-    // cookie the browser sends on its own. If anything secret ever landed
-    // here, every script on this origin could read it.
-    expect(sessionStorage.getItem("mcpjam-server-connection-pending")).toBe(
-      "scr_abc"
+  it("holds nothing but values that already travel in the open", () => {
+    rememberPendingAuthorization("scr_abc", AUTH_URL);
+    // The request id is printed in tool output and `state` goes to the provider
+    // in a query string. The AUTHORITY is the HttpOnly cookie the browser sends
+    // on its own; if anything secret ever landed here, every script on this
+    // origin could read it.
+    const raw = sessionStorage.getItem("mcpjam-server-connection-pending");
+    expect(JSON.parse(raw!)).toEqual({
+      requestId: "scr_abc",
+      state: "st-abc",
+      expiresAt: expect.any(Number),
+    });
+  });
+
+  it("stops claiming callbacks once it has aged out", () => {
+    const now = 1_000_000;
+    rememberPendingAuthorization("scr_abc", AUTH_URL, now);
+
+    expect(readPendingAuthorization(now + 60 * 60 * 1000 - 1)).not.toBeNull();
+    // An abandoned attempt must not sit in a tab forever waiting to swallow an
+    // unrelated `/oauth/callback`.
+    expect(readPendingAuthorization(now + 60 * 60 * 1000)).toBeNull();
+  });
+
+  it("declines to remember an attempt whose url carries no state", () => {
+    rememberPendingAuthorization(
+      "scr_abc",
+      "https://auth.example.com/authorize"
     );
+    // Without a state there is nothing to match on later, so the marker would
+    // be exactly the indiscriminate one this design rejects.
+    expect(readPendingAuthorization()).toBeNull();
+  });
+
+  it("survives an unreadable marker rather than throwing", () => {
+    sessionStorage.setItem("mcpjam-server-connection-pending", "scr_legacy");
+    expect(readPendingAuthorization()).toBeNull();
+  });
+});
+
+describe("callbackMatchesPending", () => {
+  it("claims only the callback this attempt is waiting for", () => {
+    rememberPendingAuthorization("scr_abc", AUTH_URL);
+    const pending = readPendingAuthorization();
+
+    expect(
+      callbackMatchesPending(
+        pending,
+        readCallbackParams("?code=c&state=st-abc")
+      )
+    ).toBe(true);
+    // The Inspector's own OAuth flow shares `/oauth/callback`. A marker that
+    // claimed this would swallow that flow's callback, silently.
+    expect(
+      callbackMatchesPending(pending, readCallbackParams("?code=c&state=other"))
+    ).toBe(false);
+    expect(callbackMatchesPending(pending, null)).toBe(false);
+    expect(
+      callbackMatchesPending(null, readCallbackParams("?code=c&state=st-abc"))
+    ).toBe(false);
   });
 });
 

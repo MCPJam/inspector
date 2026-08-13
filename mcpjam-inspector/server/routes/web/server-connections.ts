@@ -319,10 +319,16 @@ function translatePrepare(error: unknown): WebRouteError {
   if (error instanceof AuthorizationPrepareError) {
     // A refusal is about the target and will not clear on its own; only an
     // outage earns a 5xx and the "try again" it implies.
+    //
+    // `NO_AUTHORIZATION_SERVER` is deliberately NOT in this set, though it
+    // reads like a verdict. It means the metadata came back unreadable, and the
+    // discovery walk cannot tell "this server publishes none" from "we could
+    // not fetch it just now" — a 503 on the well-known path produces the same
+    // absence. Calling that permanent would deny a retry to a server that is
+    // merely having a bad minute.
     if (
       error.code === "URL_NOT_ALLOWED" ||
-      error.code === "UNTRUSTWORTHY_METADATA" ||
-      error.code === "NO_AUTHORIZATION_SERVER"
+      error.code === "UNTRUSTWORTHY_METADATA"
     ) {
       return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
     }

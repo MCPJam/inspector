@@ -23,6 +23,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  callbackMatchesPending,
   clearPendingAuthorization,
   handoffRequestPath,
   isTerminalHandoffStatus,
@@ -134,12 +135,20 @@ export function ServerConnectionHandoff() {
             "",
             handoffRequestPath(result.requestId)
           );
-        } else if (callback && pending) {
+        } else if (callbackMatchesPending(pending, callback)) {
           // Returned from the authorization server. The cookie travelled with
           // the top-level navigation, so this post is already authorized.
-          clearPendingAuthorization();
           await call("/authorize/complete", callback);
-          window.history.replaceState({}, "", handoffRequestPath(pending));
+          // Cleared only after the post SUCCEEDS. Clearing first would mean a
+          // transient failure stranded the user on `/oauth/callback` with the
+          // one thing that could route them home already gone — and a reload,
+          // the obvious thing to try, would do nothing.
+          clearPendingAuthorization();
+          window.history.replaceState(
+            {},
+            "",
+            handoffRequestPath(pending!.requestId)
+          );
         }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -172,6 +181,30 @@ export function ServerConnectionHandoff() {
     [refresh]
   );
 
+  /**
+   * Cancel, WITHOUT the refresh every other action does.
+   *
+   * `/cancel` clears the continuation cookie — that is the point, the request
+   * is over and the cookie authorizes nothing now. So the usual follow-up
+   * `/state` call has nothing to authenticate with, comes back 401, and the
+   * page shows an error for an action that worked. The cancel response already
+   * carries the new status; using it is both correct and one fewer round trip.
+   */
+  const cancel = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await call<{ status: string }>("/cancel", {});
+      setState((current) =>
+        current ? { ...current, status: result.status, live: false } : current
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const authorize = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -183,7 +216,8 @@ export function ServerConnectionHandoff() {
       // Written before navigating, because after `assign` nothing here runs
       // again. The request id is all it holds; the authority to finish is the
       // cookie, which the browser sends on its own.
-      if (state) rememberPendingAuthorization(state.requestId);
+      if (state)
+        rememberPendingAuthorization(state.requestId, authorizationUrl);
       window.location.assign(authorizationUrl);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -330,7 +364,7 @@ export function ServerConnectionHandoff() {
           type="button"
           disabled={busy}
           className="text-xs text-muted-foreground underline disabled:opacity-50"
-          onClick={() => void act(() => call("/cancel", {}))}
+          onClick={() => void cancel()}
         >
           Cancel this request
         </button>

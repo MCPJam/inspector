@@ -33,6 +33,7 @@ import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
 import {
+  callbackMatchesPending,
   matchHandoffRoute,
   readCallbackParams,
   readPendingAuthorization,
@@ -170,8 +171,11 @@ const isInIframe = (() => {
 function isServerConnectionHandoff(): boolean {
   if (matchHandoffRoute(window.location.pathname)) return true;
   if (window.location.pathname !== "/oauth/callback") return false;
-  return Boolean(
-    readPendingAuthorization() && readCallbackParams(window.location.search)
+  // Matched on `state`, not merely on a marker existing: an abandoned handoff
+  // must not swallow the Inspector's own OAuth callbacks in the same tab.
+  return callbackMatchesPending(
+    readPendingAuthorization(),
+    readCallbackParams(window.location.search)
   );
 }
 

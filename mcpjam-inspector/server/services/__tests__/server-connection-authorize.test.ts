@@ -329,6 +329,42 @@ describe("registering the client", () => {
     expect(body?.token_endpoint_auth_method).toBe("client_secret_post");
   });
 
+  it("refuses a method it cannot perform instead of registering one", async () => {
+    // Registering with a method we cannot use buys a client record and then a
+    // failure one step later, at the token exchange, reported as a credential
+    // problem rather than a capability one.
+    await expect(
+      registrationBody({
+        token_endpoint_auth_methods_supported: ["private_key_jwt"],
+      })
+    ).rejects.toMatchObject({ code: "REGISTRATION_FAILED" });
+  });
+
+  it("does not register a client for an authorization it is about to refuse", async () => {
+    const seen: string[] = [];
+    const misdirecting = fakeFetch({
+      resource: () =>
+        jsonResponse({
+          resource: "https://other.example.com/mcp",
+          authorization_servers: ["https://auth.example.com"],
+        }),
+    });
+    const watching = (async (input: URL | RequestInfo, init?: RequestInit) => {
+      if (init?.method === "POST" && String(input).includes("/register")) {
+        seen.push(String(input));
+      }
+      return await misdirecting(input as RequestInfo, init);
+    }) as unknown as typeof fetch;
+
+    await expect(prepare(watching)).rejects.toMatchObject({
+      code: "UNTRUSTWORTHY_METADATA",
+    });
+    // Registration CREATES something on the provider's side. Checking the
+    // resource afterwards would leave that record behind for an authorization
+    // that was refused.
+    expect(seen).toEqual([]);
+  });
+
   it("says nothing when the server advertises nothing", async () => {
     const body = await registrationBody({
       token_endpoint_auth_methods_supported: undefined,

@@ -16,7 +16,13 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { ServerConnectionHandoff } from "../ServerConnectionHandoff";
 import {
   clearPendingAuthorization,
@@ -25,6 +31,8 @@ import {
 } from "@/lib/server-connection-handoff";
 
 const ORIGIN = "https://app.mcpjam.test";
+// Carries the `state` the marker binds to; the callbacks below return it.
+const AUTH_URL = "https://auth.example.com/authorize?client_id=c&state=st";
 
 function stateBody(overrides: Record<string, unknown> = {}) {
   return {
@@ -137,8 +145,18 @@ describe("the claim", () => {
 });
 
 describe("what the page shows", () => {
-  it("shows the redacted url and warns about the query without revealing it", async () => {
-    mockApi({ "/state": () => stateBody() });
+  it("renders only the redacted url, never an operational one", async () => {
+    // `serverUrl` is NOT part of the handoff payload — the backend deliberately
+    // sends `displayUrl` instead, because a keyed endpoint's query IS the
+    // credential. Feeding one in anyway is the regression this guards: if
+    // someone widens the state interface and renders it, the secret appears on
+    // screen and nothing else would notice.
+    mockApi({
+      "/state": () =>
+        stateBody({
+          serverUrl: "https://target.example.com/mcp?key=sk-live-99",
+        }),
+    });
     goTo("/connect/server/request/scr_1");
 
     const { container } = render(<ServerConnectionHandoff />);
@@ -148,12 +166,27 @@ describe("what the page shows", () => {
       screen.getByText("https://target.example.com/mcp?key=REDACTED")
     ).toBeInTheDocument();
     expect(container.textContent).toContain("query parameters");
-    // The whole reason `displayUrl` exists: a keyed endpoint's query IS the
-    // credential, so the page tells the user it is there without showing it.
-    expect(container.textContent).not.toContain("secret");
+    expect(container.textContent).not.toContain("sk-live-99");
   });
 
-  it("offers a retry only when the backend says the failure may clear", async () => {
+  it("offers a retry when the backend says the failure may clear", async () => {
+    mockApi({
+      "/state": () =>
+        stateBody({
+          status: "failed",
+          errorMessage: "That server was unreachable.",
+          errorRetryable: true,
+        }),
+    });
+    goTo("/connect/server/request/scr_1");
+
+    const { container } = render(<ServerConnectionHandoff />);
+    await screen.findByText("That server was unreachable.");
+
+    expect(container.textContent).toContain("may work");
+  });
+
+  it("withholds it when the backend says the failure will not", async () => {
     mockApi({
       "/state": () =>
         stateBody({
@@ -167,10 +200,29 @@ describe("what the page shows", () => {
     const { container } = render(<ServerConnectionHandoff />);
     await screen.findByText("That address is not allowed.");
 
-    // `errorRetryable` is the backend's judgement. Offering "try again" for a
-    // refusal that will never clear wastes the user's time and misdescribes
-    // what happened.
+    // `errorRetryable` is the backend's judgement, and both directions have to
+    // be pinned: a page that always shows the hint, or never does, passes a
+    // one-sided test either way.
     expect(container.textContent).not.toContain("may work");
+  });
+
+  it("shows the cancelled state without a call it cannot authenticate", async () => {
+    const calls = mockApi({
+      "/state": () => stateBody(),
+      "/cancel": () => ({ status: "cancelled" }),
+    });
+    goTo("/connect/server/request/scr_1");
+
+    render(<ServerConnectionHandoff />);
+    fireEvent.click(await screen.findByText("Cancel this request"));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Cancel this request")).not.toBeInTheDocument()
+    );
+    // `/cancel` clears the continuation cookie — that is the point. A follow-up
+    // `/state` would have nothing to authenticate with, come back 401, and show
+    // an error for an action that worked.
+    expect(calls.filter((c) => c.path === "/state")).toHaveLength(1);
   });
 });
 
@@ -242,7 +294,7 @@ describe("returning from the authorization server", () => {
       }),
       "/state": () => stateBody({ status: "validating" }),
     });
-    rememberPendingAuthorization("scr_1");
+    rememberPendingAuthorization("scr_1", AUTH_URL);
     goTo("/oauth/callback", "?code=auth-code&state=st&iss=https://as.example");
 
     render(<ServerConnectionHandoff />);
@@ -275,7 +327,7 @@ describe("returning from the authorization server", () => {
       }),
       "/state": () => stateBody({ status: "awaiting_authorization" }),
     });
-    rememberPendingAuthorization("scr_1");
+    rememberPendingAuthorization("scr_1", AUTH_URL);
     goTo(
       "/oauth/callback",
       "?error=access_denied&error_description=User+declined&state=st"

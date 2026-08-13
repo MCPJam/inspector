@@ -16,14 +16,22 @@
  * cannot read the continuation cookie — that is the point of it being
  * HttpOnly — so when the authorization server redirects to `/oauth/callback`,
  * nothing in the URL says which flow that callback belongs to. The marker
- * answers only that question. It holds a request id, which is already public,
- * and the actual authority for finishing the flow is the cookie the browser
- * sends automatically. Putting anything else in here would move a secret into
- * storage that any script on this origin can read.
+ * answers only that question. It holds a request id and the `state` this
+ * attempt expects, both of which already travel in the open — the request id is
+ * printed in tool output, and `state` goes to the provider in a query string.
+ * The actual authority for finishing the flow is the cookie the browser sends
+ * automatically. Putting anything else in here would move a secret into storage
+ * that any script on this origin can read.
+ *
+ * IT MATCHES ON `state`, NOT MERELY ON EXISTENCE. `/oauth/callback` is shared
+ * with the Inspector's own OAuth flow. A marker that claimed any callback would
+ * swallow that flow's callbacks in the same tab the moment someone abandoned a
+ * handoff — a bug with no error and no obvious cause. Requiring the returning
+ * `state` to be the one this attempt sent makes the branch unambiguous, and the
+ * expiry means an abandoned attempt stops claiming anything at all.
  *
  * `sessionStorage`, not `localStorage`: the flow lives inside one tab's visit,
- * and a marker that outlived the tab would send a later, unrelated
- * `/oauth/callback` into the connection branch.
+ * and a marker that outlived the tab would follow the user into unrelated work.
  */
 
 const TOKEN_PATH = /^\/connect\/server\/([A-Za-z0-9_-]+)\/?$/;
@@ -62,9 +70,35 @@ export function handoffRequestPath(requestId: string): string {
   return `/connect/server/request/${requestId}`;
 }
 
-export function rememberPendingAuthorization(requestId: string): void {
+/** An attempt cannot outlive the request it belongs to, and the backend caps
+ * that at an hour. A marker past this point is abandoned, and abandoned markers
+ * must stop claiming callbacks. */
+const MARKER_TTL_MS = 60 * 60 * 1000;
+
+export interface PendingAuthorization {
+  requestId: string;
+  /** The `state` this attempt sent, read back out of the authorization URL. */
+  state: string;
+  expiresAt: number;
+}
+
+export function rememberPendingAuthorization(
+  requestId: string,
+  authorizationUrl: string,
+  now: number = Date.now()
+): void {
+  let state: string | null = null;
   try {
-    sessionStorage.setItem(MARKER_KEY, requestId);
+    state = new URL(authorizationUrl).searchParams.get("state");
+  } catch {
+    state = null;
+  }
+  if (!state) return;
+  try {
+    sessionStorage.setItem(
+      MARKER_KEY,
+      JSON.stringify({ requestId, state, expiresAt: now + MARKER_TTL_MS })
+    );
   } catch {
     // Storage can be unavailable (private mode, a blocked partition). The flow
     // still completes — the callback simply cannot route itself back, and the
@@ -73,13 +107,37 @@ export function rememberPendingAuthorization(requestId: string): void {
   }
 }
 
-export function readPendingAuthorization(): string | null {
+export function readPendingAuthorization(
+  now: number = Date.now()
+): PendingAuthorization | null {
   try {
-    const value = sessionStorage.getItem(MARKER_KEY)?.trim();
-    return value ? value : null;
+    const raw = sessionStorage.getItem(MARKER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingAuthorization>;
+    if (
+      typeof parsed?.requestId !== "string" ||
+      typeof parsed?.state !== "string" ||
+      typeof parsed?.expiresAt !== "number"
+    ) {
+      return null;
+    }
+    if (parsed.expiresAt <= now) return null;
+    return parsed as PendingAuthorization;
   } catch {
+    // Unreadable storage, or a marker written by an older build. Either way it
+    // is not a marker this code can act on, and guessing would be worse than
+    // letting the callback fall through to the flow that does understand it.
     return null;
   }
+}
+
+/** Whether this callback is the one that marker is waiting for. Existence alone
+ * is not enough — see the module docblock. */
+export function callbackMatchesPending(
+  pending: PendingAuthorization | null,
+  callback: CallbackParams | null
+): boolean {
+  return Boolean(pending && callback && pending.state === callback.state);
 }
 
 export function clearPendingAuthorization(): void {
