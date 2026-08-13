@@ -1,4 +1,5 @@
 import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -255,6 +256,23 @@ function createHostedClientSecretResolver({
 }
 
 /**
+ * Step failures that stop the flow but carry no signal for us.
+ *
+ * The RFC 8414 `issuer` check rejects a metadata document the server under test
+ * built wrong. Every machine enforces it, yet only 2026-07-28 reads the field
+ * afterwards (it compares the issuer to the authorization-server URL and to the
+ * callback `iss`), so on the older three the report is another project's spec
+ * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
+ * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
+ *
+ * The SDK owns the message and exports it, so matching here cannot drift out of
+ * sync with what the machines actually throw.
+ */
+const UNREPORTED_STEP_FAILURES = new Set([
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+]);
+
+/**
  * Wrap the caller's `updateState` so every NEW step failure is reported.
  *
  * This is the only reliable hook: the SDK state machine catches its own step
@@ -269,7 +287,7 @@ function createHostedClientSecretResolver({
  *
  * `Warning: `-prefixed messages are skipped entirely — those are advisories the
  * flow recovers from (an optional metadata field the server left out), not step
- * failures.
+ * failures. So are the messages in `UNREPORTED_STEP_FAILURES`.
  */
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
@@ -279,9 +297,12 @@ function withStepFailureReporting(
 
   return (updates) => {
     const error = updates.error;
-    if (typeof error === "string" && error.startsWith("Warning: ")) {
-      // Advisory only: the flow continues and the message is already on screen.
-      // Reporting these buries real step failures under server-under-test nits.
+    if (
+      typeof error === "string" &&
+      (error.startsWith("Warning: ") || UNREPORTED_STEP_FAILURES.has(error))
+    ) {
+      // Not ours to act on: the message is already on screen, and reporting
+      // these buries real step failures under server-under-test nits.
       // Still counts as replacing the previous message, so a failure that
       // recurs after it is a new failure — same as an explicit clear below.
       lastReportedError = undefined;

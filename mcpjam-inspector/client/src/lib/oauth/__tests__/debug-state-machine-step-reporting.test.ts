@@ -15,6 +15,8 @@ vi.mock("@mcpjam/sdk/browser", async (importOriginal) => {
   return { ...actual, createOAuthStateMachine };
 });
 
+import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "@mcpjam/sdk/browser";
+
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
 
 /**
@@ -119,6 +121,22 @@ describe("OAuth debugger step-failure reporting", () => {
 
     expect(reportCaught).not.toHaveBeenCalled();
     expect(updateState).toHaveBeenCalledWith(advisory);
+  });
+
+  it("ignores a metadata document missing the RFC 8414 issuer", () => {
+    // Stops the flow, but it is the server under test violating RFC 8414 and
+    // nothing we act on — it must stay on screen without reaching Sentry.
+    // The message comes from the SDK export the machines throw, so a rephrasing
+    // there cannot leave the adapter matching on stale text.
+    const { wrapped, updateState } = wrappedUpdateState();
+
+    const serverFault = {
+      error: AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+    };
+    wrapped(serverFault);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFault);
   });
 
   it("still reports a real failure that follows a warning", () => {
