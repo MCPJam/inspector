@@ -12,6 +12,8 @@ Because that text is chosen by the server under test — and MCPJam is routinely
 
 The redactor also owns the 300-character cap that keeps an HTML error page from becoming the message, and the extractor deliberately returns uncapped text. Capping first is unsafe: `sanitizeTraceErrorMessage` closes an unterminated JSON value or URL userinfo only when it is the one that cut the text, so a reason cut beforehand looks whole to it, and a credential whose closing quote or `@` sat just past the cap keeps its raw prefix. Its own `MAX_SCANNED` window still bounds the work. `trace.ts` shares the extractor and sanitizes its own result the same way, so registration failures gain the same guard.
 
+Because the redactor is what bounds these strings, `trace.ts` now caps a derived step error itself in raw-history mode (`sanitize: false`), which skips redaction: that error is drawn from the response body, and a gateway's error page would otherwise become a step's one-line error in full. The untruncated body stays on the HTTP history entry, which is where raw mode means to keep it.
+
 `trace.ts` already had this extraction for registration failures and now shares it, gaining the plain-text case it lacked — that path previously fell through to `HTTP 400 Bad Request`, discarding the same text for the same reason.
 
 All four protocol machines (2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28) end on this step and now report it identically, through `describeAuthenticatedRequestFailure`.

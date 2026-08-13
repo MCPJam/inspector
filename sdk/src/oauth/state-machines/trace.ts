@@ -4,6 +4,7 @@ import {
   getStepInfo,
 } from "./shared/step-metadata.js";
 import {
+  MAX_REPORTED,
   sanitizeOAuthHeaders,
   sanitizeOAuthTraceValue,
   sanitizeOAuthUrl,
@@ -309,9 +310,13 @@ export function projectOAuthTraceSnapshot(input: {
     }
     const entryError = inferHttpHistoryEntryError(entry);
     if (entryError) {
+      // Raw mode skips the redactor, which is also what bounds this string.
+      // The error is derived from a response body and can be an HTML error
+      // page in full; a step's error is a line, and the untruncated body is
+      // already on `record.details.response` right above.
       record.error = sanitizeTraces
         ? sanitizeTraceErrorMessage(entryError)
-        : entryError;
+        : entryError.slice(0, MAX_REPORTED);
     }
   }
 

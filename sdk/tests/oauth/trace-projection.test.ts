@@ -241,4 +241,44 @@ describe("OAuth trace projection", () => {
 
     expect(snapshot.error).toBe(raw);
   });
+
+  // Raw mode skips the redactor, which is also what bounds a derived step
+  // error. That error now comes from the response body, so an error page would
+  // otherwise land in a step's one-line error in full.
+  it("bounds a derived step error when sanitize is false, keeping the body in history", () => {
+    const page = `<!doctype html><title>Gateway</title>${"x".repeat(50_000)}`;
+
+    const snapshot = projectOAuthTraceSnapshot({
+      state: {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "request_client_registration",
+        httpHistory: [
+          {
+            step: "request_client_registration",
+            timestamp: 1_000,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/register",
+              headers: {},
+              body: { client_name: "MCPJam Inspector" },
+            },
+            response: {
+              status: 502,
+              statusText: "Bad Gateway",
+              headers: { "content-type": "text/html" },
+              body: page,
+            },
+          },
+        ],
+        infoLogs: [],
+      },
+      sanitize: false,
+    });
+
+    const step = snapshot.steps.find(
+      (entry) => entry.step === "request_client_registration",
+    );
+    expect(step?.error?.length).toBe(500);
+    expect(snapshot.httpHistory[0]?.response?.body).toBe(page);
+  });
 });

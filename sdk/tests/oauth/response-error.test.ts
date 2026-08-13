@@ -156,7 +156,9 @@ describe("describeAuthenticatedRequestFailure", () => {
       body: { message: `${filler}"client_secret": "${secret}" rejected` },
     });
 
-    expect(message).not.toContain("SECRET0123456789");
+    // The bare prefix, not a long slice of it: a regression that leaks a
+    // shorter fragment is still a leak, and a longer needle would miss it.
+    expect(message).not.toContain("SECRET");
   });
 
   it("redacts URL userinfo whose closing @ falls past the reason cap", () => {
@@ -169,6 +171,6 @@ describe("describeAuthenticatedRequestFailure", () => {
       body: `${filler}https://user:${password}@example.test/token failed`,
     });
 
-    expect(message).not.toContain("PASSWORD0123456789");
+    expect(message).not.toContain("PASSWORD");
   });
 });
