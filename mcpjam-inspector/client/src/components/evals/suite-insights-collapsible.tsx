@@ -7,11 +7,8 @@ import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { useRunGroupQuality } from "./use-run-group-quality";
 import { GroupFindingList } from "./run-group-diagnosis-presentation";
-import {
-  insightHighlightCompactLabelClass,
-  insightHighlightCompactSectionClass,
-  insightHighlightNarrativeClass,
-} from "./insight-highlight-chrome";
+import { InsightBannerShell } from "./insight-banner-shell";
+import { insightHighlightNarrativeClass } from "./insight-highlight-chrome";
 
 /** A selected run group — when present, the banner shows cross-host diagnosis. */
 export interface InsightGroupScope {
@@ -61,29 +58,6 @@ function describeRunInsightsError(code: string | undefined): string {
 
 function summaryNeedsExpand(text: string): boolean {
   return text.replace(/\s+/g, " ").trim().length > SUMMARY_CLAMP_CHARS;
-}
-
-/** Shared banner chrome: sparkle + label on the left, body on the right. */
-function InsightBannerShell({
-  label,
-  children,
-  trailing,
-}: {
-  label: string;
-  children: ReactNode;
-  trailing?: ReactNode;
-}) {
-  return (
-    <section className={insightHighlightCompactSectionClass}>
-      <div className="flex items-start gap-2.5">
-        <div className="flex shrink-0 items-center pt-0.5">
-          <span className={insightHighlightCompactLabelClass}>{label}</span>
-        </div>
-        {children}
-        {trailing}
-      </div>
-    </section>
-  );
 }
 
 /**
