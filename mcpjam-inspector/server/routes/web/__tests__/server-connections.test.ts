@@ -26,7 +26,12 @@ const backendCalls = vi.hoisted(() => ({
   selectProject: vi.fn(),
   ensureDefaultProject: vi.fn(),
   cancelFromHandoff: vi.fn(),
+  fetchAuthorizationContext: vi.fn(),
+  startAuthorizationAttempt: vi.fn(),
+  completeAuthorizationAttempt: vi.fn(),
 }));
+
+const authorize = vi.hoisted(() => ({ prepareAuthorization: vi.fn() }));
 
 const authkit = vi.hoisted(() => ({ verifyAuthKitToken: vi.fn() }));
 const identity = vi.hoisted(() => ({ resolveUserByExternalId: vi.fn() }));
@@ -36,6 +41,13 @@ vi.mock("../../../services/server-connections-backend.js", async () => {
     typeof import("../../../services/server-connections-backend.js")
   >("../../../services/server-connections-backend.js");
   return { ...actual, ...backendCalls };
+});
+
+vi.mock("../../../services/server-connection-authorize.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/server-connection-authorize.js")
+  >("../../../services/server-connection-authorize.js");
+  return { ...actual, ...authorize };
 });
 
 vi.mock("../../../services/authkit-jwt.js", async () => {
@@ -58,9 +70,14 @@ const { ServerConnectionBackendError } = await import(
 const { AuthKitVerificationError } = await import(
   "../../../services/authkit-jwt.js"
 );
-const { default: serverConnectionsWeb } = await import("../server-connections.js");
+const { default: serverConnectionsWeb } = await import(
+  "../server-connections.js"
+);
 const { resetServerConnectionClaimRateLimitForTests } = await import(
   "../../../middleware/server-connection-claim-rate-limit.js"
+);
+const { AuthorizationPrepareError } = await import(
+  "../../../services/server-connection-authorize.js"
 );
 const { mapRuntimeError, webError } = await import("../errors.js");
 
@@ -208,7 +225,9 @@ describe("claim", () => {
 
   it("forwards no actor when the identity service is down", async () => {
     authkit.verifyAuthKitToken.mockResolvedValue({ sub: "workos_user_1" });
-    identity.resolveUserByExternalId.mockRejectedValue(new Error("convex down"));
+    identity.resolveUserByExternalId.mockRejectedValue(
+      new Error("convex down")
+    );
 
     const res = await post(
       "/claim",
@@ -312,9 +331,9 @@ describe("claim rate limiting", () => {
     expect((await claim(app, ip)).status).toBe(429);
 
     // A different address keeps its own budget.
-    expect(
-      (await claim(app, { "x-real-ip": "198.51.100.4" })).status
-    ).toBe(200);
+    expect((await claim(app, { "x-real-ip": "198.51.100.4" })).status).toBe(
+      200
+    );
 
     mod.resetServerConnectionClaimRateLimitForTests();
   });
@@ -457,14 +476,16 @@ describe("the steps after the claim", () => {
       new ServerConnectionBackendError("already chosen", 409)
     );
     expect(
-      (await post("/select-project", { projectId: "proj_1" }, withCookie)).status
+      (await post("/select-project", { projectId: "proj_1" }, withCookie))
+        .status
     ).toBe(409);
 
     backendCalls.selectProject.mockRejectedValue(
       new ServerConnectionBackendError("gone", 410)
     );
     expect(
-      (await post("/select-project", { projectId: "proj_1" }, withCookie)).status
+      (await post("/select-project", { projectId: "proj_1" }, withCookie))
+        .status
     ).toBe(404);
   });
 
@@ -484,5 +505,210 @@ describe("the steps after the claim", () => {
     expect(backendCalls.ensureDefaultProject).toHaveBeenCalledWith(
       "continuation-abc"
     );
+  });
+});
+
+/**
+ * The authorization step.
+ *
+ * One assertion here matters more than the rest: what comes back in the
+ * response body. The route prepares a PKCE verifier and a client secret and
+ * sends them to Convex; if either ever appeared in the JSON the page receives,
+ * PKCE would be proving nothing and an XSS on this origin could pair a stolen
+ * code with the verifier to redeem it. So the shape of the response is pinned
+ * exactly, not merely checked for the field it should contain.
+ */
+describe("authorize", () => {
+  const prepared = {
+    authorizationUrl: "https://auth.example.com/authorize?client_id=cid",
+    codeVerifier: "verifier-secret",
+    state: "state-abc",
+    clientId: "cid",
+    clientSecret: "client-secret-value",
+    issuer: "https://auth.example.com",
+    oauthResourceUrl: "https://target.example.com/mcp",
+  };
+
+  beforeEach(() => {
+    backendCalls.fetchAuthorizationContext.mockResolvedValue({
+      requestId: "scr_1",
+      serverUrl: "https://target.example.com/mcp?key=secret-query-value",
+      serverId: "srv_1",
+      projectId: "proj_1",
+      authorizationServerUrl: null,
+      registrationMode: null,
+      requestedName: "Target",
+    });
+    authorize.prepareAuthorization.mockResolvedValue(prepared);
+    backendCalls.startAuthorizationAttempt.mockResolvedValue({
+      status: "authorizing",
+    });
+  });
+
+  it("returns the authorization url and nothing else", async () => {
+    const res = await post("/authorize", {}, withCookie);
+    const raw = await res.clone().text();
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      authorizationUrl: prepared.authorizationUrl,
+    });
+    // Named individually rather than trusting the deep-equal above, because a
+    // future field added to the response would still pass `toEqual` if someone
+    // updated the expectation without thinking about what it now carries.
+    expect(raw).not.toContain("verifier-secret");
+    expect(raw).not.toContain("client-secret-value");
+    // The operational URL's query can BE the credential; the page gets
+    // `displayUrl` and never this.
+    expect(raw).not.toContain("secret-query-value");
+  });
+
+  it("hands the verifier to convex, not to the browser", async () => {
+    await post("/authorize", {}, withCookie);
+
+    expect(backendCalls.startAuthorizationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        continuationToken: "continuation-abc",
+        codeVerifier: "verifier-secret",
+        clientSecret: "client-secret-value",
+        state: "state-abc",
+      })
+    );
+  });
+
+  it("redirects back to the origin the cookie is pinned to", async () => {
+    await post("/authorize", {}, withCookie);
+
+    // `__Host-` pins the continuation cookie to one origin. A redirect URI
+    // pointing anywhere else returns the user to a page that cannot read it.
+    const redirectUri = `${ORIGIN}/oauth/callback`;
+    expect(authorize.prepareAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({ redirectUri })
+    );
+    expect(backendCalls.startAuthorizationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ redirectUri })
+    );
+  });
+
+  it("refuses without the continuation cookie", async () => {
+    const res = await post("/authorize", {});
+
+    expect(res.status).toBe(401);
+    expect(authorize.prepareAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cross-origin post", async () => {
+    const res = await post(
+      "/authorize",
+      {},
+      {
+        ...withCookie,
+        origin: "https://evil.example",
+      }
+    );
+
+    expect(res.status).toBe(403);
+    expect(backendCalls.startAuthorizationAttempt).not.toHaveBeenCalled();
+  });
+
+  it("reports a blocked target as a refusal, not as an outage", async () => {
+    authorize.prepareAuthorization.mockRejectedValue(
+      new AuthorizationPrepareError("blocked", "URL_NOT_ALLOWED")
+    );
+
+    // 4xx, not 5xx: a blocked address will never work, and a page that offers
+    // "try again" on it is lying to the user.
+    expect((await post("/authorize", {}, withCookie)).status).toBe(400);
+
+    authorize.prepareAuthorization.mockRejectedValue(
+      new AuthorizationPrepareError("unreachable", "UNREACHABLE")
+    );
+    expect((await post("/authorize", {}, withCookie)).status).toBe(502);
+  });
+
+  it("does not spend an attempt when preparation failed", async () => {
+    authorize.prepareAuthorization.mockRejectedValue(
+      new AuthorizationPrepareError("unreachable", "UNREACHABLE")
+    );
+
+    await post("/authorize", {}, withCookie);
+
+    // The attempt counter increments inside `startOAuthAttempt`. Calling it
+    // after a failed preparation would burn one of three attempts on a consent
+    // screen the user never saw.
+    expect(backendCalls.startAuthorizationAttempt).not.toHaveBeenCalled();
+  });
+});
+
+describe("authorize/complete", () => {
+  beforeEach(() => {
+    backendCalls.completeAuthorizationAttempt.mockResolvedValue({
+      requestId: "scr_1",
+      status: "validating",
+    });
+  });
+
+  it("forwards the callback under the cookie's authority", async () => {
+    const res = await post(
+      "/authorize/complete",
+      {
+        state: "state-abc",
+        code: "auth-code",
+        iss: "https://auth.example.com",
+      },
+      withCookie
+    );
+
+    expect(res.status).toBe(200);
+    expect(backendCalls.completeAuthorizationAttempt).toHaveBeenCalledWith({
+      continuationToken: "continuation-abc",
+      state: "state-abc",
+      code: "auth-code",
+      iss: "https://auth.example.com",
+    });
+  });
+
+  it("carries a denial through rather than treating it as a failure", async () => {
+    backendCalls.completeAuthorizationAttempt.mockResolvedValue({
+      requestId: "scr_1",
+      status: "awaiting_authorization",
+    });
+
+    const res = await post(
+      "/authorize/complete",
+      { state: "state-abc", error: "access_denied" },
+      withCookie
+    );
+
+    // A user who declines consent gets a 200 and a status to render, not an
+    // error page: the request is still alive and still has attempts.
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      requestId: "scr_1",
+      status: "awaiting_authorization",
+    });
+  });
+
+  it("refuses a body carrying anything it did not ask for", async () => {
+    const res = await post(
+      "/authorize/complete",
+      { state: "state-abc", code: "auth-code", continuationToken: "attacker" },
+      withCookie
+    );
+
+    // The cookie is the only source of the continuation token. A body field
+    // that silently overrode it would undo the reason the cookie is HttpOnly.
+    expect(res.status).toBe(400);
+    expect(backendCalls.completeAuthorizationAttempt).not.toHaveBeenCalled();
+  });
+
+  it("refuses without the continuation cookie", async () => {
+    const res = await post("/authorize/complete", {
+      state: "state-abc",
+      code: "auth-code",
+    });
+
+    expect(res.status).toBe(401);
+    expect(backendCalls.completeAuthorizationAttempt).not.toHaveBeenCalled();
   });
 });

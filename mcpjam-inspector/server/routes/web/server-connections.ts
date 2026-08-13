@@ -27,11 +27,18 @@ import { z } from "zod";
 import {
   cancelFromHandoff,
   claimHandoff,
+  completeAuthorizationAttempt,
   ensureDefaultProject,
+  fetchAuthorizationContext,
   fetchHandoffState,
   selectProject,
   ServerConnectionBackendError,
+  startAuthorizationAttempt,
 } from "../../services/server-connections-backend.js";
+import {
+  AuthorizationPrepareError,
+  prepareAuthorization,
+} from "../../services/server-connection-authorize.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "./errors.js";
 import { readCookie, setCookie, clearCookie } from "./shared/cookies.js";
 import { resolveOptionalActor } from "../../middleware/optional-actor.js";
@@ -259,6 +266,113 @@ serverConnections.post("/create-project", async (c) => {
   const token = requireContinuation(c);
   try {
     const result = await ensureDefaultProject(token);
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    throw translate(error);
+  }
+});
+
+/**
+ * The redirect URI this deployment hands to an authorization server.
+ *
+ * Derived from the request's own origin rather than from configuration, and
+ * that is load-bearing: the callback has to land somewhere the `__Host-`
+ * continuation cookie will be sent, and `__Host-` pins the cookie to exactly
+ * one origin. A configured value that disagreed with the origin the user is
+ * actually on would send them back to a page with no cookie and no way to
+ * explain why.
+ */
+function callbackUriFor(c: { req: { url: string } }): string {
+  return new URL("/oauth/callback", c.req.url).toString();
+}
+
+const completeAuthorizationSchema = z.strictObject({
+  state: z.string().trim().min(1),
+  code: z.string().trim().min(1).optional(),
+  iss: z.string().trim().min(1).optional(),
+  error: z.string().trim().min(1).optional(),
+  errorDescription: z.string().trim().min(1).max(300).optional(),
+});
+
+/** Map a preparation failure onto something the page can say out loud. The
+ * distinction that matters is refusal versus outage: a blocked target will
+ * never work and a "try again" button would be a lie. */
+function translatePrepare(error: unknown): WebRouteError {
+  if (error instanceof AuthorizationPrepareError) {
+    if (error.code === "URL_NOT_ALLOWED") {
+      return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+    }
+    return new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, error.message);
+  }
+  return translate(error);
+}
+
+/**
+ * POST /api/web/server-connections/authorize
+ *
+ * Prepare one authorization and hand the page a URL to open.
+ *
+ * The response contains the authorization URL and NOTHING ELSE. The PKCE
+ * verifier generated alongside it goes straight to Convex — a verifier the
+ * browser could read is a verifier an XSS on this origin could pair with a
+ * stolen code, which is the whole property PKCE exists to provide.
+ */
+serverConnections.post("/authorize", async (c) => {
+  assertSameOrigin(c);
+  const token = requireContinuation(c);
+  try {
+    const context = await fetchAuthorizationContext(token);
+    const redirectUri = callbackUriFor(c);
+    const prepared = await prepareAuthorization({
+      serverUrl: context.serverUrl,
+      redirectUri,
+      requestedName: context.requestedName,
+    });
+
+    await startAuthorizationAttempt({
+      continuationToken: token,
+      clientId: prepared.clientId,
+      clientSecret: prepared.clientSecret,
+      codeVerifier: prepared.codeVerifier,
+      redirectUri,
+      state: prepared.state,
+      issuer: prepared.issuer,
+      oauthResourceUrl: prepared.oauthResourceUrl,
+    });
+
+    return c.json({ authorizationUrl: prepared.authorizationUrl }, 200, {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    throw translatePrepare(error);
+  }
+});
+
+/**
+ * POST /api/web/server-connections/authorize/complete
+ *
+ * Redeem the callback. The page posts what came back in the query string; the
+ * exchange itself happens in Convex, where the verifier and the client secret
+ * are, so no token for the target server ever passes through this process.
+ */
+serverConnections.post("/authorize/complete", async (c) => {
+  assertSameOrigin(c);
+  const token = requireContinuation(c);
+  const body = parseWithSchema(
+    completeAuthorizationSchema,
+    await c.req.json().catch(() => {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid JSON body"
+      );
+    })
+  );
+  try {
+    const result = await completeAuthorizationAttempt({
+      continuationToken: token,
+      ...body,
+    });
     return c.json(result, 200, { "cache-control": "no-store" });
   } catch (error) {
     throw translate(error);

@@ -278,3 +278,65 @@ export async function cancelFromHandoff(
 ): Promise<{ status: string }> {
   return await callBackend("/cancel", { continuationToken });
 }
+
+// ── Browser authorization channel ──────────────────────────────────────────
+
+export interface AuthorizationContext {
+  requestId: string;
+  /** THE OPERATIONAL URL. Its query string can be the credential itself, which
+   * is why every browser-facing payload carries `displayUrl` instead. This
+   * value exists to be handed to the SSRF-guarded transport and to nothing
+   * else — it must not be returned from a web route, logged, or attached to an
+   * error. */
+  serverUrl: string;
+  serverId: string;
+  projectId: string;
+  authorizationServerUrl: string | null;
+  registrationMode: string | null;
+  requestedName: string | null;
+}
+
+export async function fetchAuthorizationContext(
+  continuationToken: string
+): Promise<AuthorizationContext> {
+  return await callBackend<{ ok: true } & AuthorizationContext>(
+    "/oauth/context",
+    { continuationToken }
+  );
+}
+
+export interface StartAuthorizationInput {
+  continuationToken: string;
+  clientId: string;
+  clientSecret?: string;
+  /** Goes in, never comes back. The PKCE verifier is the one value that must
+   * survive the round trip through the authorization server without existing
+   * anywhere the browser can read it. */
+  codeVerifier: string;
+  redirectUri: string;
+  state: string;
+  protocolVersion?: string;
+  issuer?: string;
+  oauthResourceUrl?: string;
+}
+
+export async function startAuthorizationAttempt(
+  input: StartAuthorizationInput
+): Promise<{ status: string }> {
+  return await callBackend("/oauth/start", { ...input });
+}
+
+export interface CompleteAuthorizationInput {
+  continuationToken: string;
+  state: string;
+  code?: string;
+  iss?: string;
+  error?: string;
+  errorDescription?: string;
+}
+
+export async function completeAuthorizationAttempt(
+  input: CompleteAuthorizationInput
+): Promise<{ requestId: string; status: string }> {
+  return await callBackend("/oauth/complete", { ...input });
+}
