@@ -17,7 +17,9 @@
  * fails here instead of silently downgrading a refusal.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import { AddressInfo } from "node:net";
 import { createPinnedFetch } from "../pinned-fetch.js";
 import {
   BlockedEgressTargetError,
@@ -168,6 +170,154 @@ describe("every hop's scheme is checked, not just the last one", () => {
       )
     ).rejects.toBeInstanceOf(BlockedEgressTargetError);
   });
+});
+
+describe("the redirect method rewrite is Fetch's, exactly", () => {
+  /**
+   * This adapter follows redirects ITSELF, one `executeOAuthProxy` call per hop,
+   * so the method rewrite the transport would have done is now this loop's job.
+   * A rewrite that is merely close is a silently different request than a plain
+   * `fetch` would have sent: too broad and a 301 turns a PUT into a GET, so the
+   * write never happens and the probe reports success; too narrow and an
+   * initialize POST is replayed into a body somewhere the caller never
+   * addressed.
+   *
+   * A real loopback server is the only honest way to observe this — the method
+   * that matters is the one that ARRIVES at hop two, which no amount of mocking
+   * the transport would exercise. The `allowLoopback` carve-out is what makes it
+   * reachable, and the test above proves that carve-out reaches the socket.
+   */
+  let server: Server;
+  let origin: string;
+  let status = 302;
+  let landed: { method: string; body: string; hasContentType: boolean } | null =
+    null;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      if (req.url === "/start") {
+        res.writeHead(status, { location: "/end" });
+        res.end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        landed = {
+          method: req.method ?? "",
+          body: Buffer.concat(chunks).toString(),
+          hasContentType: req.headers["content-type"] !== undefined,
+        };
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("{}");
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve)
+    );
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  });
+
+  /** Drives one request and returns what the FINAL hop actually received. */
+  async function sent(
+    path: "/start" | "/end",
+    redirectStatus: number,
+    method: string,
+    body?: string
+  ) {
+    status = redirectStatus;
+    landed = null;
+    await createPinnedFetch({ allowLoopback: true, timeoutMs: 5_000 })(
+      `${origin}${path}`,
+      {
+        method,
+        ...(body === undefined
+          ? {}
+          : { body, headers: { "content-type": "application/json" } }),
+      }
+    );
+    return landed;
+  }
+
+  const redirected = (redirectStatus: number, method: string, body?: string) =>
+    sent("/start", redirectStatus, method, body);
+
+  it.each([301, 302])("rewrites POST to GET on %i", async (redirectStatus) => {
+    const hop = await redirected(redirectStatus, "POST", '{"probe":1}');
+
+    expect(hop?.method).toBe("GET");
+    expect(hop?.body).toBe("");
+    // The body headers have to go with the body, or hop two advertises a
+    // content-type for a payload it no longer carries.
+    expect(hop?.hasContentType).toBe(false);
+  });
+
+  it.each([
+    ["PUT", 301],
+    ["PUT", 302],
+    ["PATCH", 301],
+    ["DELETE", 302],
+  ])("preserves %s on %i", async (method, redirectStatus) => {
+    // The regression: an earlier revision rewrote every non-GET/HEAD method
+    // here, so a redirected PUT arrived as a GET and the write silently became
+    // a read. Fetch rewrites POST and only POST for 301/302 — which is also
+    // exactly what the transport does one layer down, at `prepareRedirect`.
+    const hop = await redirected(redirectStatus, method, '{"probe":1}');
+
+    expect(hop?.method).toBe(method);
+  });
+
+  it("never carries a non-POST body, at any hop", async () => {
+    // Read this before believing the case above proves too little. The
+    // transport encodes a body for POST ONLY (`encodeRequestBody` returns
+    // undefined for every other method), so a PUT arrives bodiless whether or
+    // not a redirect happened — the direct call is the control that shows it.
+    // Nothing is being dropped BY THE REDIRECT, which is the property under
+    // test; the missing body is a constraint of the layer underneath.
+    //
+    // It costs this adapter nothing today: its scope is probing MCP servers,
+    // which is POST `initialize` and GET. If a body-carrying PUT is ever
+    // needed here, the fix belongs in the SDK, and this test is where the
+    // constraint is written down.
+    const direct = await sent("/end", 302, "PUT", '{"probe":1}');
+    expect(direct?.method).toBe("PUT");
+    expect(direct?.body).toBe("");
+
+    const viaRedirect = await redirected(302, "PUT", '{"probe":1}');
+    expect(viaRedirect?.body).toBe(direct?.body);
+  });
+
+  it("rewrites a non-GET/HEAD method to GET on 303", async () => {
+    const hop = await redirected(303, "POST", '{"probe":1}');
+
+    expect(hop?.method).toBe("GET");
+    expect(hop?.body).toBe("");
+  });
+
+  it("leaves HEAD alone on 303", async () => {
+    // The other half of the regression. 303 rewrites everything EXCEPT GET and
+    // HEAD; turning a HEAD into a GET makes the probe pull a response body the
+    // caller deliberately did not ask for.
+    const hop = await redirected(303, "HEAD");
+
+    expect(hop?.method).toBe("HEAD");
+  });
+
+  it.each([307, 308])(
+    "preserves both method and body on %i",
+    async (redirectStatus) => {
+      const hop = await redirected(redirectStatus, "POST", '{"probe":1}');
+
+      expect(hop?.method).toBe("POST");
+      expect(hop?.body).toBe('{"probe":1}');
+    }
+  );
 });
 
 describe("a refusal does not describe the internal network", () => {

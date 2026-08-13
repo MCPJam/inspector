@@ -40,20 +40,65 @@ function addPlatformOptions(command: Command): Command {
 }
 
 /**
- * The platform options for the command being run, INCLUDING the ones its
- * ancestors declared.
+ * The one place `--api-key`, `--api-url` and `--project` are resolved.
  *
- * `addPlatformOptions` is applied to the `servers` group as well as to each of
- * its subcommands, and Commander stores a flag on the command that declares it
- * nearest the top — so `--api-key` typed after `projects server connect` lands
- * on `servers`, and the subcommand's own `options` object never sees it. The
- * symptom is "Not logged in" while holding a perfectly good key.
+ * READ THIS BEFORE USING `options.x` FOR ANY OF THE THREE. Each is declared on
+ * the `servers` group AND on its subcommands, and Commander does not give the
+ * subcommand a copy: whichever command declares a flag NEAREST THE TOP consumes
+ * it, wherever it appears on the line. `projects server connect --project alpha`
+ * stores `alpha` on `servers`, and `connect`'s own `options.project` is
+ * `undefined` — so reading it there silently ignores what the caller typed and
+ * falls back to the default project. That is not a hypothetical; it is what the
+ * connect command did.
  *
- * `getGlobalOptions` already reads `optsWithGlobals()` for exactly this reason;
- * platform options need the same treatment and did not have it.
+ * The same mechanism makes a `requiredOption` on such a subcommand impossible
+ * to satisfy — the group eats the value, then the subcommand fails the parse
+ * for not having received it — which is why the duplicate declarations here are
+ * plain `option()` and required-ness is checked in the action instead.
+ *
+ * Ancestors are merged first and the action command last, so the nearest
+ * declaration wins. Commander's own `optsWithGlobals()` reduces the other way
+ * — its source comments the loop "globals overwrite locals" — which is the
+ * wrong precedence for a flag the caller repeated closer to the command they
+ * were running. Undefined values are skipped so a future Commander that
+ * materializes an unset flag as `undefined` cannot erase a real value.
  */
 function platformOptionsOf(command: Command): PlatformOptions {
-  return command.optsWithGlobals() as PlatformOptions;
+  const nearestFirst: Command[] = [];
+  for (
+    let current: Command | null = command;
+    current !== null;
+    current = current.parent
+  ) {
+    nearestFirst.push(current);
+  }
+
+  const merged: Record<string, unknown> = {};
+  for (const cmd of nearestFirst.reverse()) {
+    for (const [key, value] of Object.entries(cmd.opts())) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+  return merged as PlatformOptions;
+}
+
+/**
+ * `--project`, for the commands that cannot run without one.
+ *
+ * These used to be `requiredOption`, which the `servers` group's own
+ * `--project` made unsatisfiable — Commander consumed the value at the group
+ * and then failed the subcommand for not having it, so `projects servers get
+ * --project alpha --server srv-1` could not be typed at all. Enforcing it here
+ * keeps the same outcome for the same mistake (`command.error` raises the
+ * `CommanderError` the CLI already maps to a usage error) while letting the
+ * value arrive from wherever Commander actually put it.
+ */
+function requireProject(command: Command, options: PlatformOptions): string {
+  const project = options.project?.trim();
+  if (!project) {
+    command.error("error: required option '--project <id-or-name>' not specified");
+  }
+  return project;
 }
 
 async function runPlatformCommand<TOutput>(
@@ -176,7 +221,6 @@ export function registerProjectsCommands(program: Command): void {
   ).action(
     async (
       options: PlatformOptions & {
-        project: string;
         name?: string;
         description?: string;
         visibility?: string;
@@ -184,8 +228,9 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const platformOptions = platformOptionsOf(command);
       const input = updateProjectOperation.inputSchema.parse({
-        project: options.project,
+        project: requireProject(command, platformOptions),
         ...(options.name === undefined ? {} : { name: options.name }),
         ...(options.description === undefined
           ? {}
@@ -195,7 +240,7 @@ export function registerProjectsCommands(program: Command): void {
           : { visibility: options.visibility }),
       });
       const result = await runPlatformCommand(
-        platformOptionsOf(command),
+        platformOptions,
         globalOptions.timeout,
         ({ client, signal }) =>
           updateProjectOperation.execute(input, { client, signal })
@@ -209,13 +254,14 @@ export function registerProjectsCommands(program: Command): void {
       .command("delete")
       .description("Delete a project and its project-owned resources")
       .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(async (options: PlatformOptions & { project: string }, command) => {
+  ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
     const input = deleteProjectOperation.inputSchema.parse({
-      project: options.project,
+      project: requireProject(command, platformOptions),
     });
     const result = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         deleteProjectOperation.execute(input, { client, signal })
@@ -232,14 +278,15 @@ export function registerProjectsCommands(program: Command): void {
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
   );
-  servers.action(async (options: PlatformOptions, command) => {
+  servers.action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
     const result = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectServersOperation.execute(
-          { project: options.project },
+          { project: platformOptions.project },
           { client, signal }
         )
     );
@@ -264,16 +311,18 @@ export function registerProjectsCommands(program: Command): void {
       .command("create")
       .alias("add")
       .description("Create a saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--body <json>", "Server JSON body")
   ).action(async (options: PlatformOptions & { body: string }, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
+    const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         createProjectServerOperation.execute(
-          { project: options.project, body: parseBody(options.body) as never },
+          { project, body: parseBody(options.body) as never },
           { client, signal }
         )
     );
@@ -284,16 +333,18 @@ export function registerProjectsCommands(program: Command): void {
     servers
       .command("get")
       .description("Get one saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
+    const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         getProjectServerOperation.execute(
-          { project: options.project, serverId: options.server },
+          { project, serverId: options.server },
           { client, signal }
         )
     );
@@ -304,7 +355,7 @@ export function registerProjectsCommands(program: Command): void {
     servers
       .command("update")
       .description("Update one saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
       .requiredOption("--body <json>", "Patch JSON body")
   ).action(
@@ -313,13 +364,15 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const platformOptions = platformOptionsOf(command);
+      const project = requireProject(command, platformOptions);
       const result = await runPlatformCommand(
-        platformOptionsOf(command),
+        platformOptions,
         globalOptions.timeout,
         ({ client, signal }) =>
           updateProjectServerOperation.execute(
             {
-              project: options.project,
+              project,
               serverId: options.server,
               body: parseBody(options.body),
             },
@@ -335,16 +388,18 @@ export function registerProjectsCommands(program: Command): void {
       .command("delete")
       .alias("remove")
       .description("Delete one saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
+    const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         deleteProjectServerOperation.execute(
-          { project: options.project, serverId: options.server },
+          { project, serverId: options.server },
           { client, signal }
         )
     );
@@ -380,6 +435,7 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const platformOptions = platformOptionsOf(command);
 
       // Parsed at the keyboard, like every sibling command here. Commander
       // hands back whatever was typed, so without this `--url " "` and
@@ -387,14 +443,18 @@ export function registerProjectsCommands(program: Command): void {
       // rejected there — a slower, vaguer error for a mistake visible now.
       const input = connectProjectServerOperation.inputSchema.parse({
         url: options.url,
-        project: options.project,
+        // NOT `options.project` — the `servers` group declares `--project` too
+        // and therefore consumes it, so the subcommand's own copy is always
+        // undefined and this command quietly connected to the default project
+        // instead of the one that was named.
+        project: platformOptions.project,
         serverId: options.server,
         name: options.name,
         reauthorize: options.reauthorize,
       });
 
       const created = await runPlatformCommand(
-        platformOptionsOf(command),
+        platformOptions,
         globalOptions.timeout,
         ({ client, signal }) =>
           connectProjectServerOperation.execute(input, { client, signal })
@@ -479,14 +539,15 @@ export function registerProjectsCommands(program: Command): void {
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
       )
-  ).action(async (options: PlatformOptions, command) => {
+  ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
     const payload = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         showServersOperation.execute(
-          { project: options.project },
+          { project: platformOptions.project },
           { client, signal }
         )
     );

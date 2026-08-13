@@ -203,6 +203,11 @@ async function startPlatformFixture(): Promise<{
       );
       return;
     }
+    if (url.pathname === "/api/v1/projects/proj-alpha/servers/srv-ready") {
+      // Exact match, so it cannot shadow the `/doctor` route above.
+      res.end(JSON.stringify(SERVERS[0]));
+      return;
+    }
     if (
       url.pathname === "/api/v1/projects/proj-alpha/servers/srv-limited/doctor"
     ) {
@@ -563,6 +568,12 @@ async function startConnectionFixture(options: {
     const url = new URL(req.url ?? "/", "http://fixture");
     res.setHeader("content-type", "application/json");
 
+    // `connect --project <name>` resolves the name to an id before creating
+    // anything, so the connection fixture has to be able to answer that too.
+    if (url.pathname === "/api/v1/projects") {
+      res.end(JSON.stringify({ items: PROJECTS }));
+      return;
+    }
     if (url.pathname === "/api/v1/server-connections" && req.method === "POST") {
       createBodies.push(raw ? JSON.parse(raw) : null);
       res.statusCode = 201;
@@ -775,6 +786,109 @@ test("server connect exits non-zero when it gave up rather than finished", async
     assert.match(run.stderr, /connect-status --request scr_1/);
   } finally {
     process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("a subcommand under `servers` can be given --project at all", async () => {
+  // Regression. `--project` is declared on the `servers` group AND on its
+  // subcommands, and Commander gives the value to whichever command declares it
+  // nearest the top — so the group consumed it and the subcommand's own
+  // `requiredOption` then failed the parse for not having received it. Every
+  // one of `servers get|create|update|delete` was unusable: there was no way to
+  // type the option they demanded.
+  const fixture = await startPlatformFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "servers",
+            "get",
+            "--project",
+            "alpha",
+            "--server",
+            "srv-ready",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(JSON.parse(run.stdout).id, "srv-ready");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("omitting --project on a subcommand that needs it is still a usage error", async () => {
+  // The required-ness moved out of Commander and into the action, so it has to
+  // be re-proved: the check must still fire, and with the same exit code the
+  // `requiredOption` produced, or a caller who forgot the flag now gets a
+  // confusing API-level failure instead of a usage message.
+  const fixture = await startPlatformFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(fixture.baseUrl, "servers", "get", "--server", "srv-ready"),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /--project/);
+    // It must fail at the keyboard, before spending a request on it.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect honors --project instead of silently ignoring it", async () => {
+  // The same collision, in the command this feature adds. `connect` read its
+  // own `options.project`, which the `servers` group had already consumed, so
+  // `--project` parsed cleanly and then did nothing — the request was created
+  // against the default project while the caller was told nothing.
+  const fixture = await startConnectionFixture({
+    created: { connectionRequestId: "scr_1", status: "awaiting_authorization" },
+  });
+  try {
+    await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+            "--project",
+            "proj-beta",
+          ),
+          "--no-wait",
+          "--no-browser",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(fixture.createBodies.length, 1);
+    // Not merely "a project was sent": with the bug, `projectId` was undefined
+    // and the request fell through to `awaiting_project`, asking a human to
+    // pick the project the caller had already named.
+    const body = fixture.createBodies[0] as { projectId?: string };
+    assert.equal(body.projectId, "proj-beta");
+  } finally {
     await fixture.close();
   }
 });

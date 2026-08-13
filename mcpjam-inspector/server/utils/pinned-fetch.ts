@@ -309,15 +309,25 @@ export function createPinnedFetch(
           throw new Error("The server returned an invalid redirect location.");
         }
 
-        // Fetch's method rewrite. A 303 always becomes a GET; 301 and 302 do
-        // the same for anything that is not GET/HEAD, which is what every
-        // browser and `undici` actually do regardless of what the RFC once
-        // implied. Replaying the initialize POST into a redirect would send the
-        // body somewhere the caller never addressed — and would also fail the
-        // probe against a server that redirects for an ordinary reason.
+        // Fetch's method rewrite, and it has to be Fetch's EXACTLY — the same
+        // condition the transport applies at `prepareRedirect`
+        // (`sdk/src/oauth-proxy.ts`), because these hops and the transport's own
+        // are meant to be the same walk split across a package boundary.
+        //
+        // 301/302 rewrite POST and nothing else: a PUT, PATCH or DELETE keeps
+        // its method, which is what the spec says and what `undici` does. 303
+        // rewrites every method EXCEPT GET and HEAD, so a HEAD probe stays a
+        // HEAD rather than quietly acquiring a response body. Widening either
+        // arm sends a different request than a direct `fetch` would have.
+        // 307/308 rewrite nothing.
+        //
+        // Only a POST carries a body through here at all — the transport's
+        // `encodeRequestBody` returns undefined for every other method — so the
+        // body clearing below is reached exactly when there is a body to clear.
         if (
-          result.status === 303 ||
           ((result.status === 301 || result.status === 302) &&
+            currentMethod === "POST") ||
+          (result.status === 303 &&
             currentMethod !== "GET" &&
             currentMethod !== "HEAD")
         ) {
