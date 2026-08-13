@@ -31,6 +31,16 @@ describe("chatbox-session", () => {
     expect(extractChatboxTokenFromPath("/settings")).toBeNull();
   });
 
+  it("extracts token from /user-testing/<slug>/<token> paths", () => {
+    expect(extractChatboxTokenFromPath("/user-testing/demo/abc123")).toBe(
+      "abc123",
+    );
+    // The scenario screen lives one segment shorter, and must NOT be read as a
+    // tester link — doing so renders the public runtime over the app screen.
+    expect(extractChatboxTokenFromPath("/user-testing/host_123")).toBeNull();
+    expect(extractChatboxTokenFromPath("/user-testing/new")).toBeNull();
+  });
+
   it("detects an active chatbox session", () => {
     expect(hasActiveChatboxSession()).toBe(false);
 
@@ -272,6 +282,10 @@ describe("chatbox-session", () => {
   });
 
   it("round-trips chatbox sign-in return path", () => {
+    writeChatboxSignInReturnPath("/user-testing/demo/token-123");
+    expect(readChatboxSignInReturnPath()).toBe("/user-testing/demo/token-123");
+
+    clearChatboxSignInReturnPath();
     writeChatboxSignInReturnPath("/chatbox/demo/token-123");
     expect(readChatboxSignInReturnPath()).toBe("/chatbox/demo/token-123");
 
@@ -289,7 +303,7 @@ describe("chatbox-session", () => {
 
   it("builds chatbox links from the current browser origin", () => {
     expect(buildChatboxLink("token 123", "Demo Chatbox")).toBe(
-      `${window.location.origin}/chatbox/demo-chatbox/token%20123`,
+      `${window.location.origin}/user-testing/demo-chatbox/token%20123`,
     );
   });
 

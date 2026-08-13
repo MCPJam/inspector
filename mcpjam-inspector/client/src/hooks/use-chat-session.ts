@@ -88,6 +88,10 @@ import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
+import {
+  reportChatFailure,
+  type ChatResponseMeta,
+} from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
@@ -711,6 +715,17 @@ interface PendingSessionHydration {
 }
 
 const MAX_LIVE_TRACE_EVENTS = 400;
+// Bounds `turnOrder`/`turns`/`requestPayloadHistory` for long-running agent
+// sessions. Without this, a session left open for many hours accumulates one
+// entry per turn — each carrying a full resolved model request (system
+// prompt + entire message history) — growing roughly quadratically and
+// eventually exhausting the renderer's V8 heap (see INSPECTOR-ELECTRON-VR).
+const MAX_LIVE_TRACE_TURNS = 200;
+// Backstop for `requestPayloadHistory` independent of the turn cap above: a
+// single turn can carry many steps (agent tool-call loops), each appending
+// its own full request payload keyed by turnId+stepIndex, so bounding by
+// turn count alone doesn't bound this array for a pathologically long turn.
+const MAX_LIVE_TRACE_REQUEST_PAYLOADS = 2 * MAX_LIVE_TRACE_TURNS;
 
 function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
   return {
@@ -774,8 +789,18 @@ async function resolveHydratedTurnTraces(
   if (raw.length === 0) {
     return [];
   }
+  // Rehydrating a session with more persisted turns than the live cap would
+  // otherwise recreate the same unbounded growth this cap prevents
+  // (INSPECTOR-ELECTRON-VR) — keep only the most recent turns, and skip
+  // fetching span blobs for the ones we're about to discard.
+  const boundedRaw =
+    raw.length > MAX_LIVE_TRACE_TURNS
+      ? [...raw]
+          .sort((left, right) => left.promptIndex - right.promptIndex)
+          .slice(-MAX_LIVE_TRACE_TURNS)
+      : raw;
   const results = await Promise.all(
-    raw.map(async (trace) => {
+    boundedRaw.map(async (trace) => {
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {
         try {
@@ -1079,6 +1104,57 @@ function upsertRequestPayloadEntry(
   );
 }
 
+// Drops the oldest turns once `turnOrder` exceeds MAX_LIVE_TRACE_TURNS,
+// keeping `turns` and `requestPayloadHistory` in sync with what's evicted.
+// Also applies a flat backstop cap to `requestPayloadHistory` in case a
+// single turn (still within the turn cap) accumulates many step entries.
+function trimLiveTraceTurns(
+  state: LiveTraceAccumulatorState
+): LiveTraceAccumulatorState {
+  let turnOrder = state.turnOrder;
+  let turns = state.turns;
+  let requestPayloadHistory = state.requestPayloadHistory;
+
+  if (turnOrder.length > MAX_LIVE_TRACE_TURNS) {
+    const dropCount = turnOrder.length - MAX_LIVE_TRACE_TURNS;
+    const droppedTurnIds = new Set(turnOrder.slice(0, dropCount));
+    turnOrder = turnOrder.slice(dropCount);
+
+    const nextTurns: Record<string, LiveTraceTurnState> = {};
+    for (const turnId of turnOrder) {
+      const turn = turns[turnId];
+      if (turn) {
+        nextTurns[turnId] = turn;
+      }
+    }
+    turns = nextTurns;
+
+    requestPayloadHistory = requestPayloadHistory.filter(
+      (entry) => !droppedTurnIds.has(entry.turnId)
+    );
+  }
+
+  if (requestPayloadHistory.length > MAX_LIVE_TRACE_REQUEST_PAYLOADS) {
+    requestPayloadHistory = requestPayloadHistory.slice(
+      -MAX_LIVE_TRACE_REQUEST_PAYLOADS
+    );
+  }
+
+  if (
+    turnOrder === state.turnOrder &&
+    requestPayloadHistory === state.requestPayloadHistory
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    turnOrder,
+    turns,
+    requestPayloadHistory,
+  };
+}
+
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
   event: LiveChatTraceEvent
@@ -1113,7 +1189,7 @@ function applyLiveTraceEvent(
     case "turn_start": {
       const turnExists = baseState.turnOrder.includes(event.turnId);
       const prev = baseState.turns[event.turnId];
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1131,12 +1207,12 @@ function applyLiveTraceEvent(
         },
         activeTurnId: event.turnId,
         activeTurnHasSnapshot: false,
-      };
+      });
     }
     case "request_payload": {
       const turnState = ensureTurnState(event.turnId, event.promptIndex);
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1157,7 +1233,7 @@ function applyLiveTraceEvent(
             payload: event.payload,
           }
         ),
-      };
+      });
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
@@ -1165,7 +1241,7 @@ function applyLiveTraceEvent(
         event.snapshot.promptIndex
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1195,12 +1271,12 @@ function applyLiveTraceEvent(
           baseState.activeTurnId === event.turnId ||
           baseState.activeTurnId === null,
         anySnapshotSeen: true,
-      };
+      });
     }
     case "turn_finish": {
       const turnState = ensureTurnState(event.turnId, event.promptIndex);
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1220,7 +1296,7 @@ function applyLiveTraceEvent(
           baseState.activeTurnId === event.turnId
             ? false
             : baseState.activeTurnHasSnapshot,
-      };
+      });
     }
     default:
       return baseState;
@@ -2309,8 +2385,22 @@ export function useChatSession(
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
 
+  // Last thing `chatFetch` saw. This is the ONLY place the Response object
+  // still exists — the AI SDK turns a non-ok response into
+  // `new Error(await response.text())` and the status, content type, and
+  // request id are gone by the time `handleChatError` runs.
+  const lastChatResponseRef = useRef<ChatResponseMeta | null>(null);
+
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
+      // Clear BEFORE awaiting, not just on the way out. If this turn's fetch
+      // rejects outright — DNS failure, connection refused, offline — no
+      // Response is ever produced and the ref would still hold the PREVIOUS
+      // turn's values, so `handleChatError` would report a fresh network
+      // failure under the last turn's status and, worse, under a request id
+      // belonging to a different request.
+      lastChatResponseRef.current = null;
+
       // authFetch owns auth resolution (WorkOS bearer / guest bearer via
       // the chatbox-installed apiContext) wherever the web engine is in
       // play — hosted builds, and chatbox runtime sessions on any platform.
@@ -2364,6 +2454,19 @@ export function useChatSession(
         }
       }
 
+      // Stash on every outcome, including ok: a stream that fails partway
+      // through still wants the request id that opened it.
+      lastChatResponseRef.current = {
+        ok: response.ok,
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? undefined,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+        // The route's own verdict on whose fault this was, when it had the
+        // error object in hand. Read from a header because the body is
+        // consumed by the AI SDK before the reporter ever runs.
+        origin: response.headers.get("x-mcpjam-error-origin") ?? undefined,
+      };
+
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
         if (useAuthedFetch) {
@@ -2381,6 +2484,12 @@ export function useChatSession(
   );
 
   const handleChatError = useCallback((chatError: Error) => {
+    // Every chat failure used to end here and go no further: this handler
+    // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
+    // that no-ops everything else. A hosted 502 produced zero client
+    // telemetry — the failure a user reported was one we had no record of.
+    reportChatFailure(chatError, lastChatResponseRef.current);
+
     // Try to recover a structured limitKind from a JSON-shaped error message
     // so the concurrency carve-out is honored on the SSE error path. Best
     // effort: untouched if the message isn't JSON.

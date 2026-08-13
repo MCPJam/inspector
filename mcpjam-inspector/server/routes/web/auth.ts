@@ -52,6 +52,7 @@ import {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
@@ -68,6 +69,7 @@ import {
   resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
+import { toXaaConnectFailure } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
@@ -1249,16 +1251,29 @@ export async function createAuthorizedManager(
     // would mask this actionable 400 behind the caller-contract 500. Gated on
     // the same XAA selection the mint pass uses. No silent fallback to the
     // demo identity, no silent XAA→OAuth fallback.
+    //
+    // Framed like every other connect-time XAA failure: the backend's sentence
+    // is written for the server's auth form, and on its own ("Complete or
+    // clear the server identity override") it names neither the server nor the
+    // surface. It is kept verbatim as the reason clause.
     if (
       isHttp &&
       effectiveAuth === "xaa" &&
       auth.serverConfig.xaaIdentityError
     ) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        auth.serverConfig.xaaIdentityError,
-        { serverId, serverName: displayServerName }
+      throw toXaaConnectFailure(
+        new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          auth.serverConfig.xaaIdentityError
+        ),
+        {
+          serverId,
+          serverName: displayServerName,
+          ...(auth.serverConfig.url
+            ? { serverUrl: auth.serverConfig.url }
+            : {}),
+        }
       );
     }
 
@@ -1555,6 +1570,13 @@ export async function createAuthorizedManager(
           isAnonymous: batch.isAnonymous,
           confidentialCimdProvider,
         });
+        const xaaFailureTarget = {
+          serverId,
+          serverName: displayServerName,
+          ...(auth.serverConfig.url
+            ? { serverUrl: auth.serverConfig.url }
+            : {}),
+        };
         try {
           connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
         } catch (error) {
@@ -1565,7 +1587,10 @@ export async function createAuthorizedManager(
               resource: auth.serverConfig.url,
             });
           }
-          throw error;
+          // Re-framed AFTER the log above, so the debugger-worded original is
+          // what reaches Sentry/Axiom (as `cause`) while the caller gets the
+          // connect-context sentence.
+          throw toXaaConnectFailure(error, xaaFailureTarget);
         }
         // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
         // second 401 surfaces rather than looping mint→401→mint.
@@ -1579,9 +1604,13 @@ export async function createAuthorizedManager(
             );
           }
           reMinted = true;
-          return {
-            accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
-          };
+          try {
+            return {
+              accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
+            };
+          } catch (error) {
+            throw toXaaConnectFailure(error, xaaFailureTarget);
+          }
         };
       }
 
@@ -1754,13 +1783,7 @@ export async function handleRoute<T>(
     return c.json(result, successStatus);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
-      c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details
-    );
+    return webErrorFromRoute(c, routeError);
   }
 }
 
@@ -2186,12 +2209,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      routeError,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
@@ -2204,6 +2224,7 @@ export {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,

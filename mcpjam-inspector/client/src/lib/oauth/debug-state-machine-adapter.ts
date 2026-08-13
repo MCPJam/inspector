@@ -1,4 +1,5 @@
 import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -15,6 +16,15 @@ import { reportCaught } from "@/lib/error-reporting";
 import { HOSTED_MODE } from "@/lib/config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { sanitizeStepError } from "./trace-redaction";
+
+/**
+ * Re-exported so the debugger's existing callers (and its tests) keep importing
+ * `sanitizeStepError` from here. The implementation moved to
+ * `trace-redaction.ts`, which owns error-string redaction for every OAuth trace
+ * surface rather than just the debugger's Sentry reports.
+ */
+export { sanitizeStepError };
 
 type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
@@ -246,6 +256,23 @@ function createHostedClientSecretResolver({
 }
 
 /**
+ * Step failures that stop the flow but carry no signal for us.
+ *
+ * The RFC 8414 `issuer` check rejects a metadata document the server under test
+ * built wrong. Every machine enforces it, yet only 2026-07-28 reads the field
+ * afterwards (it compares the issuer to the authorization-server URL and to the
+ * callback `iss`), so on the older three the report is another project's spec
+ * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
+ * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
+ *
+ * The SDK owns the message and exports it, so matching here cannot drift out of
+ * sync with what the machines actually throw.
+ */
+const UNREPORTED_STEP_FAILURES = new Set([
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+]);
+
+/**
  * Wrap the caller's `updateState` so every NEW step failure is reported.
  *
  * This is the only reliable hook: the SDK state machine catches its own step
@@ -257,107 +284,11 @@ function createHostedClientSecretResolver({
  * `warning` level, not `error`: many of these are the server-under-test
  * misbehaving, which is exactly what a debugger is for. The value is the
  * aggregate trend, not a page.
+ *
+ * `Warning: `-prefixed messages are skipped entirely — those are advisories the
+ * flow recovers from (an optional metadata field the server left out), not step
+ * failures. So are the messages in `UNREPORTED_STEP_FAILURES`.
  */
-/**
- * Bound the untrusted text before it leaves the browser.
- *
- * These strings come from the server UNDER TEST — an `error_description` is
- * whatever that server chose to return, and the debugger is routinely pointed
- * at half-built servers that echo request context back into error bodies. A
- * diagnostic signal must not become an exfiltration path, so every shape a
- * credential plausibly arrives in gets redacted before capture:
- *
- *   1. URL userinfo, with or without a scheme (`https://u:p@h`, `u:p@h`)
- *   2. credential-ish query/form parameters, by name
- *   3. `Authorization: Bearer|Basic <value>` echoed from a request
- *   4. JSON credential fields (`"client_secret": "..."`)
- *
- * Then a length cap, because an upstream body can be arbitrarily large.
- *
- * Deliberately over-redacts: losing a token's value costs nothing here (the
- * parameter NAME is the diagnostic), while leaking one is unrecoverable.
- */
-const CREDENTIAL_PARAM_NAMES =
-  "client_secret|access_token|refresh_token|id_token|code_verifier|code|assertion|password|api[-_]?key|token|secret";
-
-/** Final length of a reported message. */
-const MAX_REPORTED = 500;
-
-/**
- * How much raw input the redactors are allowed to scan.
- *
- * The cap has to come BEFORE the replace chain — an upstream body can be
- * megabytes, and four global regexes over it would copy the whole thing four
- * times on a render path. It is deliberately wider than `MAX_REPORTED` so the
- * redactors still see the context around anything that survives to the output.
- */
-const MAX_SCANNED = 4_000;
-
-export function sanitizeStepError(message: string): string {
-  const truncated = message.length > MAX_SCANNED;
-  const bounded = truncated ? message.slice(0, MAX_SCANNED) : message;
-
-  const redacted = bounded
-    // 1a. scheme://user:pass@host. Greedy up to the LAST `@` of the
-    // authority: `@` is legal inside a password, so
-    // `https://user:secret@part@host` has userinfo `user:secret@part`, and
-    // stopping at the first `@` would report half the password.
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi, "$1[redacted]@")
-    // 1b. bare user:pass@host (no scheme), same greediness.
-    .replace(/(^|[\s(<"'])[^\s/@:]+:[^\s/]+@(?=[\w.-]+)/g, "$1[redacted]@")
-    // 2. ?client_secret=… / &token=…
-    .replace(
-      new RegExp(`\\b(${CREDENTIAL_PARAM_NAMES})=[^&\\s"'<>]+`, "gi"),
-      "$1=[redacted]",
-    )
-    // 3a. An echoed `Authorization:` header — redact whatever follows.
-    .replace(
-      /\b((?:proxy-)?authorization\s*[:=]\s*)(bearer|basic)\s+\S+/gi,
-      "$1$2 [redacted]",
-    )
-    // 3b. A bare `Bearer <value>` with no header context. This one must only
-    // fire on a credential-SHAPED value: `\b(bearer|basic)\s+\w+` turns the
-    // very common "Bearer token is expired" into "Bearer [redacted] is
-    // expired", destroying the diagnostic word this function promises to keep.
-    // Real values carry base64url/JWT punctuation or are simply long.
-    .replace(
-      /\b(bearer|basic)\s+(?:[\w-]*[._~+/=][\w\-._~+/=]*|\w{20,})/gi,
-      "$1 [redacted]",
-    )
-    // 4. "client_secret": "…" — `(?:\\.|[^"\\])*` rather than `[^"]*`, or an
-    // escaped quote inside the value ends the match early and leaves the
-    // secret's tail in the report.
-    .replace(
-      new RegExp(
-        `("(?:${CREDENTIAL_PARAM_NAMES})"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`,
-        "gi",
-      ),
-      '$1"[redacted]"',
-    );
-
-  // Patterns 1b/2/3 all match to end-of-string, so a value the cap cut in half
-  // is still redacted. The JSON and scheme-userinfo forms need a closing
-  // delimiter, so cutting mid-value would leave a raw prefix — close those two
-  // here, and only when the cap actually fired, so an ordinary message that
-  // merely ends in a URL keeps its hostname.
-  const tailGuarded = truncated
-    ? redacted
-        .replace(
-          // Escape-aware like the terminated form above, or an unterminated
-          // value containing `\\"` stops the match at that quote and leaks its
-          // tail. `[\\s\\S]?` so a trailing backslash at the cut still matches.
-          new RegExp(
-            `("(?:${CREDENTIAL_PARAM_NAMES})"\\s*:\\s*)"(?:\\\\[\\s\\S]?|[^"\\\\])*$`,
-            "gi",
-          ),
-          '$1"[redacted]',
-        )
-        .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*$/gi, "$1[redacted]")
-    : redacted;
-
-  return tailGuarded.slice(0, MAX_REPORTED);
-}
-
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
   context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
@@ -366,6 +297,18 @@ function withStepFailureReporting(
 
   return (updates) => {
     const error = updates.error;
+    if (
+      typeof error === "string" &&
+      (error.startsWith("Warning: ") || UNREPORTED_STEP_FAILURES.has(error))
+    ) {
+      // Not ours to act on: the message is already on screen, and reporting
+      // these buries real step failures under server-under-test nits.
+      // Still counts as replacing the previous message, so a failure that
+      // recurs after it is a new failure — same as an explicit clear below.
+      lastReportedError = undefined;
+      updateState(updates);
+      return;
+    }
     if (typeof error === "string" && error !== "" && error !== lastReportedError) {
       lastReportedError = error;
       reportCaught(new Error(sanitizeStepError(error)), {
@@ -414,6 +357,11 @@ export function createInspectorOAuthStateMachine(
         (config.getState?.() ?? config.state).currentStep ?? "unknown",
     }),
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
+    // Explicit non-connect intent. The connect paths fail closed when required
+    // PKCE/PRM metadata is missing, which is correct for them and useless here:
+    // the debugger exists to SHOW what a nonconforming server does. Warn and
+    // continue, and only because this surface asked for it by name.
+    requiredMetadataEnforcement: "observe",
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
     // The debugger is a local-dev inspection surface: when the server under

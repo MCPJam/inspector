@@ -323,8 +323,8 @@ export function useUsageInsights({
     | undefined;
 
   // `getUsageBreakdown` already carries `themes` + `latestRun`, so we don't
-  // subscribe to `listClustersByChatbox` — UsageInsightsStrip and the rebuild
-  // button both read everything they need from `breakdown`.
+  // subscribe to `listClustersByChatbox` — the themes chips, the freshness
+  // chip, and the rebuild button all read what they need from `breakdown`.
   const breakdown = useQuery(
     (isSwarm
       ? "chatSessions:getSwarmUsageBreakdown"

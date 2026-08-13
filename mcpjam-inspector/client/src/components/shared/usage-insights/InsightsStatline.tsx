@@ -1,24 +1,13 @@
 import type { ReactNode } from "react";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
-import {
   isSameSelection,
   type InsightsSelection,
-  type UsageFilterChip,
-  type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 import type { UsageBreakdown } from "@/hooks/useUsageInsights";
 import {
   selectionForNode,
   stageValueLabel,
-} from "@/components/chatboxes/insights-sankey";
-import {
-  CriterionScorecard,
-  summarizeCriterionFacets,
-} from "@/components/swarms/CriterionScorecard";
+} from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
 
 const CHIP_CLASS =
@@ -31,18 +20,12 @@ const STAGE_LABELS: Record<"outcome" | "sentiment", string> = {
 
 interface InsightsStatlineProps {
   breakdown: UsageBreakdown | null | undefined;
-  filter: UsageFilterState;
   flowSelection: InsightsSelection | null;
   onSelectFlow: (selection: InsightsSelection) => void;
-  onToggleChip: (chip: UsageFilterChip) => void;
-  onOpenSessionsTab?: () => void;
   /** Leading chips (e.g. Swarm personas). */
   leadingSlot?: ReactNode;
   /** Pattern / struggles chip (Swarm). */
   strugglesSlot?: ReactNode;
-  /** Extra content below the rubric scorecard in its popover. */
-  checksExtras?: ReactNode;
-  trailing?: ReactNode;
   testId?: string;
 }
 
@@ -98,32 +81,19 @@ function FlowFacetChip({
 
 /**
  * Compact Insights chrome shared by Swarm run detail and User Testing:
- * session count, top outcome / sentiment, optional Checks, trailing toggle.
+ * top outcome / sentiment chips (and surface-specific slots).
+ * View toggle + freshness live in the chart header beside the Sankey legend.
  */
 export function InsightsStatline({
   breakdown,
-  filter,
   flowSelection,
   onSelectFlow,
-  onToggleChip,
-  onOpenSessionsTab,
   leadingSlot,
   strugglesSlot,
-  checksExtras,
-  trailing,
   testId = "insights-statline",
 }: InsightsStatlineProps) {
   const outcome = topClickableNode(breakdown, "outcome");
   const sentiment = topClickableNode(breakdown, "sentiment");
-  const facets = breakdown?.criterionBreakdown ?? [];
-  const summary = facets.length ? summarizeCriterionFacets(facets) : null;
-  const checksLabel = summary
-    ? summary.totalFail > 0
-      ? `✕ Checks ${summary.cleanCount}/${facets.length} · ${summary.totalFail} failing`
-      : `✓ Checks ${summary.cleanCount}/${facets.length}`
-    : checksExtras
-      ? "Checks"
-      : null;
 
   return (
     <div
@@ -131,14 +101,6 @@ export function InsightsStatline({
       data-testid={testId}
     >
       {leadingSlot}
-      <button
-        type="button"
-        className={CHIP_CLASS}
-        onClick={onOpenSessionsTab}
-        disabled={!onOpenSessionsTab}
-      >
-        {breakdown?.totalSessions ?? 0} sessions
-      </button>
       {outcome ? (
         <FlowFacetChip
           stage="outcome"
@@ -155,35 +117,7 @@ export function InsightsStatline({
           onSelectFlow={onSelectFlow}
         />
       ) : null}
-      {checksLabel ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                CHIP_CLASS,
-                Boolean(summary && summary.totalFail > 0) &&
-                  "border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20",
-              )}
-              aria-label={checksLabel}
-            >
-              {checksLabel}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-[26rem] max-w-[90vw] p-0">
-            <div className="flex max-h-[60vh] min-h-0 flex-col overflow-y-auto">
-              <CriterionScorecard
-                facets={facets}
-                filter={filter}
-                onToggleChip={onToggleChip}
-              />
-              {checksExtras}
-            </div>
-          </PopoverContent>
-        </Popover>
-      ) : null}
       {strugglesSlot}
-      {trailing ? <div className="ml-auto">{trailing}</div> : null}
     </div>
   );
 }

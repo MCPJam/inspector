@@ -56,7 +56,8 @@ export function DetailPageHeader<T extends string>({
   backTestId?: string;
   title: ReactNode;
   actions?: ReactNode;
-  tabs: {
+  /** Omit on sibling routes (e.g. User Testing Edit) that share this chrome. */
+  tabs?: {
     value: T;
     options: readonly ViewModeSelectorOption<T>[];
     onChange: (value: T) => void;
@@ -70,7 +71,8 @@ export function DetailPageHeader<T extends string>({
   return (
     <div
       className={cn(
-        "relative shrink-0 border-b border-border/40 px-8 pt-2.5 pb-0",
+        "relative shrink-0 border-b border-border/40 px-8 pt-2.5",
+        tabs ? "pb-0" : "pb-3",
         className,
       )}
       data-testid={testId}
@@ -95,14 +97,16 @@ export function DetailPageHeader<T extends string>({
 
       {children ? <div className="mt-3 min-w-0">{children}</div> : null}
 
-      <ViewModeSelector
-        value={tabs.value}
-        options={tabs.options}
-        onChange={tabs.onChange}
-        ariaLabel={tabs.ariaLabel}
-        indicatorId={tabs.indicatorId}
-        className={TAB_CLASSNAME}
-      />
+      {tabs ? (
+        <ViewModeSelector
+          value={tabs.value}
+          options={tabs.options}
+          onChange={tabs.onChange}
+          ariaLabel={tabs.ariaLabel}
+          indicatorId={tabs.indicatorId}
+          className={TAB_CLASSNAME}
+        />
+      ) : null}
     </div>
   );
 }

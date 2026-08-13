@@ -36,6 +36,7 @@ import {
   syncChatboxSessionHash,
 } from "@/lib/embedded-preview";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/chatbox-server-optional";
+import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
@@ -81,10 +82,26 @@ interface ChatboxDisplayError {
   message: string;
 }
 
+/**
+ * Visitor-facing copy on the public chatbox runtime, and the reason none of it
+ * names a product.
+ *
+ * Whoever reads these strings followed a link someone sent them. They are not
+ * signed in to MCPJam, have never seen the dashboard, and "swarm" is a word
+ * they have no referent for — it named the internal surface the link happened
+ * to be created from. Worse, one `chatboxes` row backs BOTH a Swarm and a User
+ * Testing scenario (nothing on the row distinguishes them; `isDeliberateScenario`
+ * infers it client-side), so on the User Testing surface the noun was outright
+ * wrong: the author's own preview told them their scenario was a swarm.
+ *
+ * "Link" is what the visitor actually has, and it is true on every surface.
+ * Keep it that way — reintroducing a product noun here means picking one of two
+ * products for a reader who knows neither.
+ */
 const INVALID_CHATBOX_LINK_MESSAGE =
-  "This swarm link is invalid or expired. Ask the owner to share a new link if you still need access.";
+  "This link is invalid or expired. Ask whoever shared it for a new one if you still need access.";
 const UNEXPECTED_CHATBOX_ERROR_MESSAGE =
-  "We couldn't open this swarm right now. Please try again or open MCPJam.";
+  "We couldn't open this link right now. Please try again or open MCPJam.";
 
 type ChatboxBootstrapAuthMode = "workos" | "guest";
 type ChatboxLandingState =
@@ -178,7 +195,7 @@ function getChatboxDisplayError(
   if (!error) {
     return {
       kind: "invalid_link",
-      title: "Swarm Link Unavailable",
+      title: "Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
@@ -236,14 +253,14 @@ function getChatboxDisplayError(
   if (isInvalidLink) {
     return {
       kind: "invalid_link",
-      title: "Swarm Link Unavailable",
+      title: "Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
 
   return {
     kind: "unexpected",
-    title: "Swarm Link Unavailable",
+    title: "Link Unavailable",
     message: UNEXPECTED_CHATBOX_ERROR_MESSAGE,
   };
 }
@@ -310,7 +327,7 @@ async function redeemChatboxToken(
   if (!nextSession) {
     throw createChatboxRouteError(
       502,
-      "Swarm redeem returned an incomplete bootstrap payload."
+      "Chatbox redeem returned an incomplete bootstrap payload."
     );
   }
 
@@ -479,9 +496,43 @@ export function ChatboxChatPage({
     return [...sessionServersRequired, ...optionalActive];
   }, [session, sessionServersRequired, enabledOptionalServerIds]);
 
+  // Does the recipient actually have to authorize anything? The bootstrap
+  // payload only carries `useOAuth`, a compat mirror that is also true for an
+  // `auto` (discover) server — gating on it is what asked recipients to
+  // authorize servers with no authorization server at all. The probe answers
+  // from the canonical `authMethod`.
+  const oauthRequirementByServerId = useHostedOAuthRequirements(
+    sessionServersActive,
+    !!session
+  );
+
   const oauthServers = useMemo(
-    () => sessionServersActive.map(bootstrapServerToHostedOAuthDescriptor),
-    [sessionServersActive]
+    () =>
+      sessionServersActive.map((server) => {
+        const descriptor = bootstrapServerToHostedOAuthDescriptor(server);
+        const requirement = oauthRequirementByServerId[server.serverId];
+        return {
+          ...descriptor,
+          // A server enters the gate only once the probe has answered for it.
+          // The gate seeds its status map the first time it sees a server and
+          // then preserves that status across rebuilds, so admitting a server
+          // while the answer is still "checking" would freeze it as satisfied
+          // and the panel would never appear for a real OAuth server.
+          useOAuth:
+            descriptor.useOAuth &&
+            (requirement === "required" || requirement === "not_required"),
+          // Still in the authorizable set either way: a "no" only means "do not
+          // prompt up front", and a genuine 401 later still routes through
+          // `markOAuthRequired` and gets its Authorize action.
+          authorizationRequiredUpfront: requirement === "required",
+        };
+      }),
+    [sessionServersActive, oauthRequirementByServerId]
+  );
+
+  const requiredOAuthServers = useMemo(
+    () => oauthServers.filter((server) => !server.optional),
+    [oauthServers]
   );
 
   const handleEnableChatboxOptionalServer = useCallback((serverId: string) => {
@@ -843,7 +894,7 @@ export function ChatboxChatPage({
     // Copy link work across reloads.
     const token = shareableToken;
     if (!session || !token) {
-      toast.error("Swarm link unavailable");
+      toast.error("Link unavailable");
       return;
     }
 
@@ -856,9 +907,9 @@ export function ChatboxChatPage({
       await navigator.clipboard.writeText(
         buildChatboxLink(token, session.payload.name)
       );
-      toast.success("Swarm link copied");
+      toast.success("Link copied");
     } catch {
-      toast.error("Failed to copy swarm link");
+      toast.error("Failed to copy link");
     }
   }, [session, shareableToken]);
 
@@ -898,7 +949,10 @@ export function ChatboxChatPage({
     !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
-    servers: sessionServersRequired,
+    // The probed descriptors, not the raw bootstrap rows: the gate asks "does
+    // this session require authorization", which the payload's `useOAuth`
+    // mirror cannot answer (see `oauthServers` above).
+    servers: requiredOAuthServers,
     oauthPending,
     hasBusyOAuth,
     pendingOAuthServers,
@@ -938,7 +992,15 @@ export function ChatboxChatPage({
               {displayError.message}
             </p>
             <div className="mt-4 flex items-center justify-center gap-2">
-              {!isAuthenticated && (isAccessDenied || guestBlocked) ? (
+              {/* No sign-in CTA inside the author's Preview embed. `signIn()`
+                  navigates THIS frame to WorkOS and returns to
+                  `/oauth/callback`, outside the `main.tsx` self-embed
+                  exemption, so the frame lands on `IframeRouterError` — the
+                  author is offered a button that cannot complete. Standalone
+                  visitors keep it; it works there. */}
+              {!isAuthenticated &&
+              (isAccessDenied || guestBlocked) &&
+              !isEmbeddedPreview() ? (
                 <Button onClick={handleSignIn}>Sign in</Button>
               ) : null}
               <Button variant="outline" onClick={handleOpenMcpJam}>
@@ -1006,6 +1068,7 @@ export function ChatboxChatPage({
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
           isFinishingOAuth={isFinishingOAuth}
+          onSkipAuthorization={introGate.dismissAuthPanel}
         />
       </div>
     );

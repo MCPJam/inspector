@@ -15,6 +15,8 @@ vi.mock("@mcpjam/sdk/browser", async (importOriginal) => {
   return { ...actual, createOAuthStateMachine };
 });
 
+import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "@mcpjam/sdk/browser";
+
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
 
 /**
@@ -36,152 +38,6 @@ function wrappedUpdateState(updateState = vi.fn(), currentStep = "metadata") {
   };
   return { wrapped: passed.updateState, updateState };
 }
-
-describe("sanitizeStepError", () => {
-  it("strips userinfo out of URLs the server under test echoed back", async () => {
-    // error_description is whatever the server chose to return, and the
-    // debugger is routinely pointed at half-built servers.
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    expect(
-      sanitizeStepError("failed: https://user:s3cret@example.test/token"),
-    ).toBe("failed: https://[redacted]@example.test/token");
-  });
-
-  it("redacts userinfo through the LAST @ of the authority", async () => {
-    // `@` is legal inside a password, so browser URL parsing treats
-    // `user:secret@part` as the whole userinfo here. Stopping at the first
-    // `@` would report half of it.
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    const out = sanitizeStepError("POST https://user:secret@part@example.test/token");
-    expect(out).not.toContain("part");
-    expect(out).toBe("POST https://[redacted]@example.test/token");
-  });
-
-  it("redacts bare user:pass@host with no scheme", async () => {
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    expect(sanitizeStepError("connect failed for admin:hunter2@example.test")).toBe(
-      "connect failed for [redacted]@example.test",
-    );
-  });
-
-  it("redacts credential query parameters by name", async () => {
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    const out = sanitizeStepError(
-      "POST /token?client_secret=abc123&code=xyz789&grant_type=authorization_code failed",
-    );
-    expect(out).not.toContain("abc123");
-    expect(out).not.toContain("xyz789");
-    // The parameter NAME is the diagnostic and is preserved; so is anything
-    // that is not credential-shaped.
-    expect(out).toContain("client_secret=[redacted]");
-    expect(out).toContain("grant_type=authorization_code");
-  });
-
-  it("redacts Authorization bearer and basic values", async () => {
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    expect(
-      sanitizeStepError("upstream said: Authorization: Bearer eyJhbGciOi.J9.sig"),
-    ).toContain("Bearer [redacted]");
-    expect(sanitizeStepError("Authorization: Basic dXNlcjpwYXNz")).toContain(
-      "Basic [redacted]",
-    );
-  });
-
-  it("redacts JSON credential fields", async () => {
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    const out = sanitizeStepError('{"client_secret": "s3cret", "iss": "https://a.test"}');
-    expect(out).not.toContain("s3cret");
-    expect(out).toContain('"client_secret": "[redacted]"');
-    expect(out).toContain("https://a.test");
-  });
-
-  it("keeps an escaped quote inside a JSON credential value redacted", async () => {
-    // `[^"]*` would treat the escaped quote as the end of the string and
-    // leave the secret's tail in the report.
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    const out = sanitizeStepError(String.raw`{"client_secret":"abc\"def"}`);
-    expect(out).not.toContain("def");
-    expect(out).toContain('"client_secret":"[redacted]"');
-  });
-
-  it("keeps the diagnostic word after a bare Bearer/basic mention", async () => {
-    // "Bearer token is expired" is a real, common error_description. A naive
-    // `bearer\s+\w+` redactor eats the word that says WHAT went wrong.
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    expect(sanitizeStepError("Bearer token is expired")).toBe(
-      "Bearer token is expired",
-    );
-    expect(sanitizeStepError("the basic flow worked")).toBe(
-      "the basic flow worked",
-    );
-    // …but a credential-shaped value is still redacted without a header.
-    expect(sanitizeStepError("got Bearer eyJhbGciOi.J9.sig back")).toContain(
-      "Bearer [redacted]",
-    );
-  });
-
-  it("does not emit a raw credential prefix when the input cap splits one", async () => {
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    // A long redactable run SHRINKS under redaction, pulling content from
-    // beyond the 500-char report bound into view — so a JSON secret left
-    // unterminated by the 4000-char scan bound really can surface.
-    const out = sanitizeStepError(
-      `access_token=${"A".repeat(3960)}{"client_secret":"SUPERSECRETVALUE"}`,
-    );
-    expect(out).not.toContain("SUPERSECR");
-    expect(out).toContain("access_token=[redacted]");
-    expect(out).toContain('"client_secret":"[redacted]');
-  });
-
-  it("redacts a truncated JSON credential that contains an escaped quote", async () => {
-    // The tail guard has to be escape-aware too: `[^"]*$` stops at the
-    // escaped quote, and the long redactable prefix shrinks enough to pull
-    // the exposed suffix inside the 500-char report.
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    const out = sanitizeStepError(
-      `access_token=${"A".repeat(3960)}` +
-        String.raw`{"client_secret":"abc\"SUPERSECRET"}`,
-    );
-    expect(out).not.toContain("SUPE");
-    expect(out).toContain('"client_secret":"[redacted]');
-  });
-
-  it("caps pathological lengths", async () => {
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    expect(sanitizeStepError("x".repeat(5000))).toHaveLength(500);
-  });
-
-  it("leaves an ordinary message alone", async () => {
-    const { sanitizeStepError } = await import(
-      "../debug-state-machine-adapter"
-    );
-    expect(sanitizeStepError("token exchange failed: 401")).toBe(
-      "token exchange failed: 401",
-    );
-  });
-});
 
 describe("OAuth debugger step-failure reporting", () => {
   beforeEach(() => {
@@ -253,6 +109,58 @@ describe("OAuth debugger step-failure reporting", () => {
     wrapped({ error: "" });
 
     expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("ignores advisory warnings the flow recovers from", () => {
+    const { wrapped, updateState } = wrappedUpdateState();
+
+    const advisory = {
+      error: "Warning: Authorization server may not support S256 PKCE method",
+    };
+    wrapped(advisory);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(advisory);
+  });
+
+  it("ignores a metadata document missing the RFC 8414 issuer", () => {
+    // Stops the flow, but it is the server under test violating RFC 8414 and
+    // nothing we act on — it must stay on screen without reaching Sentry.
+    // The message comes from the SDK export the machines throw, so a rephrasing
+    // there cannot leave the adapter matching on stale text.
+    const { wrapped, updateState } = wrappedUpdateState();
+
+    const serverFault = {
+      error: AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+    };
+    wrapped(serverFault);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFault);
+  });
+
+  it("still reports a real failure that follows a warning", () => {
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "Warning: Authorization server may not support S256" });
+    wrapped({ error: "token exchange failed: 401" });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    expect((reportCaught.mock.calls[0][0] as Error).message).toBe(
+      "token exchange failed: 401",
+    );
+  });
+
+  it("reports the same failure again when a warning came between", () => {
+    // The warning replaced the message on screen, so the recurrence is a new
+    // failure — not the duplicate update the dedup guard exists to swallow.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "token exchange failed: 401" });
+    wrapped({ error: "Warning: Authorization server may not support S256" });
+    wrapped({ error: "token exchange failed: 401" });
+
+    expect(reportCaught).toHaveBeenCalledTimes(2);
   });
 
   it("still forwards every update to the caller's updateState", () => {

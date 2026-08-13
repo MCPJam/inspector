@@ -13,7 +13,7 @@
  * Never throws. Always returns a `NormalizedError`.
  */
 
-import { redactSensitiveValue } from "../redaction.js";
+import { redactForTelemetry } from "../telemetry-redaction.js";
 import {
   MCP_ERROR_CODES,
   PRE_RENUMBER_DRAFT_ERROR_CODES,
@@ -70,7 +70,7 @@ export function isNormalizedError(value: unknown): value is NormalizedError {
 }
 
 function redactString(value: string): string {
-  const out = redactSensitiveValue(value);
+  const out = redactForTelemetry(value);
   return typeof out === "string" ? out : String(value);
 }
 
@@ -433,7 +433,18 @@ function resolveSlug(error: unknown): {
   // problem, not the MCP-server-re-auth problem auth/http_401 talks about.
   // Without this pre-check the generic status branch wins and the user
   // gets the wrong docs link / next steps.
-  if (/missing\s+(?:or\s+invalid\s+)?bearer/i.test(message)) {
+  //
+  // `bearer token (is) required` is the same gate said differently: the hosted
+  // server's own 401 for a request that arrived with no `Authorization` header
+  // (`server/middleware/bearer-auth.ts`). Its body reaches the UI as a bare
+  // string — the swarm create flow renders `err.message`, so the status is
+  // gone by then — and without this the classifier fell through to
+  // `internal/unknown` and the banner read "Unknown error", offering guesses
+  // where the actual answer is "sign in again".
+  if (
+    /missing\s+(?:or\s+invalid\s+)?bearer/i.test(message) ||
+    /bearer\s+token\s+(?:is\s+)?required/i.test(message)
+  ) {
     return { slug: "auth/missing_bearer" };
   }
 

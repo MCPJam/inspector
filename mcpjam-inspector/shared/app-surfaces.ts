@@ -237,6 +237,7 @@ export const APP_SURFACES = [
     routePatterns: [
       "user-testing",
       "user-testing/new",
+      "user-testing/:scenarioId/edit",
       "user-testing/:scenarioId",
     ],
     navSegments: ["chatboxes"],
@@ -522,22 +523,6 @@ export const APP_SURFACES = [
       kind: "none",
       reason:
         "Read-only review of chat-turn traces; nothing to operate, but snapshot-only for observability so the agent can see the recent traffic summary.",
-    },
-    showInAtlas: true,
-  },
-  {
-    id: "auth",
-    canonicalPath: "/auth",
-    routePatterns: ["auth"],
-    navSegments: ["auth"],
-    title: "Auth",
-    purpose: "Local authentication settings for MCP servers.",
-    userActivities: ["Review server auth state"],
-    hostedBlocked: true,
-    agentTools: {
-      kind: "none",
-      reason:
-        "Sensitive auth state (server credentials and sessions); the agent must not automate it.",
     },
     showInAtlas: true,
   },

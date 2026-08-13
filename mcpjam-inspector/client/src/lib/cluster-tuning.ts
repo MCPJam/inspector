@@ -56,7 +56,7 @@ export const CLUSTER_TUNING_KNOB_COPY: Record<
 > = {
   maxClusters: {
     label: "Max themes",
-    hint: "Ceiling on themes per axis. The clustering still picks the number that fits, and never exceeds √(sessions) — so a small chatbox stays below this.",
+    hint: "Ceiling on themes per axis. The clustering still picks the number that fits, and never exceeds √(sessions) — so a small scenario stays below this.",
   },
   minSeparation: {
     label: "Separation floor",

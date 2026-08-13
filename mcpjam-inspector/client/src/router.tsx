@@ -4,7 +4,6 @@ import App, {
   ApiKeysSettingsRoute,
   GithubChecksSettingsRoute,
   IntegrationsSettingsRoute,
-  AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
   ConformanceRoute,
@@ -103,7 +102,6 @@ const ROUTE_ELEMENTS: Record<
   resources: { element: <ResourcesRoute /> },
   prompts: { element: <PromptsRoute /> },
   tasks: { element: <TasksRoute /> },
-  auth: { element: <AuthRoute /> },
   skills: { element: <SkillsRoute /> },
   learning: { element: <LearningRoute /> },
   conformance: { element: <ConformanceRoute /> },
@@ -117,13 +115,14 @@ const ROUTE_ELEMENTS: Record<
   // render ServersRoute while `pathnameToActiveTab` still resolves
   // "chat" → "playground" — sidebar/content mismatch).
   "chat/*": { element: <ChatAliasRoute /> },
-  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` one
-  // scenario's detail (share band + Sessions | Clusters). Same element: the
-  // route param is what selects the view, so a deep-linked scenario survives
-  // the auth-gate remounts a cold boot puts it through.
+  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` detail
+  // (Insights | Sessions); `/user-testing/:scenarioId/edit` setup/share.
+  // Same element: the route param is what selects the view, so a deep-linked
+  // scenario survives the auth-gate remounts a cold boot puts it through.
   "user-testing": { element: <ChatboxesRoute /> },
   // Static segment, so it outranks `:scenarioId` in React Router's matcher.
   "user-testing/new": { element: <ChatboxesRoute /> },
+  "user-testing/:scenarioId/edit": { element: <ChatboxesRoute /> },
   "user-testing/:scenarioId": { element: <ChatboxesRoute /> },
   // Old bookmarks and every session link copied before the rename. Search and
   // hash come along: `/chatboxes?host=X&session=Y` has to land on that

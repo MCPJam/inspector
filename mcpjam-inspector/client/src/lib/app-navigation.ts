@@ -14,6 +14,7 @@ import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
+import type { InsightsView } from "@/hooks/useInsightsFlowController";
 
 /**
  * Every organization settings section.
@@ -122,11 +123,13 @@ export function buildHostComparePath(
 /** The create route. A static segment, so it outranks `:scenarioId`. */
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
-/** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
-export type UserTestingDetailTab = "edit" | "sessions" | "insights";
+/**
+ * Detail sub-tabs on `/user-testing/:scenarioId`. Insights is the landing tab.
+ * Edit is a sibling route (`/edit`), not a tab.
+ */
+export type UserTestingDetailTab = "sessions" | "insights";
 
 const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
-  "edit",
   "sessions",
   "insights",
 ]);
@@ -137,32 +140,63 @@ const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
  * share. A HOST id is still accepted by the surface (links minted under the
  * older scheme redirect onto the chatbox id), but new links should never be
  * built with one. `session` opens straight into one tester session, which is
- * what a copied session link carries.
+ * what a copied session link carries; `sel` and `view` carry an Insights
+ * selection and which diagram it was made on, so a link to "this cluster, in
+ * the flow view" reopens exactly that. `buildSwarmPath` carries `sel` in the
+ * same shape but not `view` — Swarms always reopens on the flow diagram.
  */
 export function buildUserTestingScenarioPath(
   scenarioId: string,
-  opts: { tab?: UserTestingDetailTab; session?: string } = {}
+  opts: {
+    tab?: UserTestingDetailTab;
+    session?: string;
+    sel?: string;
+    /** Typed like `tab`, so an unknown view cannot be minted into a link. */
+    view?: InsightsView;
+  } = {}
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "sessions") search.set("tab", opts.tab);
+  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
+  if (opts.sel) search.set("sel", opts.sel);
+  // `flow` is the default; only the non-default view needs saying.
+  if (opts.view && opts.view !== "flow") search.set("view", opts.view);
   const query = search.toString();
   return query ? `${base}?${query}` : base;
 }
 
-/** Parse the sub-tab query on a scenario path. Unknown / missing → sessions. */
+/** Setup / share / preview for one scenario — sibling of the detail tabs. */
+export function buildUserTestingScenarioEditPath(scenarioId: string): string {
+  return `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}/edit`;
+}
+
+/**
+ * Legacy `?tab=edit` / `share` / `preview` query — Edit is now its own route.
+ * Callers should redirect these to {@link buildUserTestingScenarioEditPath}.
+ */
+export function isLegacyUserTestingEditTab(search: string): boolean {
+  const tab = new URLSearchParams(search).get("tab");
+  return tab === "edit" || tab === "share" || tab === "preview";
+}
+
+/**
+ * Parse the sub-tab query on a scenario path. Missing / unknown → insights.
+ * A `session` deep-link without an explicit tab still opens Sessions.
+ * Legacy edit/share/preview queries are NOT returned here — use
+ * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
+ */
 export function parseUserTestingDetailTab(
   search: string
 ): UserTestingDetailTab {
-  const tab = new URLSearchParams(search).get("tab");
-  // Legacy slugs: `share` / `preview` → Edit (Preview docks beside Edit);
-  // `clusters` → Insights (label aligned with Swarm run detail).
-  if (tab === "share" || tab === "preview") return "edit";
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab");
   if (tab === "clusters") return "insights";
-  return tab && USER_TESTING_DETAIL_TABS.has(tab)
-    ? (tab as UserTestingDetailTab)
-    : "sessions";
+  if (tab && USER_TESTING_DETAIL_TABS.has(tab)) {
+    return tab as UserTestingDetailTab;
+  }
+  if (params.get("session")) return "sessions";
+  return "insights";
 }
 
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
@@ -193,12 +227,18 @@ export function buildSwarmPath(
 }
 
 /**
- * Parse the detail-tab query on a Swarm Run path. Unknown / missing / legacy
- * `overview` or `personas` → insights (personas now live on Insights).
+ * Parse the detail-tab query on a Swarm Run path. Missing / unknown →
+ * insights. Legacy `overview` / `personas` → insights (personas live there).
+ * A `session` deep-link without an explicit tab still opens Sessions.
  */
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
-  const value = new URLSearchParams(search).get("tab");
-  if (value === "sessions") return value;
+  const params = new URLSearchParams(search);
+  const value = params.get("tab");
+  if (value === "sessions") return "sessions";
+  if (value === "insights" || value === "personas" || value === "overview") {
+    return "insights";
+  }
+  if (params.get("session")) return "sessions";
   return "insights";
 }
 
