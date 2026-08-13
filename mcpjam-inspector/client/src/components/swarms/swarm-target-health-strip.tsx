@@ -13,7 +13,10 @@
  * wave read as an outage.
  */
 import { cn } from "@/lib/utils";
-import { humanizeSwarmAttemptError } from "@/shared/swarm-attempt-error";
+import {
+  humanizeSwarmAttemptError,
+  UNKNOWN_ATTEMPT_ERROR_MESSAGE,
+} from "@/shared/swarm-attempt-error";
 import type { SwarmWaveTargetHealth } from "@/lib/swarm-api";
 
 /** A target is worth a row only once something did not simply succeed. */
@@ -25,12 +28,22 @@ function hasTrouble(row: SwarmWaveTargetHealth): boolean {
  * The refusal, prettified through the SHARED humanizer — same path the live
  * Running step takes. Never rendered raw: rows written before the runner
  * started sanitizing still hold a full `swarm-agent <url> failed (429): {...}`
- * envelope, and a structured code alone is enough for the humanizer to map a
- * recognized sandbox failure with no stored message at all.
+ * envelope, and a recognized code alone is enough for the humanizer to name a
+ * sandbox failure with no stored message at all.
+ *
+ * `null` when the humanizer can only reach its unknown-reason fallback. Unlike
+ * a per-attempt view, this strip has ALREADY said what happened in its chips —
+ * "1 rate limited" followed by "The session failed for an unknown reason"
+ * reads as a contradiction, and an unrecognized `errorCode` with no stored
+ * message lands exactly there.
  */
 export function targetFailureReason(row: SwarmWaveTargetHealth): string | null {
   if (!row.errorCode && !row.errorMessage) return null;
-  return humanizeSwarmAttemptError(row.errorMessage, row.errorCode).message;
+  const { message } = humanizeSwarmAttemptError(
+    row.errorMessage,
+    row.errorCode
+  );
+  return message === UNKNOWN_ATTEMPT_ERROR_MESSAGE ? null : message;
 }
 
 export function SwarmTargetHealthStrip({

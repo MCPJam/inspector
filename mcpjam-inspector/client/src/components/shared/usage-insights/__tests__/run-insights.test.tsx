@@ -163,19 +163,29 @@ function finding(overrides: Partial<SwarmFinding> = {}): SwarmFinding {
   };
 }
 
+const INSIGHTS_ELEMENT = (onOpenSession: () => void) => (
+  <RunInsights
+    surface={{
+      kind: "swarm",
+      projectId: "proj-1",
+      swarmRunGroupId: "run-1",
+    }}
+    onOpenSession={onOpenSession}
+  />
+);
+
 function renderInsights() {
   const onOpenSession = vi.fn();
-  render(
-    <RunInsights
-      surface={{
-        kind: "swarm",
-        projectId: "proj-1",
-        swarmRunGroupId: "run-1",
-      }}
-      onOpenSession={onOpenSession}
-    />
-  );
+  render(INSIGHTS_ELEMENT(onOpenSession));
   return onOpenSession;
+}
+
+/** Render, then hand back a `refresh` that re-renders the SAME tree after the
+ * mocked signals change — how a live subscription update reaches the rows. */
+function renderRefreshableInsights() {
+  const onOpenSession = vi.fn();
+  const { rerender } = render(INSIGHTS_ELEMENT(onOpenSession));
+  return { refresh: () => rerender(INSIGHTS_ELEMENT(onOpenSession)) };
 }
 
 beforeEach(() => {
@@ -308,6 +318,20 @@ describe("evidence integrity", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("closes an OPEN row when its evidence disappears under it", () => {
+    // Signals are a live subscription. Without this, a refresh that dropped
+    // the exemplars left the model's Why/Fix on screen with nothing behind
+    // it — the row was merely un-openable, not closed.
+    state.dto = completed();
+    const { refresh } = renderRefreshableInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.getByTestId("run-insight-detail")).toBeInTheDocument();
+
+    state.signals = unevidenced();
+    refresh();
+    expect(screen.queryByTestId("run-insight-detail")).not.toBeInTheDocument();
+  });
+
   it("still expands once a failing exemplar is present", () => {
     state.signals = signals({
       candidates: [signal({ contrastSessionIds: ["s-9"] })],
@@ -375,20 +399,25 @@ describe("summary and caveats", () => {
   });
 });
 
+/** A FUNCTION, not a constant element: React bails out of re-rendering a
+ * subtree handed the identical element object, so a shared constant would make
+ * `rerender` silently no-op. */
+const bannerAndRecommendations = () => (
+  <RunInsightsProvider
+    surface={{
+      kind: "swarm",
+      projectId: "proj-1",
+      swarmRunGroupId: "run-1",
+    }}
+    onOpenSession={vi.fn()}
+  >
+    <RunInsightsBanner />
+    <RunInsightsRecommendations />
+  </RunInsightsProvider>
+);
+
 function renderBannerAndRecommendations() {
-  return render(
-    <RunInsightsProvider
-      surface={{
-        kind: "swarm",
-        projectId: "proj-1",
-        swarmRunGroupId: "run-1",
-      }}
-      onOpenSession={vi.fn()}
-    >
-      <RunInsightsBanner />
-      <RunInsightsRecommendations />
-    </RunInsightsProvider>
-  );
+  return render(bannerAndRecommendations());
 }
 
 describe("RunInsightsBanner + Recommendations", () => {
@@ -419,6 +448,20 @@ describe("RunInsightsBanner + Recommendations", () => {
     fireEvent.click(screen.getByTestId("run-insight-headline"));
     expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Why:/i);
     expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Fix:/i);
+  });
+
+  it("closes an OPEN recommendation when its evidence disappears", () => {
+    state.dto = completed();
+    state.findings = [finding()];
+    const { rerender } = renderBannerAndRecommendations();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.getByTestId("run-insight-detail")).toBeInTheDocument();
+
+    state.signals = signals({
+      candidates: [signal({ exemplarSessionIds: [] })],
+    });
+    rerender(bannerAndRecommendations());
+    expect(screen.queryByTestId("run-insight-detail")).not.toBeInTheDocument();
   });
 
   // The rail has TWO row components. The evidence rule is a property of the

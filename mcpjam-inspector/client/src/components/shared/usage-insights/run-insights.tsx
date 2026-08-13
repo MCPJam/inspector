@@ -1011,15 +1011,15 @@ function RecommendationRow({
   const chip = finding ? STATUS_CHIP[finding.status] : undefined;
   const affected = signal.affectedSessions;
   const headline = signalSentence(signal, { cohort });
-  // Gated on a failing exemplar — see `canExpand`. Prose and contrast links
-  // are never enough on their own.
-  const hasDetail =
-    canExpand(signal) &&
-    Boolean(
-      insight?.rootCause ||
-        insight?.recommendation ||
-        signal.exemplarSessionIds.length
-    );
+  // Gated on a failing exemplar and nothing else — see `canExpand`. An
+  // exemplar alone is worth opening for (the session chips are the point);
+  // prose without one is not.
+  const hasDetail = canExpand(signal);
+  // Evidence can disappear under an OPEN row: signals are a live subscription,
+  // and a refresh that drops the exemplars would otherwise leave the model's
+  // prose on screen with nothing behind it. Derived, not stored, so the row
+  // closes the moment it stops qualifying.
+  const isExpanded = hasDetail && expanded;
 
   const toggleDismiss = () => {
     if (!finding) return;
@@ -1043,7 +1043,7 @@ function RecommendationRow({
           type="button"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
           disabled={!hasDetail}
-          aria-expanded={expanded}
+          aria-expanded={isExpanded}
           aria-label={headline}
           className={cn(
             "flex h-6 min-w-7 shrink-0 items-center justify-center rounded border px-1 font-mono text-xs font-semibold tabular-nums transition-colors",
@@ -1072,7 +1072,7 @@ function RecommendationRow({
             <ChevronRight
               className={cn(
                 "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-90"
+                isExpanded && "rotate-90"
               )}
               aria-hidden="true"
             />
@@ -1105,7 +1105,7 @@ function RecommendationRow({
           ) : null}
         </div>
       </div>
-      {expanded ? (
+      {isExpanded ? (
         <div
           className="space-y-1 border-t border-border/40 bg-muted/20 px-3 py-2 pl-12"
           data-testid="run-insight-detail"
@@ -1282,15 +1282,15 @@ function InsightRow({
   const dismissed =
     dismissedOptimistic ?? Boolean(finding && finding.dismissedAt !== null);
   const chip = finding ? STATUS_CHIP[finding.status] : undefined;
-  // Gated on a failing exemplar — see `canExpand`. Prose and contrast links
-  // are never enough on their own.
-  const hasDetail =
-    canExpand(signal) &&
-    Boolean(
-      insight?.rootCause ||
-        insight?.recommendation ||
-        signal.exemplarSessionIds.length
-    );
+  // Gated on a failing exemplar and nothing else — see `canExpand`. An
+  // exemplar alone is worth opening for (the session chips are the point);
+  // prose without one is not.
+  const hasDetail = canExpand(signal);
+  // Evidence can disappear under an OPEN row: signals are a live subscription,
+  // and a refresh that drops the exemplars would otherwise leave the model's
+  // prose on screen with nothing behind it. Derived, not stored, so the row
+  // closes the moment it stops qualifying.
+  const isExpanded = hasDetail && expanded;
 
   const toggleDismiss = () => {
     if (!finding) return;
@@ -1332,7 +1332,7 @@ function InsightRow({
             <ChevronRight
               className={cn(
                 "mt-1 size-3 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-90"
+                isExpanded && "rotate-90"
               )}
               aria-hidden="true"
             />
@@ -1364,7 +1364,7 @@ function InsightRow({
         ) : null}
       </div>
 
-      {expanded ? (
+      {isExpanded ? (
         <div className="mt-1 space-y-1 pl-3.5" data-testid="run-insight-detail">
           {insight?.rootCause ? (
             <p className="text-xs text-muted-foreground">

@@ -64,16 +64,33 @@ describe("SwarmTargetHealthStrip", () => {
     expect(reason.textContent ?? "").not.toBe("");
   });
 
-  it("renders a reason from a structured code with no stored message", () => {
+  it("renders a reason from a RECOGNIZED code with no stored message", () => {
     render(
       <SwarmTargetHealthStrip
-        targetHealth={[health({ errorCode: "spend_cap_exceeded" })]}
+        targetHealth={[health({ errorCode: "sandbox_at_capacity" })]}
         terminal
       />
     );
+    expect(screen.getByTestId("swarm-target-health-reason")).toHaveTextContent(
+      /at capacity/i
+    );
+  });
+
+  it("shows no reason rather than a non-answer beside the chips", () => {
+    // An unrecognized code with no message humanizes to "The session failed
+    // for an unknown reason" — printed next to a "1 rate limited" chip that
+    // just said what happened, it reads as a contradiction. The chips carry
+    // the outcome; a sentence that adds nothing is worse than no sentence.
+    render(
+      <SwarmTargetHealthStrip
+        targetHealth={[health({ errorCode: "some_unmapped_code" })]}
+        terminal
+      />
+    );
+    expect(screen.getByTestId("swarm-target-health-row")).toBeInTheDocument();
     expect(
-      screen.getByTestId("swarm-target-health-reason")
-    ).toBeInTheDocument();
+      screen.queryByTestId("swarm-target-health-reason")
+    ).not.toBeInTheDocument();
   });
 
   it("stays silent while the wave is still running", () => {
@@ -101,6 +118,13 @@ describe("SwarmTargetHealthStrip", () => {
   it("tolerates a server deployed before the field existed", () => {
     const { container } = render(
       <SwarmTargetHealthStrip targetHealth={undefined} terminal />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("stays silent when target health is present but empty", () => {
+    const { container } = render(
+      <SwarmTargetHealthStrip targetHealth={[]} terminal />
     );
     expect(container).toBeEmptyDOMElement();
   });
