@@ -121,6 +121,20 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(updateState).toHaveBeenCalledWith(advisory);
   });
 
+  it("ignores a metadata document missing the RFC 8414 issuer", () => {
+    // Stops the flow, but it is the server under test violating RFC 8414 and
+    // nothing we act on — it must stay on screen without reaching Sentry.
+    const { wrapped, updateState } = wrappedUpdateState();
+
+    const serverFault = {
+      error: "Authorization server metadata missing required 'issuer' field",
+    };
+    wrapped(serverFault);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFault);
+  });
+
   it("still reports a real failure that follows a warning", () => {
     const { wrapped } = wrappedUpdateState();
 
