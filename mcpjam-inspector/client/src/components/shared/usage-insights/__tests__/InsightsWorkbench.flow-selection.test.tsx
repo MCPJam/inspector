@@ -18,6 +18,7 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsightsWorkbench } from "../InsightsWorkbench";
 import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
@@ -76,11 +77,14 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
   SessionFlowSankey: ({
     onSelectNode,
     onSelectLink,
+    headerActions,
   }: {
     onSelectNode: (selection: InsightsSelection) => void;
     onSelectLink: (selection: InsightsSelection) => void;
+    headerActions?: React.ReactNode;
   }) => (
     <>
+      {headerActions}
       <button type="button" onClick={() => onSelectNode(GOAL_NODE)}>
         pick goal theme
       </button>
@@ -115,21 +119,26 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
 vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
   TopicMapPanel: ({
     onToggleChip,
+    headerActions,
   }: {
     onToggleChip: (chip: UsageFilterChip) => void;
+    headerActions?: React.ReactNode;
   }) => (
-    <button
-      type="button"
-      onClick={() =>
-        onToggleChip({
-          kind: "cluster",
-          clusterId: "cluster-b",
-          label: "Refund status",
-        })
-      }
-    >
-      pick map community
-    </button>
+    <>
+      {headerActions}
+      <button
+        type="button"
+        onClick={() =>
+          onToggleChip({
+            kind: "cluster",
+            clusterId: "cluster-b",
+            label: "Refund status",
+          })
+        }
+      >
+        pick map community
+      </button>
+    </>
   ),
 }));
 
