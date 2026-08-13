@@ -4643,7 +4643,7 @@ export function PlaygroundMain({
                     sideOffset={6}
                     collisionPadding={12}
                   >
-                    <p className="font-medium">Restart session</p>
+                    <p className="font-medium">Clear chat</p>
                     <p className="text-xs font-light text-muted-foreground">
                       Clears this conversation and starts fresh ·{" "}
                       {navigator.platform.includes("Mac")
