@@ -1482,43 +1482,65 @@ export class PlatformApiClient {
       this.timeoutMs
     );
 
+    // BOTH THE FETCH AND THE BODY READ ARE INSIDE THIS `try`, and that is the
+    // point. Headers arriving is not the end of the request: a server can send
+    // them and then stall the body indefinitely. Releasing the deadline and the
+    // caller's signal at the end of the fetch — as this did — left
+    // `response.text()` bounded by NOTHING. Not `timeoutMs`, which had just been
+    // cleared; not the caller's abort, whose listener had just been removed. A
+    // stalling server held the caller forever, and a Ctrl-C could not take it
+    // back.
     let response: Response;
+    let raw: string;
     try {
-      response = await this.fetchFn(url, {
-        method,
-        headers,
-        body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (externalSignal?.aborted) {
-        // Caller-initiated abort: propagate, don't dress it up as an API error.
-        throw error;
+      try {
+        response = await this.fetchFn(url, {
+          method,
+          headers,
+          body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (externalSignal?.aborted) {
+          // Caller-initiated abort: propagate, don't dress it up as an API error.
+          throw error;
+        }
+        const aborted = controller.signal.aborted;
+        throw new PlatformApiError(
+          aborted
+            ? `Request to ${path} timed out after ${this.timeoutMs}ms`
+            : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
+                error
+              )}`,
+          aborted ? "TIMEOUT" : "NETWORK_ERROR",
+          { status: 0, endpoint: path, cause: error }
+        );
       }
-      const aborted = controller.signal.aborted;
-      throw new PlatformApiError(
-        aborted
-          ? `Request to ${path} timed out after ${this.timeoutMs}ms`
-          : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
-              error
-            )}`,
-        aborted ? "TIMEOUT" : "NETWORK_ERROR",
-        { status: 0, endpoint: path, cause: error }
-      );
+
+      try {
+        raw = await response.text();
+      } catch (error) {
+        // Same taxonomy as the fetch arm above, for the same reasons: a caller's
+        // abort is theirs to see, and our own deadline is a TIMEOUT rather than
+        // an unexplained read failure. Reporting a stalled body as
+        // INTERNAL_ERROR sends someone looking for a bug on our side.
+        if (externalSignal?.aborted) throw error;
+        if (controller.signal.aborted) {
+          throw new PlatformApiError(
+            `Request to ${path} timed out after ${this.timeoutMs}ms`,
+            "TIMEOUT",
+            { status: 0, endpoint: path, cause: error }
+          );
+        }
+        throw new PlatformApiError(
+          `Failed to read the MCPJam API response (${response.status}) for ${path}`,
+          "INTERNAL_ERROR",
+          { status: response.status, endpoint: path, cause: error }
+        );
+      }
     } finally {
       clearTimeout(timeoutHandle);
       externalSignal?.removeEventListener("abort", onExternalAbort);
-    }
-
-    let raw: string;
-    try {
-      raw = await response.text();
-    } catch (error) {
-      throw new PlatformApiError(
-        `Failed to read the MCPJam API response (${response.status}) for ${path}`,
-        "INTERNAL_ERROR",
-        { status: response.status, endpoint: path, cause: error }
-      );
     }
 
     let parsed: unknown;
