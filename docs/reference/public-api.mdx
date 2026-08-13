@@ -178,7 +178,7 @@ is stable and machine-readable; `message` is human-readable and may change;
 | --- | --- | --- |
 | `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
 | `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
-| `FORBIDDEN` | 403 | Key is valid but not allowed to do this |
+| `FORBIDDEN` | 403 | Key is valid but not allowed to do this — or the **target MCP server** rejected the credentials MCPJam presented (retrying with a different MCPJam key will not help; reconnect or re-authorize the server) |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
 | `NOT_FOUND` | 404 | Unknown project, server, or resource |
 | `CONFLICT` | 409 | The resource isn't in a state that accepts this write — a stale `expectedRevision`, a duplicate name, or an environment that can't currently be launched. Re-read and retry |
