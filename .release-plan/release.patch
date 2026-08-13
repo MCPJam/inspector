@@ -1,175 +1,326 @@
-diff --git a/.changeset/chat-error-payload-wall.md b/.changeset/chat-error-payload-wall.md
+diff --git a/.changeset/chat-upstream-error-page-retry.md b/.changeset/chat-upstream-error-page-retry.md
 deleted file mode 100644
-index 426975c67..000000000
---- a/.changeset/chat-error-payload-wall.md
+index adefc186d..000000000
+--- a/.changeset/chat-upstream-error-page-retry.md
 +++ /dev/null
 @@ -1,13 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Stop rendering a gateway's HTML error page into the chat.
+-Stop pasting a gateway's error page into the chat, and offer a retry instead of only a reset.
 -
--When an upstream hop fails, the response body is an HTML document, and the AI SDK surfaces the failure as `new Error(await response.text())` — so the entire page landed in `error.message` and rendered verbatim, filling the chat with a wall of red markup and pushing the conversation off screen. A user demoed exactly this on a call: a 502 whose only readable content was the phrase "Bad Gateway" buried in the middle of a stylesheet.
+-An upstream hop answering with HTML was already summarized in the banner headline, but the page itself was kept — truncated to 4KB — as the "More details" payload, so a momentary 502 in front of `app.mcpjam.com` still put `<!DOCTYPE html>` onward, a Cloudflare status table and a datacentre name into a User Testing transcript. The banner's only action was `Reset chat`, which for a User Testing session means discarding the data the session existed to collect.
 -
--An opaque or oversized payload is now summarized to one line — "The request failed with HTTP 502. An upstream service returned an error page instead of a response." — with the original body preserved in the existing "More details" collapsible. The copy says "an upstream service" rather than "the server" because the page comes from whichever hop failed, and naming "the server" in an MCP debugger reads as an accusation against the user's MCP server.
+-The page body is now discarded outright. The banner says the useful thing — "MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again." — and "More details" carries status plus the gateway's own request id (Cloudflare's `Ray ID`, or the `Request ID` / `Correlation ID` its peers print), which are the only two facts on such a page anyone can act on.
 -
--The status is read from the page's `<title>` and `<h1>` — both, in order, since a generic `<title>Error</title>` over an `<h1>503 Service Unavailable</h1>` is a real page shape — rather than by scanning the document for any three-digit number (the page that prompted this carries `500` and `404` inside a stylesheet). Detection covers bodies that are not well-formed documents: truncated or streamed responses that never reach `</html>`, and pages behind a comment or an XML declaration.
+-The formatted error also carries `code: "upstream_error_page"` and `isRetryable`, and the chat surfaces render a Retry beside the reset for it — resending the last message is the entire fix for a transient upstream failure. The retry is gated on that code rather than on `isRetryable` alone, which the server also sets on failures a blind resend cannot help with.
 -
--Ordinary error text is untouched: only genuinely opaque or oversized bodies take this path. The error card and its details pane also gained height caps, so a message that slips past the formatter costs a scrollbar rather than the viewport.
-diff --git a/.changeset/hosts-deleted-permalink-loop.md b/.changeset/hosts-deleted-permalink-loop.md
+-Ordinary error text and oversized-but-readable messages are untouched: only a response body that is an error page takes this path.
+diff --git a/.changeset/oauth-consolidate-diagram-actions.md b/.changeset/oauth-consolidate-diagram-actions.md
 deleted file mode 100644
-index 86d48f5aa..000000000
---- a/.changeset/hosts-deleted-permalink-loop.md
+index 0881156ac..000000000
+--- a/.changeset/oauth-consolidate-diagram-actions.md
++++ /dev/null
+@@ -1,11 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Collapse ~1,300 lines of duplicated sequence-diagram action builders into one era-parameterized builder.
+-
+-`buildActions_2025_03_26` / `_2025_06_18` / `_2025_11_25` / `_2026_07_28` were four near-identical array literals totaling ~1,700 lines. They are pure presentation — the arrows in the debugger's sequence diagram — with zero effect on the wire, which makes them the one part of the era machines where consolidation is all upside: maximum maintenance cost, no protocol risk. (The wire step tables are the opposite trade and deliberately stay separate.)
+-
+-The eras genuinely differ in five places, and each is now a field on an era spec rather than a conditional buried in a shared body: whether the ladder opens with the RFC 9728 protected-resource preamble (2025-03-26 does not), the MCP method on the unauthenticated probe, how the authorization-server metadata document is discovered, PKCE's requirement wording, and 2026-07-28's three additions (the DCR-deprecation note, the issuer the credentials are bound to, and the SEP-2350 scope union).
+-
+-Verified rather than asserted: `sequence-actions-goldens.test.ts` snapshots the rendered actions for every era × every supported registration strategy × populated and empty flow state — 24 snapshots — and they are byte-identical across the change. One quirk is preserved deliberately, with a comment saying so: an operator-precedence artifact that renders `"undefined..."` for an absent code challenge. Fixing it would move the goldens, and this change's job is to not move them.
+diff --git a/.changeset/oauth-delete-legacy-auth-tab.md b/.changeset/oauth-delete-legacy-auth-tab.md
+deleted file mode 100644
+index 91d2628bf..000000000
+--- a/.changeset/oauth-delete-legacy-auth-tab.md
++++ /dev/null
+@@ -1,11 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Delete the legacy Auth tab and the two OAuth implementations only it used.
+-
+-The Auth tab was reachable by URL but absent from the sidebar and blocked in hosted mode. It was also the only importer of `lib/oauth/oauth-state-machine.ts` (385 lines, one commit in six months) and the only production caller of `refreshOAuthTokens`. Three of the five client-side OAuth implementations existed to serve one unlinked screen — and every one of them was another place the same user action could behave differently.
+-
+-Removed: `components/AuthTab.tsx`, `lib/oauth/oauth-state-machine.ts`, `refreshOAuthTokens`, the `auth` route and its `AuthRoute` component, and the `auth` app surface.
+-
+-No replacement is needed. The main connect path never called `refreshOAuthTokens`, and hosted refresh goes through Convex (`server/utils/hosted-oauth-refresh.ts`). If local manual refresh is wanted later, it belongs as an era-parameterized SDK refresh step — not as a revived `fetchToken` + `loadCallbackDiscoveryState` pair, which bypassed every era rule the state machines enforce.
+diff --git a/.changeset/oauth-era-differential-harness.md b/.changeset/oauth-era-differential-harness.md
+deleted file mode 100644
+index 2c3359234..000000000
+--- a/.changeset/oauth-era-differential-harness.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Add a differential golden harness across every era, registration strategy, and branch.
+-
+-`no-emulation-goldens.test.ts` covers one happy ladder per era, `dcr` only, no error branches. That notices an accidental change to the default path and nothing else — a thin basis for trusting four ~50%-duplicated state machines, and far too thin to justify consolidating them.
+-
+-`era-differential-goldens.test.ts` widens it to 4 eras × each supported registration strategy (`dcr`, `preregistered`, and `cimd` where the era supports it) × a catalog of the branches that actually differ: DCR failure, DCR failure with a pre-registered fallback, `strictConformance` refusing that fallback, present-but-mismatched and absent RFC 9207 `iss`, issuer mismatch, `allowPathScopedIssuer` on and off, each `resourceIndicatorEnforcement` mode, and — for the current-profile eras — missing PKCE metadata, `S256` absent, `plain` alongside `S256`, and empty or absent `authorization_servers`.
+-
+-Two layers on purpose. The full request-sequence snapshot is a review aid: it shows what changed, and accepting an update is one keystroke. The named assertions are the gate — S256 PKCE end to end, one `redirect_uri` reused, the same validated canonical resource on both the authorization and token requests, a CSRF state always issued, and no MCP bearer credential on any OAuth endpoint. A snapshot update cannot normalize away a violation of those.
+-
+-Era differences are pinned rather than tolerated. The issuer-mismatch branch asserts that only 2026-07-28 hard-rejects it, so a change to shared code cannot quietly give an older era the strict behavior or take it from the newest one.
+diff --git a/.changeset/oauth-executor-machine-integration.md b/.changeset/oauth-executor-machine-integration.md
+deleted file mode 100644
+index f35bd0a5f..000000000
+--- a/.changeset/oauth-executor-machine-integration.md
 +++ /dev/null
 @@ -1,15 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Fix a client permalink for a deleted client hanging the app.
+-Cover the executor ↔ state-machine seam with a real integration test, and gate the MCP OAuth wire invariants on named assertions.
 -
--Client URLs are permalinks, so a bookmark or history entry for `/hosts/:hostId` outlives the client itself. Opening one after the client was deleted — or opening a teammate's link while signed into a different project — put `HostsRoute` and `HostsTab` in a fight over the same id. The route synced the id out of the URL into shared state and into the project's persisted "previewed client"; `HostsTab` reconciled both against the loaded client list, found the id missing, and cleared them; the route then synced the id straight back from the URL, and around again.
+-Every OAuth test mocked one side of the joint the #3865 bug lived in: the inspector's tests mock `@mcpjam/sdk/browser`, and the SDK's tests stub the request executor. Nobody wired the real pair, which is how a redactor applied to live response bodies reached production.
 -
--The corrective `navigate('/hosts')` never landed. It is a React Router transition, so the stream of higher-priority state updates from that ping-pong starved it indefinitely. The usual symptom was silent: the page looked normal while the tab pegged a CPU core (a harness reproduction rendered over 17,000 times in two seconds). When the updates happened to chain synchronously it instead tripped React's nested-update limit and the app fell through to the route error screen with "Maximum update depth exceeded" — the shape reported by a self-hosted user in Sentry.
+-`client/src/lib/oauth/__tests__/oauth-refresh-integration.test.ts` mocks only what cannot exist in a unit process — `@/lib/config` pinned to the hosted configuration that exhibited the bug, and `authFetch` replaced by a forwarder that performs the same unwrap the real `/api/web/oauth` proxy does before making a real request. `@mcpjam/sdk/browser` is deliberately not mocked; `client/vitest.config.ts` already aliases it to SDK source, so the real state machines run. The whole flow — initiate, authorize, callback — takes about two seconds and needs no browser.
 -
--`HostsRoute` now resolves the URL id against the client list before it syncs or persists anything, and treats an id the list doesn't contain as unopenable. Nothing writes the dead id back, so there is nothing for `HostsTab` to fight, and the route bounces once to the client list at `/hosts` with a toast explaining the client no longer exists. The bounce uses `replace`, so the dead URL leaves the history stack instead of sitting one Back press away.
+-The oracle is the fixture rather than our own options object. `e2e/fixtures/fake-oauth-mcp-server.ts` returns 401 from `/mcp` unless `Authorization` matches byte-for-byte, so the happy-path test proves the token is usable rather than merely non-empty. The wire invariants are asserted by name against the requests the fixture actually received: same canonical `resource` on the authorization and token requests, S256 PKCE end to end, one `redirect_uri` reused across registration/authorization/exchange, no MCP bearer token on any OAuth endpoint, zero token requests when callback `state` is missing or mismatched, no raw nonce in the published trace, fail-closed on missing PKCE or protected-resource metadata, and no foreign configured `resourceUrl` reaching the wire.
 -
--The check waits for the client list to finish loading before calling any id dead — the list is empty for a beat on every cold start, and bouncing during that window would break working deep links. During that same window the id is merely unverified, so it opens the canvas immediately (no flash of the client list on a normal permalink) but is not yet written to the project's saved "previewed client" — that store is on disk, so closing the tab mid-load would otherwise leave a possibly-deleted client filed as the project's preview and reopen it on the next visit.
+-Named assertions rather than snapshots alone: accepting an updated snapshot must not be able to make a missing `S256`, a broken resource binding, or a forwarded credential look normal.
 -
--Returning to the same dead link later in the session bounces again rather than going quiet, so the explanation isn't shown only to whoever hits it first.
-diff --git a/.changeset/inspector-error-origin-pipeline.md b/.changeset/inspector-error-origin-pipeline.md
+-The fixture gains an opt-in `tokenFailure` and metadata overrides, plus full URL, query, and headers on its request log. Defaults are byte-identical, so both Playwright projects are unaffected.
+diff --git a/.changeset/oauth-one-redaction-owner.md b/.changeset/oauth-one-redaction-owner.md
 deleted file mode 100644
-index 66493e4fe..000000000
---- a/.changeset/inspector-error-origin-pipeline.md
+index a8ccf9b15..000000000
+--- a/.changeset/oauth-one-redaction-owner.md
 +++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Make #mcpjam-alerts trustworthy: page on MCPJam's failures, and only those.
--
--Server error envelopes now ask one question — whose fault is this? — and act on the answer. `origin: "mcpjam"` captures to Sentry; everything else is recorded in Axiom (`http.request.failed` carries `origin` and `slug`) without paging, so the volume of each bucket is measurable before anything is promoted into the alerting path.
--
--This closes a structural blindness and a noise problem that were two halves of the same accident. `/api/web/*` never rethrows, so `app.onError -> logger.error -> Sentry` was unreachable for the entire hosted surface and hosted connect 502s were invisible. Meanwhile every catch-site under `/api/mcp/*` called `logger.error`, which captures unconditionally, so a user's dead MCP server — or a conformance probe doing exactly its job — raised an issue and posted to the channel.
--
--Also: chat failures reach the client error sinks at all now (they previously hit a rate-limit filter that no-op'd everything else, so a 502 left no client trace), a non-OK response from MCPJam's own chat backend is classified even though no `Error` object exists at that site, and `ErrorCard` says whether a failure was MCPJam's or not.
-diff --git a/.changeset/oauth-client-trace-error-redaction.md b/.changeset/oauth-client-trace-error-redaction.md
-deleted file mode 100644
-index 021df0bd7..000000000
---- a/.changeset/oauth-client-trace-error-redaction.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Redact credentials echoed into the OAuth trace entries the client builds itself.
--
--`projectOAuthTraceSnapshot({ sanitize })` covers everything derived from a state machine's HTTP history, but not the trace steps the client writes directly — `failOAuthTraceStep` and the OAuth proxy's transport-failure entry. The refresh flow produces *only* those, so it had no error redaction at all: an authorization server that echoes a `refresh_token` back in `error_description` put it verbatim into a persisted, copyable trace.
--
--Both sites now go through `traceOAuthErrorMessage` in the new `lib/oauth/trace-redaction.ts`, gated on `SANITIZE_OAUTH_TRACES` the same way `traceOAuthValue`/`traceOAuthHeaders` already are — local dev still shows the server's raw text, which is the point of the inspector. The redactor itself is the debugger's existing `sanitizeStepError`, moved rather than rewritten: it already handles URL userinfo, named parameters, echoed `Authorization` headers, JSON credential fields, and truncation tails, and it deliberately preserves diagnostic wording like "Bearer token is expired". `debug-state-machine-adapter.ts` re-exports it, so its callers and tests are unchanged.
--
--Also documents `serializeBody` as a live-data path that must never be redacted, matching the note already on `parseOAuthResponseBody`.
-diff --git a/.changeset/oauth-executor-redaction-sentinel.md b/.changeset/oauth-executor-redaction-sentinel.md
-deleted file mode 100644
-index 0ee29c72e..000000000
---- a/.changeset/oauth-executor-redaction-sentinel.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
+@@ -1,22 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
 ----
 -
--Fail loudly when a redaction sentinel reaches the OAuth state machine as a credential.
+-Give OAuth trace redaction one owner, and make `state` a secret in traces.
 -
--The factory already wraps every machine's request executor for SSRF, which makes it the one place that sees every executor result across all four protocol eras. It now also inspects `OAuthRequestResult.body` for the sentinel shapes this codebase's redactors emit (`[redacted]`, and the `abcd...[redacted]...yz` truncation form) in `access_token`, `refresh_token`, `id_token`, and `client_secret`, and throws `OAuthRedactedCredentialError` naming the field and a query/fragment-free request target. Clean results are returned unchanged, by identity.
+-The redaction policy — which field names are secret, what a redacted value looks like, how a free-form error string is scrubbed — existed in six places, and the copies had already drifted. The SDK's sensitive-field set omitted `state` while the client's included it, so the same value was published or redacted depending on which code path rendered it; the SDK's error-string redactor was a naive subset that turned "Bearer token is expired" into "Bearer [redacted] is expired", destroying the word that says what went wrong.
 -
--The point is the seam, not the sentinel. A redaction sentinel is a non-empty string, so it passes every truthiness check and is spent as a credential; the first signal is a `401 invalid_token` from the resource server, three layers from the cause. `OAuthRedactedCredentialError` says what actually happened. The check reads `result.body` because that is where the real executor puts response fields — a guard written against `result.access_token` would look correct and never fire.
+-There is now one source of truth: `oauth/state-machines/trace-redaction.ts` in the SDK, exported from `@mcpjam/sdk/browser`. The inspector's `lib/oauth/trace-redaction.ts` re-exports it and adds the `SANITIZE_OAUTH_TRACES` gate; `mcp-oauth.ts`, `oauth-trace.ts`, and `App.tsx`'s OAuth-debugger error boundary all call it instead of their own copies. The surviving error redactor is the debugger's, which already handled URL userinfo, named parameters, echoed `Authorization` headers, JSON credential fields, and truncation tails — and preserves diagnostic wording.
 -
--The match is deliberately narrow: an opaque token is an arbitrary string, so anything looser would break real logins. This is defense in depth for known shapes, not a substitute for keeping trace transformations out of live-data paths.
-diff --git a/.changeset/oauth-trace-state-error-fallback.md b/.changeset/oauth-trace-state-error-fallback.md
+-Consolidating on it dropped two cases the SDK's redactor did have, both restored here. A credential after a bare `:` — `access_token: <value>` is how prose in an `error_description` writes it, and the surviving rule matched `=` only. And short opaque `Bearer`/`Basic` values carrying no base64url punctuation, such as `Basic dXNlcjpwYXNz`, which the surviving rule skipped because it keyed on punctuation-or-length to avoid eating "Bearer token is expired". That test is now inverted rather than dropped: redact unless the value is a plain lowercase word, so the diagnostic wording survives and short credentials do not.
+-
+-Three leaks closed on the way:
+-
+-- **`state` in sanitized traces.** It is not a bearer credential, which is why it was easy to leave out, but a still-live `state` is the CSRF correlation secret for an in-flight authorization. It is now redacted as a structured field, in URL queries, in form and JSON bodies, and inside error strings. Diagnostics use the new `describeOAuthStateMatch`, which reports `statePresent`/`stateMatched` instead of the nonce.
+-- **Request URLs in HTTP history.** `sanitizeHttpHistoryEntry` redacted headers and bodies but not `request.url`, so every recorded authorization request kept its `state` (and a callback URL its `code`).
+-- **Prose reshaped into fields.** `URLSearchParams` never fails, so `"rejected: access_token=ntn_live"` was parsed into a single field whose key (`"rejected: access_token"`) is not in the sensitive set — losing redaction the plain-string path would have applied. Reshaping now requires parameter-shaped keys; everything else goes to the error-string redactor.
+-
+-Telemetry redaction stays separate and is renamed to `redactForTelemetry` (`src/telemetry-redaction.ts`). It over-redacts deliberately and is length-capped for Sentry; merging it with the display redactor would weaken one or the other. `redactSensitiveValue` remains exported as a deprecated alias so external consumers do not break.
+-
+-A ratchet test (`lib/__tests__/oauth-redaction-ratchet.test.ts`) keeps redaction identifiers inside the trace modules. Vitest runs in CI; the lint workflow only runs typecheck and build, so an eslint rule would never have fired.
+diff --git a/.changeset/oauth-required-metadata-fails-closed.md b/.changeset/oauth-required-metadata-fails-closed.md
 deleted file mode 100644
-index f48d4d3f3..000000000
---- a/.changeset/oauth-trace-state-error-fallback.md
+index f3e453a57..000000000
+--- a/.changeset/oauth-required-metadata-fails-closed.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/sdk": major
+-"@mcpjam/inspector": patch
+----
+-
+-Fail closed when metadata an MCP authorization profile requires a client to verify is missing or unusable.
+-
+-Two checks used to warn and continue, which means the flow proceeded without the protection the check exists to guarantee, and the downgrade was invisible on the wire:
+-
+-- **Protected-resource metadata.** An empty or missing RFC 9728 `authorization_servers` list was replaced by the MCP server's own URL, inventing an authorization server the resource never named. Now an error from **2025-06-18** onward — that revision already required the PRM document to "include the `authorization_servers` field containing at least one authorization server," and 2025-11-25 and 2026-07-28 repeat it verbatim.
+-- **PKCE.** An authorization server whose `code_challenge_methods_supported` omits `S256` was accepted with a `console.warn` unless `strictConformance` was set. Continuing is a silent downgrade to a weaker code challenge method, so the flow now stops. Gated at **2025-11-25**, because 2025-06-18 says nothing about `code_challenge_methods_supported` and inventing a rule it does not state would make that machine unfaithful to its era. Advertising `plain` in addition to `S256` is still fine — the client picks `S256`.
+-
+-The two gates are deliberately different, and each is scoped to the eras whose spec text actually states the requirement. Gating both at 2025-11-25 would have left the version selector as a one-click bypass: a user blocked by the PRM check could pick 2025-06-18 and connect anyway, against a revision carrying the same MUST. 2025-03-26 predates the profile's adoption of RFC 9728 and keeps the historical fallback.
+-
+-The debugger keeps the warn-and-continue behavior, because showing what a half-built server actually does is the point of pointing MCPJam at one. It gets it by passing the new `requiredMetadataEnforcement: "observe"`, an explicit non-connect intent: the default is `"reject"`, so connect, reconnect, hosted connect, and callback completion fail closed without opting in. Under `"observe"` an authorization-server substitution is recorded as an info log rather than applied silently.
+-
+-Both gates live in `oauth/state-machines/shared/required-metadata.ts` and are consulted by every era's machine, so a machine cannot drift from its era's policy and a new era file cannot silently omit the check.
+diff --git a/.changeset/oauth-retire-legacy-callback-exchange.md b/.changeset/oauth-retire-legacy-callback-exchange.md
+deleted file mode 100644
+index 02597fa7d..000000000
+--- a/.changeset/oauth-retire-legacy-callback-exchange.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Retire the legacy callback token exchange, and give `clearOAuthData` ownership of the pending marker.
+-
+-`handleOAuthCallback` branched on whether a stored flow session existed: with one, the era state machine redeemed the code; without one, a second complete implementation rediscovered metadata and called `exchangeAuthorization` directly. That is how the same user action took two different code paths — prod and staging shipped byte-identical code and behaved differently — and the legacy path was era-blind. It skipped the era machine and with it the callback-state checks the machine performs, the resource binding, and the issuer policy, so each of those protections had to be re-implemented and separately tested on the fallback.
+-
+-The fallback is gone. A callback with no stored flow session now clears the pending marker, records `oauth_callback_no_session_recovery`, and returns an explicit "please connect again to reauthorize" — it makes no token request at all. A session that straddles a deploy will land here, and a clear reauthorization is strictly safer than redeeming a code without the protections the current era requires.
+-
+-The branch was reachable because `clearOAuthData(serverName)` cleared every per-server key but never the global `mcp-oauth-pending` marker, leaving a server name with no session behind it. `clearOAuthData` now owns the full key list, and removes the global marker **only when it names the server being cleaned** — the marker is global, so cleanup for one server must never strand another server's in-flight authorization (a real two-tab shape). A test enumerates every `mcp-*` key an OAuth flow writes, so a new key has to be added to the cleanup too.
+-
+-Five tests that each defended one protection on the retired path are replaced by one that asserts every such shape now asks for reauthorization and redeems nothing.
+diff --git a/.changeset/oauth-review-redaction-gaps.md b/.changeset/oauth-review-redaction-gaps.md
+deleted file mode 100644
+index eb633f4ac..000000000
+--- a/.changeset/oauth-review-redaction-gaps.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-Close four ways a credential could still reach a sanitized OAuth trace.
+-
+-Each was found by probing the redactor with the shape rather than by reading it, and each is now pinned by a test that fails on the unredacted string:
+-
+-- **Underscore-prefixed credential names.** `user_access_token=…` in a query string or error body did not match, because the name heuristic anchored on a word boundary and `_` is a word character. Names are matched on `_`-delimited segments now, so a vendor prefix no longer defeats the check.
+-- **Colon-bearing keys.** A key containing `:` let ordinary prose be parsed as a structured field record and skip the field-name policy entirely. The key charset for that detection no longer admits `:`.
+-- **Credential-shaped names outside the enumerated set.** `session_token`, `refresh_secret` and friends were not on the sensitive-field list, so a body containing them serialized in the clear. The heuristic now covers `token`/`secret`/`password`/`credential`/`cookie`/`auth`/`api_key` as name segments — with an explicit exemption for descriptive suffixes (`_type`, `_endpoint`, `_supported`, `_uri`, `_methods`, …) so `token_type: "Bearer"` and `token_endpoint` stay legible. Redacting those would make a trace useless for the thing it exists for. The exemption is on the NAME alone — the value behind it is still sanitized, so a descriptive-looking `session_token_url=…%3Faccess_token%3D…` cannot carry a credential through a name the policy waved past.
+-- **URL userinfo.** `https://user:s3cret@auth.example.com/token` survived `sanitizeOAuthUrl`, because `new URL().toString()` preserves credentials in the authority. They are cleared before serialization, and HTTP-history entries now route their `request.url` through the same sanitizer instead of copying it verbatim.
+-
+-`sanitizeTraceErrorMessage` takes `maxLength`/`maxScanned` options so a long stack is redacted in one pass rather than line by line — line-splitting was itself the leak, since a credential spanning a wrap escaped every per-line scan.
+-
+-Also in this pass: the connect-time `resourceUrl` is checked for provenance against the configured server URL before it is used (`selectStoredResourceUrl`), so a stale or foreign stored value cannot bind the flow to a resource the user never configured; it is rejected before the browser is redirected.
+diff --git a/.changeset/oauth-secret-sweep-and-xaa-pin.md b/.changeset/oauth-secret-sweep-and-xaa-pin.md
+deleted file mode 100644
+index 66e6776e0..000000000
+--- a/.changeset/oauth-secret-sweep-and-xaa-pin.md
 +++ /dev/null
 @@ -1,9 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
 ----
 -
--Redact the `state.error` fallback in OAuth trace projection.
+-Pin the "no raw secret in a sanitized trace" criterion, and fence the XAA redact-into-live-state instance.
 -
--`projectOAuthTraceSnapshot` read `state.error` in three places and only sanitized two of them. The unsanitized one is the step-level fallback: when the failing step already has an `httpHistory` entry, `inferHttpHistoryEntryError` returns nothing (it only mines responses for `request_client_registration`), the "no entry for the current step" branch is skipped because the entry exists, and the step's `error` fell through to the raw string. An authorization server that echoes a credential back in `error_description` landed it verbatim in rendered, copied, and persisted traces.
+-`sanitized-trace-contains-no-secrets.test.ts` asks the whole question at once: a sanitized projection carrying an access token, refresh token, ID token, client secret, authorization code, PKCE verifier, cookie, and OAuth `state` — in request URLs, headers, form and JSON bodies, response bodies, transport errors, info-log data, and the free-form flow error — must contain none of them. Each leak fixed in this series was found somewhere different; what they had in common was that nobody was asking about all of them together. It also asserts the trace stays useful (step, endpoint, and non-secret parameters survive) and that local dev still shows everything raw, which is the point of the inspector.
 -
--The projection of `state.error` is now computed once, next to the snapshot's own `error` field, and every consumer reads that variable. `state.error` is read raw exactly once in the file, so the redaction policy has a single place to keep in sync rather than three branches to remember.
-diff --git a/.changeset/sdk-connect-error-provenance.md b/.changeset/sdk-connect-error-provenance.md
+-Separately, XAA's `sanitizeDiagnosticUpdates` redacts secrets and writes the result back into live flow state — structurally the same shape as the OAuth bug this series started from. It is inert today for two reasons, now written down next to the code: every redacted key is a display surface, and the only one read back as behavior (`lastResponse.body.status`) is a number the redactor does not touch. The key list is extracted as `REDACTED_DIAGNOSTIC_KEYS` and pinned by a test, so widening it to a credential field cannot happen as a one-word edit. This is a fence, not a refactor — the instance is provably harmless and does not need changing.
+diff --git a/.changeset/oauth-typed-request-builder.md b/.changeset/oauth-typed-request-builder.md
 deleted file mode 100644
-index 69649e788..000000000
---- a/.changeset/sdk-connect-error-provenance.md
+index 30792a510..000000000
+--- a/.changeset/oauth-typed-request-builder.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-One typed builder for every OAuth initiation, so the same server cannot behave differently depending on which button started it.
+-
+-Four production paths hand-rolled their own `initiateOAuth` options, and they disagreed. The hosted gate omitted `allowPathScopedIssuer`, `clientSecret`, `hasClientSecret`, `customHeaders`, `resourceUrl`, and `registrationMode`; the initial-connect path omitted `resourceUrl`. A server with a path-scoped authorization server or a configured resource indicator therefore authorized correctly from one entry point and failed from another — the most expensive shape an OAuth bug can take, because it only reproduces on one path and nobody knows which.
+-
+-`lib/oauth/oauth-request.ts` now assembles every security-sensitive field once. Callers supply what they resolved from their own source — connect form, stored server record, hosted bootstrap — and the builder decides what reaches the wire. Intent is explicit (`connect`, `reconnect`, `hosted-connect`, `step-up`, `debug`, `emulation`); the four connect-like intents produce identical shared fields, and the intentional differences (step-up's widened scopes and challenge metadata URL) are asserted separately so they stay intentional.
+-
+-`initiateOAuth` accepts only a `BuiltOAuthRequest` — a branded type nothing but the builder can produce — so a fifth divergent bag is a compile error rather than a bug report.
+-
+-Connect-like intents now reject a configured `resourceUrl` that does not identify the configured MCP server, **before** the redirect, and report it as a configuration failure at each entry point. Previously the mismatch surfaced only after the user had left the page. `debug` and `emulation` may still carry nonconforming values, because exercising them is what those surfaces are for — but they have to say so by name, and the deviation is an observation rather than conformance.
+-
+-`allowPathScopedIssuer` remains a per-server opt-in and reads as off when absent; it never becomes a default.
+-
+-The proof is not options-object equality alone: the test also drives a built request into the real state machine and re-checks the wire invariants — same canonical resource, S256 PKCE, and one `redirect_uri` reused across registration and authorization.
+diff --git a/.changeset/sdk-oauth-node-entry.md b/.changeset/sdk-oauth-node-entry.md
+deleted file mode 100644
+index 8b29936a1..000000000
+--- a/.changeset/sdk-oauth-node-entry.md
++++ /dev/null
+@@ -1,18 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add `@mcpjam/sdk/oauth/node`, a Node-only entry point for SSRF-hardened OAuth networking.
+-
+-The guard that keeps an outbound OAuth fetch from reaching private infrastructure is already written, tested, and complete — it just isn't reachable from a Node consumer that isn't the Inspector. Both existing doors are the wrong shape:
+-
+-- The root `@mcpjam/sdk` entry exports the DNS-pinned proxy (`executeOAuthProxy`, `fetchOAuthMetadata`, `validateUrl`), but importing it pulls in the entire SDK graph — `ai`, every provider package, the eval runtime, the client manager. `dist/index.js` is 1.69 MB. A backend action that only wants to fetch an authorization-server metadata document safely should not have to load a model factory to do it.
+-- `@mcpjam/sdk/browser` exports the RFC 6890 classifier (`isPrivateHost`, `isDisallowedIpAddress`, `assertOutboundOAuthUrlAllowed`), and stops there deliberately. Classification alone does not close the DNS-rebinding window: a bare public hostname passes the classifier by design, on the understanding that the caller will resolve it, validate every answer, and pin the surviving addresses into the socket. That resolution step needs `node:dns` and has always lived on the Node side.
+-
+-So a Node consumer outside this repo could have the cheap half or the complete half, never a cheap complete half. `@mcpjam/sdk/oauth/node` is that: the classifier and the pinned transport together, with `node:dns`, `node:http`, and `node:https` as the only imports in the whole graph. The built entry is 29.58 KB.
+-
+-The immediate consumer is `mcpjam-backend`, whose hosted OAuth discovery, token exchange, and refresh paths still use unrestricted `fetch`. Those are the requests where an attacker-influenced URL — a hostile server's `resource_metadata` pointer, a redirect hop — is most worth steering at 169.254.169.254 or a LAN address, and they are the ones with a credential attached. Giving the backend an import instead of a port is the point: a second copy of an SSRF policy is a copy that drifts, and the drift is silent until it is a vulnerability.
+-
+-Nothing else changes. This is additive — a new export map entry, a new tsup entry, and a file that contains only re-exports. Existing imports from the root entry and from `/browser` are untouched.
+-
+-Two things are locked down by tests rather than convention. The re-exports are asserted by **identity** against `oauth-proxy.ts` and `oauth/ssrf-guard.ts`, so a future fork fails the suite instead of quietly diverging while still type-checking. And the import graph is walked transitively and asserted to reach only `node:` builtins, so the "safe for a backend action" property survives someone adding a heavy import three modules deep in `oauth-proxy.ts` — the check fires there, not in a backend deploy months later.
+diff --git a/.changeset/v1-upstream-auth-failed-code.md b/.changeset/v1-upstream-auth-failed-code.md
+deleted file mode 100644
+index 074457872..000000000
+--- a/.changeset/v1-upstream-auth-failed-code.md
++++ /dev/null
+@@ -1,12 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
 ----
 -
--Report a refused connection as a refused connection.
+-Stop reporting an upstream MCP auth rejection as a 500 on the public v1 API.
 -
--Connecting to a host that nothing is listening on classified as `transport/fetch_failed` — "we could not reach it", which tells a developer nothing they did not already know. The specific reason was present the whole time and discarded three separate ways:
+-`UPSTREAM_AUTH_FAILED` landed as an internal Inspector `ErrorCode` — the target MCP server refused the credentials MCPJam presented, which the hosted routes now answer with a 403 instead of burying in the INTERNAL_ERROR bucket. `INTERNAL_TO_V1_CODE` had no entry for it, and `mapInternalCode` defaults to `INTERNAL_ERROR`, so the public surface kept telling API callers that MCPJam had broken when the user's own server had refused us. It now collapses onto `FORBIDDEN` (403): the public union has no upstream-auth member, and FORBIDDEN carries the property that matters to a caller — retrying with a different MCPJam credential will not help.
 -
--- The HTTP connect paths rethrew a readable summary with no `cause`, so the underlying error object (and its errno) was unreachable. Both throw sites now preserve it, and the combined Streamable-HTTP+SSE failure additionally keeps the Streamable attempt on a non-enumerable `streamableCause` for when the two transports failed for different reasons.
--- `extractNodeErrno` returned the first string `code` it found and stopped. A wrapper that stamps its own domain code on the outside of the chain — the MCP SDK's `ERA_NEGOTIATION_FAILED` — therefore shadowed the real `ECONNREFUSED` one hop below it. Unrecognized codes no longer end the walk; they are still returned when the chain holds no errno at all.
--- `describeError` matched undici's generic `fetch failed` before looking for an errno spelled out in the same message ("... connect ECONNREFUSED 127.0.0.1:9999"). An errno in the text now wins over the generic phrase.
+-This is the second code to fall into that default (`ENVIRONMENT_REVISION_CONFLICT` was the first), because the test meant to catch it could not: `mapInternalCode` always returns a valid public code, so asserting the result is a member of the union passes for an unmapped code too. The contract suite now pins the unmapped set explicitly, so adding an `ErrorCode` without deciding its public mapping fails instead of silently widening the INTERNAL_ERROR bucket. That check documents six codes as a known, accepted gap — `BILLING_LIMIT_REACHED` (the public union has no billing member), plus `XAA_CONNECTION_NOT_CONFIGURED`, `TASK_NOT_FOUND`, `TASKS_UNSUPPORTED`, `CHATBOX_ACCESS_DENIED` and `CHATBOX_ACCESS_STALE`, whose reachability from `/api/v1` is unconfirmed and whose mappings are contract decisions rather than mechanical ones.
 -
--A refused port now resolves to `transport/econnrefused`, whose guidance names the actual next step. One documented limit remains: a server pinned to Streamable HTTP (`disableSseFallback`) still reports `transport/fetch_failed`, because the upstream era-negotiation probe drops both the cause and the errno text before MCPJam sees the failure.
-diff --git a/.changeset/sdk-error-origin.md b/.changeset/sdk-error-origin.md
+-`mcpjam-backend` keeps a byte-identical copy of this map in `convex/publicApi/contract.ts` until its pinned SDK version includes the subpath, so it needs the same entry and fixture line to stay in step.
+diff --git a/.changeset/workos-client-config-runtime-injection.md b/.changeset/workos-client-config-runtime-injection.md
 deleted file mode 100644
-index 5656eb2b5..000000000
---- a/.changeset/sdk-error-origin.md
+index cc45f130f..000000000
+--- a/.changeset/workos-client-config-runtime-injection.md
 +++ /dev/null
-@@ -1,14 +0,0 @@
+@@ -1,20 +0,0 @@
 ----
--"@mcpjam/sdk": minor
-----
--
--Record who has to act on an error, not just what went wrong.
--
--Every catalog entry now carries an `origin`: `user_server`, `user_config`, `mcpjam`, or `ambiguous`. MCPJam is a debugger, so pointing it at a broken server is the product working rather than an incident — this is the field that lets a failure be shown plainly to the user without alerting the MCPJam team, and lets the failures that *are* ours stop hiding inside that noise.
--
--- `origin` is optional on the published `ErrorCatalogEntry` type so external callers can still construct one, and required in practice: a test asserts every catalog slug declares it. Read it through the new `originOf()`, which defaults missing or unknown values to `ambiguous` — payloads cross versions, and an older normalized error has no origin at all. `isNormalizedError` deliberately does not require the field, so those payloads still pass the wire guard.
--- `describeError(error, context)` and `describeAsSlug(slug, error, context)` accept an optional `credentialOwner`. Auth and provider failures default to `user_config` because the credential is normally the user's; hosted paths that refresh their own tokens or bill a managed provider key pass `credentialOwner: "mcpjam"` so the same failure is correctly recorded as MCPJam's. Nothing else is reassigned — a managed-credential caller hitting a refused port still gets `user_config`.
--
--Two classifications are worth calling out because the obvious reading is wrong. `jsonrpc/invalid_request` and `jsonrpc/header_mismatch` are `ambiguous`, not `user_server`: MCPJam builds that envelope, so a serialization bug of ours lands there, and filing it under the user would make the one class of bug that affects every user the class we never see. `internal/unknown` is `ambiguous` rather than `mcpjam` for the mirror-image reason — every unrecognized failure from an arbitrary server lands there, and treating it as ours would rebuild the noise problem.
--
--Origin is a routing signal, not display copy. User-facing text should keep coming from each entry's `oneLine` / `likelyCauses` / `nextSteps`, which already describe cases the wire cannot disambiguate — a refused port is "nothing is running there" or "the port is wrong", and no origin value can tell you which.
-diff --git a/.changeset/sdk-insufficient-scope-extract.md b/.changeset/sdk-insufficient-scope-extract.md
-deleted file mode 100644
-index 0a0b3a0b2..000000000
---- a/.changeset/sdk-insufficient-scope-extract.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
 ----
 -
--Export the SEP-2350 challenge extractor, so there is one copy of it.
+-Serve WorkOS client config at runtime instead of baking it into the bundle, and delete the dead `VITE_WORKOS_DEV_MODE` knob.
 -
--The SDK recognized an upstream `InsufficientScopeError` (`isInsufficientScopeError`) and the Inspector server separately walked the same cause chain to pull the `WWW-Authenticate` fields off it. Two hand-maintained copies of one recognizer, and they had already drifted: only the host-side copy knew that `resourceMetadataUrl` arrives as a `URL` object at runtime rather than a string, so the SDK-side reader would have silently dropped the real production value.
+-`VITE_WORKOS_CLIENT_ID` and `VITE_WORKOS_API_HOSTNAME` were inlined by Vite at build time, which meant every environment needed the value listed in two hand-maintained places that nobody diffs: the Railway service variables, and the `ARG` allowlist in `mcpjam-inspector/Dockerfile`. Miss either one and the client does not fail to build — it ships silently misconfigured.
 -
--`extractInsufficientScopeChallenge` and its `InsufficientScopeChallenge` type are now exported from `@mcpjam/sdk`, and both recognizers share one cause-chain walk with its cycle guard.
+-That is what happened to staging. It carried no `VITE_WORKOS_API_HOSTNAME`, so `resolveWorkosClientOptions` fell through to the default `api.workos.com`. From `staging.mcpjam.com` that host is cross-site, so the AuthKit session cookie was never sent; `#refreshSession` posted `{client_id, grant_type: "refresh_token"}` with no credential, got a 400, and `#doRefresh`'s catch called `removeSessionData()`. Because AuthKit stores the refresh token in `memoryStorage` outside dev mode, nothing survived the page load and every single navigation logged the user out. Production was unaffected only because it sets the variable to `auth.mcpjam.com`, which shares a registrable domain with `app.mcpjam.com`.
 -
--Behavior is preserved on both sides, including the difference between them: `isInsufficientScopeError` still returns `true` for a branded error carrying no challenge fields — the transport-fallback protection cares that the class was seen, not that it was actionable — while `extractInsufficientScopeChallenge` returns `undefined` for that case and keeps walking, so a branded but empty wrapper cannot hide a populated challenge deeper in the chain. Detection remains strictly by class brand or `.name`; an unrelated error that happens to carry a `requiredScope` field still cannot masquerade as a step-up challenge.
+-The downstream symptoms all traced back to that one 400: the hosted shell showed its `logged-out` gate (staging runs `NON_PROD_LOCKDOWN`, so there is no guest fallback to absorb it), `AppReadyProvider` never left `resolving-auth`, and MCP server OAuth appeared to fail — tokens are persisted through `/api/web/oauth/import-tokens`, which forwards the caller's bearer, so with no session the credential could not be written and the next connect attempt replayed the consent screen.
+-
+-Both values now ride the existing `window.__MCP_RUNTIME_CONFIG__` channel that already carries the Convex URLs (`getInspectorClientRuntimeConfig` in `server/env.ts`, read by `client/src/lib/runtime-config.ts`). The serving process knows which WorkOS environment it belongs to; the bundle no longer has to. A Railway variable change now takes effect on restart, in every environment, with no rebuild and no Dockerfile edit.
+-
+-This is backward compatible and needs no deploy-config change: the server reads the canonical unprefixed `WORKOS_CLIENT_ID` / `WORKOS_API_HOSTNAME` first and falls back to the `VITE_`-prefixed names, which Railway already injects into the running container. The client still falls back to its build-time value when no runtime config is present, so npx and Electron builds are unchanged. The Dockerfile `ARG`s are deliberately left in place for now — removing them is a separate cleanup once every environment has been confirmed on the runtime path.
+-
+-Two smaller fixes ride along:
+-
+-- **`getInspectorClientRuntimeConfigScript` keyed its "inject anything at all?" guard off the two Convex fields.** An environment with WorkOS config but no Convex URL would have emitted no script and silently fallen back to build-time values. It now checks every field.
+-- **`resolveWorkosDevMode` is gone.** It read `VITE_WORKOS_DEV_MODE`, which was set in no environment and was absent from the Dockerfile `ARG` allowlist, so no deployed build could set it — a config knob that could not be configured. It was added in the same change as the first-party AuthKit proxy at `/user_management`, which is what actually gives local dev cookie mode, and it existed only to opt out of the mode that proxy made universal. It is replaced by an exported `WORKOS_DEV_MODE = false` constant, still passed explicitly to `AuthKitProvider`, because `@workos-inc/authkit-js` defaults `devMode` to `location.hostname === "localhost"` — omitting the prop would move local dev onto a different session-storage path than every deployed environment.
+diff --git a/cli/package.json b/cli/package.json
+index 641f5f557..82c691a0a 100644
+--- a/cli/package.json
++++ b/cli/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/cli",
+-  "version": "3.20.0",
++  "version": "3.20.1",
+   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+   "type": "module",
+   "main": "dist/index.js",
+@@ -17,7 +17,7 @@
+     "prepublishOnly": "npm run build"
+   },
+   "dependencies": {
+-    "@mcpjam/sdk": "^3.0.0",
++    "@mcpjam/sdk": "^4.0.0",
+     "@modelcontextprotocol/server": "2.0.0",
+     "commander": "^12.1.0",
+     "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 96e64bb65..745dfe2cb 100644
+index 745dfe2cb..c00444dcc 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.35.0",
-+  "version": "2.35.1",
+-  "version": "2.35.1",
++  "version": "2.36.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -177,21 +328,33 @@ index 96e64bb65..745dfe2cb 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^3.0.0",
-+    "@mcpjam/sdk": "^3.1.0",
+-    "@mcpjam/sdk": "^3.1.0",
++    "@mcpjam/sdk": "^4.0.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index a57b5af36..548ffbcff 100644
+index 548ffbcff..d1aa5d464 100644
 --- a/package-lock.json
 +++ b/package-lock.json
+@@ -60,9 +60,9 @@
+     },
+     "cli": {
+       "name": "@mcpjam/cli",
+-      "version": "3.20.0",
++      "version": "3.20.1",
+       "dependencies": {
+-        "@mcpjam/sdk": "^3.0.0",
++        "@mcpjam/sdk": "^4.0.0",
+         "@modelcontextprotocol/server": "2.0.0",
+         "commander": "^12.1.0",
+         "posthog-node": "^5.24.10",
 @@ -389,7 +389,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.35.0",
-+      "version": "2.35.1",
+-      "version": "2.35.1",
++      "version": "2.36.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -199,8 +362,8 @@ index a57b5af36..548ffbcff 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^3.0.0",
-+        "@mcpjam/sdk": "^3.1.0",
+-        "@mcpjam/sdk": "^3.1.0",
++        "@mcpjam/sdk": "^4.0.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -208,20 +371,55 @@ index a57b5af36..548ffbcff 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "3.0.0",
-+      "version": "3.1.0",
+-      "version": "3.1.0",
++      "version": "4.0.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
+@@ -38268,11 +38268,11 @@
+     },
+     "widget-react": {
+       "name": "@mcpjam/widget-react",
+-      "version": "0.1.4",
++      "version": "0.1.5",
+       "license": "MIT",
+       "dependencies": {
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^3.0.0",
++        "@mcpjam/sdk": "^4.0.0",
+         "@modelcontextprotocol/client": "2.0.0",
+         "@modelcontextprotocol/ext-apps": "^1.7.4",
+         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 99731620f..f773d2ef4 100644
+index 53edce593..6bbec114d 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "3.0.0",
-+  "version": "3.1.0",
+-  "version": "3.1.0",
++  "version": "4.0.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
+diff --git a/widget-react/package.json b/widget-react/package.json
+index 42431c608..037c35d9a 100644
+--- a/widget-react/package.json
++++ b/widget-react/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/widget-react",
+-  "version": "0.1.4",
++  "version": "0.1.5",
+   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
+   "license": "MIT",
+   "type": "module",
+@@ -34,7 +34,7 @@
+   },
+   "dependencies": {
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^3.0.0",
++    "@mcpjam/sdk": "^4.0.0",
+     "@modelcontextprotocol/client": "2.0.0",
+     "@modelcontextprotocol/ext-apps": "^1.7.4",
+     "lucide-react": "^0.525.0",

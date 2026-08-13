@@ -7,9 +7,15 @@ import * as Sentry from "@sentry/electron/main";
  * `["abnormal-exit", "launch-failed", "integrity-failure"]` as EVENTS — the
  * remaining reasons (`crashed`, `oom`, `killed`) are recorded as breadcrumbs
  * only, which means they surface just as context on some LATER event and
- * produce no issue of their own. Those three are the ones a desktop user
+ * produce no issue of their own. `crashed` and `oom` are ones a desktop user
  * actually experiences as "the app broke", so they are promoted to events
  * here.
+ *
+ * `killed` stays out: the OS kills Electron's own utility processes under
+ * memory pressure on a busy machine, Electron respawns them, and the user
+ * sees nothing. Capturing it produced issues about the reporter's hardware
+ * rather than about the app. It remains a breadcrumb, so it still shows up
+ * as context if a real failure follows.
  *
  * `clean-exit` stays out: that is a normal shutdown.
  */
@@ -19,7 +25,6 @@ export const CAPTURED_EXIT_REASONS = [
   "integrity-failure",
   "crashed",
   "oom",
-  "killed",
 ] as const;
 
 interface CrashLogger {
