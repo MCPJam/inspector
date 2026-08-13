@@ -197,11 +197,7 @@ describe("web routes — oauth error contract", () => {
     );
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
-    // 424, not 502: reaching the target server failed, so the request had a
-    // failed dependency rather than this route breaking. Staying out of the
-    // 5xx range is what keeps Cloudflare from replacing the body and the
-    // `x-mcpjam-error-origin` header with its own error page.
-    expect(status).toBe(424);
+    expect(status).toBe(502);
     // mapRuntimeError frames connection-class failures as a target-server
     // problem (the raw errno alone reads like an MCPJam outage in the client
     // toast) while preserving the raw error for debugging.

@@ -14,6 +14,7 @@ import {
   ErrorCode,
   WebRouteError,
   mapRuntimeError,
+  mapTargetServerError,
   webErrorFromRoute,
 } from "../errors.js";
 import { isOriginCaptureHandled } from "../../../utils/error-origin-capture.js";
@@ -137,38 +138,35 @@ describe("mapRuntimeError", () => {
     });
   });
 
-  it("maps ECONN* errno messages to 424", () => {
+  it("maps ECONN* errno messages to 502", () => {
     expect(
       mapRuntimeError(new Error("connect ECONNREFUSED 127.0.0.1:8080")).status,
-    ).toBe(424);
-    expect(mapRuntimeError(new Error("read ECONNRESET")).status).toBe(424);
-    expect(mapRuntimeError(new Error("ECONNABORTED")).status).toBe(424);
+    ).toBe(502);
+    expect(mapRuntimeError(new Error("read ECONNRESET")).status).toBe(502);
+    expect(mapRuntimeError(new Error("ECONNABORTED")).status).toBe(502);
   });
 
-  it("maps standard connection-failure phrases to 424", () => {
+  it("maps standard connection-failure phrases to 502", () => {
     expect(
       mapRuntimeError(new Error("Connection refused by peer")).status,
-    ).toBe(424);
-    expect(mapRuntimeError(new Error("Connection reset")).status).toBe(424);
+    ).toBe(502);
+    expect(mapRuntimeError(new Error("Connection reset")).status).toBe(502);
     expect(
       mapRuntimeError(new Error("Failed to connect to upstream")).status,
-    ).toBe(424);
-    expect(mapRuntimeError(new Error("fetch failed")).status).toBe(424);
+    ).toBe(502);
+    expect(mapRuntimeError(new Error("fetch failed")).status).toBe(502);
     expect(
       mapRuntimeError(new Error("getaddrinfo ENOTFOUND example.com")).status,
-    ).toBe(424);
-    expect(mapRuntimeError(new Error("socket hang up")).status).toBe(424);
+    ).toBe(502);
+    expect(mapRuntimeError(new Error("socket hang up")).status).toBe(502);
   });
 
-  it("keeps the connection class OUT of the 5xx range so the edge cannot eat it", () => {
-    // Not a style preference. Cloudflare replaces an origin 5xx with its own
-    // error page, discarding the body and the `x-mcpjam-error-origin` header —
-    // and the chat client then reports a user's unreachable MCP server as an
-    // MCPJam outage. Any 4xx survives that hop; this pins the range, not just
-    // the digits.
-    const mapped = mapRuntimeError(new Error("fetch failed"));
-    expect(mapped.status).toBeGreaterThanOrEqual(400);
-    expect(mapped.status).toBeLessThan(500);
+  it("keeps the shared mapper on 5xx, because it does not know the hop", () => {
+    // The 424 downgrade is opt-in per catch site (`mapTargetServerError`). The
+    // shared mapper also catches a failed fetch to MCPJam's own Convex
+    // deployment and the router-wide `web.onError`, where the hop is unknown —
+    // downgrading those would stop paging us during our own outage.
+    expect(mapRuntimeError(new Error("fetch failed")).status).toBe(502);
   });
 
   it("frames the connection class as a target-server problem, preserving the raw error", () => {
@@ -176,10 +174,21 @@ describe("mapRuntimeError", () => {
     // MCPJam outage; the mapped message must name the target server as the
     // failing side while keeping the raw error for debugging.
     const mapped = mapRuntimeError(new Error("read ECONNRESET"));
-    expect(mapped.status).toBe(424);
+    expect(mapped.status).toBe(502);
     expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
     expect(mapped.message).toContain("read ECONNRESET");
     expect(mapped.message).toContain("not an MCPJam outage");
+  });
+
+  it("keeps timeout precedence and handles a null throw", () => {
+    // The timeout branch runs BEFORE the connection branch, so a message that
+    // satisfies both stays a 504 — the connection downgrade must not capture
+    // it. And a non-Error throw still has to land on the stable fallback.
+    expect(mapRuntimeError(new Error("Connection timed out")).status).toBe(504);
+
+    const mapped = mapRuntimeError(null);
+    expect(mapped.status).toBe(500);
+    expect(mapped.code).toBe(ErrorCode.INTERNAL_ERROR);
   });
 
   it("never returns a blank message for a blank-message error", () => {
@@ -283,6 +292,55 @@ describe("mapRuntimeError", () => {
         (s) => original.propertyIsEnumerable(s),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("mapTargetServerError", () => {
+  it("downgrades the connection class out of the 5xx range", () => {
+    // The range is the load-bearing part, not the digits: Cloudflare replaces
+    // an origin 5xx with its own error page, discarding the JSON envelope and
+    // the `x-mcpjam-error-origin` header, and the chat client then reports a
+    // user's unreachable MCP server as an MCPJam outage. A later "more
+    // specific" 5xx would silently restore that.
+    const mapped = mapTargetServerError(new Error("fetch failed"));
+    expect(mapped.status).toBe(424);
+    expect(mapped.status).toBeGreaterThanOrEqual(400);
+    expect(mapped.status).toBeLessThan(500);
+    expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
+  });
+
+  it("preserves the message, normalized block and origin the shared mapper attached", () => {
+    // The status is mutated on the mapped error rather than rebuilt: a fresh
+    // `WebRouteError` would drop `origin`, `normalized` and the cause link the
+    // capture dedupe walks — and `origin` is what the response header carries.
+    const mapped = mapTargetServerError(new Error("read ECONNRESET"));
+    expect(mapped.message).toContain("read ECONNRESET");
+    expect(mapped.message).toContain("not an MCPJam outage");
+    expect(mapped.normalized).toBeDefined();
+    expect(mapped.origin).toBe(originOf(mapped.normalized!));
+  });
+
+  it("touches ONLY the connection class", () => {
+    // Every other status this mapper can produce is either not a dependency
+    // failure or not ours to relabel. A timeout stays 504 (the request may
+    // still be running on the far side), auth rejections stay where the spec
+    // puts them, and an internal error stays a 500 so it keeps paging.
+    expect(mapTargetServerError(new Error("Connection timed out")).status).toBe(
+      504,
+    );
+    expect(mapTargetServerError(new Error("kaboom")).status).toBe(500);
+  });
+
+  it("leaves a pre-built WebRouteError alone", () => {
+    // A route that already decided its own status — including a deliberate
+    // 502 for an internal hop — passes through `mapRuntimeError` untouched,
+    // and this wrapper must not second-guess it.
+    const explicit = new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Convex is unreachable",
+    );
+    expect(mapTargetServerError(explicit).status).toBe(502);
   });
 });
 

@@ -363,6 +363,52 @@ export function mapRuntimeError(error: unknown): WebRouteError {
 }
 
 /**
+ * `mapRuntimeError` for a catch site whose failing outbound hop can only have
+ * been the user's own MCP server.
+ *
+ * Connection-class failures leave the shared mapper as `502
+ * SERVER_UNREACHABLE`, and on hosted that status is the only part of the
+ * verdict that survives: Cloudflare replaces an origin 5xx with its own error
+ * page, discarding the JSON envelope AND the `x-mcpjam-error-origin` header
+ * `webError` attaches. The chat client is then left with a bare 5xx and falls
+ * back to its documented rule — a 5xx from our own route is ours — so a user's
+ * unreachable MCP server is reported as an MCPJam outage. It pages us, and it
+ * tells the user MCPJam was down when their server was the thing that refused.
+ *
+ * `424 Failed Dependency` states what actually happened (the request was
+ * well-formed; something it depends on failed) and, being a 4xx, reaches the
+ * browser untouched. Any 4xx would clear the edge; 424 is the honest one.
+ *
+ * DECLARED, never inferred. This is deliberately a separate entry point rather
+ * than a change to `mapRuntimeError`: that mapper is a shared envelope with no
+ * hop information — the same connection-class branch also catches a failed
+ * fetch to MCPJam's own Convex deployment (`/api/web/server-secrets` reaches
+ * nothing else) and the router-wide `web.onError`, where the hop is unknown.
+ * Downgrading those to a 4xx would stop paging us during our OWN outage, which
+ * is a strictly worse failure than the one this fixes. So the status follows
+ * the same rule the origin does: the catch site that knows the hop says so.
+ */
+export function mapTargetServerError(error: unknown): WebRouteError {
+  const routeError = mapRuntimeError(error);
+  // Only a status this mapper CLASSIFIED. A `WebRouteError` that arrived
+  // pre-built carries a status some other call site chose on purpose — and a
+  // deliberate `502 SERVER_UNREACHABLE` is how a caller that knew its hop was
+  // internal says so. Relabelling that as the user's dependency would undo the
+  // one signal this function is trying to preserve.
+  if (error instanceof WebRouteError) return routeError;
+  // Mutated rather than rebuilt: `mapRuntimeError` has already stamped
+  // `origin`, backfilled `normalized`, and attached the cause link the capture
+  // dedupe walks. A fresh `WebRouteError` would drop all three.
+  if (
+    routeError.status === 502 &&
+    routeError.code === ErrorCode.SERVER_UNREACHABLE
+  ) {
+    routeError.status = 424;
+  }
+  return routeError;
+}
+
+/**
  * Status/code/message mapping only. Split out from `mapRuntimeError` so the
  * capture decision happens exactly once, on whichever `WebRouteError` the
  * branches below produce, instead of being duplicated down five return paths.
@@ -448,20 +494,9 @@ function classifyRuntimeError(error: unknown): WebRouteError {
     return new WebRouteError(504, ErrorCode.TIMEOUT, message, undefined, normalized);
   }
 
-  // 424, NOT 502. The failure is the TARGET server refusing us; the request
-  // itself was fine, which is exactly what "Failed Dependency" states.
-  //
-  // The status is load-bearing beyond honesty. Hosted traffic runs behind
-  // Cloudflare, which replaces an origin 5xx with its own branded error page —
-  // discarding this body AND the `x-mcpjam-error-origin` header `webError`
-  // attaches. The chat client is then left with a bare 5xx, and its documented
-  // fallback ("a 5xx from our own route is ours") reports the user's own
-  // unreachable MCP server as an MCPJam outage: it pages us, and it tells the
-  // user MCPJam was down when their server was. A 4xx passes through
-  // untouched, so the origin verdict survives to the reader that needs it.
   if (CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message))) {
     return new WebRouteError(
-      424,
+      502,
       ErrorCode.SERVER_UNREACHABLE,
       formatServerUnreachableMessage(message),
       undefined,
