@@ -167,20 +167,26 @@ export function HostConfigComparisonMatrix({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      data-testid="compare-matrix"
       className={cn(
-        "overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
-        mobileOptimized && "min-w-0 max-w-full"
+        // framer-motion leaves a non-`none` `transform` on this element even at
+        // rest. The scroll box below MUST be a direct child of it (not several
+        // levels further out): some browsers mis-constrain `position: sticky`
+        // to the nearest *transformed* ancestor's box rather than the true
+        // scrolling ancestor when the two don't coincide, which un-pins the
+        // header. Keeping them coincident here is what the original PR shipped
+        // with — this only replaces its fixed `max-h-[70vh]` with a height that
+        // tracks how much space is actually left below the search/selector row.
+        "flex min-h-60 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
+        mobileOptimized && "max-w-full"
       )}
     >
-      {/* Bounded height so this div is a *real* scroll container (not just
-          page flow) — `sticky top-0`/`sticky left-0` on the header only take
-          effect when their nearest scrolling ancestor actually scrolls. */}
       <div
-        className={
-          mobileOptimized
-            ? "max-h-[70vh] max-w-full overflow-auto [-webkit-overflow-scrolling:touch]"
-            : "max-h-[70vh] overflow-auto"
-        }
+        data-testid="compare-matrix-scroll"
+        className={cn(
+          "min-h-0 flex-1 overflow-auto",
+          mobileOptimized && "max-w-full [-webkit-overflow-scrolling:touch]"
+        )}
       >
         <table
           className={cn(
