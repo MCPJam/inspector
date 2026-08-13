@@ -310,7 +310,7 @@ export function createPinnedFetch(
         }
 
         // Fetch's method rewrite, and it has to be Fetch's EXACTLY — the same
-        // condition the transport applies at `prepareRedirect`
+        // condition the transport applies at `updateRequestForRedirect`
         // (`sdk/src/oauth-proxy.ts`), because these hops and the transport's own
         // are meant to be the same walk split across a package boundary.
         //

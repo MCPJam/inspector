@@ -107,7 +107,14 @@ async function runPlatformCommand<TOutput>(
   execute: (context: {
     client: ReturnType<typeof buildPlatformClient>["client"];
     signal: AbortSignal;
-  }) => Promise<TOutput>
+  }) => Promise<TOutput>,
+  /**
+   * Cancels the request from outside its own deadline — today that is Ctrl-C
+   * during a poll. Without it the only way out of an in-flight request is the
+   * timeout, so a user who interrupted a watch still waits the better part of
+   * `timeoutMs` for the terminal to come back.
+   */
+  externalSignal?: AbortSignal
 ): Promise<TOutput> {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
@@ -122,6 +129,10 @@ async function runPlatformCommand<TOutput>(
     );
   }, timeoutMs);
   timeoutHandle.unref?.();
+
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) onExternalAbort();
+  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
   try {
     const { client } = buildPlatformClient({ ...options, timeoutMs });
@@ -139,6 +150,7 @@ async function runPlatformCommand<TOutput>(
     throw toCliError(error);
   } finally {
     clearTimeout(timeoutHandle);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -487,17 +499,20 @@ export function registerProjectsCommands(program: Command): void {
       }
 
       const settled = await pollConnection(
-        platformOptionsOf(command),
+        platformOptions,
         globalOptions.timeout,
         created.connectionRequestId,
         created.expiresAt
       );
-      writeResult(settled.result, globalOptions.format);
+      // An interrupt during the first request leaves no fresher status than the
+      // one the create call returned, so report that rather than nothing.
+      const latest = settled.result ?? created;
+      writeResult(latest, globalOptions.format);
       if (settled.gaveUp) {
         // A script must be able to tell "it finished" from "I stopped
         // watching". Returning the last poll silently made those identical.
         process.stderr.write(
-          `Stopped waiting; the request is still ${settled.result.status} and continues in the cloud.\n` +
+          `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
             `  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
         );
         process.exitCode = 1;
@@ -604,9 +619,17 @@ async function pollConnection(
   connectionRequestId: string,
   expiresAt?: string | null
 ): Promise<{
-  result: Awaited<
-    ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
-  >;
+  /**
+   * Undefined only when Ctrl-C landed during the very first status request, so
+   * no poll ever returned. The caller has the create response and prints that
+   * instead — there is nothing newer to report, and inventing a status would be
+   * worse than saying what we last knew.
+   */
+  result:
+    | Awaited<
+        ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
+      >
+    | undefined;
   gaveUp: boolean;
 }> {
   let delayMs = 2_000;
@@ -622,12 +645,25 @@ async function pollConnection(
    * timer fires, and the terminal looks hung at exactly the moment the user
    * asked for it back. */
   let wakeSleep: (() => void) | undefined;
+  /** The other half of the same promise. Waking the sleep is no help when the
+   * interrupt lands while a status request is in flight: the flag is not read
+   * again until that request resolves, so the terminal stays hung for up to the
+   * request timeout after the user asked for it back. */
+  const interruptController = new AbortController();
+  /** The last status we actually received, so an interrupt mid-request can
+   * still report something true rather than failing the command. */
+  let lastResult:
+    | Awaited<
+        ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
+      >
+    | undefined;
   const onInterrupt = () => {
     interrupted = true;
     process.stderr.write(
       "\nStopped watching. The request continues in the cloud — open the link above to finish it.\n"
     );
     wakeSleep?.();
+    interruptController.abort(new Error("Interrupted by the user."));
   };
   // Registered only for the duration of the wait, and `once`, so a second
   // Ctrl-C still terminates the process the way a user expects.
@@ -637,15 +673,28 @@ async function pollConnection(
     for (;;) {
       // Already merged by the caller — this helper receives resolved options
       // rather than a Commander command.
-      const current = await runPlatformCommand(
-        options,
-        timeoutMs,
-        ({ client, signal }) =>
-          getProjectServerConnectionStatusOperation.execute(
-            { connectionRequestId },
-            { client, signal }
-          )
-      );
+      let current: Awaited<
+        ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
+      >;
+      try {
+        current = await runPlatformCommand(
+          options,
+          timeoutMs,
+          ({ client, signal }) =>
+            getProjectServerConnectionStatusOperation.execute(
+              { connectionRequestId },
+              { client, signal }
+            ),
+          interruptController.signal
+        );
+      } catch (error) {
+        // OUR abort, not a failure: the user asked to stop and we cancelled the
+        // request to make that immediate. Any other error is still the caller's
+        // to see.
+        if (!interrupted) throw error;
+        return { result: lastResult, gaveUp: true };
+      }
+      lastResult = current;
 
       if (isTerminalConnectionStatus(current.status)) {
         return { result: current, gaveUp: false };

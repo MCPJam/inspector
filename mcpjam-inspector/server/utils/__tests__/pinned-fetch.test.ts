@@ -267,7 +267,8 @@ describe("the redirect method rewrite is Fetch's, exactly", () => {
     // The regression: an earlier revision rewrote every non-GET/HEAD method
     // here, so a redirected PUT arrived as a GET and the write silently became
     // a read. Fetch rewrites POST and only POST for 301/302 — which is also
-    // exactly what the transport does one layer down, at `prepareRedirect`.
+    // exactly what the transport does one layer down, at
+    // `updateRequestForRedirect`.
     const hop = await redirected(redirectStatus, method, '{"probe":1}');
 
     expect(hop?.method).toBe(method);

@@ -892,3 +892,131 @@ test("server connect honors --project instead of silently ignoring it", async ()
     await fixture.close();
   }
 });
+
+test("a failing command does not leave its exit code on the next main()", async () => {
+  // Commands signal failure by setting `process.exitCode`, which `main()` reads
+  // back — so the channel is a global that outlives the call. A `connect` that
+  // gave up left a 1 sitting there, and the next in-process `main()` returned
+  // 1 for work that had succeeded. Only the real entrypoint runs `main()` once;
+  // tests, embedders and anything scripting the CLI run it repeatedly.
+  const gaveUp = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "awaiting_authorization",
+      // Already expired, so the poll loop gives up on its first check.
+      expiresAt: new Date(Date.now() - 1_000).toISOString(),
+    },
+  });
+  try {
+    const first = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            gaveUp.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+          ),
+          "--no-browser",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(first.result.exitCode, 1);
+  } finally {
+    await gaveUp.close();
+  }
+
+  // Deliberately NOT resetting process.exitCode between the two runs: the
+  // point of the test is that the second run does not inherit the first's.
+  const ok = await startPlatformFixture();
+  try {
+    const second = await captureProcessOutput(() =>
+      main([...projectsArgv(ok.baseUrl, "list"), "--format", "json"], {
+        telemetry: telemetryDisabled,
+      }),
+    );
+    assert.equal(second.result.exitCode, 0);
+  } finally {
+    process.exitCode = 0;
+    await ok.close();
+  }
+});
+
+test("Ctrl-C during an in-flight poll returns without waiting out the request", async () => {
+  // Waking the backoff sleep is only half of it. When the interrupt lands while
+  // a status request is in flight, nothing re-reads the flag until that request
+  // resolves — so the CLI printed "Stopped watching" and then sat there for up
+  // to the request timeout, which is the hang the message exists to prevent.
+  const server: Server = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+      // drain body
+    }
+    const url = new URL(req.url ?? "/", "http://fixture");
+    res.setHeader("content-type", "application/json");
+
+    if (url.pathname === "/api/v1/server-connections" && req.method === "POST") {
+      res.statusCode = 201;
+      res.end(
+        JSON.stringify({
+          connectionRequestId: "scr_1",
+          status: "awaiting_authorization",
+        }),
+      );
+      return;
+    }
+    if (url.pathname.startsWith("/api/v1/server-connections/")) {
+      // Never answers. The only ways out are the request timeout and the
+      // interrupt; the test asserts which one actually happens.
+      process.nextTick(() => process.emit("SIGINT"));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ code: "NOT_FOUND", message: "no route" }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+
+  const startedAt = Date.now();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            `http://127.0.0.1:${port}/api/v1`,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+          ),
+          "--no-browser",
+          // Well above the time an interrupt should take, so finishing quickly
+          // can only mean the request was actually aborted.
+          "--timeout",
+          "30000",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.match(run.stderr, /Stopped watching/);
+    assert.equal(run.result.exitCode, 1);
+    assert.ok(
+      Date.now() - startedAt < 10_000,
+      `interrupt took ${Date.now() - startedAt}ms; the request was not aborted`,
+    );
+    // Nothing fresher was ever received, so the create response is what gets
+    // reported rather than a crash or an invented status.
+    assert.equal(JSON.parse(run.stdout).connectionRequestId, "scr_1");
+  } finally {
+    process.exitCode = 0;
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
