@@ -66,20 +66,38 @@ test("caniuse compare table fills the viewport and keeps its header pinned", asy
 
   // The header row stays at a fixed spot in the viewport across a real,
   // physical scroll (not just a single before/after snapshot — a
-  // transform-vs-sticky mismatch can let it drift partway through).
-  await page.mouse.move(640, 500);
-  const positions: number[] = [];
-  for (let i = 0; i < 4; i++) {
-    await page.mouse.wheel(0, 300);
-    await page.waitForTimeout(200);
-    positions.push((await headerCell.boundingBox())!.y);
-  }
-  // A real loss of stickiness tracks the scroll delta (~300px per step, since
-  // that's what we just scrolled by), not a few px of render jitter — the
-  // tolerance only needs to be well below that to catch it.
-  const spread = Math.max(...positions) - Math.min(...positions);
-  expect(
-    spread,
-    `sticky header should stay put while scrolling, drifted ${Math.round(spread)}px across ${JSON.stringify(positions.map(Math.round))}`
-  ).toBeLessThanOrEqual(20);
+  // transform-vs-sticky mismatch can let it drift partway through). Hover the
+  // scroller itself (not a hardcoded point) so the wheel events are
+  // guaranteed to land on it rather than some other element under the cursor.
+  //
+  // Retried as a whole: preset columns can still be hydrating, and a re-render
+  // mid-attempt can reset the scroller's `scrollTop` back to 0, which would
+  // otherwise read as "the wheel event missed" rather than the harmless
+  // hydration hiccup it actually is.
+  await expect(async () => {
+    await scroller.hover();
+    const scrollTopBefore = await scroller.evaluate((el) => el.scrollTop);
+    const positions: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(200);
+      positions.push((await headerCell.boundingBox())!.y);
+    }
+    const scrollTopAfter = await scroller.evaluate((el) => el.scrollTop);
+    // Otherwise a wheel event that missed the scroller would leave the header
+    // untouched too, and the drift check below would pass vacuously.
+    expect(
+      scrollTopAfter - scrollTopBefore,
+      `wheel scroll should have moved the table's internal scroller, went from ${scrollTopBefore} to ${scrollTopAfter}`
+    ).toBeGreaterThan(100);
+
+    // A real loss of stickiness tracks the scroll delta (~300px per step,
+    // since that's what we just scrolled by), not a few px of render jitter —
+    // the tolerance only needs to be well below that to catch it.
+    const spread = Math.max(...positions) - Math.min(...positions);
+    expect(
+      spread,
+      `sticky header should stay put while scrolling, drifted ${Math.round(spread)}px across ${JSON.stringify(positions.map(Math.round))}`
+    ).toBeLessThanOrEqual(20);
+  }).toPass({ timeout: 20_000 });
 });
