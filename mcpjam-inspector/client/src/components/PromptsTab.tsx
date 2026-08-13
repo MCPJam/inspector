@@ -40,7 +40,15 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import { runWithScopeStepUp } from "@/lib/scope-step-up";
+import {
+  resetScopeStepUp,
+  runWithScopeStepUp,
+} from "@/lib/scope-step-up";
+import {
+  claimPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  savePendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
 import type { GetPromptInspectorCommand } from "@/shared/inspector-command.js";
 
 /** Cap the list of prompts a snapshot enumerates (names/titles only). */
@@ -293,8 +301,29 @@ export function PromptsTab({
         // SEP-2350: the wrapper owns the whole step-up lifecycle — reset the
         // bounded budget on success, drive the union-scope re-authorization on
         // a `403 insufficient_scope`, re-throw everything else untouched.
-        const data = await runWithScopeStepUp(server, () =>
-          getPromptApi(serverName, targetPrompt, resolvedParams),
+        const data = await runWithScopeStepUp(
+          server,
+          { method: "prompts/get", operation: targetPrompt },
+          () => getPromptApi(serverName, targetPrompt, resolvedParams),
+          {
+            beforeStepUp: () =>
+              savePendingDirectScopeStepUpReplay({
+                operation: {
+                  resourceUrl: String(
+                    (server?.config as any)?.url ?? serverName,
+                  ),
+                  method: "prompts/get",
+                  operation: targetPrompt,
+                },
+                descriptor: {
+                  kind: "prompt",
+                  surface: "prompts",
+                  serverName,
+                  promptName: targetPrompt,
+                  arguments: resolvedParams,
+                },
+              }),
+          },
         );
         if (getVersion !== promptGetVersionRef.current) return;
         setPromptContent(data.content);
@@ -317,6 +346,42 @@ export function PromptsTab({
       server,
     ],
   );
+
+  useEffect(() => {
+    if (!serverName || !isServerConnected) return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "prompts",
+    });
+    if (!pending || pending.descriptor.kind !== "prompt") return;
+    const descriptor = pending.descriptor;
+    setSelectedPrompt(descriptor.promptName);
+    setLoading(true);
+    setError("");
+    void getPromptApi(
+      descriptor.serverName,
+      descriptor.promptName,
+      descriptor.arguments,
+    )
+      .then((data) => {
+        setPromptContent(data.content);
+        resetScopeStepUp(server, {
+          method: "prompts/get",
+          operation: descriptor.promptName,
+        });
+      })
+      .catch((error) => {
+        setError(
+          `Authorization finished, but the prompt could not be replayed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      })
+      .finally(() => {
+        setLoading(false);
+        clearPendingDirectScopeStepUpReplay();
+      });
+  }, [isServerConnected, server, serverName]);
 
   const promptNames = prompts.map((prompt) => prompt.name);
 
@@ -412,8 +477,29 @@ export function PromptsTab({
           // agent-triggered `403 insufficient_scope` must be able to start a
           // re-authorization, and an agent-triggered success must clear the
           // budget, exactly as the on-screen path does.
-          const data = await runWithScopeStepUp(server, () =>
-            getPromptApi(serverName, target.name, providedArgs),
+          const data = await runWithScopeStepUp(
+            server,
+            { method: "prompts/get", operation: target.name },
+            () => getPromptApi(serverName, target.name, providedArgs),
+            {
+              beforeStepUp: () =>
+                savePendingDirectScopeStepUpReplay({
+                  operation: {
+                    resourceUrl: String(
+                      (server?.config as any)?.url ?? serverName,
+                    ),
+                    method: "prompts/get",
+                    operation: target.name,
+                  },
+                  descriptor: {
+                    kind: "prompt",
+                    surface: "prompts",
+                    serverName,
+                    promptName: target.name,
+                    arguments: providedArgs,
+                  },
+                }),
+            },
           );
           // Commit to the on-screen pane only if this is still the newest
           // render; the tool still returns what IT fetched.

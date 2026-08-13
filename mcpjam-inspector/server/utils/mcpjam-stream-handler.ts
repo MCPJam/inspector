@@ -25,14 +25,23 @@ import type {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import {
+  describeAsSlug,
+  describeError,
+  type NormalizedError,
+} from "@mcpjam/sdk";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
+import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
+import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
   buildFinishChunk,
   emitError,
@@ -48,6 +57,7 @@ import {
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
+import { isScopeStepUpSuspendSignal } from "./scope-step-up-continuation.js";
 import {
   spliceMrtrToolResult,
   hasUnresolvedToolCall,
@@ -144,7 +154,7 @@ function isModelVisibleImageOutput(value: unknown): boolean {
  */
 function isApprovalFreeMetaToolName(
   name: string,
-  progressivePlan: ProgressiveToolPlan | undefined,
+  progressivePlan: ProgressiveToolPlan | undefined
 ): boolean {
   if (!progressivePlan?.enabled) return false;
   return META_TOOL_NAMES.includes(name);
@@ -227,7 +237,7 @@ const STEP_LOG_THRESHOLD = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
 
 function readLinkedMcpResourceWithManager(
-  mcpClientManager: MCPClientManager,
+  mcpClientManager: MCPClientManager
 ): (params: {
   serverId: string;
   uri: string;
@@ -251,7 +261,7 @@ let warnedMissingAbortSignal = false;
  */
 export function warnIfChatAbortSignalMissing(
   signal: AbortSignal | undefined,
-  source: string,
+  source: string
 ): void {
   if (signal || warnedMissingAbortSignal) return;
   warnedMissingAbortSignal = true;
@@ -260,7 +270,7 @@ export function warnIfChatAbortSignalMissing(
   logger.warn(
     "[mcpjam-stream-handler] inbound chat request has no AbortSignal; " +
       "client disconnect will not cancel the agentic loop",
-    { source },
+    { source }
   );
 }
 
@@ -397,6 +407,62 @@ export interface MCPJamEngineErrorEvent {
   promptIndex: number;
   /** Step index when fired inside `processOneStep`; omitted for site (3). */
   stepIndex?: number;
+  /**
+   * Classified form of this failure, including its `origin` — whose fault the
+   * turn dying was.
+   *
+   * The hosted 502 that started this work fires at site (1), which has NO
+   * Error object at all: just a non-OK `Response` from our own `/stream`
+   * endpoint. `describeError` has nothing to classify there, so site (1)
+   * classifies from the HTTP status and body shape instead (see
+   * {@link describeBackendStreamFailure}). Sites (2) and (3) hold a real
+   * error and go through the normal describer.
+   */
+  normalized?: NormalizedError;
+}
+
+/**
+ * Classify a non-OK response from MCPJam's own `/stream` backend.
+ *
+ * There is no error object at this site — the failure IS an HTTP response —
+ * so nothing in the describer can reach it. Without this, a hosted 502 on a
+ * chat turn produced a raw string and no attribution, which is exactly the
+ * failure a user cannot tell apart from their own server dying.
+ *
+ * Status drives the verdict:
+ *
+ * - 401/403 and 429 are the provider walls. They keep the catalog's default
+ *   `user_config` origin because the common case is a BYO key that expired or
+ *   ran out of credit. A managed-key failure IS ours, but the key's owner is
+ *   not plumbed to this layer yet; defaulting to the non-paging reading is the
+ *   safe direction to be wrong in, and the fix is to pass `credentialOwner`
+ *   once that context exists.
+ * - Any other 5xx is OUR backend answering badly, and the origin is set
+ *   explicitly rather than taken from the slug. `internal/unknown` is
+ *   `ambiguous` by design — it is where unrecognized failures from arbitrary
+ *   user servers land — but this call site knows something the slug cannot:
+ *   the hop was to MCPJam's own Convex deployment. That is precisely the
+ *   "callers that know the failure happened on an internal boundary escalate
+ *   it themselves" case the catalog documents.
+ */
+export function describeBackendStreamFailure(
+  status: number | undefined,
+  rawText: string,
+): NormalizedError {
+  const detail = new Error(
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+  );
+
+  if (status === 401 || status === 403) {
+    return describeAsSlug("provider/auth_error", detail);
+  }
+  if (status === 429) {
+    return describeAsSlug("provider/quota", detail);
+  }
+  if (status !== undefined && status >= 500) {
+    return { ...describeAsSlug("internal/unknown", detail), origin: "mcpjam" };
+  }
+  return describeAsSlug("internal/unknown", detail);
 }
 
 export interface MCPJamHandlerOptions {
@@ -430,6 +496,23 @@ export interface MCPJamHandlerOptions {
    * subdir). Absent ⇒ the box default (`/home/user`). Confined server-side.
    */
   computerWorkdir?: string;
+  /**
+   * A disposable box the CALLER already provisioned for this session, which the
+   * harness runs on INSTEAD of reserving the acting user's personal computer
+   * (B-isolation phase 6). Set by the swarm runner per attempt; absent for
+   * playground/chat/evals, which keep the personal path byte for byte.
+   *
+   * TRUSTED, and out-of-band on purpose. It travels on the handler options —
+   * never on a host config or a run snapshot — exactly like `ctx.sandboxBinding`
+   * does for the `bash` tool, so the only thing that can produce one is an
+   * in-process caller that just booted the box. A widened host-config union
+   * would be forgeable from a member-readable snapshot.
+   *
+   * HARNESS-ONLY. The emulated engine's built-in tools bind through
+   * `resolveHostTools`/`ctx.sandboxBinding`; this is the harness's equivalent,
+   * because `runHarnessTurn` does not go through the tool resolver at all.
+   */
+  harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -531,12 +614,24 @@ export interface MCPJamHandlerOptions {
    * only; the harness path never suspends through this manager.
    */
   mrtrResume?: MrtrEngineResume;
+  /** SEP-2350 resume descriptor; driven before the first model step. */
+  scopeStepUpResume?: MrtrEngineResume;
+  /**
+   * Creates a continuation for an exact harness-proxied tools/call. The
+   * harness supplies its model-visible toolCallId after correlating the proxy
+   * request with the streamed tool-input part.
+   */
+  createHarnessScopeStepUpContinuation?: (input: {
+    info: InsufficientScopeInfo & { toolCallId: string };
+    toolName: string;
+    toolInput: unknown;
+  }) => ScopeStepUpRequiredEvent | Promise<ScopeStepUpRequiredEvent>;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace,
     // §3: present only for chat-backed harness turns — the resume-state commit
     // to apply atomically with the transcript via /ingest-chat.
-    harnessSessionCommit?: HarnessSessionCommitPayload,
+    harnessSessionCommit?: HarnessSessionCommitPayload
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -781,7 +876,7 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
 
 function hasUnresolvedClientFulfilledToolCalls(
   messages: ModelMessage[],
-  tools: ToolSet,
+  tools: ToolSet
 ): boolean {
   const resultIds = new Set<string>();
   for (const msg of messages) {
@@ -819,7 +914,7 @@ function hasUnresolvedClientFulfilledToolCalls(
 
 function generateUniqueToolCallId(
   usedToolCallIds: Set<string>,
-  prefix = "tc",
+  prefix = "tc"
 ): string {
   const MAX_ATTEMPTS = 100;
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
@@ -837,7 +932,7 @@ function generateUniqueToolCallId(
 
 function createToolCallIdNormalizer(
   usedToolCallIds: Set<string>,
-  stepIndex: number,
+  stepIndex: number
 ): (rawToolCallId?: string) => string {
   const perStepMap = new Map<string, string>();
   let collisionCounter = 0;
@@ -866,7 +961,7 @@ function createToolCallIdNormalizer(
 
 function getPromptAssistantStepBaseIndex(
   messageHistory: ModelMessage[],
-  promptMessageStartIndex: number,
+  promptMessageStartIndex: number
 ): number {
   let assistantCount = 0;
   for (
@@ -882,7 +977,7 @@ function getPromptAssistantStepBaseIndex(
 }
 
 function readUsageFromFinishChunk(
-  finishChunk: UIMessageChunk | null,
+  finishChunk: UIMessageChunk | null
 ): LiveChatTraceUsage | undefined {
   if (!finishChunk || finishChunk.type !== "finish") {
     return undefined;
@@ -928,7 +1023,7 @@ function readUsageFromFinishChunk(
  * capture never fabricates one.
  */
 function readFinishReasonFromChunk(
-  finishChunk: UIMessageChunk | null,
+  finishChunk: UIMessageChunk | null
 ): string | undefined {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
@@ -938,7 +1033,7 @@ function readFinishReasonFromChunk(
 function createClientFinishChunk(
   finishChunk: UIMessageChunk | null,
   traceTurn: LiveTraceTurnContext | null,
-  fallbackReason: "length" | "stop",
+  fallbackReason: "length" | "stop"
 ): UIMessageChunk {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
@@ -957,7 +1052,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : (metadata ?? usage);
+      : metadata ?? usage;
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -970,7 +1065,7 @@ function setStepSpanMessageRanges(
   promptIndex: number,
   stepIndex: number,
   messageStartIndex: number | undefined,
-  messageEndIndex: number | undefined,
+  messageEndIndex: number | undefined
 ): void {
   if (
     typeof messageStartIndex !== "number" ||
@@ -1038,7 +1133,7 @@ function scrubMessagesForBackend(
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
-  preserveReasoningFromIndex?: number,
+  preserveReasoningFromIndex?: number
 ): ModelMessage[] {
   let pruned: ModelMessage[];
   if (
@@ -1069,7 +1164,7 @@ function scrubMessagesForBackend(
       const assistantMsg = msg as AssistantModelMessage;
       if (!Array.isArray(assistantMsg.content)) return msg;
       const filtered = assistantMsg.content.filter(
-        (part) => part.type !== "tool-approval-request",
+        (part) => part.type !== "tool-approval-request"
       );
       if (filtered.length === assistantMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -1078,7 +1173,7 @@ function scrubMessagesForBackend(
     if (msg.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       const filtered = toolMsg.content.filter(
-        (part) => part.type !== "tool-approval-response",
+        (part) => part.type !== "tool-approval-response"
       );
       if (filtered.length === toolMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -1089,29 +1184,59 @@ function scrubMessagesForBackend(
 
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
-    Object.keys(tools as Record<string, unknown>),
+    Object.keys(tools as Record<string, unknown>)
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
       withoutUnavailableToolHistory,
       mcpClientManager,
-      selectedServers,
+      selectedServers
     ),
     mcpClientManager,
-    selectedServers,
+    selectedServers
   );
   return normalizeModelMessagesForConvex(scrubbed);
 }
 
 function safelyEmitLiveTextDelta(
   onLiveTextDelta: ((delta: string) => void) | undefined,
-  delta: string,
+  delta: string
 ) {
   if (!onLiveTextDelta) return;
   safelyInvoke("[mcpjam-stream-handler] onLiveTextDelta", () =>
-    onLiveTextDelta(delta),
+    onLiveTextDelta(delta)
   );
+}
+
+/**
+ * Backend denial codes that name the USER as the responsible party.
+ *
+ * Only relevant at HTTP 200: the spend precheck answers `{ok:false,
+ * code:"user_rate_limit"}` with a 200 status, so without this the whole
+ * category would either page on every routine spend-limit rejection or, with a
+ * looser "any code counts" rule, silently exempt the backend's own
+ * `mcpjam_rate_limit` / `mcpjam_api_error` / `mcpjam_config_error` codes —
+ * which are the opposite of user-owned.
+ *
+ * An unrecognized code at 200 from our own backend is therefore treated as a
+ * fault, not a refusal. That direction is chosen deliberately: a missing entry
+ * here costs one investigated alert, while a permissive rule costs the
+ * blindness this work exists to remove. Add codes as the backend adds them.
+ */
+const USER_OWNED_DENIAL_CODES = new Set<string>([
+  // convex `stream/routes.ts` + `lib/llmCallShell.ts` spend precheck
+  "user_rate_limit",
+  "wallet_locked",
+  "org_rate_limit",
+  // convex billing guard
+  "billing_limit_reached",
+  "billing_feature_not_included",
+]);
+
+/** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
+export function isUserOwnedDenialCode(code: string | undefined): boolean {
+  return USER_OWNED_DENIAL_CODES.has(code ?? "");
 }
 
 /**
@@ -1125,8 +1250,9 @@ function safelyEmitLiveTextDelta(
  */
 function parseEngineErrorBody(
   status: number | undefined,
-  bodyText: string,
+  bodyText: string
 ): { message: string; code?: string; details?: string } {
+  let code: string | undefined;
   try {
     const body = JSON.parse(bodyText) as {
       code?: string;
@@ -1140,6 +1266,12 @@ function parseEngineErrorBody(
         ...(body.details ? { details: body.details } : {}),
       };
     }
+    // Bodies without an `error` field can still carry a machine-readable
+    // `code` — the spend-precheck denial is `{ok:false, code:"user_rate_limit",
+    // isRetryable, retryAfter}` (issue #3708). Surface it alongside the
+    // generic message so consumers (agent route's rate-limit mapping) can
+    // branch on `code` instead of regexing the raw body text.
+    code = typeof body?.code === "string" ? body.code : undefined;
   } catch {
     // body wasn't JSON — fall through to generic shape
   }
@@ -1148,6 +1280,7 @@ function parseEngineErrorBody(
       status !== undefined
         ? `Backend stream error: ${status} ${bodyText}`
         : bodyText,
+    ...(code ? { code } : {}),
   };
 }
 
@@ -1158,11 +1291,11 @@ function parseEngineErrorBody(
  */
 function safelyEmitEngineError(
   onEngineError: ((event: MCPJamEngineErrorEvent) => void) | undefined,
-  event: MCPJamEngineErrorEvent,
+  event: MCPJamEngineErrorEvent
 ) {
   if (!onEngineError) return;
   safelyInvoke("[mcpjam-stream-handler] onEngineError", () =>
-    onEngineError(event),
+    onEngineError(event)
   );
 }
 
@@ -1260,11 +1393,11 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-                parseErr !== null &&
-                "message" in parseErr &&
-                typeof (parseErr as { message?: unknown }).message === "string"
+              parseErr !== null &&
+              "message" in parseErr &&
+              typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
-                : "stream parse failed",
+                : "stream parse failed"
             );
       }
 
@@ -1363,7 +1496,7 @@ async function processStream(
           const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
           const providerMetadata = mergeMcpToolOriginMetadata(
             chunk.providerMetadata,
-            serverIdForToolCall,
+            serverIdForToolCall
           );
           contentParts.push({
             type: "tool-call",
@@ -1406,7 +1539,7 @@ async function processStream(
                 "[mcpjam-stream-handler] onToolCall callback failed",
                 {
                   error: error instanceof Error ? error.message : String(error),
-                },
+                }
               );
             }
           }
@@ -1477,7 +1610,7 @@ async function emitToolResults(
   // synthetic don't supply this callback — the UI writer + trace event
   // still fire unchanged. PR 14: a returned promise is awaited so the
   // eval render hook completes before the engine's next step.
-  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>,
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>
 ): Promise<void> {
   for (const msg of newMessages) {
     if (msg?.role === "tool") {
@@ -1503,7 +1636,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : (part.output ?? rawResult);
+              : part.output ?? rawResult;
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -1516,8 +1649,7 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
-                  {})
+                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -1580,7 +1712,7 @@ async function emitToolResults(
                   {
                     error:
                       error instanceof Error ? error.message : String(error),
-                  },
+                  }
                 );
               }
             }
@@ -1608,7 +1740,7 @@ function emitInheritedToolCalls(
   tools?: ToolSet,
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
-  onToolCall?: (event: MCPJamToolCallEvent) => void,
+  onToolCall?: (event: MCPJamToolCallEvent) => void
 ) {
   // Collect existing tool result IDs
   const existingResultIds = new Set<string>();
@@ -1662,7 +1794,7 @@ function emitInheritedToolCalls(
                 "[mcpjam-stream-handler] onToolCall callback failed (inherited)",
                 {
                   error: error instanceof Error ? error.message : String(error),
-                },
+                }
               );
             }
           }
@@ -1694,7 +1826,7 @@ async function handlePendingApprovals(
   // PR 5b-pre review fix (Cursor Medium): resumed-approval branch
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
-  onToolCall?: (event: MCPJamToolCallEvent) => void,
+  onToolCall?: (event: MCPJamToolCallEvent) => void
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -1816,7 +1948,7 @@ async function handlePendingApprovals(
               "[mcpjam-stream-handler] onToolResult callback failed (denial path)",
               {
                 error: error instanceof Error ? error.message : String(error),
-              },
+              }
             );
           }
         }
@@ -1858,7 +1990,7 @@ async function handlePendingApprovals(
   // executeToolCallsFromMessages skips tool-call IDs that already have results
   // (via existingToolResultIds), so the denied results prevent double-execution.
   const needsExecution = [...approvedToolCallIds].some(
-    (id) => !existingResultIds.has(id),
+    (id) => !existingResultIds.has(id)
   );
 
   if (needsExecution) {
@@ -1904,7 +2036,7 @@ async function handlePendingApprovals(
                 "[mcpjam-stream-handler] onToolCall callback failed (approval)",
                 {
                   error: error instanceof Error ? error.message : String(error),
-                },
+                }
               );
             }
           }
@@ -1933,7 +2065,7 @@ async function handlePendingApprovals(
       newMessages,
       traceTurn,
       stepIndex,
-      onToolResult,
+      onToolResult
     );
     didHandle = true;
   }
@@ -1946,7 +2078,7 @@ async function handlePendingApprovals(
  * Calls Convex, streams the response, and executes tools if needed.
  */
 async function processOneStep(
-  ctx: StepContext,
+  ctx: StepContext
 ): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
   const {
     writer,
@@ -1998,10 +2130,10 @@ async function processOneStep(
       ? (() => {
           const activeNames = resolveActiveToolNames(
             progressivePlan,
-            discoveryState,
+            discoveryState
           );
           const cataloged = new Set(
-            progressivePlan.catalog.map((entry) => entry.modelName),
+            progressivePlan.catalog.map((entry) => entry.modelName)
           );
           const seen = new Set(activeNames);
           for (const def of toolDefs) {
@@ -2031,7 +2163,7 @@ async function processOneStep(
         prepareAdvertisedTools,
         onWarn: (message, meta) =>
           logger.warn(`[mcpjam-stream-handler] ${message}`, meta),
-      }),
+      })
     );
     activeToolDefs = activeToolDefs.filter((def) => advertised.has(def.name));
   }
@@ -2062,12 +2194,12 @@ async function processOneStep(
     tools,
     mcpClientManager,
     selectedServers,
-    traceTurn.promptMessageStartIndex,
+    traceTurn.promptMessageStartIndex
   );
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
-    stepIndex,
+    stepIndex
   );
 
   // The trace payload must reflect the *advertised* subset — `activeToolDefs`
@@ -2081,7 +2213,7 @@ async function processOneStep(
         const t = (tools as Record<string, unknown>)[def.name];
         return t === undefined ? null : [def.name, t];
       })
-      .filter((pair): pair is [string, unknown] => pair !== null),
+      .filter((pair): pair is [string, unknown] => pair !== null)
   ) as ToolSet;
 
   emitRequestPayload(writer, {
@@ -2166,7 +2298,19 @@ async function processOneStep(
     throw error;
   }
 
-  if (!res.ok || !res.body) {
+  // A 200 OK with Content-Type: application/json is a non-stream denial
+  // (e.g. spend-precheck: `{ok:false, code:"user_rate_limit", ...}`).
+  // Treat it the same as a non-OK response so `onEngineError` fires and the
+  // turn does not silently complete with an empty reply (issue #3708).
+  // `res.headers?` — not every caller hands us a real `Response`. The eval
+  // runner's tests stub `{ok, status, body, text}` with no `headers`, and an
+  // unguarded `.get` throws a TypeError that the outer catch converts into a
+  // failed turn (7 evals-runner / runner-parity tests).
+  const isJsonDenial =
+    res.ok &&
+    !!res.body &&
+    !!res.headers?.get("content-type")?.includes("application/json");
+  if (!res.ok || !res.body || isJsonDenial) {
     const errorText = await res.text().catch(() => "stream failed");
     const failAbs = Date.now();
     const stepMessageEndIndex =
@@ -2188,7 +2332,7 @@ async function processOneStep(
             ? traceTurn.promptMessageStartIndex
             : undefined,
         messageEndIndex: stepMessageEndIndex,
-      },
+      }
     );
     setStepSpanMessageRanges(
       traceTurn.turnSpans,
@@ -2197,7 +2341,7 @@ async function processOneStep(
       stepMessageEndIndex != null
         ? traceTurn.promptMessageStartIndex
         : undefined,
-      stepMessageEndIndex,
+      stepMessageEndIndex
     );
     emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
     writeTraceEvent(writer, {
@@ -2207,7 +2351,7 @@ async function processOneStep(
       stepIndex,
       errorText,
     });
-    emitError(writer, errorText);
+      emitError(writer, errorText);
     // PR 5b-followup-2: surface the structured guardrail body to
     // `streamSink: "none"` consumers (eval backend stream runner). The
     // writer-side `error` chunk above is fire-and-forget here; the
@@ -2216,6 +2360,44 @@ async function processOneStep(
     // 429 reason on its SSE error event instead of the generic
     // "Backend stream failed during iteration" fallback.
     const parsed = parseEngineErrorBody(res.status, errorText);
+    // Site (1): no Error object exists here, so classify from the response
+    // itself. A 5xx from our own backend is the hosted-502 class — capture it,
+    // because nothing downstream of this point ever will.
+    const normalized = describeBackendStreamFailure(res.status, errorText);
+    // `isJsonDenial` proves only that the body was JSON — NOT that it was the
+    // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
+    // is not enough either. The backend's error-code union includes
+    // `mcpjam_rate_limit`, `mcpjam_api_error`, and `mcpjam_config_error`,
+    // which name US as the responsible party; exempting them because they
+    // happen to carry a code would silence exactly the failures worth paging
+    // on. Only the codes below are user-owned refusals from a backend that is
+    // working correctly, so only they skip the boundary.
+    const isRecognizedDenial =
+      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
+    maybeCaptureOriginError(new Error(parsed.message), normalized, {
+      source: "route:mcp.chat-v2.backend-stream",
+      // The boundary is declared for a genuine TRANSPORT failure only, and
+      // NOT for `isJsonDenial`. A denial is an HTTP 200 carrying a structured
+      // refusal (`{ok:false, code:"user_rate_limit"}`) — the backend working
+      // correctly, and a routine, user-owned outcome. Promoting it would page
+      // the team on every ordinary spend-limit rejection, which is precisely
+      // the noise class this work removes.
+      //
+      // On a real failure the declaration earns its place twice: it tags the
+      // event with the boundary the rest of the codebase triages on, and it
+      // escalates an unrecognized status from our own backend, which
+      // `describeBackendStreamFailure` leaves `ambiguous` because it
+      // classifies the response alone and cannot know whose backend answered.
+      ...(isRecognizedDenial
+        ? {}
+        : { boundary: "mcpjam_internal" as const }),
+      extra: {
+        httpStatus: res.status,
+        code: parsed.code,
+        isJsonDenial,
+        isRecognizedDenial,
+      },
+    });
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,
       ...(parsed.code ? { code: parsed.code } : {}),
@@ -2224,6 +2406,7 @@ async function processOneStep(
       rawText: errorText,
       promptIndex: traceTurn.promptIndex,
       stepIndex,
+      normalized,
     });
     return { shouldContinue: false, didEmitFinish: false };
   }
@@ -2246,7 +2429,7 @@ async function processOneStep(
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
     traceTurn.turnUsage,
-    readUsageFromFinishChunk(finishChunk),
+    readUsageFromFinishChunk(finishChunk)
   );
 
   // Update message history with assistant response
@@ -2366,7 +2549,7 @@ async function processOneStep(
       if (deniedByAssistantIdx.size > 0) {
         const denialMessages: ModelMessage[] = [];
         const sortedKeys = [...deniedByAssistantIdx.keys()].sort(
-          (a, b) => b - a,
+          (a, b) => b - a
         );
         for (const idx of sortedKeys) {
           const denialContent = deniedByAssistantIdx.get(idx)!;
@@ -2383,7 +2566,7 @@ async function processOneStep(
           denialMessages,
           traceTurn,
           stepIndex,
-          onToolResult,
+          onToolResult
         );
       }
       // Fall through to the normal tool-execution branch below so
@@ -2406,7 +2589,7 @@ async function processOneStep(
           promptIndex: traceTurn.promptIndex,
           stepIndex,
           spans: traceTurn.turnSpans,
-        },
+        }
       );
       const metaMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: metaTracedTools as Record<string, any>,
@@ -2423,7 +2606,7 @@ async function processOneStep(
           metaMessages,
           traceTurn,
           stepIndex,
-          onToolResult,
+          onToolResult
         );
         // Promote any ids the model just loaded so a subsequent
         // resumed-after-approval step sees them as loaded.
@@ -2449,14 +2632,14 @@ async function processOneStep(
           messageEndIndex: stepMessageEndIndex,
           status: "ok",
           ...harnessSpanMeta,
-        },
+        }
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex,
+        stepMessageEndIndex
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
@@ -2473,7 +2656,7 @@ async function processOneStep(
       tools,
       traceTurn,
       stepIndex,
-      onToolCall,
+      onToolCall
     );
 
     const toolsStartAbs = Date.now();
@@ -2485,7 +2668,7 @@ async function processOneStep(
           promptIndex: traceTurn.promptIndex,
           stepIndex,
           spans: traceTurn.turnSpans,
-        },
+        }
       );
 
       // Progressive mode: gate execution to the active subset. Visibility
@@ -2496,7 +2679,7 @@ async function processOneStep(
       let executableTools = gateToolsToActiveSubset(
         tracedTools as Record<string, unknown>,
         progressivePlan,
-        () => discoveryState,
+        () => discoveryState
       );
       // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
       // set (`activeToolDefs`), gate execution to it too so a remembered /
@@ -2506,7 +2689,7 @@ async function processOneStep(
         const advertised = new Set(activeToolDefs.map((def) => def.name));
         executableTools = gateToolsToAdvertisedSubset(
           executableTools,
-          () => advertised,
+          () => advertised
         );
       }
 
@@ -2523,7 +2706,7 @@ async function processOneStep(
         modelVisibleMcpToolResults,
         readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
         ...(abortSignal ? { abortSignal } : {}),
-        });
+      });
       const toolsEndAbs = Date.now();
 
       const newToolCallIds = new Set<string>();
@@ -2546,7 +2729,7 @@ async function processOneStep(
         messageHistory,
         traceTurn.promptIndex,
         stepIndex,
-        newToolCallIds,
+        newToolCallIds
       );
       const stepMessageEndIndexAfterTools =
         messageHistory.length > traceTurn.promptMessageStartIndex
@@ -2578,14 +2761,14 @@ async function processOneStep(
           messageEndIndex: stepMessageEndIndexAfterTools,
           status: "ok",
           ...harnessSpanMeta,
-        },
+        }
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndexAfterTools,
-        stepMessageEndIndexAfterTools,
+        stepMessageEndIndexAfterTools
       );
 
       // Emit results for newly executed tools
@@ -2595,7 +2778,7 @@ async function processOneStep(
         newMessages,
         traceTurn,
         stepIndex,
-        onToolResult,
+        onToolResult
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2634,7 +2817,10 @@ async function processOneStep(
       // browser resends it on resume); the epilogue persists it and closes the
       // stream. The whole point of the durable transport vs legacy elicitation
       // is that the worker does not hold open awaiting a human.
-      if (isMrtrSuspendSignalShape(error)) {
+      if (
+        isMrtrSuspendSignalShape(error) ||
+        isScopeStepUpSuspendSignal(error)
+      ) {
         emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
@@ -2659,14 +2845,14 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
-        },
+        }
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex,
+        stepMessageEndIndex
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2678,7 +2864,7 @@ async function processOneStep(
         stepIndex,
         errorText,
       });
-      emitError(writer, errorText);
+    emitError(writer, errorText);
       // PR 5b-followup-2: surface the error to `streamSink: "none"`
       // consumers (eval backend stream runner). The processStream /
       // tool-execution catch path doesn't have a structured body, so
@@ -2689,6 +2875,9 @@ async function processOneStep(
         rawText: errorText,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
+        // Site (2) holds a real error — no capture here, the chat route's
+        // stream `onError` owns that decision for this path.
+        normalized: describeError(error),
       });
       return { shouldContinue: false, didEmitFinish: false };
     }
@@ -2713,14 +2902,14 @@ async function processOneStep(
       messageEndIndex: stepMessageEndIndex,
       status: "ok",
       ...harnessSpanMeta,
-    },
+    }
   );
   setStepSpanMessageRanges(
     traceTurn.turnSpans,
     traceTurn.promptIndex,
     stepIndex,
     stepMessageStartIndex,
-    stepMessageEndIndex,
+    stepMessageEndIndex
   );
   emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2780,7 +2969,7 @@ export interface ChatEngineLoopResult {
  */
 export async function runChatEngineLoop(
   options: MCPJamHandlerOptions,
-  streamSink: "ui" | "none",
+  streamSink: "ui" | "none"
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
@@ -2800,6 +2989,7 @@ export async function runChatEngineLoop(
     modelVisibleMcpToolResults,
     approvalMode,
     mrtrResume,
+    scopeStepUpResume,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -2866,7 +3056,7 @@ export async function runChatEngineLoop(
         ) {
           const id = lookupToolIdByModelName(
             progressivePlan.catalog,
-            part.toolName,
+            part.toolName
           );
           if (id) discoveryState.pendingApprovalToolIds.add(id);
         }
@@ -2895,7 +3085,7 @@ export async function runChatEngineLoop(
   });
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
     messageHistory,
-    traceTurn.promptMessageStartIndex,
+    traceTurn.promptMessageStartIndex
   );
   let steps = 0;
   let runSucceeded = false;
@@ -2923,7 +3113,18 @@ export async function runChatEngineLoop(
     // The narrowed `{ write }` shape matches StepContext.writer and
     // MCPJamHandlerOptions.onStreamWriterReady, both of which only need
     // the writer for chunk forwarding.
-    const safeWriter: { write: (chunk: UIMessageChunk) => void } = {
+    const safeWriter: {
+      write: (chunk: UIMessageChunk) => void;
+      isClosed: () => boolean;
+    } = {
+      // Whether the underlying controller is gone. Load-bearing for anything
+      // that must know a chunk ACTUALLY reached the browser: `write` below is
+      // deliberately no-throw (a client disconnect must not bring down the
+      // agentic loop), so a caller with only `write` cannot distinguish
+      // "delivered" from "silently dropped". The chatbox sandbox notices use
+      // this to avoid acking — and therefore permanently consuming — a notice
+      // that was written into a closed stream.
+      isClosed: () => streamClosed,
       write: (chunk: UIMessageChunk) => {
         lastWriteAt = Date.now();
         if (streamClosed) return;
@@ -2942,7 +3143,7 @@ export async function runChatEngineLoop(
                   writeError instanceof Error
                     ? writeError.message
                     : String(writeError),
-              },
+              }
             );
           }
         }
@@ -2958,28 +3159,25 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(
-        () => {
-          if (streamClosed || aborted) return;
-          const sinceLastWrite = Date.now() - lastWriteAt;
-          if (sinceLastWrite < resolvedHeartbeatMs) return;
-          try {
-            writeTraceEvent(safeWriter, {
-              type: "heartbeat",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-            });
-          } catch (error) {
-            // Should not happen — safeWriter swallows write errors —
-            // but a final guard here keeps a misbehaving writeTraceEvent
-            // from killing the loop.
-            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        },
-        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
-      );
+      heartbeatTimer = setInterval(() => {
+        if (streamClosed || aborted) return;
+        const sinceLastWrite = Date.now() - lastWriteAt;
+        if (sinceLastWrite < resolvedHeartbeatMs) return;
+        try {
+          writeTraceEvent(safeWriter, {
+            type: "heartbeat",
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+          });
+        } catch (error) {
+          // Should not happen — safeWriter swallows write errors —
+          // but a final guard here keeps a misbehaving writeTraceEvent
+          // from killing the loop.
+          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -3018,7 +3216,10 @@ export async function runChatEngineLoop(
       // `requireToolApproval` alone would leave that denial unprocessed and
       // the tool call unresolved: the turn would hang forever, which is the
       // exact failure the two-sided predicate exists to prevent.
-      if (requireToolApproval || (uiToolApprovals?.requiredNames.size ?? 0) > 0) {
+      if (
+        requireToolApproval ||
+        (uiToolApprovals?.requiredNames.size ?? 0) > 0
+      ) {
         const handled = await handlePendingApprovals(
           safeWriter,
           messageHistory,
@@ -3029,7 +3230,7 @@ export async function runChatEngineLoop(
           abortSignal,
           modelVisibleMcpToolResults,
           onToolResult,
-          onToolCall,
+          onToolCall
         );
         if (handled) {
           // Approvals were processed — if there are still unresolved tool
@@ -3047,7 +3248,12 @@ export async function runChatEngineLoop(
       // indeterminate outcome pauses. This is the SAME engine that produced the
       // suspension, re-entered on any replica.
       let mrtrPaused = false;
-      if (mrtrResume && !aborted && !hasUnresolvedToolCall(messageHistory, mrtrResume.toolCallId)) {
+      const operationResume = scopeStepUpResume ?? mrtrResume;
+      if (
+        operationResume &&
+        !aborted &&
+        !hasUnresolvedToolCall(messageHistory, operationResume.toolCallId)
+      ) {
         // The resume request's `toolCallId` does not identify an unresolved
         // tool-call in the resent history (stale, tampered, or already
         // resolved). Do NOT drive — driving would claim/consume the durable
@@ -3055,18 +3261,18 @@ export async function runChatEngineLoop(
         // Pause and let the client reconcile.
         logger.warn(
           "[mcpjam-stream-handler] MRTR resume: toolCallId is not an unresolved tool-call; skipping resume",
-          { toolCallId: mrtrResume.toolCallId },
+          { toolCallId: operationResume.toolCallId }
         );
         mrtrPaused = true;
-      } else if (mrtrResume && !aborted) {
-        const resolution = await mrtrResume.resolve((chunk) =>
-          safeWriter.write(chunk),
+      } else if (operationResume && !aborted) {
+        const resolution = await operationResume.resolve((chunk) =>
+          safeWriter.write(chunk)
         );
         if (resolution.kind === "complete" || resolution.kind === "recover") {
           const spliced = spliceMrtrToolResult(
             messageHistory,
-            mrtrResume.toolCallId,
-            resolution.toolResultMessage,
+            operationResume.toolCallId,
+            resolution.toolResultMessage
           );
           if (spliced) {
             await emitToolResults(
@@ -3075,7 +3281,7 @@ export async function runChatEngineLoop(
               [resolution.toolResultMessage],
               traceTurn,
               effectiveSteps(),
-              onToolResult,
+              onToolResult
             );
             emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
             // Only run the model once EVERY tool-call in the resent history has
@@ -3096,7 +3302,7 @@ export async function runChatEngineLoop(
             // reconcile.
             logger.warn(
               "[mcpjam-stream-handler] MRTR resume: suspended tool-call not found in history; pausing",
-              { toolCallId: mrtrResume.toolCallId },
+              { toolCallId: operationResume.toolCallId }
             );
             mrtrPaused = true;
           }
@@ -3173,7 +3379,7 @@ export async function runChatEngineLoop(
         driver.usage = traceTurn.turnUsage;
         driver.fireStepFinish(
           effectiveSteps() - 1,
-          !didEmitFinish && !shouldContinue,
+          !didEmitFinish && !shouldContinue
         );
 
         if (!shouldContinue) {
@@ -3212,8 +3418,8 @@ export async function runChatEngineLoop(
           createClientFinishChunk(
             null,
             traceTurn,
-            hitStepCap() ? "length" : "stop",
-          ),
+            hitStepCap() ? "length" : "stop"
+          )
         );
         finishEmitted = true;
       }
@@ -3242,7 +3448,7 @@ export async function runChatEngineLoop(
           traceTurn.turnStartedAt,
           traceTurn.turnStartedAt,
           failAbs,
-          traceTurn.promptIndex,
+          traceTurn.promptIndex
         );
         emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
         writeTraceEvent(safeWriter, {
@@ -3265,6 +3471,7 @@ export async function runChatEngineLoop(
           message: errorText,
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
+          normalized: describeError(error),
         });
       }
     } finally {
@@ -3296,7 +3503,7 @@ export async function runChatEngineLoop(
         } catch (persistenceError) {
           logger.error(
             "[mcpjam-stream-handler] Error while persisting conversation",
-            persistenceError,
+            persistenceError
           );
         }
       }
@@ -3306,7 +3513,7 @@ export async function runChatEngineLoop(
       } catch (cleanupError) {
         logger.error(
           "[mcpjam-stream-handler] Error while running stream cleanup",
-          cleanupError,
+          cleanupError
         );
       }
     }
@@ -3314,8 +3521,25 @@ export async function runChatEngineLoop(
 
   if (streamSink === "ui") {
     const stream = createUIMessageStream({
-      execute: executeEngine,
-      onFinish: onFinishEngine,
+      // Do not pass `onFinishEngine` as createUIMessageStream's `onFinish`.
+      // AI SDK enables its own message-state reducer whenever that callback is
+      // present. A resumed scope step-up begins with `tool-output-available`
+      // for a tool call created in the pre-OAuth response, but this stream has
+      // no matching `tool-input-available`; the reducer throws after the first
+      // trace chunk and strands the browser in "streaming".
+      //
+      // Our engine already owns the authoritative ModelMessage history, so run
+      // persistence/cleanup directly after execution. With no SDK `onFinish`
+      // reducer, cross-response tool results pass through to the browser and
+      // the exact resumed transcript is still persisted before the stream
+      // closes.
+      execute: async (context) => {
+        try {
+          await executeEngine(context);
+        } finally {
+          await onFinishEngine();
+        }
+      },
     });
     const response = createUIMessageStreamResponse({ stream });
     return {
@@ -3365,19 +3589,22 @@ export async function runChatEngineLoop(
  * and `extraBodyFields: { providerKey }` without modification.
  */
 export async function handleMCPJamFreeChatModel(
-  options: MCPJamHandlerOptions,
+  options: MCPJamHandlerOptions
 ): Promise<Response> {
   // A host with a `harness` selected (claude-code | codex) runs the real runtime
   // via runHarnessTurn; otherwise the emulated engine. `harness` is already a
   // validated HarnessId (readHarness → isHarness) or undefined, so a truthiness
   // check is the right gate — runHarnessTurn re-resolves the adapter defensively.
   // Both satisfy the same ChatEngineLoopResult contract (streamSink "ui" → Response).
-  const result = await (options.harness
+  const useHarness = Boolean(options.harness && !options.scopeStepUpResume);
+  const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));
   if (!result.response) {
     throw new Error(
-      `${options.harness ? "runHarnessTurn" : "runChatEngineLoop"}(streamSink: 'ui') returned no Response — internal invariant violated`,
+      `${
+        useHarness ? "runHarnessTurn" : "runChatEngineLoop"
+      }(streamSink: 'ui') returned no Response — internal invariant violated`
     );
   }
   return result.response;

@@ -64,6 +64,13 @@ interface OAuthFlowLoggerProps {
     onContinue?: () => void;
     continueLabel?: string;
     continueDisabled?: boolean;
+    /**
+     * The advance is in flight. Matches the sibling Connect/Refresh buttons'
+     * convention ("Connecting..."/"Refreshing..."): without it, Continue looked
+     * inert for the whole round trip and users clicked it again — the single
+     * biggest rageclick hotspot on this surface.
+     */
+    continuePending?: boolean;
     resetDisabled?: boolean;
     onConnectServer?: () => void;
     onRefreshTokens?: () => void;
@@ -445,10 +452,15 @@ export function OAuthFlowLogger({
                   <Button
                     size="sm"
                     onClick={actions.onContinue}
-                    disabled={actions.continueDisabled}
+                    disabled={
+                      actions.continueDisabled || actions.continuePending
+                    }
+                    aria-busy={actions.continuePending || undefined}
                     className="h-7"
                   >
-                    {actions.continueLabel || "Continue"}
+                    {actions.continuePending
+                      ? "Continuing..."
+                      : actions.continueLabel || "Continue"}
                   </Button>
                 )}
                 {!actions?.onContinue && actions?.continueLabel && (
@@ -743,7 +755,12 @@ export function OAuthFlowLogger({
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground line-clamp-2">
+                            <p
+                              className={cn(
+                                "text-xs text-muted-foreground",
+                                !isExpanded && "line-clamp-2"
+                              )}
+                            >
                               {info.summary}
                             </p>
                             {hasError && firstErrorMessage && (

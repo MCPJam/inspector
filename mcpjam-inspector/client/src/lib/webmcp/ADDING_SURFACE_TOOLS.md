@@ -29,7 +29,7 @@ call in the surface component.
 
    The shared-hook hazard is real: EvalsTab and CiEvalsTab share their state
    hooks, so a bridge call inside one of those would register the evals
-   group under the wrong surface on /ci-evals. The coverage test enforces a
+   group under the wrong surface on Runs mode. The coverage test enforces a
    literal `surfaceId: "<id>"` in the module you list.
 4. **Manifest.** Flip the surface's `agentTools` from `{ kind: "none", … }`
    to `{ kind: "group" }` and set `hasSnapshotProvider: true` (a group ships
@@ -84,6 +84,22 @@ tool that PREFILLS a form for the user to review and submit —
 `ui_open_server_form` precedent. Direct commit is for low-entropy actions
 whose full input the model can plausibly get right and the user can see
 happen.
+
+### Ask instead of guessing (but rarely)
+
+`ui_ask_user` (core group) parks the turn on an inline multiple-choice card
+and resumes it with the user's answer. A tool handler that discovers
+ambiguity should NOT call it — return an error naming what is missing and let
+the model decide whether asking is worth an interruption.
+
+Two rules keep it from becoming noise. It is READ-ONLY, so it never gates —
+do not "improve" it with an approval pill. And it is never a substitute for
+one: asking "shall I delete this?" on a question card is not an approval,
+because the destructive tool that follows is a separate call carrying its own
+annotations.
+
+The free-text escape hatch is supplied by the renderer and is not optional. A
+prompt or tool that has the model author its own "Other" option is a bug.
 
 ### Names
 

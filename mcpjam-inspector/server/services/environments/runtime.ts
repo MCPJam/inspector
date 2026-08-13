@@ -25,15 +25,21 @@
  *     configuration the user launched. Those raise, never default.
  */
 import type { ConvexHttpClient } from "convex/browser";
+import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
+import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
 
 /** Where a connectable server in the resolved set came from. */
 export type RuntimeServerSource = "host_or_group" | "plugin" | "override";
 
 /** The channel(s) a resolved skill arrived through. */
-export type RuntimeSkillChannel = "host" | "environment" | "plugin";
+export type RuntimeSkillChannel =
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 export interface ResolvedEnvironmentSkill {
   skillId: string;
@@ -85,6 +91,24 @@ export interface ResolvedEnvironmentRuntime {
     }>;
   };
   skills?: ResolvedEnvironmentSkill[];
+  /** Captured MCP-server skills selected by the environment. */
+  serverSkills?: Array<{
+    serverSkillId: string;
+    versionId: string;
+    serverId: string;
+    serverSlug: string;
+    serverLabel: string;
+    ref: string;
+    skillUri: string;
+    name: string;
+    description: string;
+    content: string;
+    contentSha256: string;
+    versionHash: string;
+    versionNumber: number;
+    capturedAt: number;
+    files: Array<{ path: string; size: number; url: string | null }>;
+  }>;
   pluginVersions?: Array<{
     pluginId: string;
     pluginVersionId: string;
@@ -189,6 +213,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Where a `local`-placement plugin component would actually execute if this
+ *  deployment admitted one. See the venue note on
+ *  {@link resolveEnvironmentForRuntime}. */
+export type RuntimeVenue = "local" | "computer";
+
+/**
+ * DEPLOYMENT-wide, not per-caller. This resolver runs before any box is
+ * reserved and has no cheap way to ask whether THIS actor could reserve one, so
+ * a caller who cannot (a guest, an unentitled project) still gets the component
+ * admitted and then refused at connect. That refusal is correct and fail-closed
+ * — nothing runs — but it costs a round trip to reach. Narrowing the venue to
+ * the acting caller's own eligibility belongs with the turn-level pre-warm that
+ * resolves the box before the environment does.
+ */
+export function resolveRuntimeVenue(): RuntimeVenue | undefined {
+  if (!HOSTED_MODE) return "local";
+  return canColocatePluginStdio() ? "computer" : undefined;
+}
+
 /**
  * Fail-closed structural validation.
  *
@@ -237,6 +280,25 @@ function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
  * unknown args. That narrowing is applied to the RESOLVED spec by
  * `./plugin-override`, which can only remove versions this environment already
  * resolved for this caller.
+ *
+ * The RUNTIME VENUE is declared — HERE, once, for every caller of this service
+ * (chat-v2, the preview route, the connect check):
+ *
+ *   - `"local"` when this deployment IS the local binary. The backend admits
+ *     `local`-placement plugin components, which this process spawns itself
+ *     through the `createAuthorizedManager` stdio divert.
+ *   - `"computer"` when this deployment can colocate such a component inside
+ *     the caller's own computer sandbox behind the in-VM shim. Same admission,
+ *     different executor.
+ *   - NOTHING otherwise (not an explicit "hosted"): absent already means hosted
+ *     fail-closed on the backend, and omitting the field keeps those requests
+ *     byte-identical.
+ *
+ * `"computer"` rides the SAME predicate the connect seam gates on
+ * ({@link canColocatePluginStdio}), which is what keeps admission and execution
+ * from drifting: declaring a venue this deployment cannot serve would hand back
+ * server ids that fail at connect, and no client can tell that apart from a
+ * broken plugin.
  */
 export async function resolveEnvironmentForRuntime(
   convexClient: ConvexHttpClient,
@@ -247,6 +309,7 @@ export async function resolveEnvironmentForRuntime(
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
+  const runtimeVenue = resolveRuntimeVenue();
   let raw: unknown;
   try {
     raw = await convexClient.query(
@@ -255,6 +318,7 @@ export async function resolveEnvironmentForRuntime(
         projectId: args.projectId,
         environmentId: args.environmentId,
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
+        ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
       } as any
     );
   } catch (error) {
@@ -420,6 +484,7 @@ export function toEnvironmentPreview(
       )
     : [];
   const skills = spec.skills ?? [];
+  const capturedServerSkills = spec.serverSkills ?? [];
   const skillDelivery: EnvironmentSkillDelivery = !harness
     ? "emulated"
     : options.harnessSupportsSkills(harness)
@@ -454,13 +519,22 @@ export function toEnvironmentPreview(
       name: entry.name,
       source: entry.source ?? null,
     })),
-    skills: skills.map((skill) => ({
-      skillId: skill.skillId,
-      name: skill.name,
-      description: skill.description,
-      channels: Array.isArray(skill.channels) ? skill.channels : [],
-      hasFiles: Array.isArray(skill.files) && skill.files.length > 0,
-    })),
+    skills: [
+      ...skills.map((skill) => ({
+        skillId: skill.skillId,
+        name: skill.name,
+        description: skill.description,
+        channels: Array.isArray(skill.channels) ? skill.channels : [],
+        hasFiles: Array.isArray(skill.files) && skill.files.length > 0,
+      })),
+      ...capturedServerSkills.map((skill) => ({
+        skillId: skill.serverSkillId,
+        name: skill.ref,
+        description: skill.description,
+        channels: ["mcp-server" as const],
+        hasFiles: Array.isArray(skill.files) && skill.files.length > 0,
+      })),
+    ],
     plugins: (spec.pluginVersions ?? []).map((plugin) => ({
       pluginId: plugin.pluginId,
       pluginVersionId: plugin.pluginVersionId,
@@ -479,7 +553,7 @@ export function toEnvironmentPreview(
       builtInToolIds,
       hasComputer: isRecord(runtimeConfig.computer),
       serverCount: connectable.length,
-      skillCount: skills.length,
+      skillCount: skills.length + capturedServerSkills.length,
       skillDelivery,
       pluginCount: (spec.pluginVersions ?? []).length,
       serversOverridden: runtimeServersAreOverridden(spec),

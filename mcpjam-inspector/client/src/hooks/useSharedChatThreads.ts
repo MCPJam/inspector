@@ -4,6 +4,10 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
+// Type-only import, so the SharedChatThread import on the other side is not a
+// runtime cycle. One declaration of the backend contract, not two.
+import type { SessionCriteria } from "@/lib/swarm-api";
+import type { SessionSentiment } from "@/hooks/chatbox-usage-filters";
 
 export type SharedChatSourceType = "chatbox" | "swarm";
 
@@ -40,6 +44,37 @@ export interface SharedChatThread {
   visitorRecency?: "new" | "returning";
   visitorSegment?: string;
   language?: string;
+  /**
+   * Goal facets, written by the cluster rebuild. All optional and all absent on
+   * sessions that predate the goal/outcome split — absence means "not
+   * analyzed", which is a different claim from the `unclear` outcome, so the UI
+   * must not substitute a default for a missing field.
+   */
+  outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
+  outcomeConfidence?: number;
+  friction?: string;
+  /**
+   * Model-inferred user sentiment. Absent until a run at signals version 2+.
+   * Derived from the shared contract rather than restated, so a change to the
+   * closed list cannot leave thread data and the filters disagreeing.
+   */
+  sentiment?: SessionSentiment;
+  /** Deterministic evidence, recorded beside the outcome and never folded in. */
+  terminalToolError?: boolean;
+  /**
+   * Emergent theme per signal axis. `themeClusterId` above is the goal one,
+   * kept under its original name so existing readers keep working.
+   */
+  behaviorClusterId?: string;
+  behaviorClusterLabel?: string;
+  outcomeClusterId?: string;
+  outcomeClusterLabel?: string;
+  sentimentClusterId?: string;
+  sentimentClusterLabel?: string;
+  /** Multi-label trajectory tags, derived from the transcript (no model call). */
+  behaviorTags?: string[];
+  /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */
+  pathKey?: string;
   /**
    * The hostConfigId that was active on the chatbox's referenced host
    * when this session opened. Pinned at session-insert time; survives
@@ -84,6 +119,12 @@ export interface SharedChatThread {
    * (`getSession`) returns the full record with denormalized findings.
    */
   readiness?: SessionReadiness;
+  /**
+   * Compact deterministic rubric verdict (mirrors `chatSessions.criteria`).
+   * Absent on chatbox threads and on swarm threads whose run carried no
+   * rubric — those render no criterion chip rather than a misleading 0/0.
+   */
+  criteria?: SessionCriteria;
   /**
    * Goal-completion judge verdict for SWARM sessions — the compact
    * denormalized `chatSessions.goalScore` subset (see backend
@@ -220,13 +261,19 @@ export function useSharedChatTurnTraces({
 export interface SessionBrowserArtifacts {
   widgetRenderObservations: EvalTraceWidgetRenderObservationView[];
   browserInteractionSteps: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Session-scoped replay `.webm`, resolved server-side. Present (as `null`) on
+   * the artifact-less shape too, so a replay surface branches on data rather
+   * than on `undefined`.
+   */
+  videoUrl: string | null;
 }
 
 /**
- * Browser-rendered MCP App artifacts for a session (render observations +
- * Computer Use steps), written by the synthetic-session runner. Sorted and
- * screenshot-url-resolved server-side; empty arrays for sessions without
- * browser artifacts (live visitor sessions, pre-feature synthetic runs).
+ * Browser-rendered MCP App artifacts for a session — render observations,
+ * Computer Use steps, and the replay video — written by the synthetic-session
+ * runner. Sorted and url-resolved server-side; empty arrays / null video for
+ * sessions without browser artifacts (live visitor sessions, pre-feature runs).
  */
 export function useSessionBrowserArtifacts({
   threadId,

@@ -24,10 +24,19 @@
  */
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
+import { HOSTED_MODE } from "../../config.js";
 import { type ExecutionScope } from "../execution-scope.js";
-import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
 import { execViaRemoteDataPlane } from "../computers/remote-data-plane.js";
 import {
+  resolvePersonalComputerEngine,
+  type ComputerEngine,
+} from "../computers/engine.js";
+import {
+  LOCAL_COMPUTER_UNAVAILABLE_ERROR,
+  runLocalComputerCommand,
+} from "../computers/local-machine.js";
+import {
+  COMPUTERS_NOT_CONFIGURED_ERROR,
   DEFAULT_COMMAND_TIMEOUT_S,
   MAX_COMMAND_TIMEOUT_S,
   e2bRunner,
@@ -52,19 +61,53 @@ export interface BashToolOptions {
   workdir?: string;
   /** Mirrors the host's requireToolApproval — a root shell must honor it. */
   requireToolApproval?: boolean;
+  /**
+   * Resolved-and-actor-coerced execution engine (see `computers/engine.ts`).
+   * ABSENT reproduces the legacy cloud-family fork exactly — every caller
+   * that doesn't opt in is behavior-preserved.
+   */
+  engine?: ComputerEngine;
+  /**
+   * The turn EXPLICITLY asked for the local engine (validated route parse).
+   * Only read when the engine resolves `unavailable`, to pick the honest
+   * error: "the local engine isn't available" beats the generic
+   * "computers are not configured" when the user asked for their machine.
+   */
+  localEngineRequested?: boolean;
 }
 
 export function buildBashTool(
   opts: BashToolOptions,
   runner: BashRunner = e2bRunner
 ): ToolSet[string] {
+  // Legacy callers (no engine threaded) get exactly the old fork.
+  const engine =
+    opts.engine ?? resolvePersonalComputerEngine({ localConsentValid: false });
+  const isLocal = engine === "local";
+  // Stamped on NON-HOSTED turns only: hosted model-visible output and
+  // persisted transcripts must stay byte-identical. e2b + delegated both
+  // read "cloud" — the distinction is plumbing, not a place. A FAILED
+  // explicit-local ask labels "local" too: the error is about the local
+  // engine, and a "cloud" badge on it would misattribute the failure.
+  const engineLabel: "local" | "cloud" =
+    isLocal || (engine === "unavailable" && opts.localEngineRequested === true)
+      ? "local"
+      : "cloud";
+  const annotate = (
+    result: RunComputerCommandResult
+  ): RunComputerCommandResult =>
+    HOSTED_MODE ? result : { ...result, engine: engineLabel };
   return tool({
-    description:
-      "Run a bash command on this project's personal cloud computer (a " +
-      "persistent Linux workstation — files and installed tools survive " +
-      "between commands and sessions). Commands run non-interactively; for " +
-      "logins use device-flow commands (e.g. `gh auth login`) and relay the " +
-      "verification URL to the user.",
+    description: isLocal
+      ? "Run a bash command on the user's own machine — the same computer " +
+        "this inspector runs on. Commands run as the user's account; files " +
+        "persist between commands. Commands run non-interactively, and each " +
+        "one may require the user's approval before it executes."
+      : "Run a bash command on this project's personal cloud computer (a " +
+        "persistent Linux workstation — files and installed tools survive " +
+        "between commands and sessions). Commands run non-interactively; for " +
+        "logins use device-flow commands (e.g. `gh auth login`) and relay the " +
+        "verification URL to the user.",
     inputSchema: z.object({
       command: z
         .string()
@@ -82,12 +125,25 @@ export function buildBashTool(
         ),
     }),
     // A root shell on a personal machine must honor the host's approval
-    // policy exactly like MCP/skill tools do.
-    needsApproval: opts.requireToolApproval === true,
+    // policy exactly like MCP/skill tools do. The LOCAL engine goes further:
+    // approval is ALWAYS on — a model-driven shell on the user's real machine
+    // has no auto-approve in v1, whatever the host config says.
+    needsApproval: isLocal ? true : opts.requireToolApproval === true,
     execute: async (
       { command, timeoutSeconds },
       { toolCallId, abortSignal }
     ): Promise<RunComputerCommandResult> => {
+      if (isLocal) {
+        return annotate(
+          await runLocalComputerCommand({
+            projectId: opts.projectId,
+            command,
+            commandId: toolCallId,
+            timeoutSeconds,
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          })
+        );
+      }
       const execArgs = {
         authHeader: opts.authHeader,
         projectId: opts.projectId,
@@ -98,12 +154,20 @@ export function buildBashTool(
         timeoutSeconds,
         signal: abortSignal,
       };
-      if (isComputersDataPlaneConfigured()) {
-        return runComputerCommand({ ...execArgs, source: "chat" }, runner);
+      if (engine === "e2b") {
+        return annotate(
+          await runComputerCommand({ ...execArgs, source: "chat" }, runner)
+        );
       }
-      // No vendor credentials here — delegate to the deployed data plane
-      // (or report unconfigured when no remote is named either).
-      return execViaRemoteDataPlane(execArgs);
+      if (engine === "delegated") {
+        // No vendor credentials here — delegate to the deployed data plane.
+        return annotate(await execViaRemoteDataPlane(execArgs));
+      }
+      return annotate({
+        error: opts.localEngineRequested
+          ? LOCAL_COMPUTER_UNAVAILABLE_ERROR
+          : COMPUTERS_NOT_CONFIGURED_ERROR,
+      });
     },
   });
 }

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
   type JourneySessionRow,
+  type SessionCriteria,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
@@ -13,6 +14,7 @@ import {
   type TraceViewMode,
 } from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
   swarmCellKey,
   type JourneyRunStreamState,
@@ -60,12 +62,37 @@ const CELL_META: Record<
   },
 };
 
+/** The execution plane's own record of one attempt (`journeyRunAttempts`). */
+export type SwarmAttemptOutcome = {
+  status: "pending" | "running" | "succeeded" | "failed" | "rate_limited";
+  errorCode?: string | null;
+  errorMessage?: string | null;
+};
+
+const TERMINAL_ATTEMPT_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "rate_limited",
+]);
+
 export function resolveSwarmCellOutcome(args: {
   liveStatus?: SwarmCellLiveStatus;
   session?: JourneySessionRow | null;
+  attempt?: SwarmAttemptOutcome | null;
   runStatus: string;
 }): SwarmMatrixCellOutcome {
-  const { liveStatus, session, runStatus } = args;
+  const { liveStatus, session, attempt, runStatus } = args;
+
+  // The attempt row OUTRANKS everything once terminal. It is the only record
+  // of what the runner actually decided; the `chatSessions` lifecycle is a
+  // different plane that says nothing about whether the attempt succeeded.
+  // Without this, a rate-limited attempt whose session row sits at `active`
+  // rendered as a green "done" — the run reported 20 of 20 sessions complete
+  // while every one of them had been refused by the provider.
+  if (attempt && TERMINAL_ATTEMPT_STATUSES.has(attempt.status)) {
+    return attempt.status as SwarmMatrixCellOutcome;
+  }
+
   if (liveStatus && liveStatus !== "pending") {
     return liveStatus;
   }
@@ -85,7 +112,13 @@ export function resolveSwarmCellOutcome(args: {
   // finishes — that is NOT "still running". Only pulse Running while the
   // journey run itself is in flight.
   if (session.status === "running" || session.status === "active") {
-    return runStatus === "running" ? "running" : "succeeded";
+    if (runStatus === "running") return "running";
+    // Run is over and the lifecycle never advanced. With no attempt row to
+    // consult (pre-`journeyRunAttempts` runs), the transcript is the only
+    // evidence left — and a session that recorded nothing did not succeed,
+    // whatever the run summary counted it as.
+    if ((session.messageCount ?? 0) > 0) return "succeeded";
+    return runStatus === "rate_limited" ? "rate_limited" : "failed";
   }
   if (runStatus === "running") return "running";
   return "pending";
@@ -100,6 +133,7 @@ export function SwarmHostCell({
   sessionIndex,
   outcome,
   goalScore,
+  criteria,
   selected,
   onSelect,
 }: {
@@ -107,6 +141,7 @@ export function SwarmHostCell({
   sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
+  criteria?: SessionCriteria;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -117,13 +152,15 @@ export function SwarmHostCell({
       onClick={onSelect}
       data-testid="swarm-host-cell"
       data-outcome={outcome}
-      aria-label={`Open session ${sessionIndex + 1} on ${hostLabel} (${meta.label})`}
+      aria-label={`Open session ${sessionIndex + 1} on ${hostLabel} (${
+        meta.label
+      })`}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
         "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
           ? "border-primary bg-primary/5"
-          : "border-border/50 bg-background/60",
+          : "border-border/50 bg-background/60"
       )}
     >
       <span className="font-medium text-foreground/80">{hostLabel}</span>
@@ -133,7 +170,56 @@ export function SwarmHostCell({
       <span className={cn("size-1.5 rounded-full", meta.dot)} />
       <span className={cn("font-semibold", meta.text)}>{meta.label}</span>
       <SessionGoalScoreBadge goalScore={goalScore} />
+      <SessionCriteriaChip criteria={criteria} />
     </button>
+  );
+}
+
+/**
+ * Per-cell deterministic rubric verdict: `N/M` passed when graded, a subtle
+ * glyph while pending or after a grading failure, and NOTHING when the session
+ * carries no stamp.
+ *
+ * Rendering nothing for an absent stamp is the point. A `0/0` would claim the
+ * session was graded against an empty rubric; absence means the run had no
+ * rubric at all, which is a different thing and belongs in no denominator.
+ */
+function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
+  if (!criteria) return null;
+
+  if (criteria.status === "completed") {
+    const results = criteria.results ?? [];
+    if (results.length === 0) return null;
+    const passed = results.filter((r) => r.passed).length;
+    const allPassed = passed === results.length;
+    return (
+      <span
+        title={`${passed} of ${results.length} checks passed`}
+        className={cn(
+          "rounded px-1 font-mono text-[10px] tabular-nums",
+          allPassed
+            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+            : "bg-destructive/10 text-destructive"
+        )}
+      >
+        {passed}/{results.length}
+      </span>
+    );
+  }
+
+  // Pending and failed-grading stay visually quiet — they say something about
+  // the GRADER, not about the session, and shouting them would read as a
+  // product failure.
+  const pending = criteria.status === "pending";
+  return (
+    <span
+      title={
+        pending ? "Checks still being graded" : "Checks could not be graded"
+      }
+      className="rounded px-1 font-mono text-[10px] text-muted-foreground"
+    >
+      {pending ? "…" : "—"}
+    </span>
   );
 }
 
@@ -148,7 +234,7 @@ export type SwarmMatrixSelection = {
 export function SwarmSessionsMatrix({
   runId,
   targets,
-  sessionsPerHost,
+  sessionsPerTarget,
   sessions,
   hostSummaries,
   stream,
@@ -160,7 +246,7 @@ export function SwarmSessionsMatrix({
   runId: string;
   /** One column per execution target (per-target model — B6). */
   targets: SwarmTargetColumn[];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   sessions: JourneySessionRow[];
   hostSummaries: Array<{
     hostId: string;
@@ -185,7 +271,7 @@ export function SwarmSessionsMatrix({
     return map;
   }, [sessions]);
 
-  const rows = Math.max(1, sessionsPerHost);
+  const rows = Math.max(1, sessionsPerTarget);
   const visibleTargets = targetKeyFilter
     ? targets.filter((target) => target.key === targetKeyFilter)
     : targets;
@@ -200,11 +286,9 @@ export function SwarmSessionsMatrix({
           // Per-TARGET minted cell ids (shared mint — env targets key on the
           // environmentId identity, so two same-host targets never collide).
           const cellIds = Array.from({ length: rows }, (_, sessionIndex) =>
-            swarmAttemptChatSessionId(runId, target.identity, sessionIndex),
+            swarmAttemptChatSessionId(runId, target.identity, sessionIndex)
           );
-          const listed = cellIds.filter((id) =>
-            sessionByChatId.has(id),
-          ).length;
+          const listed = cellIds.filter((id) => sessionByChatId.has(id)).length;
           return cellIds.map((chatSessionId, sessionIndex) => {
             const convexSession = sessionByChatId.get(chatSessionId);
             const liveStatus =
@@ -224,7 +308,7 @@ export function SwarmSessionsMatrix({
               runStatus !== "running"
             ) {
               const hs = hostSummaries.find(
-                (h) => summaryTargetKey(h) === target.key,
+                (h) => summaryTargetKey(h) === target.key
               );
               const unlistedFailed = hs
                 ? Math.min(hs.failed, Math.max(0, hs.total - listed))
@@ -233,7 +317,7 @@ export function SwarmSessionsMatrix({
               // succeeded slots (usually early indices) stay Done.
               if (
                 unlistedFailed > 0 &&
-                sessionIndex >= sessionsPerHost - unlistedFailed
+                sessionIndex >= sessionsPerTarget - unlistedFailed
               ) {
                 outcome = "failed";
               }
@@ -248,6 +332,7 @@ export function SwarmSessionsMatrix({
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
+                criteria={convexSession?.criteria}
                 selected={selected}
                 onSelect={() =>
                   onSelect({
@@ -278,6 +363,7 @@ export function SwarmLiveStreamPane({
   runStatus,
   onOpenCompleted,
   fillHeight = false,
+  autoFollowing = false,
 }: {
   selection: SwarmMatrixSelection | null;
   stream: JourneyRunStreamState;
@@ -288,27 +374,67 @@ export function SwarmLiveStreamPane({
   onOpenCompleted: (session: JourneySessionRow) => void;
   /** Fill the parent's height instead of capping the trace viewport. */
   fillHeight?: boolean;
+  /**
+   * True while the pane is following the run rather than a session the viewer
+   * chose. Worth saying out loud: it explains why the view moves on its own, and
+   * that clicking a session stops it.
+   */
+  autoFollowing?: boolean;
 }) {
   // Match playground default: Chat while the stream is live.
   const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
+  // The Replay tab's mode lives outside the shared `TraceViewMode` union (see
+  // trace-view-mode-tabs.tsx), so it rides its own flag.
+  const [replayActive, setReplayActive] = useState(false);
 
   useEffect(() => {
     // Reset to Chat when the selected cell changes so each session opens on
     // the streaming-friendly view (same idea as playground turn start).
     setViewMode("chat");
+    setReplayActive(false);
   }, [selection?.chatSessionId]);
 
   // Completed / late-open sessions: SSE buffer is gone — load the persisted
   // transcript blob the same way ShareUsageThreadDetail does.
   const persisted = usePersistedSessionTrace(convexSession?.id ?? null);
-  const displayTrace = fallbackTrace ?? persisted.trace;
+
+  // The live SSE trace wins for the transcript — it is ahead of the persisted
+  // blob while the run is going. But its browser artifacts are only the LIVE
+  // frames: no video (there is none until the run ends) and no render
+  // observations. The persisted query is where the final ones arrive, and it
+  // keeps polling after the run finishes, so overlay them on top of the fallback
+  // rather than letting a lingering live trace hide the finished recording.
+  const displayTrace: TraceEnvelope | null = useMemo(() => {
+    if (!fallbackTrace) return persisted.trace;
+    const finalized = persisted.trace;
+    if (!finalized) return fallbackTrace;
+    return {
+      ...fallbackTrace,
+      ...(finalized.widgetRenderObservations?.length
+        ? { widgetRenderObservations: finalized.widgetRenderObservations }
+        : {}),
+      // Persisted steps supersede the live frames once they exist: same steps,
+      // full-resolution screenshots, and a `videoOffsetMs` to seek with.
+      ...(finalized.browserInteractionSteps?.length
+        ? { browserInteractionSteps: finalized.browserInteractionSteps }
+        : {}),
+      ...(finalized.videoUrl ? { videoUrl: finalized.videoUrl } : {}),
+    };
+  }, [fallbackTrace, persisted.trace]);
+
+  // Replay availability — the SHARED predicate, so this pane's tab and the
+  // viewer's panel can't disagree about (say) an empty-string videoUrl.
+  // `replayActive` is component state that survives a cell switch, so clamp it
+  // rather than resetting: flipping back restores the view.
+  const hasReplay = hasReplayArtifacts(displayTrace ?? {});
+  const showReplay = replayActive && hasReplay;
 
   if (!selection) {
     return (
       <div
         className={cn(
           "flex min-h-[12rem] items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 px-4 text-center text-[12px] text-muted-foreground",
-          fillHeight && "h-full",
+          fillHeight && "h-full"
         )}
         data-testid="swarm-live-pane-empty"
       >
@@ -319,9 +445,10 @@ export function SwarmLiveStreamPane({
 
   const live = stream.sessions[selection.chatSessionId];
   const outcome = resolveSwarmCellOutcome({
-    liveStatus: stream.cellStatus[
-      swarmCellKey(selection.targetKey, selection.sessionIndex)
-    ],
+    liveStatus:
+      stream.cellStatus[
+        swarmCellKey(selection.targetKey, selection.sessionIndex)
+      ],
     session: convexSession,
     runStatus,
   });
@@ -337,7 +464,7 @@ export function SwarmLiveStreamPane({
     <div
       className={cn(
         "flex min-h-0 flex-col gap-2 rounded-lg border border-border/60 bg-background/80 p-3",
-        fillHeight && "h-full flex-1",
+        fillHeight && "h-full flex-1"
       )}
       data-testid="swarm-live-pane"
     >
@@ -351,6 +478,15 @@ export function SwarmLiveStreamPane({
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 shrink-0">
+          {autoFollowing ? (
+            <span
+              className="rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              title="Following the run — pick a session to stay on it"
+              data-testid="swarm-live-pane-following"
+            >
+              Following
+            </span>
+          ) : null}
           {isStreaming || persisted.loading ? (
             <Loader2 className="size-3 animate-spin text-muted-foreground" />
           ) : (
@@ -370,6 +506,27 @@ export function SwarmLiveStreamPane({
               : null)}
         </p>
       )}
+
+      {/* Setup notes for this session — e.g. a host built-in that was
+          deliberately not advertised. Shown as its own line, not folded into
+          the error slot: the session is healthy, it just ran with less than the
+          host config asked for, and a silently absent tool reads as a bug. */}
+      {live?.notices?.length ? (
+        <ul
+          className="flex flex-col gap-1"
+          data-testid="swarm-live-pane-notices"
+        >
+          {live.notices.map((notice, i) => (
+            <li
+              key={`${notice.kind}:${notice.toolId ?? ""}:${i}`}
+              className="flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400"
+            >
+              <Info className="mt-[1px] size-3 shrink-0" aria-hidden />
+              <span className="min-w-0">{notice.message}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {/* Which plugin bundle produced this transcript. A swarm transcript is
           the only record of what a simulated session ran with, and a plugin
@@ -403,9 +560,15 @@ export function SwarmLiveStreamPane({
           mode={viewMode}
           onModeChange={(next) => {
             if (next === "tools") return;
+            setReplayActive(false);
             setViewMode(next);
           }}
           showToolsTab={false}
+          // Swarms are the one surface that runs Computer Use, so they produce
+          // the richest recording — the Replay tab is where you watch it back.
+          showBrowserTab={hasReplay}
+          browserActive={showReplay}
+          onSelectBrowser={() => setReplayActive(true)}
         />
       </div>
 
@@ -414,7 +577,7 @@ export function SwarmLiveStreamPane({
       <div
         className={cn(
           "flex min-h-[14rem] flex-1 flex-col overflow-hidden rounded-md border border-border/40",
-          !fillHeight && "max-h-[min(70vh,36rem)]",
+          !fillHeight && "max-h-[min(70vh,36rem)]"
         )}
       >
         {displayTrace ? (
@@ -425,7 +588,7 @@ export function SwarmLiveStreamPane({
             connectedServerIds={[]}
             chromeDensity="compact"
             hideToolbar
-            forcedViewMode={viewMode}
+            forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
           />

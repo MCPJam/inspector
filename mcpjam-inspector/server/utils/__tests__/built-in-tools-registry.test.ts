@@ -148,6 +148,201 @@ describe("resolveHostTools — computer-backed bash", () => {
   });
 });
 
+describe("resolveHostTools — local engine actor coercion (structural)", () => {
+  // The observables: the LOCAL engine forces needsApproval:true whatever the
+  // host says, and its description names the user's own machine — so a tool
+  // built with approval OFF that still requires approval PROVES local
+  // survived, and one that doesn't PROVES the downgrade fired.
+  function bashTool(extraCtx: Record<string, unknown>) {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        requireToolApproval: false,
+        computerEngine: "local",
+        ...extraCtx,
+      } as never
+    );
+    return tools?.[BASH_TOOL_NAME] as
+      | { needsApproval?: boolean; description?: string }
+      | undefined;
+  }
+
+  it("honors local for a signed-in member's direct turn", () => {
+    const bash = bashTool({});
+    expect(bash?.needsApproval).toBe(true);
+    expect(bash?.description).toMatch(/user's own machine/);
+  });
+
+  it("downgrades local for a chatbox session", () => {
+    const bash = bashTool({ isChatboxSession: true });
+    expect(bash?.needsApproval).toBe(false);
+    expect(bash?.description).not.toMatch(/user's own machine/);
+  });
+
+  it("downgrades local for a guest on a host-funded swarm scope", () => {
+    const bash = bashTool({
+      isGuest: true,
+      executionScope: {
+        kind: "swarm",
+        swarmId: "swarm-1",
+        accessVersion: 1,
+        projectId: "project-1",
+        workspaceId: "ws-1",
+      },
+    });
+    // Bash IS advertised on the swarm grant — but never on the local engine.
+    expect(bash).toBeDefined();
+    expect(bash?.needsApproval).toBe(false);
+    expect(bash?.description).not.toMatch(/user's own machine/);
+  });
+
+  it("never reaches the personal path at all in a journey session", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      { ...ctx, computerEngine: "local", isJourneySession: true } as never
+    );
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+});
+
+describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
+  it("suppresses bash and reports a visible reason", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        onToolSuppressed: (info) => suppressed.push(info),
+      }
+    );
+    // The rest of the host's built-ins are untouched — only bash drops.
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+    expect(suppressed).toHaveLength(1);
+    expect(suppressed[0]!.id).toBe(BASH_TOOL_NAME);
+    // The reason has to say WHY, not just "unavailable": whoever opens the run
+    // needs to tell this apart from a host-config mistake.
+    expect(suppressed[0]!.reason).toMatch(/simulated \(swarm\) sessions/);
+  });
+
+  it("suppresses bash even when an executionScope is threaded", () => {
+    // `executionScope` cannot isolate a Journey run's bash (a signed-in
+    // launcher resolves to project_member), so it must not re-open the gate.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        executionScope: { kind: "project", projectId: "project-1" },
+      }
+    );
+    expect(tools).toBeUndefined();
+  });
+
+  it("leaves evals and hosted chat unaffected", () => {
+    for (const surface of [{}, { isChatboxSession: true }]) {
+      const tools = resolveHostTools(
+        { builtInToolIds: [BASH_TOOL_NAME], computer },
+        { ...ctx, ...surface }
+      );
+      expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    }
+  });
+
+  it("never constructs the bash tool, so no reserve can be attempted", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      { ...ctx, isJourneySession: true }
+    );
+    // No tool object at all ⇒ nothing the model can invoke ⇒ the reserve call
+    // inside `buildBashTool`'s execute is unreachable for this session.
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+});
+
+describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
+  const binding = { sandboxId: "sbx_ephemeral_1", workdir: "/srv/app" };
+
+  it("lifts the Journey suppression — a bound session gets bash", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        sandboxBinding: binding,
+        onToolSuppressed: (info) => suppressed.push(info),
+      }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    // Nothing was suppressed, so no notice should have been emitted either.
+    expect(suppressed).toHaveLength(0);
+  });
+
+  it("binds to the sandbox even with NO computer on the config", () => {
+    // The ephemeral path does not consult `config.computer` at all. A snapshot
+    // whose target carries no computer still gets a shell once a binding
+    // exists, because the binding IS the resource.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, isJourneySession: true, sandboxBinding: binding }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+  });
+
+  it("cannot be injected through the wire-sourced config", () => {
+    // THE unforgeability property. `sandboxBinding` does not exist on
+    // HostToolsConfig, so a hostile runtime-config / run-snapshot payload has
+    // no field to smuggle one in through — the value can only arrive on `ctx`,
+    // which is constructed in-process.
+    const hostilePayload = {
+      builtInToolIds: [BASH_TOOL_NAME],
+      computer: { kind: "ephemeral", sandboxId: "sbx_attacker" },
+      sandboxBinding: { sandboxId: "sbx_attacker" },
+    } as never;
+    const tools = resolveHostTools(hostilePayload, {
+      ...ctx,
+      isJourneySession: true,
+    });
+    // Still suppressed: the payload's extra keys are inert.
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+
+  it("still rejects a forged `ephemeral` computer on a non-journey surface", () => {
+    // `narrowHostComputer` is unchanged and only accepts `personal`, so the
+    // union that was NOT built stays impossible to fake.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME],
+        computer: { kind: "ephemeral", sandboxId: "sbx_attacker" },
+      },
+      ctx
+    );
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+
+  it("guest and executionScope gates do not apply to the ephemeral path", () => {
+    // A binding-holder has already passed the backend's provision
+    // authorization (project member + run launcher + a claimed, running
+    // attempt); the guest/scope gates below it reason about the personal
+    // reserve, which is not happening here.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, isGuest: true, sandboxBinding: binding }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+  });
+
+  it("inherits requireToolApproval like the personal path does", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, sandboxBinding: binding, requireToolApproval: true }
+    );
+    expect(tools![BASH_TOOL_NAME].needsApproval).toBe(true);
+  });
+});
+
 describe("resolveHostTools — workspace tools (platform operation catalog)", () => {
   it("advertises every workspace id when the platform client is wired", () => {
     const tools = resolveHostTools(
@@ -232,6 +427,12 @@ describe("narrowHostComputer", () => {
     expect(narrowHostComputer(null)).toBeNull();
     expect(narrowHostComputer("personal")).toBeNull();
     expect(narrowHostComputer({ kind: "shared" })).toBeNull();
+    // `personal` remains the ONLY accepted kind. The ephemeral sandbox binding
+    // deliberately travels on `ctx`, not here — widening this union would make
+    // the binding wire-forgeable, which is why it was not done.
+    expect(
+      narrowHostComputer({ kind: "ephemeral", sandboxId: "sbx_1" })
+    ).toBeNull();
     expect(narrowHostComputer({ kind: "personal", workdir: "   " })).toEqual({
       kind: "personal",
     });

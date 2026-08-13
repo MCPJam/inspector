@@ -1,4 +1,5 @@
 import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -11,9 +12,19 @@ import {
   type RegistrationStrategy2025_11_25,
 } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
+import { reportCaught } from "@/lib/error-reporting";
 import { HOSTED_MODE } from "@/lib/config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { sanitizeStepError } from "./trace-redaction";
+
+/**
+ * Re-exported so the debugger's existing callers (and its tests) keep importing
+ * `sanitizeStepError` from here. The implementation moved to
+ * `trace-redaction.ts`, which owns error-string redaction for every OAuth trace
+ * surface rather than just the debugger's Sentry reports.
+ */
+export { sanitizeStepError };
 
 type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
@@ -30,6 +41,12 @@ export interface InspectorOAuthStateMachineConfig {
   serverName: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * Opt-in: accept a path-scoped authorization server whose metadata
+   * advertises the same-origin root as issuer (multi-tenant AS deployments
+   * like Scalekit). Off = strict RFC 8414 issuer match.
+   */
+  allowPathScopedIssuer?: boolean;
   /**
    * Credentials the user configured on the OAuth test profile ("Configure
    * Server to Test" → Client credentials). Secrets are never written to
@@ -88,6 +105,37 @@ function serializeProxyBody(
   return body;
 }
 
+/** Cap on the reason text, so no failure body can become the error message. */
+const MAX_PROXY_ERROR_CHARS = 300;
+
+/**
+ * The proxy route answers a failure with `{ error }` naming the guard that
+ * rejected the request — unresolvable host, private/reserved address, timeout,
+ * redirect cap. Dropping it leaves the flow log (and Sentry) with a bare status
+ * line that says nothing about which one fired.
+ *
+ * Only the proxy hop's own failures land here: whenever the server under test
+ * answers at all, the route wraps that response in a 200, so this never sees a
+ * body from it.
+ */
+async function readProxyError(response: Response): Promise<string | undefined> {
+  const text = await response.text().catch(() => "");
+  if (!text) return undefined;
+
+  let reason = text;
+  try {
+    const body = JSON.parse(text) as {
+      message?: string;
+      error?: string;
+    } | null;
+    const message = body?.message ?? body?.error;
+    if (typeof message === "string" && message) reason = message;
+  } catch {
+    // Not JSON — a reverse proxy or dev-server error page. Report its text.
+  }
+  return reason.slice(0, MAX_PROXY_ERROR_CHARS);
+}
+
 export function createDebugRequestExecutor(): OAuthRequestExecutor {
   return async (request) => {
     const debugProxyPath = HOSTED_MODE
@@ -112,8 +160,11 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
     });
 
     if (!proxyResponse.ok) {
+      const reason = await readProxyError(proxyResponse);
       throw new Error(
-        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}`,
+        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}${
+          reason ? `: ${reason}` : ""
+        }`,
       );
     }
 
@@ -204,6 +255,83 @@ function createHostedClientSecretResolver({
   };
 }
 
+/**
+ * Step failures that stop the flow but carry no signal for us.
+ *
+ * The RFC 8414 `issuer` check rejects a metadata document the server under test
+ * built wrong. Every machine enforces it, yet only 2026-07-28 reads the field
+ * afterwards (it compares the issuer to the authorization-server URL and to the
+ * callback `iss`), so on the older three the report is another project's spec
+ * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
+ * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
+ *
+ * The SDK owns the message and exports it, so matching here cannot drift out of
+ * sync with what the machines actually throw.
+ */
+const UNREPORTED_STEP_FAILURES = new Set([
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+]);
+
+/**
+ * Wrap the caller's `updateState` so every NEW step failure is reported.
+ *
+ * This is the only reliable hook: the SDK state machine catches its own step
+ * errors internally and never rethrows — it writes the message into flow state
+ * and returns normally. Without this, a debugger step that failed for everyone
+ * (a broken metadata fetch, a 401 exchange) produced no signal at all outside
+ * the user's own screen.
+ *
+ * `warning` level, not `error`: many of these are the server-under-test
+ * misbehaving, which is exactly what a debugger is for. The value is the
+ * aggregate trend, not a page.
+ *
+ * `Warning: `-prefixed messages are skipped entirely — those are advisories the
+ * flow recovers from (an optional metadata field the server left out), not step
+ * failures. So are the messages in `UNREPORTED_STEP_FAILURES`.
+ */
+function withStepFailureReporting(
+  updateState: InspectorOAuthStateMachineConfig["updateState"],
+  context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
+): InspectorOAuthStateMachineConfig["updateState"] {
+  let lastReportedError: string | undefined;
+
+  return (updates) => {
+    const error = updates.error;
+    if (
+      typeof error === "string" &&
+      (error.startsWith("Warning: ") || UNREPORTED_STEP_FAILURES.has(error))
+    ) {
+      // Not ours to act on: the message is already on screen, and reporting
+      // these buries real step failures under server-under-test nits.
+      // Still counts as replacing the previous message, so a failure that
+      // recurs after it is a new failure — same as an explicit clear below.
+      lastReportedError = undefined;
+      updateState(updates);
+      return;
+    }
+    if (typeof error === "string" && error !== "" && error !== lastReportedError) {
+      lastReportedError = error;
+      reportCaught(new Error(sanitizeStepError(error)), {
+        source: "oauth_debugger_step",
+        level: "warning",
+        extra: {
+          // Prefer the step this update is moving TO. An update that both
+          // advances the step and carries an error would otherwise be
+          // attributed to the PREVIOUS step, making the dimension misleading.
+          step:
+            (updates as { currentStep?: string }).currentStep ??
+            context.getStep(),
+          protocolVersion: context.protocolVersion,
+        },
+      });
+    } else if (!error && "error" in updates) {
+      // Cleared: the next occurrence of the same message is a new failure.
+      lastReportedError = undefined;
+    }
+    updateState(updates);
+  };
+}
+
 export function createInspectorOAuthStateMachine(
   config: InspectorOAuthStateMachineConfig,
 ) {
@@ -223,7 +351,17 @@ export function createInspectorOAuthStateMachine(
 
   return createOAuthStateMachine({
     ...machineConfig,
+    updateState: withStepFailureReporting(config.updateState, {
+      protocolVersion: config.protocolVersion,
+      getStep: () =>
+        (config.getState?.() ?? config.state).currentStep ?? "unknown",
+    }),
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
+    // Explicit non-connect intent. The connect paths fail closed when required
+    // PKCE/PRM metadata is missing, which is correct for them and useless here:
+    // the debugger exists to SHOW what a nonconforming server does. Warn and
+    // continue, and only because this surface asked for it by name.
+    requiredMetadataEnforcement: "observe",
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
     // The debugger is a local-dev inspection surface: when the server under

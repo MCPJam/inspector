@@ -5,6 +5,9 @@ import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
+import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { EnvironmentToolsPane } from "./panes/EnvironmentToolsPane";
 import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
 import { cn } from "@/lib/utils";
@@ -19,10 +22,13 @@ type LeftRailTab = "sessions" | "tools";
  */
 export function PlaygroundLeftRail({
   previewedHostId,
+  projectId,
 }: {
   /** Resolved previewed host (from PlaygroundTab) — used to surface a harness
    *  host's native built-in tools in the Tools list. */
   previewedHostId?: string | null;
+  /** Project scope, for the environment-mode Tools body (see `ToolsBody`). */
+  projectId?: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
 
@@ -59,7 +65,10 @@ export function PlaygroundLeftRail({
         {activeTab === "sessions" ? (
           <SessionsBody />
         ) : (
-          <ToolsBody previewedHostId={previewedHostId ?? null} />
+          <ToolsBody
+            previewedHostId={previewedHostId ?? null}
+            projectId={projectId ?? null}
+          />
         )}
       </div>
     </div>
@@ -123,12 +132,36 @@ function SessionsBody() {
   );
 }
 
-function ToolsBody({ previewedHostId }: { previewedHostId: string | null }) {
+function ToolsBody({
+  previewedHostId,
+  projectId,
+}: {
+  previewedHostId: string | null;
+  projectId: string | null;
+}) {
   const state = usePlaygroundStateContext();
   // When the previewed host runs a harness (e.g. Claude Code), surface its
   // native built-in tools so the panel isn't empty/tool-less. Resolved once
   // here and fed into BOTH the multi-server pane and the zero-server fallback.
   const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
+  // ENVIRONMENT MODE: the panes below read the browser's own connections,
+  // which environment turns never create (the backend connects per message) —
+  // so they'd report "No tools found" while tools execute fine in chat. Read
+  // the SAME selected-environment signal the Playground itself uses (the
+  // persisted previewed id, fail-closed behind the flag exactly like
+  // `usePlaygroundEnvironment`) and show the environment's server-listed
+  // tools instead.
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const [storedEnvironmentId] = usePreviewedEnvironmentId(projectId);
+  const environmentId = environmentsEnabled ? storedEnvironmentId : null;
+  if (environmentId && projectId) {
+    return (
+      <EnvironmentToolsPane
+        projectId={projectId}
+        environmentId={environmentId}
+      />
+    );
+  }
   // The Playground is multi-server by nature: its active set mirrors the
   // connected servers. Aggregate tools across ALL active servers whenever
   // there's at least one — not only when there's more than one. Using `> 1`
@@ -168,6 +201,7 @@ function ToolsBody({ previewedHostId }: { previewedHostId: string | null }) {
       onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
       showLogger={false}
       builtinTools={harnessBuiltinTools}
+      hasConnectedServer={false}
     />
   );
 }

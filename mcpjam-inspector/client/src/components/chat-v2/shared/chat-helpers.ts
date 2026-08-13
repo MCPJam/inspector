@@ -460,7 +460,163 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
+  const opaque = summarizeOpaquePayload(errorString);
+  if (opaque) return opaque;
+
   return { message: errorString };
+}
+
+/**
+ * Longest error text rendered inline. Past this the chat turns into a wall of
+ * red and the actual conversation is pushed off screen.
+ */
+const INLINE_MESSAGE_MAX = 400;
+
+/** Hard cap on what we keep for the collapsible. */
+const RAW_PAYLOAD_MAX = 4000;
+
+/**
+ * Anything a document can legally lead with before its first real tag: a byte
+ * order mark, whitespace, HTML comments, an XML declaration. Gateways and
+ * proxies prepend these freely.
+ */
+const HTML_PREAMBLE = /^(?:﻿|\s|<!--[\s\S]*?-->|<\?xml[\s\S]*?\?>)+/i;
+
+/** Markup that can only be a document, once any preamble is stripped. */
+const MARKUP_OPENER = /^<(?:!doctype\s+html|html|head|body|title)\b/i;
+
+/**
+ * The one marker conclusive wherever it appears. `<html>` is NOT: error text
+ * quotes it ("expected <html> but the tool returned a number"), and treating
+ * that as a document would summarize a perfectly readable message away.
+ */
+const DOCTYPE_MARKER = /<!doctype\s+html/i;
+
+/**
+ * Detection has to survive bodies that are not well-formed documents. A
+ * truncated or streamed response never reaches `</html>`; a proxy may prepend
+ * a comment or an XML declaration; a fragment may begin at `<head>` with no
+ * doctype at all. Matching only "starts with `<html`" or "ends with
+ * `</html>`" let all of those through to be rendered as raw markup — the
+ * exact failure this function exists to prevent.
+ *
+ * The start-anchored check runs against the preamble-stripped body so that
+ * ordinary prose which merely mentions a tag ("expected `<html>` here") is not
+ * mistaken for a document.
+ */
+function looksLikeErrorPage(trimmed: string): boolean {
+  if (DOCTYPE_MARKER.test(trimmed)) return true;
+  if (/<\/html>\s*$/i.test(trimmed)) return true;
+  return MARKUP_OPENER.test(trimmed.replace(HTML_PREAMBLE, ""));
+}
+
+/**
+ * `code` carried by a formatted upstream-error-page failure.
+ *
+ * The chat surfaces key their retry affordance off this rather than off
+ * `isRetryable`, which the server also sets on failures that resending the
+ * last message cannot help with.
+ */
+export const UPSTREAM_ERROR_PAGE_CODE = "upstream_error_page";
+
+/**
+ * Pull the status out of an error page's `<title>` or `<h1>` — the two places
+ * gateways put it verbatim ("502 Bad Gateway"). Deliberately not a scan of the
+ * whole document: a bare `\b\d{3}\b` match anywhere would happily return a
+ * pixel value out of an inline stylesheet.
+ *
+ * Both headings are tried in order rather than preferring whichever exists.
+ * A generic `<title>Error</title>` over an `<h1>503 Service Unavailable</h1>`
+ * is a real page shape, and taking the title just because it is present threw
+ * away the only status on the page.
+ */
+function extractErrorPageStatus(html: string): number | undefined {
+  const headings = [
+    html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1],
+    html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1],
+  ];
+  for (const heading of headings) {
+    const status = heading?.match(/\b([45]\d{2})\b/)?.[1];
+    if (!status) continue;
+    const parsed = Number(status);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+/**
+ * Pull the gateway's own request handle out of an error page — Cloudflare's
+ * `Ray ID`, and the `Request ID` / `Correlation ID` its peers print instead.
+ * It is the one field on the page worth keeping: it is what support can join
+ * against, and it is the reason "More details" can be status + id rather than
+ * page source.
+ *
+ * The capture group cannot contain `<`, and the markup between the label and
+ * the value is consumed by a group we throw away, so no fragment of the
+ * document can reach the UI through this.
+ */
+const ERROR_PAGE_REQUEST_ID =
+  /\b(?:ray|request|correlation)[\s_-]?id\b\s*[:#]?\s*(?:<[^>]*>|\s)*([0-9A-Za-z][0-9A-Za-z-]{5,63})/i;
+
+function extractErrorPageRequestId(html: string): string | undefined {
+  return html.match(ERROR_PAGE_REQUEST_ID)?.[1];
+}
+
+/**
+ * Last-resort formatting for a body that is not an error message at all.
+ *
+ * When an upstream hop fails — a gateway 502, a proxy timeout — the response
+ * body is an HTML page, and the AI SDK surfaces it by throwing
+ * `new Error(await response.text())`. That put an entire HTML document into
+ * `message`, which rendered verbatim and unbounded.
+ *
+ * Returns `null` for ordinary error text so every existing message is
+ * untouched; only genuinely opaque or oversized payloads are summarized. An
+ * oversized message keeps its original in `details` for the existing
+ * collapsible — an error PAGE does not, because a response body we never
+ * asked for has no business being in a transcript at all.
+ */
+function summarizeOpaquePayload(raw: string): FormattedError | null {
+  const trimmed = raw.trim();
+
+  if (looksLikeErrorPage(trimmed)) {
+    const statusCode = extractErrorPageStatus(trimmed);
+    const requestId = extractErrorPageRequestId(trimmed);
+    // The page itself is DISCARDED here, not truncated into `details`. A
+    // gateway interstitial is markup, a timestamp and a datacentre name; the
+    // only two facts in it a developer can act on are the status and the
+    // request id, and keeping the rest meant pasting a document into a
+    // transcript that someone is trying to read a conversation out of.
+    //
+    // The copy names reachability, not blame. Whichever hop answered, what
+    // the person in the chat needs to know is that the failure was transient
+    // and that their session survived it — hence `isRetryable`, which is what
+    // puts a retry beside the reset the banner would otherwise offer alone.
+    return {
+      message:
+        "MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again.",
+      code: UPSTREAM_ERROR_PAGE_CODE,
+      isRetryable: true,
+      details: JSON.stringify({
+        upstreamResponse: "Error page (HTML body discarded)",
+        ...(statusCode !== undefined ? { status: statusCode } : {}),
+        ...(requestId !== undefined ? { requestId } : {}),
+      }),
+      ...(statusCode !== undefined ? { statusCode } : {}),
+    };
+  }
+
+  if (trimmed.length <= INLINE_MESSAGE_MAX) return null;
+
+  const details =
+    trimmed.length > RAW_PAYLOAD_MAX
+      ? `${trimmed.slice(0, RAW_PAYLOAD_MAX)}…`
+      : trimmed;
+
+  return {
+    message: `${trimmed.slice(0, INLINE_MESSAGE_MAX).trimEnd()}…`,
+    details,
+  };
 }
 
 export const VALID_MESSAGE_ROLES: UIMessage["role"][] = [
@@ -539,8 +695,16 @@ export function buildSkillToolMessages(
 
     const toolCallId = `skill-load-${skill.name}-${generateId()}`;
 
-    // Format output to match server-side loadSkill response
-    const skillOutput = `# Skill: ${skill.name}\n\n${skill.content}`;
+    // Format output to match server-side loadSkill response.
+    //
+    // `toolOutput` is the escape hatch for a SERVER-SERVED skill (SEP-2640):
+    // its `loadSkill` result is the shared origin banner plus the body, and the
+    // banner already carries the `# Skill: <ref>` heading. Re-prefixing here
+    // would produce a message the tool could never have returned, breaking the
+    // "injection is indistinguishable from a real tool result" invariant this
+    // whole function exists to maintain.
+    const skillOutput =
+      skill.toolOutput ?? `# Skill: ${skill.name}\n\n${skill.content}`;
 
     // Build parts array
     const parts: UIMessage["parts"] = [];

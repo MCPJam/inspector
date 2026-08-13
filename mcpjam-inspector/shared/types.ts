@@ -717,7 +717,9 @@ export type ServerFormOAuthProtocolMode =
 
 /**
  * The default concrete era used when nothing is stored and "auto" cannot be
- * biased by a wire pin (the current "Latest" release).
+ * biased by a wire pin. Deliberately not the newest era: an unpinned server
+ * gets the widely-deployed November flow, not the one servers are still
+ * catching up to.
  */
 export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcreteMode =
   "2025-11-25";
@@ -942,6 +944,12 @@ export interface ServerFormData {
    * with path-scoped issuers). Off = strict RFC 8414 issuer match.
    */
   xaaAllowPathScopedIssuer?: boolean;
+  /**
+   * The OAuth Debugger's equivalent of `xaaAllowPathScopedIssuer`, kept as a
+   * separate per-server field so enabling the relaxation for one debugger does
+   * not silently widen trust in the other. Off = strict RFC 8414 issuer match.
+   */
+  oauthAllowPathScopedIssuer?: boolean;
   /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow rather than standard OAuth. Mutually exclusive

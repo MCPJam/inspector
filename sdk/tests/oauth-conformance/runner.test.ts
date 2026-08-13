@@ -1,4 +1,5 @@
 import { OAuthConformanceTest } from "../../src/oauth-conformance/index.js";
+import { deriveOAuthRunOutcome } from "../../src/oauth-conformance/runner.js";
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "../../src/oauth/client-identity.js";
 import { MCP_OAUTH_CLIENT_CREDENTIALS_EXTENSION } from "../../src/oauth/state-machines/shared/initialize.js";
 import * as operations from "../../src/operations.js";
@@ -27,6 +28,80 @@ function createMcpInitializeResponse(protocolVersion: string): Response {
     },
   });
 }
+
+describe("deriveOAuthRunOutcome", () => {
+  const step = (
+    id: string,
+    status: "passed" | "failed" | "skipped",
+    skipReason?: "not-applicable" | "could-not-run",
+  ) =>
+    ({
+      step: id,
+      title: id,
+      summary: "",
+      status,
+      ...(skipReason ? { skipReason } : {}),
+      durationMs: 0,
+      logs: [],
+      httpAttempts: [],
+      ...(skipReason === "could-not-run"
+        ? { error: { message: `${id} could not run` } }
+        : {}),
+    }) as any;
+
+  it("reports incomplete, not passed, when an applicable step could not run", () => {
+    const derived = deriveOAuthRunOutcome({
+      steps: [
+        step("request_without_token", "passed"),
+        step("oauth_invalid_redirect", "skipped", "could-not-run"),
+      ],
+      flowComplete: true,
+    });
+
+    // The exact gap this closes: the old inline verdict called this "passed"
+    // because nothing FAILED, certifying an obligation the run never tested.
+    expect(derived.outcome).toBe("incomplete");
+    expect(derived.incompleteReason).toContain("oauth_invalid_redirect");
+  });
+
+  it("keeps reason-less and not-applicable skips as passes, preserving existing flows", () => {
+    const derived = deriveOAuthRunOutcome({
+      steps: [
+        step("request_without_token", "passed"),
+        step("generate_pkce_parameters", "skipped"),
+        step("oauth_resource_metadata_challenge", "skipped", "not-applicable"),
+      ],
+      flowComplete: true,
+    });
+
+    expect(derived.outcome).toBe("passed");
+  });
+
+  it("keeps OAuth's own states on top: incomplete never outranks not-applicable or an unfinished flow", () => {
+    const unrun = [step("x", "skipped", "could-not-run")];
+
+    expect(
+      deriveOAuthRunOutcome({
+        steps: unrun,
+        flowComplete: true,
+        notApplicableReason: "server serves without auth",
+      }).outcome,
+    ).toBe("not-applicable");
+
+    expect(
+      deriveOAuthRunOutcome({ steps: unrun, flowComplete: false }).outcome,
+    ).toBe("failed");
+  });
+
+  it("still fails on any failed step", () => {
+    expect(
+      deriveOAuthRunOutcome({
+        steps: [step("a", "passed"), step("b", "failed")],
+        flowComplete: true,
+      }).outcome,
+    ).toBe("failed");
+  });
+});
 
 describe("OAuthConformanceTest", () => {
   it("passes the 2025-11-25 CIMD flow with a stubbed headless authorization strategy", async () => {
@@ -396,7 +471,10 @@ describe("OAuthConformanceTest", () => {
     expect(
       result.steps.find((step) => step.step === "token_request")?.httpAttempts,
     ).toHaveLength(1);
-    expect(initializeRequests).toHaveLength(2);
+    // Three, not two: the runner now opens with a tokenless `initialize` to
+    // decide whether this server requires authorization at all. It carries the
+    // same client_credentials capability as the rest, asserted below.
+    expect(initializeRequests).toHaveLength(3);
     for (const requestBody of initializeRequests) {
       expect(requestBody).toMatchObject({
         method: "initialize",
@@ -978,7 +1056,7 @@ describe("OAuthConformanceTest", () => {
     expect(failedStep).toMatchObject({
       status: "failed",
       error: {
-        message: expect.stringContaining("advertise S256"),
+        message: expect.stringContaining("without S256"),
       },
     });
   });
@@ -1118,7 +1196,6 @@ describe("OAuthConformanceTest", () => {
     expect(result.verification).toBeUndefined();
     expect(result.steps.map((step) => step.step)).not.toContain("verify_list_tools");
   });
-
   it("reports the S13 registration_endpoint check even when the flow FAILS", async () => {
     // The load-bearing regression guard for HP-47 S13's placement.
     //
@@ -1193,5 +1270,105 @@ describe("OAuthConformanceTest", () => {
     // The real root cause stays the headline — the added check must not hijack the
     // summary and make the actual discovery failure harder to see.
     expect(result.summary).not.toContain("oauth_as_registration_endpoint");
+  });
+
+  it.each([
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+    "2026-07-28",
+  ] as const)(
+    "reports a public server as not applicable rather than failed on %s",
+    async (protocolVersion) => {
+      const serverUrl = "https://public.example.com/mcp";
+      const requestedUrls: string[] = [];
+
+      // A server that requires no authorization at all: it serves the
+      // unauthenticated initialize and never challenges.
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url === serverUrl) {
+          return createMcpInitializeResponse("2025-06-18");
+        }
+        return new Response(null, { status: 404 });
+      }) as unknown as typeof fetch;
+
+      const test = new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion,
+        registrationStrategy: "dcr",
+        fetchFn,
+      });
+
+      const result = await test.run();
+
+      // Authorization is OPTIONAL in every revision, so a server that requires
+      // none has nothing to violate: not applicable, never a failure.
+      expect(result.outcome).toBe("not-applicable");
+      expect(result.passed).toBe(false);
+      expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+
+      const probeStep = result.steps.find(
+        (step) => step.step === "request_without_token",
+      );
+      expect(probeStep?.status).toBe("skipped");
+      expect(probeStep?.skipReason).toBe("not-applicable");
+      expect(result.summary).toContain("not applicable");
+
+      // The regression this fixes: the run used to march into Protected
+      // Resource Metadata discovery, 404, and report a hard failure.
+      expect(
+        requestedUrls.some((url) => url.includes("oauth-protected-resource")),
+      ).toBe(false);
+      expect(
+        requestedUrls.some((url) => url.includes("oauth-authorization-server")),
+      ).toBe(false);
+    },
+  );
+
+  it("emits one row per step when a step fails, not a green/red duplicate", async () => {
+    const serverUrl = "https://mcp.excalidraw.example/mcp";
+
+    // Challenges with 401 but implements neither discovery mechanism — the
+    // shape that used to print "Request Resource Metadata" twice.
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, { status: 401 });
+      }
+      return new Response(null, { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const test = new OAuthConformanceTest({
+      serverUrl,
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      auth: { mode: "headless" },
+      fetchFn,
+    });
+
+    const result = await test.run();
+
+    expect(result.outcome).toBe("failed");
+
+    const stepIds = result.steps.map((step) => step.step);
+    expect(new Set(stepIds).size).toBe(stepIds.length);
+
+    // The surviving row is the failure, and it carries the probe evidence
+    // that the transition row never had.
+    const metadataSteps = result.steps.filter(
+      (step) => step.step === "request_resource_metadata",
+    );
+    expect(metadataSteps).toHaveLength(1);
+    expect(metadataSteps[0]!.status).toBe("failed");
+    expect(metadataSteps[0]!.httpAttempts.length).toBeGreaterThan(0);
+
+    // The summary names the step by its human title. Asserted here, where the
+    // summary is GENERATED from a real failed step, rather than in a UI test
+    // that would only echo back a title handed to it.
+    expect(result.summary).toContain("Request Resource Metadata");
+    expect(result.summary).not.toContain("request_resource_metadata");
   });
 });

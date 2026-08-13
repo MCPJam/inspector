@@ -13,6 +13,9 @@
 import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+// The guest allowlist lives in its own module so `requireVerifiedAuth` can
+// ask the same question without importing this router (a cycle).
+import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -22,10 +25,17 @@ import evals from "./evals.js";
 import hosts from "./hosts.js";
 import harness from "./harness.js";
 import environments from "./environments.js";
+import plugins from "./plugins.js";
+import journeys from "./journeys.js";
+import scenarios from "./scenarios.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
+import agent from "./agent.js";
+import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import projects from "./projects.js";
+import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
 import { v1Error, v1OnError } from "./envelope.js";
@@ -38,93 +48,12 @@ const v1 = new Hono();
 // OSS CLI (`mcpjam compat`), the SDK's fetchHostCompatCatalog default, and
 // share-link previews. GET-only router; no project/user data.
 v1.route("/", hostCatalog);
+v1.route("/", publicModels);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
 v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
-// Guests get a NARROW allowlist of v1 routes — exactly the platform MCP tool
-// surface the worker drives (see mcp/src/tools/platformTools.ts
-// PLATFORM_CATALOG_OPERATIONS + show_servers). Everything else (tunnels,
-// eval-ingest, oauth token import, export, /me) stays guest-rejected. This is
-// default-deny: a newly-added v1 route is closed to guests until it earns a
-// pattern here (and its own guest security review). The catalog reads in this
-// list additionally relax the Convex /v1/* surface (publicApi/routes.ts
-// authedV1) so the proxied reads succeed end-to-end.
-// An allowlist entry is method-aware: `methods` omitted means any method is
-// guest-allowed on that path (the historical behavior); a `methods` list
-// restricts it. `eval-suites` is GET-only because the GET lists suites (a read)
-// but POST /eval-suites CREATES a suite — a WRITE that must stay guest-denied.
-type GuestRule = { pattern: RegExp; methods?: readonly string[] };
-
-const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
-  // Harness built-in tool catalog: static published-package metadata (no
-  // project/user data), read by the first-party UI to show a harness host's
-  // native tools. Safe for guests (local mode + share-link previews); GET-only.
-  { pattern: /^\/harness\/[^/]+\/builtin-tools$/, methods: ["GET"] },
-  // Host-compat catalog: static public host metadata (no project/user data).
-  // Mounted before the auth middleware (fully public), so this rule is
-  // defense-in-depth for guests if the mount order ever changes; GET-only.
-  { pattern: /^\/host-catalog$/, methods: ["GET"] },
-  { pattern: /^\/chat-sessions$/ },
-  { pattern: /^\/projects$/ },
-  { pattern: /^\/projects\/[^/]+\/servers$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/doctor$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/prompts$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/prompts\/get$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/resources$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/resources\/read$/ },
-  // GET lists a project's suites (read, guest-allowed). POST /eval-suites
-  // CREATES a suite (write) and is intentionally guest-DENIED.
-  { pattern: /^\/projects\/[^/]+\/eval-suites$/, methods: ["GET"] },
-  // GET reads one suite's settings / its cases (reads, guest-allowed). The
-  // PATCH/DELETE on these paths are WRITES and stay guest-DENIED (default-deny).
-  { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+$/, methods: ["GET"] },
-  {
-    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/cases$/,
-    methods: ["GET"],
-  },
-  {
-    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/cases\/[^/]+$/,
-    methods: ["GET"],
-  },
-  { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/ },
-  { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
-  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
-  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
-  {
-    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
-  },
-  { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
-  { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
-];
-
-export function isGuestAllowedV1Request(
-  method: string,
-  fullPath: string
-): boolean {
-  // `c.req.path` is the full request path; strip the mount prefix so the
-  // patterns above stay readable and relative.
-  const relative = fullPath.replace(/^\/api\/v1/, "");
-  const upper = method.toUpperCase();
-  return GUEST_ALLOWED_V1_RULES.some(
-    (rule) =>
-      rule.pattern.test(relative) &&
-      (!rule.methods || rule.methods.includes(upper))
-  );
-}
-
-/**
- * Back-compat path-only (method-agnostic) check for any external importer of
- * the old name. Prefer `isGuestAllowedV1Request` — this ignores method and so
- * would admit guest writes on method-restricted paths.
- */
-export function isGuestAllowedV1Path(fullPath: string): boolean {
-  const relative = fullPath.replace(/^\/api\/v1/, "");
-  return GUEST_ALLOWED_V1_RULES.some((rule) => rule.pattern.test(relative));
-}
 
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
@@ -149,13 +78,37 @@ v1.route("/", harness);
 // OFF the guest allowlist — reads need project membership and every write needs
 // project admin. Distinct from the Computer sandbox images below.
 v1.route("/", environments);
+// Agent Plugins — READ-ONLY (list + version detail). Guest-DENIED by default
+// (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are member-gated
+// anyway, and there is no share-link flow that needs plugin inventory.
+v1.route("/", plugins);
+// Journeys + journey runs — the public API for Swarms. Flag-gated beta
+// (`sandboxes-enabled`, enforced server-side on writes), so these are absent
+// from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
+// Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
+// none should — a journey run spends hosted-model credits.
+v1.route("/", journeys);
+// Scenarios — publishing a project environment for user testing. WRITES, so
+// they live here rather than in the read-proxy catalog. Publishing is behind
+// the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
+// not. Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches these,
+// and the existing chatbox guest GETs (which share-link flows depend on) stay
+// exactly as they are until a guest security review says otherwise.
+v1.route("/", scenarios);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalIngest);
+// Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.
+v1.route("/", agent);
+// Executing an action a human approved in Slack. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — every approved action spends.
+v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
+v1.route("/", projects);
 v1.route("/", tunnels);
 
 v1.onError((error, c) => v1OnError(error, c));

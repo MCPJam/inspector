@@ -11,12 +11,14 @@ import {
   getEvalIterationTraceOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getPluginVersionOperation,
   getServerPromptOperation,
   listChatboxesOperation,
   listChatSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
   listServerPromptsOperation,
@@ -24,10 +26,11 @@ import {
   listServerToolsOperation,
   PlatformApiClient,
   PlatformApiError,
+  ALL_OPERATIONS,
   readServerResourceOperation,
   runEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   showServersOperation,
-  type PlatformOperation,
 } from "../../src/platform/index.js";
 
 const PROJECTS = [
@@ -176,6 +179,63 @@ const STEPS = [
   },
 ];
 
+const ENVIRONMENTS = [
+  {
+    id: "env-stg",
+    projectId: "project-new",
+    name: "Staging",
+    hostId: "host-1",
+    revision: 7,
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
+const PLUGINS = [
+  {
+    id: "plugin-1",
+    projectId: "project-new",
+    name: "linear-tools",
+    displayName: "Linear Tools",
+    enabled: true,
+    activeVersionId: "pv-1",
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
+const PLUGIN_VERSION = {
+  id: "pv-1",
+  pluginId: "plugin-1",
+  declaredVersion: "1.2.0",
+  bundleHash: "hash-abc",
+  manifestHash: "hash-manifest",
+  status: "ready",
+  componentCounts: { skills: 1, servers: 1, apps: 0, assets: 0, unsupported: 0 },
+  servers: [
+    {
+      componentId: "psc-1",
+      componentKey: "server:linear",
+      declaredName: "linear",
+      placement: "remote",
+      authenticationPolicy: "on_use",
+      materializedServerId: "server-1",
+    },
+  ],
+  skills: [
+    {
+      componentId: "pskc-1",
+      componentKey: "skill:triage",
+      declaredName: "triage",
+      modelRef: "linear-tools/triage",
+      materializedSkillId: "skill-1",
+    },
+  ],
+  createdAt: 1,
+  readyAt: 2,
+};
+
 const CHATBOXES = [
   {
     id: "box-1",
@@ -272,11 +332,21 @@ function makeClient(overrides: FixtureOverrides = {}): {
     ) {
       return Response.json({ items: EVAL_CASES });
     }
+    if (/^\/api\/v1\/projects\/[^/]+\/environments$/.test(path)) {
+      return Response.json({ items: ENVIRONMENTS });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/plugins$/.test(path)) {
+      return Response.json({ items: PLUGINS });
+    }
+    if (/^\/api\/v1\/plugin-versions\/[^/]+$/.test(path)) {
+      return Response.json(PLUGIN_VERSION);
+    }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-runs$/.test(path)) {
       expect(init?.method).toBe("POST");
       const requestBody = JSON.parse(String(init?.body)) as {
         serverIds?: string[];
         caseIds?: string[];
+        environmentId?: string;
       };
       return Response.json(
         {
@@ -289,6 +359,10 @@ function makeClient(overrides: FixtureOverrides = {}): {
           servers: requestBody.serverIds
             ? requestBody.serverIds.map((id) => ({ id }))
             : [{ id: "server-saved", name: "Saved" }],
+          // The API always echoes the environment triple, null for a legacy run.
+          environment: requestBody.environmentId
+            ? { id: requestBody.environmentId, name: "Staging", revision: 7 }
+            : null,
         },
         { status: 202 }
       );
@@ -315,11 +389,13 @@ function makeClient(overrides: FixtureOverrides = {}): {
     ) {
       return Response.json({ items: STEPS });
     }
-    if (
-      /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/.test(path)
-    ) {
+    if (/^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/.test(path)) {
       expect(init?.method).toBe("POST");
-      return Response.json({ ...RUN, status: "cancelled", result: "cancelled" });
+      return Response.json({
+        ...RUN,
+        status: "cancelled",
+        result: "cancelled",
+      });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/tunnels$/.test(path)) {
       expect(init?.method).toBe("POST");
@@ -368,12 +444,17 @@ function makeClient(overrides: FixtureOverrides = {}): {
         nextCursor: "tools-page-2",
       });
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/.test(path)) {
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/.test(path)
+    ) {
       const requestBody = JSON.parse(String(init?.body)) as Record<
         string,
         unknown
       >;
-      return Response.json({ content: [{ type: "text", text: "ok" }], requestBody });
+      return Response.json({
+        content: [{ type: "text", text: "ok" }],
+        requestBody,
+      });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/prompts$/.test(path)) {
       return Response.json({ items: [{ name: "summarize" }] });
@@ -606,6 +687,59 @@ describe("runEvalSuiteOperation", () => {
     expect((error as PlatformApiError).message).toContain("Echo");
   });
 
+  it("resolves an environment name and echoes the pinned triple", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke", environment: "staging" },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(([target]) =>
+      String(target).endsWith("/eval-runs")
+    );
+    expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
+      suiteId: "suite-1",
+      environmentId: "env-stg",
+    });
+    expect(result.environment).toEqual({
+      id: "env-stg",
+      name: "Staging",
+      revision: 7,
+    });
+  });
+
+  it("reports null attribution for a legacy run", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      { client }
+    );
+
+    expect(result.environment).toBeNull();
+  });
+
+  it("rejects environment together with servers, before any request", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const error = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke", environment: "Staging", servers: ["echo"] },
+        {
+          client,
+        }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain(
+      "either environment or servers"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects ambiguous suite names with the candidate ids", async () => {
     const duplicate = SUITES.map((suite) => ({ ...suite, name: "Smoke" }));
     const { client } = makeClient({ suites: duplicate, servers: HTTP_SERVERS });
@@ -643,6 +777,36 @@ describe("runEvalCaseOperation", () => {
     };
     expect(body.suiteId).toBe("suite-1");
     expect(body.caseIds).toEqual(["case-1"]);
+  });
+
+  it("sends the resolved environmentId alongside caseIds", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalCaseOperation.execute(
+      {
+        project: "new",
+        suite: "Smoke",
+        case: "echo works",
+        environment: "Staging",
+      },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    expect(JSON.parse(String((runCall?.[1] as RequestInit).body))).toEqual({
+      suiteId: "suite-1",
+      caseIds: ["case-1"],
+      environmentId: "env-stg",
+    });
+    expect(result.environment).toEqual({
+      id: "env-stg",
+      name: "Staging",
+      revision: 7,
+    });
   });
 
   it("requires a suite and a case", () => {
@@ -686,7 +850,10 @@ describe("createEvalSuiteOperation", () => {
       { client }
     );
 
-    expect(result.suite).toEqual({ id: "suite-created", name: "Authored smoke" });
+    expect(result.suite).toEqual({
+      id: "suite-created",
+      name: "Authored smoke",
+    });
     expect(result.servers).toEqual([{ id: "server-http", name: "Echo" }]);
     expect(result.caseUpsert.committed).toEqual([{ name: "case-1" }]);
 
@@ -759,9 +926,7 @@ describe("createEvalSuiteOperation", () => {
       cases: Array<Record<string, unknown>>;
     };
     const authored = parsed.cases[0]!;
-    expect(authored.steps).toEqual([
-      { id: "s1", kind: "prompt", prompt: "q" },
-    ]);
+    expect(authored.steps).toEqual([{ id: "s1", kind: "prompt", prompt: "q" }]);
     expect(authored.advancedConfig).toEqual({
       system: "be terse",
       temperature: 0.2,
@@ -997,6 +1162,35 @@ describe("chatbox operations", () => {
   });
 });
 
+describe("plugin operations", () => {
+  it("lists the project's live plugins with the project resolved by selector", async () => {
+    const { client } = makeClient();
+
+    const result = await listProjectPluginsOperation.execute(
+      { project: "new" },
+      { client }
+    );
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.items).toEqual(PLUGINS);
+  });
+
+  it("fetches a plugin version by raw id, no project resolution round-trip", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getPluginVersionOperation.execute(
+      { pluginVersionId: "pv-1" },
+      { client }
+    );
+
+    expect(result).toEqual(PLUGIN_VERSION);
+    const paths = fetchMock.mock.calls.map((call) =>
+      new URL(String(call[0])).pathname
+    );
+    expect(paths).toEqual(["/api/v1/plugin-versions/pv-1"]);
+  });
+});
+
 describe("listChatSessionsOperation", () => {
   it("lists sessions unfiltered when no project is given", async () => {
     const { client, fetchMock } = makeClient();
@@ -1118,79 +1312,122 @@ describe("closeTunnelOperation", () => {
 });
 
 describe("operation catalog consistency", () => {
-  const ALL_OPERATIONS: Array<{
-    operation: PlatformOperation<any, any>;
-    minimalInput: Record<string, unknown>;
-  }> = [
-    { operation: listProjectsOperation, minimalInput: {} },
-    { operation: listProjectServersOperation, minimalInput: {} },
-    { operation: showServersOperation, minimalInput: {} },
-    { operation: listEvalSuitesOperation, minimalInput: {} },
-    { operation: listEvalSuiteRunsOperation, minimalInput: { suite: "s" } },
-    { operation: runEvalSuiteOperation, minimalInput: { suite: "s" } },
-    {
-      operation: runEvalCaseOperation,
-      minimalInput: { suite: "s", case: "c" },
+  const MINIMAL_INPUTS: Record<string, Record<string, unknown>> = {
+    get_me: {},
+    list_models: {},
+    list_projects: {},
+    create_project: { name: "p" },
+    update_project: { project: "p", name: "renamed" },
+    delete_project: { project: "p" },
+    list_project_servers: {},
+    create_project_server: {
+      body: { name: "s", enabled: true, transportType: "http" },
     },
-    {
-      operation: createEvalSuiteOperation,
-      minimalInput: {
-        name: "s",
-        model: "anthropic/claude-haiku-4.5",
-        servers: ["echo"],
-        cases: [
-          {
-            title: "t",
-            steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
-          },
-        ],
-      },
+    get_project_server: { serverId: "s" },
+    update_project_server: { serverId: "s", body: { name: "renamed" } },
+    delete_project_server: { serverId: "s" },
+    show_servers: {},
+    diagnose_server: { server: "s" },
+    validate_server: { server: "s" },
+    export_server: { server: "s" },
+    list_server_tools: { server: "s" },
+    list_server_prompts: { server: "s" },
+    list_server_resources: { server: "s" },
+    call_server_tool: { server: "s", toolName: "t" },
+    get_server_prompt: { server: "s", promptName: "p" },
+    read_server_resource: { server: "s", uri: "u" },
+    check_host_compatibility: { server: "s" },
+    list_eval_suites: {},
+    list_eval_suite_runs: { suite: "s" },
+    run_eval_suite: { suite: "s" },
+    run_eval_case: { suite: "s", case: "c" },
+    create_eval_suite: {
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
     },
-    {
-      operation: getEvalRunOperation,
-      minimalInput: { project: "p", runId: "r" },
+    get_eval_suite: { suite: "s" },
+    update_eval_suite: { suite: "s", name: "renamed" },
+    delete_eval_suite: { suite: "s" },
+    set_eval_suite_schedule: { suite: "s", enabled: false },
+    set_eval_suite_environments: { suite: "s", environments: ["e"] },
+    list_eval_cases: { suite: "s" },
+    get_eval_case: { suite: "s", case: "c" },
+    create_eval_case: {
+      suite: "s",
+      title: "c",
+      steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
     },
-    {
-      operation: listEvalRunIterationsOperation,
-      minimalInput: { project: "p", runId: "r" },
+    update_eval_case: { suite: "s", case: "c", title: "renamed" },
+    delete_eval_case: { suite: "s", case: "c" },
+    generate_eval_cases: { suite: "s", prompt: "q" },
+    get_eval_run: { project: "p", runId: "r" },
+    list_eval_run_iterations: { project: "p", runId: "r" },
+    get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
+    cancel_eval_run: { project: "p", runId: "r" },
+    get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
+    create_tunnel: { name: "t" },
+    close_tunnel: { serverId: "s" },
+    list_chatboxes: {},
+    get_chatbox: { chatbox: "c" },
+    list_chat_sessions: {},
+    list_journeys: {},
+    list_journey_runs: { journey: "j" },
+    get_journey_run: { run: "r" },
+    list_journey_run_sessions: { run: "r" },
+    launch_journey_run: { journey: "j" },
+    cancel_journey_run: { run: "r" },
+    publish_scenario: { environment: "e" },
+    unpublish_scenario: { environment: "e" },
+    list_hosts: {},
+    get_host: { host: "h" },
+    set_host_servers: { host: "h", serverIds: [] },
+    duplicate_host: { host: "h" },
+    create_host: { name: "h", template: "claude" },
+    update_host: { host: "h", name: "renamed" },
+    delete_host: { host: "h" },
+    list_project_environments: {},
+    list_project_plugins: {},
+    get_plugin_version: { pluginVersionId: "pv" },
+    get_project_environment: { environment: "e" },
+    resolve_project_environment: { environment: "e" },
+    create_project_environment: { name: "e", hostId: "h" },
+    update_project_environment: {
+      environment: "e",
+      expectedRevision: 0,
+      name: "renamed",
     },
-    {
-      operation: getEvalIterationTraceOperation,
-      minimalInput: { project: "p", runId: "r", iterationId: "i" },
-    },
-    {
-      operation: getEvalRunStepsOperation,
-      minimalInput: { project: "p", runId: "r", iterationId: "i" },
-    },
-    {
-      operation: cancelEvalRunOperation,
-      minimalInput: { project: "p", runId: "r" },
-    },
-    { operation: listChatboxesOperation, minimalInput: {} },
-    { operation: getChatboxOperation, minimalInput: { chatbox: "c" } },
-    { operation: listChatSessionsOperation, minimalInput: {} },
-    { operation: diagnoseServerOperation, minimalInput: { server: "s" } },
-    { operation: listServerToolsOperation, minimalInput: { server: "s" } },
-    {
-      operation: callServerToolOperation,
-      minimalInput: { server: "s", toolName: "t" },
-    },
-    { operation: listServerPromptsOperation, minimalInput: { server: "s" } },
-    {
-      operation: getServerPromptOperation,
-      minimalInput: { server: "s", promptName: "p" },
-    },
-    { operation: listServerResourcesOperation, minimalInput: { server: "s" } },
-    {
-      operation: readServerResourceOperation,
-      minimalInput: { server: "s", uri: "u" },
-    },
-    { operation: createTunnelOperation, minimalInput: { name: "t" } },
-    { operation: closeTunnelOperation, minimalInput: { serverId: "s" } },
-  ];
+    archive_project_environment: { environment: "e", expectedRevision: 0 },
+    restore_project_environment: { environment: "e", expectedRevision: 0 },
+    list_sandbox_images: {},
+    get_sandbox_image: { image: "i" },
+    create_sandbox_image: { name: "i", blueprint: "base: ubuntu@sha256:abc" },
+    update_sandbox_image: { image: "i", name: "renamed" },
+    validate_sandbox_image_blueprint: { blueprint: "base: ubuntu@sha256:abc" },
+    build_sandbox_image: { image: "i" },
+    list_sandbox_image_builds: { image: "i" },
+    promote_sandbox_image: { image: "i" },
+    use_sandbox_image: { image: "i" },
+    reset_computer: {},
+    delete_sandbox_image: { image: "i" },
+  };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
-    for (const { operation, minimalInput } of ALL_OPERATIONS) {
+    expect(Object.keys(MINIMAL_INPUTS).sort()).toEqual(
+      ALL_OPERATIONS.map((operation) => operation.name).sort()
+    );
+    expect(
+      new Set(ALL_OPERATIONS.map((operation) => operation.name)).size
+    ).toBe(ALL_OPERATIONS.length);
+    for (const operation of ALL_OPERATIONS) {
+      const minimalInput = MINIMAL_INPUTS[operation.name];
+      expect(
+        minimalInput,
+        `missing fixture for ${operation.name}`
+      ).toBeDefined();
       expect(operation.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
       expect(operation.inputSchema.safeParse(minimalInput).success).toBe(true);
     }
@@ -1210,19 +1447,67 @@ describe("operation catalog consistency", () => {
       "run_eval_case",
       "cancel_eval_run",
       "create_eval_suite",
+      "set_eval_suite_environments",
       "call_server_tool",
       "create_tunnel",
       "close_tunnel",
+      "create_project_server",
+      "update_project_server",
+      "delete_project_server",
+      "create_project",
+      "update_project",
+      "delete_project",
+      "archive_project_environment",
+      "update_eval_suite",
+      "delete_eval_suite",
+      "set_eval_suite_schedule",
+      "create_eval_case",
+      "update_eval_case",
+      "delete_eval_case",
+      "generate_eval_cases",
+      "create_host",
+      "update_host",
+      "delete_host",
+      "set_host_servers",
+      "duplicate_host",
+      "create_project_environment",
+      // Launching starts a fan-out that SPENDS model credits — the most
+      // consequential write on this surface.
+      "launch_journey_run",
+      // Cancelling settles a run's attempts — a state change, not a read.
+      "cancel_journey_run",
+      // Scenarios: publishing exposes an environment to people outside the
+      // project, unpublishing tears that down. Both are writes.
+      "publish_scenario",
+      "unpublish_scenario",
+      "update_project_environment",
+      "restore_project_environment",
+      "create_sandbox_image",
+      "update_sandbox_image",
+      "build_sandbox_image",
+      "promote_sandbox_image",
+      "use_sandbox_image",
+      "reset_computer",
+      "delete_sandbox_image",
     ]);
-    for (const { operation } of ALL_OPERATIONS) {
+    for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
     }
+    expect(
+      [...writes].filter(
+        (name) => !ALL_OPERATIONS.some((op) => op.name === name)
+      )
+    ).toEqual([]);
   });
 
-  it("flags only call_server_tool as may-be-destructive", () => {
-    for (const { operation } of ALL_OPERATIONS) {
+  it("flags only operations with unknowable side effects as may-be-destructive", () => {
+    const destructive = new Set([
+      "call_server_tool",
+      "archive_project_environment",
+    ]);
+    for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(
-        operation.name === "call_server_tool"
+        destructive.has(operation.name)
       );
     }
   });

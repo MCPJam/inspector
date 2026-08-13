@@ -41,6 +41,8 @@ import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
@@ -79,6 +81,10 @@ export function HostBuilderViewRedesigned({
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
   const computersEnabled = useComputersEnabled();
+  // Mirrors ConnectViewHeader's gating: Skills is flagged in hosted mode only,
+  // local filesystem skills are ungated.
+  const skillsEnabled = useSkillsEnabled();
+  const showSkillsTab = !HOSTED_MODE || skillsEnabled;
   // Project Computers canvas inputs. Both queries resolve to `undefined`
   // until their backend functions are deployed and stay cheap when the
   // feature flag is off (the islands they feed aren't emitted then).
@@ -224,7 +230,7 @@ export function HostBuilderViewRedesigned({
   // Runtime connection state lives in `appState.servers` keyed by server
   // name, not in the persisted Convex row. Mirror it into the host builder
   // so both the canvas card dot and the Servers-tab row dot reflect the
-  // same state the Connect/Servers tab shows — without this they'd be
+  // same state the Servers tab shows — without this they'd be
   // unconditionally emerald even when the server is disconnected.
   const sharedAppState = useSharedAppState();
   const connectionStatusByName = sharedAppState.servers;
@@ -470,6 +476,11 @@ export function HostBuilderViewRedesigned({
               value="host"
               ariaLabel="Connect view"
               onChange={(next) => {
+                try {
+                  track("connect_view_selected", { from: "host", to: next });
+                } catch {
+                  // swallow — a posthog throw must never block navigation
+                }
                 if (next === "servers") {
                   // Skip `onBack()` (which would push `/hosts` first via
                   // the parent's handleSelectHost) and just navigate.
@@ -478,6 +489,8 @@ export function HostBuilderViewRedesigned({
                   navigate("/servers");
                 } else if (next === "computer") {
                   navigate("/computer");
+                } else if (next === "skills") {
+                  navigate("/skills");
                 }
               }}
               options={[
@@ -487,6 +500,9 @@ export function HostBuilderViewRedesigned({
                 // this primary nav — keep it out so it isn't duplicated.
                 ...(computersEnabled
                   ? [{ value: "computer", label: "Computer" }]
+                  : []),
+                ...(showSkillsTab
+                  ? [{ value: "skills", label: "Skills" }]
                   : []),
               ]}
             />
@@ -589,9 +605,11 @@ export function HostBuilderViewRedesigned({
                     }
                     focusSubKey={focusState.focusSubKey}
                     hostDisplayName={draftName}
+                    savedHostDisplayName={host?.name ?? draftName}
                     onHostDisplayNameChange={setDraftName}
                     themeMode={themeMode}
                     draft={draftConfig}
+                    savedDraft={savedConfig ?? draftConfig}
                     onDraftChange={(updater) =>
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))
                     }

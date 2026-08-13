@@ -3,25 +3,33 @@ import { createRoot } from "react-dom/client";
 import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
+import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
-import { initSentry } from "./lib/sentry.js";
+import { captureSentryException, initSentry } from "./lib/sentry.js";
+import { reportCaught } from "./lib/error-reporting";
+import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
-import { HOSTED_MODE } from "./lib/config";
+import { HOSTED_MODE, SANDBOX_ORIGIN } from "./lib/config";
 import {
   buildElectronHostedAuthCallbackUrl,
   resolveWorkosRedirectUri,
 } from "./lib/electron-hosted-auth";
 import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
-import { getRuntimeConvexUrl } from "./lib/runtime-config";
+import {
+  getRuntimeConvexUrl,
+  getRuntimeWorkosApiHostname,
+  getRuntimeWorkosClientId,
+} from "./lib/runtime-config";
 import {
   isDebugOAuthCallbackPath,
   normalizeInitialLegacyHashBookmark,
 } from "./lib/app-navigation";
+import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import {
   getInitialThemeMode,
@@ -34,11 +42,66 @@ import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 import {
   clearLegacyWorkosRefreshTokenStorage,
   resolveWorkosClientOptions,
-  resolveWorkosDevMode,
+  WORKOS_DEV_MODE,
 } from "./lib/workos-authkit-config";
 
 // Initialize Sentry before React mounts
 initSentry();
+
+/**
+ * A hosted deploy with no sandbox origin is a SECURITY REGRESSION, not a
+ * config nicety.
+ *
+ * `VITE_MCPJAM_SANDBOX_ORIGIN` is what puts MCP Apps widgets on an origin that
+ * shares no cookies with the host app. Unset, the iframe falls back to
+ * same-origin and the isolation the sandbox exists to provide is simply gone.
+ *
+ * `widget-react` already warns — but it warns from inside a shared package, at
+ * RENDER time, on a `console.warn` nobody is watching, and only for a user who
+ * happens to open a widget. Reporting it here instead means it is noticed at
+ * BOOT, once, by whoever deployed it, through the channel that pages someone.
+ *
+ * Deliberately non-fatal: refusing to start would take the whole app down over
+ * a widget-isolation setting, which is a worse outcome than a loud deploy.
+ *
+ * SET TO THE APP'S OWN ORIGIN counts as unset. A configured value that equals
+ * `window.location.origin` produces exactly the same same-origin iframe as no
+ * value at all — the isolation is gone either way — and it is the more likely
+ * mistake of the two, because it looks configured.
+ *
+ * REPORTED ONCE PER TAB. This is a deployment fault, and it is true for every
+ * visitor for as long as the deploy lives: capturing on each load turns one
+ * static misconfiguration into an exception per page view (and, with replay on,
+ * a session recording per visitor), which buries the signal it is meant to
+ * raise. `sessionStorage` bounds it to one report per tab without needing
+ * anything server-side. The console line stays unconditional — it costs
+ * nothing and it is what a developer looking at THIS page load will see.
+ */
+const sandboxOriginFault =
+  HOSTED_MODE &&
+  (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
+if (sandboxOriginFault) {
+  const message = SANDBOX_ORIGIN
+    ? `VITE_MCPJAM_SANDBOX_ORIGIN is set to this app's own origin (${SANDBOX_ORIGIN}). MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.`
+    : "VITE_MCPJAM_SANDBOX_ORIGIN is not configured in hosted mode. MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.";
+  console.error(`[MCPJam] ${message}`);
+
+  const REPORTED_KEY = "mcpjam.sandbox-origin-fault-reported";
+  let alreadyReported = false;
+  try {
+    alreadyReported = window.sessionStorage.getItem(REPORTED_KEY) === "1";
+    window.sessionStorage.setItem(REPORTED_KEY, "1");
+  } catch {
+    // Storage can be unavailable (Safari private mode, a blocked third-party
+    // context). Reporting every load is the safe direction for a security
+    // regression — better noisy than silent.
+  }
+  if (!alreadyReported) {
+    captureSentryException(new Error(message), {
+      tags: { area: "sandbox-origin", severity: "config" },
+    });
+  }
+}
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
@@ -57,24 +120,24 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
 //
-// Exception: same-origin self-embed of the public chatbox runtime
-// (`/chatbox/<slug>/<token>`). The Chatboxes tab's Preview pane iframes the
-// publish link to show a live preview inside the app — that's intentional,
-// not a misrouted-pushState misconfiguration, so we let the normal tree
-// mount. Restricted to the chatbox route + same-origin parent so the
-// "user app accidentally serving inspector index.html" guard still fires
-// for every other shape.
+// Exception: same-origin self-embed of the public chatbox runtime (a tester
+// link path — `/user-testing/<slug>/<token>`, or the legacy `/chatbox/…` one).
+// The User Testing tab's Preview pane iframes the publish link to show a live
+// preview inside the app — that's intentional, not a misrouted-pushState
+// misconfiguration, so we let the normal tree mount. Restricted to a tester
+// link route + same-origin parent so the "user app accidentally serving
+// inspector index.html" guard still fires for every other shape.
 const isInIframe = (() => {
   try {
     if (window.self === window.top) return false;
     try {
-      const sameOrigin =
-        window.top!.location.origin === window.location.origin;
-      // Match the documented `/chatbox/<slug>/<token>` shape only; a generic
-      // `startsWith("/chatbox/")` would let any unrelated future subpath
-      // slip past the misrouted-pushState guard.
-      const isPublicChatboxRuntimePath =
-        /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(window.location.pathname);
+      const sameOrigin = window.top!.location.origin === window.location.origin;
+      // Match the documented `<segment>/<slug>/<token>` shape only; a generic
+      // prefix test would let any unrelated future subpath slip past the
+      // misrouted-pushState guard. See lib/tester-link-path.ts.
+      const isPublicChatboxRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
+        window.location.pathname
+      );
       if (sameOrigin && isPublicChatboxRuntimePath) {
         return false;
       }
@@ -113,8 +176,16 @@ if (isInIframe) {
   const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
   const runtimeConvexUrl = getRuntimeConvexUrl();
   const convexUrl = runtimeConvexUrl || buildConvexUrl || "";
-  const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-  const workosDevMode = resolveWorkosDevMode(import.meta.env);
+  // Runtime config wins over the build-time value for the same reason the
+  // Convex URL above does: the deployed bundle is shared across environments
+  // and only the serving process knows which WorkOS environment it belongs to.
+  const buildWorkosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as
+    | string
+    | undefined;
+  // Coerced to "" rather than typed as `string`: the previous `as string` cast
+  // claimed a value that may not exist, and AuthKit already fails loudly on a
+  // falsy client id. The warning below is the one that should fire first.
+  const workosClientId = getRuntimeWorkosClientId() ?? buildWorkosClientId ?? "";
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {
@@ -144,8 +215,8 @@ if (isInIframe) {
       source: runtimeConvexUrl
         ? "runtime"
         : buildConvexUrl
-          ? "build (VITE_CONVEX_URL)"
-          : "none",
+        ? "build (VITE_CONVEX_URL)"
+        : "none",
       HOSTED_MODE,
     });
   }
@@ -172,17 +243,21 @@ if (isInIframe) {
   }
   if (!workosClientId) {
     console.warn(
-      "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work."
+      "[main] WorkOS client id is not set (runtime config or VITE_WORKOS_CLIENT_ID); authentication will not work."
     );
   }
 
-  const workosClientOptions = resolveWorkosClientOptions(
-    import.meta.env,
-    typeof window === "undefined" ? undefined : window.location
-  );
-  if (!workosDevMode) {
-    clearLegacyWorkosRefreshTokenStorage();
-  }
+  // A runtime hostname takes the same precedence an explicit
+  // `VITE_WORKOS_API_HOSTNAME` has inside `resolveWorkosClientOptions`: it
+  // overrides the local-proxy derivation rather than merging with it.
+  const runtimeWorkosApiHostname = getRuntimeWorkosApiHostname();
+  const workosClientOptions = runtimeWorkosApiHostname
+    ? { apiHostname: runtimeWorkosApiHostname }
+    : resolveWorkosClientOptions(
+        import.meta.env,
+        typeof window === "undefined" ? undefined : window.location
+      );
+  clearLegacyWorkosRefreshTokenStorage();
 
   const convex = new ConvexReactClient(convexUrl);
   normalizeInitialLegacyHashBookmark();
@@ -191,11 +266,9 @@ if (isInIframe) {
     <AuthKitProvider
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
-      devMode={workosDevMode}
+      devMode={WORKOS_DEV_MODE}
       onRefresh={() => {
-        if (!workosDevMode) {
-          clearLegacyWorkosRefreshTokenStorage();
-        }
+        clearLegacyWorkosRefreshTokenStorage();
       }}
       {...workosClientOptions}
     >
@@ -219,7 +292,7 @@ if (isInIframe) {
           <OAuthDesktopReturnNotice
             returnToElectronUrl={electronHostedAuthCallbackUrl}
           />
-        </StrictMode>,
+        </StrictMode>
       );
       return;
     }
@@ -236,6 +309,9 @@ if (isInIframe) {
       }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);
+      // This branch replaces the whole app with a static screen — without a
+      // report the failure is invisible outside the user's own console.
+      reportCaught(error, { source: "session_token_bootstrap" });
       // Show error UI instead of crashing
       root.render(
         <StrictMode>
@@ -287,11 +363,25 @@ if (isInIframe) {
       return;
     }
 
+    // Replay/surveys/exception bundles must be REGISTERED before the provider
+    // initializes the SDK, or feature start falls back to the remote fetch
+    // that Railway's edge blocks on hosted — see lib/posthog-bundled-extensions.ts.
+    // No-op (and no chunk download) off the error-capture surfaces.
+    await preloadPosthogBundledExtensions();
+
     root.render(
       <StrictMode>
-        <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
-          {Providers}
-        </PostHogProvider>
+        {/* OUTSIDE PostHogProvider on purpose: a crash while the provider
+            initializes must still be caught and reported, and Sentry capture
+            needs no React context. */}
+        <ErrorBoundary name="root">
+          <PostHogProvider
+            apiKey={getPostHogKey()}
+            options={getPostHogOptions()}
+          >
+            {Providers}
+          </PostHogProvider>
+        </ErrorBoundary>
       </StrictMode>
     );
   }

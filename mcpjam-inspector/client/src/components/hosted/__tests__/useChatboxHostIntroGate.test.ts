@@ -17,6 +17,7 @@ describe("useChatboxHostIntroGate", () => {
         hasBusyOAuth: false,
         pendingOAuthServers: [
           {
+            server: { serverId: "srv_1" },
             state: {
               status: "needs_auth",
               errorMessage: null,
@@ -42,6 +43,7 @@ describe("useChatboxHostIntroGate", () => {
         hasBusyOAuth: true,
         pendingOAuthServers: [
           {
+            server: { serverId: "srv_1" },
             state: { status: "verifying", errorMessage: null, serverUrl: null },
           },
         ],
@@ -62,6 +64,7 @@ describe("useChatboxHostIntroGate", () => {
         hasBusyOAuth: false,
         pendingOAuthServers: [
           {
+            server: { serverId: "srv_1" },
             state: {
               status: "needs_auth",
               errorMessage: null,
@@ -95,6 +98,7 @@ describe("useChatboxHostIntroGate", () => {
           pendingOAuthServers: oauthPending
             ? [
                 {
+                  server: { serverId: "srv_1" },
                   state: {
                     status: "needs_auth",
                     errorMessage: null,
@@ -165,6 +169,63 @@ describe("useChatboxHostIntroGate", () => {
     expect(result.current.composerBlocked).toBe(false);
   });
 
+  it("treats a discover server as non-OAuth even though useOAuth mirrors true", () => {
+    const { result } = renderHook(() =>
+      useChatboxHostIntroGate({
+        chatboxId: "sbx_discover",
+        servers: [{ useOAuth: true, authorizationRequiredUpfront: false }],
+        oauthPending: false,
+        hasBusyOAuth: false,
+        pendingOAuthServers: [],
+        welcomeAvailable: true,
+      }),
+    );
+
+    // Counted as an OAuth chatbox, this one skipped its welcome overlay.
+    expect(result.current.showWelcome).toBe(true);
+    expect(result.current.showAuthPanel).toBe(false);
+  });
+
+  it("releases the composer on dismissAuthPanel and re-arms on a new requirement", () => {
+    const errorRow = {
+      server: { serverId: "srv_1" },
+      state: { status: "error", errorMessage: "nope", serverUrl: null },
+    };
+    const { result, rerender } = renderHook(
+      ({ pending }: { pending: (typeof errorRow)[] }) =>
+        useChatboxHostIntroGate({
+          chatboxId: "sbx_deadend",
+          servers: [{ useOAuth: true }],
+          oauthPending: true,
+          hasBusyOAuth: false,
+          pendingOAuthServers: pending,
+          welcomeAvailable: false,
+        }),
+      { initialProps: { pending: [errorRow] } },
+    );
+
+    expect(result.current.composerBlocked).toBe(true);
+
+    act(() => {
+      result.current.dismissAuthPanel();
+    });
+
+    expect(result.current.showAuthPanel).toBe(false);
+    expect(result.current.composerBlocked).toBe(false);
+
+    // A later 401 on another server is new information, not a dismissed one.
+    rerender({
+      pending: [
+        {
+          server: { serverId: "srv_2" },
+          state: { status: "needs_auth", errorMessage: null, serverUrl: null },
+        },
+      ],
+    });
+
+    expect(result.current.showAuthPanel).toBe(true);
+  });
+
   it("skips welcome but still shows auth panel when OAuth is pending and no welcome content", () => {
     const { result } = renderHook(() =>
       useChatboxHostIntroGate({
@@ -174,6 +235,7 @@ describe("useChatboxHostIntroGate", () => {
         hasBusyOAuth: false,
         pendingOAuthServers: [
           {
+            server: { serverId: "srv_1" },
             state: {
               status: "needs_auth",
               errorMessage: null,

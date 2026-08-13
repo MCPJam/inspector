@@ -21,8 +21,14 @@
     "strict": false
   },
   "fonts": {
-    "heading": { "family": "Geist", "weight": 500 },
-    "body": { "family": "Geist", "weight": 400 }
+    "heading": {
+      "family": "Geist",
+      "weight": 500
+    },
+    "body": {
+      "family": "Geist",
+      "weight": 400
+    }
   },
   "styling": {
     "codeblocks": {
@@ -39,6 +45,7 @@
           "getting-started",
           "installation",
           "hosted/overview",
+          "hosted/slack",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
           "changelog/overview"
@@ -53,10 +60,12 @@
             "pages": [
               "inspector/home",
               "inspector/clients",
+              "inspector/connecting-servers",
               "inspector/projects",
               "inspector/plugins",
               "inspector/protocol-versions",
-              "inspector/host-compat"
+              "inspector/host-compat",
+              "inspector/skills"
             ]
           },
           {
@@ -65,7 +74,8 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
-              "inspector/compatibility"
+              "inspector/compatibility",
+              "inspector/host-templates"
             ]
           },
           {
@@ -76,7 +86,10 @@
           {
             "group": "Primitives",
             "icon": "puzzle",
-            "pages": ["inspector/tools-prompts-resources", "inspector/skills"]
+            "pages": [
+              "inspector/tools-prompts-resources",
+              "inspector/debugging"
+            ]
           },
           {
             "group": "Computer",
@@ -86,7 +99,7 @@
           {
             "group": "Embedding",
             "icon": "code",
-            "pages": ["inspector/launch-from-code"]
+            "pages": ["inspector/launch-from-code", "inspector/docs-server"]
           },
           {
             "group": "Recipes",
@@ -125,12 +138,12 @@
       },
       {
         "tab": "SDK",
-        "tag": "v1",
+        "tag": "v3",
         "groups": [
           {
             "group": "Get Started",
             "icon": "rocket",
-            "pages": ["sdk/index", "sdk/quickstart"]
+            "pages": ["sdk/index", "sdk/quickstart", "sdk/migrating-to-v3"]
           },
           {
             "group": "Concepts",
@@ -157,6 +170,7 @@
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
+              "sdk/reference/oauth-emulation",
               "sdk/reference/apps-conformance",
               "sdk/reference/tasks-conformance",
               "sdk/reference/host-compat"
@@ -206,13 +220,22 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
-    { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
-    { "source": "/inspector/chat", "destination": "/inspector/playground" },
+    {
+      "source": "/inspector/workspaces",
+      "destination": "/inspector/projects"
+    },
+    {
+      "source": "/inspector/chat",
+      "destination": "/inspector/playground"
+    },
     {
       "source": "/inspector/app-builder",
       "destination": "/inspector/playground"
     },
-    { "source": "/inspector/test-cases", "destination": "/inspector/evals" },
+    {
+      "source": "/inspector/test-cases",
+      "destination": "/inspector/evals"
+    },
     {
       "source": "/inspector/xaa-test-idp",
       "destination": "/inspector/xaa-debugger"

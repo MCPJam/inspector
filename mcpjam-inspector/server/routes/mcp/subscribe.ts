@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { InspectorCommand } from "@/shared/inspector-command.js";
+import type { InspectorEvent } from "@/shared/inspector-event.js";
 import { inspectorCommandBus } from "../../services/inspector-command-bus.js";
 
 const subscribe = new Hono();
@@ -18,6 +19,13 @@ subscribe.get("/", async (c) => {
       const send = (command: InspectorCommand) => {
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(command)}\n\n`),
+        );
+      };
+      const sendEvent = (event: InspectorEvent) => {
+        controller.enqueue(
+          encoder.encode(
+            `event: inspector-event\ndata: ${JSON.stringify(event)}\n\n`,
+          ),
         );
       };
 
@@ -63,6 +71,7 @@ subscribe.get("/", async (c) => {
       unregister = inspectorCommandBus.registerSubscriber({
         clientId,
         send,
+        sendEvent,
         supersede,
         close,
       });

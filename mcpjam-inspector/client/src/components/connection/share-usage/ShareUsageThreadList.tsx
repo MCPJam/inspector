@@ -119,7 +119,7 @@ export function ShareUsageThreadList({
   );
 }
 
-function ThreadCard({
+export function ThreadCard({
   thread,
   isSelected,
   onSelect,
@@ -150,14 +150,17 @@ function ThreadCard({
             {thread.visitorDisplayName ?? "Anonymous"}
           </span>
           {thread.synthetic === true ? (
-            <>
-              <span
-                className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-                aria-label="Synthetic session"
-                role="img"
-              />
-              <SessionReadinessBadge readiness={thread.readiness} />
-            </>
+            <span
+              className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
+              aria-label="Synthetic session"
+              role="img"
+            />
+          ) : null}
+          {/* The dot labels the POPULATION and stays synthetic-only; the
+              readiness badge follows the data, which real User Testing
+              sessions now carry. */}
+          {thread.readiness ? (
+            <SessionReadinessBadge readiness={thread.readiness} />
           ) : null}
         </p>
         <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
@@ -183,6 +186,14 @@ function ThreadCard({
           <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             <AlertTriangle className="size-3" />
             Needs review
+          </span>
+        ) : null}
+        {/* Sessions started from the in-app Preview pane, not by a tester.
+            Only rendered when the session actually carries the tag — older
+            sessions predate it and shouldn't be labelled either way. */}
+        {thread.surface === "preview" ? (
+          <span className="rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+            Preview
           </span>
         ) : null}
         {thread.themeClusterLabel ? (

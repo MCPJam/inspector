@@ -130,6 +130,129 @@ export type HostConfigConnectionDefaults = {
 // family (SEP-1865 is allowlist-only; there's no deny concept). Canonicalized
 // as a set (trimmed, deduped, sorted) so policies that differ only in array
 // order hash identically.
+/**
+ * Whether the simulated client mirrors `x-mcp-header`-annotated tool
+ * arguments into `Mcp-Param-*` HTTP headers on `tools/call`
+ * (SEP-2243, integrated into MCP `2026-07-28`).
+ *
+ * - `"mirror"` — spec-conforming, and the behavior you get when the field is
+ *   absent. Declared arguments ride as `Mcp-Param-{Name}` headers.
+ * - `"omit"` — simulate a NON-conforming client that never sends them. Real
+ *   clients in the wild are uneven here (browser clients never mirror;
+ *   MCPJam itself didn't until #3620), so this is how you check what your
+ *   server does when the headers don't arrive — including whether it answers
+ *   `-32020 HeaderMismatch` rather than silently serving the request.
+ *
+ * A property of the simulated CLIENT, not of one server, so it lives here
+ * rather than on `serverConnectionOverrides`. An enum rather than a boolean
+ * to leave room for future modes (e.g. a deliberately-corrupt value).
+ */
+export type ToolParamHeaderMirroring = "mirror" | "omit";
+
+/** The permitted {@link ToolParamHeaderMirroring} literals, for validation. */
+export const TOOL_PARAM_HEADER_MIRRORING_MODES = [
+  "mirror",
+  "omit",
+] as const satisfies readonly ToolParamHeaderMirroring[];
+
+// ── Client-conformance knobs ──────────────────────────────────────────
+//
+// Siblings of `toolParamHeaderMirroring`: each field models a way REAL
+// clients differ from each other, so a server author can see their server
+// through a specific client's eyes. Shared rules:
+//
+// - Absent = the spec-conforming/full behavior, and the field is OMITTED
+//   from canonical output, so pre-feature rows keep their hash. The
+//   conforming literal is storable but hashes distinctly; UIs write absence.
+// - Each knob is a property of the simulated CLIENT, so it lives here
+//   rather than on `serverConnectionOverrides`.
+// - Enforcement is era- and transport-scoped: a knob whose mechanism
+//   doesn't exist on the negotiated era (or on stdio) is silently inert.
+//
+// Deliberately NOT modeled here (each was considered and rejected):
+// - `Mcp-Method`/`Mcp-Name` emission — the official client attaches these
+//   on every modern enveloped request with no browser carve-out, so every
+//   SDK-built client sends them. (Only `Mcp-Param-*` mirroring is browser-
+//   gated, which is why `toolParamHeaderMirroring` exists and this does
+//   not.) "What does my server do without them" is conformance-harness
+//   territory, which already sends hostile frames outside the client.
+// - A vestigial `Mcp-Session-Id`, or per-request `_meta` sent only on the
+//   first request — no real client does either; the SDKs handle both.
+// - `requestState` echo fidelity — synthetic fault injection against the
+//   server's integrity check; belongs to the conformance harness.
+// - Elicitation form/url support — already modeled, as
+//   `clientCapabilities.elicitation.{form,url}`. Do not duplicate it here.
+// - list_changed handling — a real divergence between hosts, but making
+//   MCPJam's own tool list go stale is an anti-feature for a debugger.
+//   It belongs in the host catalog as a fact to DISPLAY about a host, not
+//   as a behavior to simulate.
+
+/**
+ * How the simulated client walks paginated list results (`tools/list`,
+ * `resources/list`, `resources/templates/list`, `prompts/list`).
+ *
+ * - `"full"` — follow `nextCursor` to exhaustion (spec-conforming client
+ *   behavior, and what an ABSENT field means).
+ * - `"firstPageOnly"` — treat page one as the complete result, the way
+ *   several real hosts notoriously do. Lets a server author answer "do my
+ *   important tools survive a first-page-only host?".
+ *
+ * Deliberate interaction: the SEP-2243 `Mcp-Param-*` mirroring source is
+ * the aggregated list cache, so under this mode params are mirrored only
+ * for page-one tools — which is exactly how such a client really behaves.
+ *
+ * Era- and transport-agnostic: pagination has existed since `2025-03-26`,
+ * and the enforcement seam is a transport wrapper (not the fetch layer), so
+ * it applies on stdio as well as Streamable HTTP. Only the cursor-less
+ * aggregation is truncated — an explicit-cursor request is the debugger's
+ * own manual paging, not something the emulated client did.
+ */
+export type PaginationTraversalMode = "full" | "firstPageOnly";
+
+/** The permitted {@link PaginationTraversalMode} literals, for validation. */
+export const PAGINATION_TRAVERSAL_MODES = [
+  "full",
+  "firstPageOnly",
+] as const satisfies readonly PaginationTraversalMode[];
+
+/**
+ * Whether the simulated client drives MRTR (multi-round tool result) at
+ * all — i.e. whether it understands `resultType: "input_required"` and
+ * retries the original request with `inputResponses`, or treats the result
+ * as terminal. Real clients differ on whether they implement the 2026
+ * pattern at all, which is the fact this models.
+ *
+ * - `"full"` — drive `input_required` rounds (and what an ABSENT field
+ *   means).
+ * - `"none"` — no MRTR: the modern connection must not advertise a
+ *   capability the MRTR bridge would have to fulfill (advertise = enforce),
+ *   and an `input_required` result surfaces to the caller instead of
+ *   silently looping.
+ *
+ * WHICH elicitation modes an MRTR-capable client fulfills is a separate,
+ * already-modeled fact: `clientCapabilities.elicitation.{form,url}`.
+ * This knob is only about the retry loop existing.
+ */
+export type MrtrSupport = "full" | "none";
+
+/** The permitted {@link MrtrSupport} literals, for validation. */
+export const MRTR_SUPPORT_MODES = [
+  "full",
+  "none",
+] as const satisfies readonly MrtrSupport[];
+
+/**
+ * The conformance-knob keys shared verbatim between the public `HostMcp`
+ * authoring shape and the internal `mcpProfile` (same names on both sides),
+ * so the profile ⇄ HostMcp round-trip helpers can copy them in one loop
+ * instead of a hand-maintained block per knob. `toolParamHeaderMirroring`
+ * predates this list and is copied individually at its call sites.
+ */
+export const CONFORMANCE_PROFILE_KEYS = [
+  "paginationTraversal",
+  "mrtrSupport",
+] as const;
+
 export type CspDomainSet = {
   connectDomains?: string[];
   resourceDomains?: string[];
@@ -147,6 +270,20 @@ export type HostConfigMcpProfileV1 = {
   // Host-default pinned MCP protocol version. Absent → SDK chooses at
   // request time. Per-server pins live on serverConnectionOverrides.
   mcpProtocolVersion?: McpProtocolVersion;
+  // Whether the simulated client mirrors `x-mcp-header` tool arguments into
+  // `Mcp-Param-*` request headers (SEP-2243). Absent → `"mirror"`, the
+  // spec-conforming default; `"omit"` simulates a non-conforming client so a
+  // server can be tested against one. Host-level on purpose — conformance is
+  // a property of the client, not of an individual server.
+  toolParamHeaderMirroring?: ToolParamHeaderMirroring;
+  // Client-conformance knobs (siblings of `toolParamHeaderMirroring`; see
+  // the type docblocks above for per-knob semantics, and for the list of
+  // knobs deliberately NOT modeled). Absent always means "spec-conforming"
+  // and is omitted from canonical output.
+  paginationTraversal?: PaginationTraversalMode;
+  // Whether the client drives MRTR retry rounds at all. WHICH elicitation
+  // modes it fulfills stays in `clientCapabilities.elicitation`.
+  mrtrSupport?: MrtrSupport;
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -448,6 +585,84 @@ export type HostConfigOAuthProfileV1 = {
   extensions?: Record<string, unknown>;
 };
 
+export const OAUTH_SCOPE_REQUEST_MODES = [
+  "omit",
+  "fixed",
+  "challenge",
+  "all-supported",
+] as const;
+
+export type OAuthScopeRequestMode = (typeof OAUTH_SCOPE_REQUEST_MODES)[number];
+
+/**
+ * How a client populates the `scope` parameter on the authorization request.
+ *
+ *   `omit`          — never sends `scope`.
+ *   `fixed`         — always sends the same captured scope list. Discriminated
+ *                     so "fixed" cannot be recorded without the scopes (same
+ *                     convention as `OAuthProtocolVersionPinning`). Order is
+ *                     the captured wire order — preserved verbatim, duplicates
+ *                     rejected — because the emulator replays the scope string
+ *                     byte-exactly.
+ *   `challenge`     — echoes the scopes from the `WWW-Authenticate` challenge.
+ *   `all-supported` — sends the AS metadata's `scopes_supported`.
+ */
+export type OAuthScopeRequest =
+  | { mode: "omit" }
+  | { mode: "fixed"; scopes: string[] }
+  | { mode: "challenge" }
+  | { mode: "all-supported" };
+
+export const OAUTH_TOKEN_ENDPOINT_AUTH_METHODS = [
+  "none",
+  "client_secret_basic",
+  "client_secret_post",
+] as const;
+
+/**
+ * RFC 7591 `token_endpoint_auth_method` a client asserts at registration and
+ * honors at the token endpoint. Closed set — a future method must be added
+ * here deliberately, not smuggled in as a free string.
+ */
+export type OAuthTokenEndpointAuthMethod =
+  (typeof OAUTH_TOKEN_ENDPOINT_AUTH_METHODS)[number];
+
+/**
+ * Per-host OAuth handshake profile, version 2 (HP-43 emulator inputs).
+ *
+ * V2 exists alongside V1 — V1 canonicalization is FROZEN and V1 rows are
+ * never rewritten, so every existing content-addressed hash stays valid. A
+ * profile opts into V2 by writing `profileVersion: 2`; absent fields are
+ * omitted from the canonical JSON exactly like V1 (never null/default-filled).
+ *
+ * Differences from V1, both in service of byte-exact wire replay:
+ *   - two new evidence-backed fields: `scopeRequest` and
+ *     `tokenEndpointAuthMethod`;
+ *   - `dcrIdentity.redirectUris` preserves the CAPTURED order and rejects
+ *     duplicates, where V1 deduped + sorted. The registration body the
+ *     emulator sends must match what the real client sent, and that includes
+ *     array order.
+ *   - `dcrIdentity.clientName` is stored verbatim, where V1 trimmed —
+ *     surrounding whitespace in a capture is part of the string a server may
+ *     gate on. Empty/whitespace-only is still rejected as a missing capture.
+ */
+export type HostConfigOAuthProfileV2 = {
+  profileVersion: 2;
+  sendsResourceIndicator?: OAuthProfileEvidence<boolean>;
+  oauthSpecVersion?: OAuthProfileEvidence<OAuthSpecVersionClaim>;
+  protocolVersionPinning?: OAuthProfileEvidence<OAuthProtocolVersionPinning>;
+  dcrIdentity?: OAuthProfileEvidence<OAuthDcrIdentity>;
+  authModel?: OAuthProfileEvidence<OAuthAuthModel[]>;
+  scopeRequest?: OAuthProfileEvidence<OAuthScopeRequest>;
+  tokenEndpointAuthMethod?: OAuthProfileEvidence<OAuthTokenEndpointAuthMethod>;
+  extensions?: Record<string, unknown>;
+};
+
+/** Either profile version. V1 rows stay V1 — there is no auto-upgrade. */
+export type HostConfigOAuthProfile =
+  | HostConfigOAuthProfileV1
+  | HostConfigOAuthProfileV2;
+
 // Personal cloud workstation attached to a host: one machine per
 // (project, user), surfaced through computer-backed built-in tools (e.g.
 // `bash` in `builtInToolIds`) and the web terminal. `computer` is the
@@ -607,7 +822,7 @@ export type HostConfigInputV2 = {
   // means "this host's OAuth behavior has not been investigated yet" — which
   // is distinct from "it has no OAuth", spelled `authModel: { value: ["none"] }`
   // — which, being a claim about the whole client, must be the list's sole entry.
-  oauthProfile?: HostConfigOAuthProfileV1;
+  oauthProfile?: HostConfigOAuthProfile;
   // Per-server connection overrides scoped to this host config. Keys are
   // server IDs. Included in the canonical hash.
   serverConnectionOverrides?: Record<
@@ -663,8 +878,9 @@ export type CanonicalHostConfigV2 = {
   chatUiOverride?: Record<string, unknown>;
   mcpProfile?: HostConfigMcpProfileV1;
   // Mirrors HostConfigInputV2.oauthProfile. Optional + omitted when absent so
-  // every pre-feature row hashes byte-identically.
-  oauthProfile?: HostConfigOAuthProfileV1;
+  // every pre-feature row hashes byte-identically. Whichever profileVersion
+  // came in is what comes out — canonicalization never upgrades V1 to V2.
+  oauthProfile?: HostConfigOAuthProfile;
   serverConnectionOverrides?: Record<
     string,
     {

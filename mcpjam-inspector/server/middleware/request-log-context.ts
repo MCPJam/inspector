@@ -153,15 +153,20 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     // unbounded string would bloat the log line. 500 chars keeps the cause.
     const errorMessage = rawErrorMessage?.slice(0, 500);
 
-    // Sentry capture is owned by the route's error handler / Sentry middleware;
-    // we deliberately don't forward here (default is sentry: false) to avoid
-    // double-capture for the same exception.
+    // Sentry capture is owned by `Hono.onError` -> `logger.error` (there is no
+    // Sentry middleware). We deliberately don't forward here (default is
+    // sentry: false) to avoid double-capture for the same exception.
     reqLogger.event(
       "http.request.failed",
       {
         statusCode: effectiveStatus,
         errorCode,
         ...(errorMessage ? { errorMessage } : {}),
+        // Present only for routes that produced a normalized error. This is
+        // where `ambiguous`-bucket volume becomes measurable without paging on
+        // it — see the field docs in `log-events.ts`.
+        ...(webErrorMeta?.origin ? { origin: webErrorMeta.origin } : {}),
+        ...(webErrorMeta?.slug ? { slug: webErrorMeta.slug } : {}),
       },
       { error: thrown instanceof Error ? thrown : undefined },
     );

@@ -39,7 +39,7 @@ The stats strip appears directly below the greeting and shows six metrics for yo
 | Tool executions · 30d | Tool calls made in the last 30 days |
 | Messages · 30d | Messages sent in the last 30 days |
 
-Click **projects** or **servers** to jump to the Servers tab. Click **eval suites** to jump to the Evals tab. The 30-day metrics refresh automatically in the background.
+Click **projects** or **servers** to jump to the Connect tab. Click **eval suites** to jump to the Evals tab. The 30-day metrics refresh automatically in the background.
 
 ## Recommended servers
 
@@ -47,9 +47,9 @@ The **Recommended servers** section shows a curated list of MCP servers. To conn
 
 1. Make sure you have an active project selected.
 2. Click **Connect** next to the server you want.
-3. MCPJam creates the server on your active project and navigates to the Servers tab.
+3. MCPJam creates the server on your active project and navigates to the Connect tab.
 
-If the server is already connected to your project, you'll see an info toast and be taken to the Servers tab instead.
+If the server is already connected to your project, you'll see an info toast and be taken to the Connect tab instead.
 
 ## Recommended clients
 
@@ -91,8 +91,11 @@ The agent acts by driving the inspector UI directly — every action it takes is
 | **Server management** | Adds, connects, disconnects, and removes MCP servers on the Connect screen by chat |
 | **App snapshot** | Reads the current state of the UI to observe before acting |
 | **Documentation & web search** | Answers questions about MCPJam features and MCP concepts |
+| **Clarifying questions** | Asks a multiple-choice question inline when a request is genuinely ambiguous, then continues the same turn with your answer |
 
 For server management, adding and connecting are always two separate steps — the agent saves the server first, then connects it, so you can see each change as it happens. If a server requires OAuth authorization, the agent reports that and waits for you to click **Authorize** yourself; it never redirects the page on your behalf. Removing a server is irreversible from chat, so it always pauses for approval even when the **Tool approval** toggle is off.
+
+When the agent needs to clarify your intent before acting, it renders a question card inline in the thread with 2–4 choices. A **Something else** option is always present so you can answer in your own words if none of the choices fit. Once you pick an option or type a free-text answer, the agent continues the same turn with your response. If you send a new message or press **Stop** instead of answering, the question is dismissed and the agent does not attempt to answer the original request — it responds to whatever you say next.
 
 Actions that mutate the UI (such as running a tool call) pause for your explicit approval before they run when the **Tool approval** toggle is on. Destructive actions — those that can't be undone by looking at the screen — always pause for approval regardless of the toggle setting.
 

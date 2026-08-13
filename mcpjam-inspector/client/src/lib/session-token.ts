@@ -298,10 +298,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // The first-party UI calling its own public harness endpoint
   // (`/api/v1/harness/:id/builtin-tools`) to list a harness's native tools.
   // `/api/v1/*` is bearer-gated (bearerAuthMiddleware reads `Authorization`),
-  // and the UI doesn't otherwise call the public API, so this is the only v1
-  // path that needs the user's bearer attached. Scoped to `/harness/` — not all
+  // and the UI doesn't otherwise call the public API, so these are the only v1
+  // paths that need the user's bearer attached. Scoped path-by-path — not all
   // of `/api/v1/` — so unrelated public-API routes don't get the UI bearer.
   "/api/v1/harness/",
+  // The org-settings Capabilities page reading the agent's op registry, so its
+  // toggles cannot drift from the tools the server actually offers.
+  "/api/v1/agent-ops",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
@@ -322,6 +325,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // needs the bearer for the hosted-issuer forward (harmless locally).
   // Boundary matching keeps this from also matching /token-exchange.
   "/api/mcp/xaa/token",
+  // Local-computer consent capability (grant/verify/revoke): the routes mount
+  // `requireVerifiedAuth`, so they need the user's WorkOS bearer. Attaching
+  // via authFetch (not a manual header) keeps the on-401 session-token refresh
+  // so a dev-server restart doesn't strand consent at 401 until a page reload.
+  "/api/mcp/computers/local-consent",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
 ];

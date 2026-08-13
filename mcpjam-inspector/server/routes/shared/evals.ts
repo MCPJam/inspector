@@ -35,6 +35,7 @@ import {
   type ProbeConfig,
   type TestCaseType,
 } from "@/shared/probe-config";
+import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -324,6 +325,21 @@ export const RunEvalsRequestSchema = z.object({
    */
   runGroupId: z.string().optional(),
   /**
+   * Caller-supplied write idempotency key, forwarded to Convex
+   * `startTestSuiteRun.idempotencyKey`. A repeat call with the same key (and
+   * the same actor + suite) returns the EXISTING run instead of creating and
+   * billing a second one.
+   *
+   * DECLARED ON THE WIRE, not just server-internal: unattended callers are
+   * exactly the ones that retry. The Slack bot derives it from the triggering
+   * event so a redelivered event or a double-clicked button lands on one run,
+   * and the scheduled worker passes its trigger id. Zod strips unknown keys
+   * silently, so leaving this undeclared meant a caller could send the key,
+   * get a 202, and still be billed twice — with nothing to indicate the key
+   * had been dropped.
+   */
+  idempotencyKey: z.string().min(1).max(256).optional(),
+  /**
    * Project-environment launch (one per attached env on a Run-all fan-out;
    * always sent explicitly, even single-env). `prepareEvalRun` resolves the
    * environment's closed server set via
@@ -363,14 +379,11 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
    * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
-   * the scheduled-evals worker passes 'schedule'.
+   * the scheduled-evals worker passes 'schedule', and the GitHub-checks
+   * worker passes 'github_check'. Server-internal on purpose: it is NOT on
+   * `RunEvalsRequestSchema`, so API callers cannot spoof run provenance.
    */
-  source?: "ui" | "api" | "schedule";
-  /**
-   * Forwarded to `startTestSuiteRun.idempotencyKey`. The scheduled worker
-   * passes its trigger id so claim retries can never double-create a run.
-   */
-  idempotencyKey?: string;
+  source?: "ui" | "api" | "schedule" | "github_check";
   /**
    * Pre-resolved environment from the caller's manager-priming preflight (the
    * hosted `/run` route and the scheduled worker resolve the environment ONCE
@@ -1055,6 +1068,14 @@ export async function authorEvalSuite(args: {
   passCriteria: RunEvalsRequest["passCriteria"];
   suiteRerun: boolean | undefined;
   refreshSnapshot: boolean | undefined;
+  /**
+   * Caller-supplied write idempotency key (see utils/idempotency.ts). When
+   * set, the suite create and EACH case create derive a stable per-row key, so
+   * a retry lands on the same suite and only re-creates the cases that did not
+   * commit. Per-case keys are derived from the case discriminator rather than
+   * its index: a retry whose case ORDER differs must still match.
+   */
+  idempotencyKey?: string;
 }): Promise<{
   suiteId: string;
   suiteName: string | undefined;
@@ -1076,6 +1097,7 @@ export async function authorEvalSuite(args: {
     passCriteria,
     suiteRerun,
     refreshSnapshot,
+    idempotencyKey,
   } = args;
 
   const persistedEnvironment = buildPersistedSuiteEnvironment({
@@ -1169,7 +1191,7 @@ export async function authorEvalSuite(args: {
         { suiteId: resolvedSuiteId }
       );
 
-      for (const [, testCaseData] of testCaseMap.entries()) {
+      for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
         const testCaseStepsKey = JSON.stringify(
           normalizeForComparison(testCaseData.steps || [])
         );
@@ -1300,6 +1322,14 @@ export async function authorEvalSuite(args: {
               ),
               matchOptions: testCaseData.matchOptions,
               predicates: testCaseData.predicates,
+              ...(idempotencyKey
+                ? {
+                    idempotencyKey: deriveItemIdempotencyKey(
+                      idempotencyKey,
+                      caseDedupeKey
+                    ),
+                  }
+                : {}),
             });
             committedCases.push({ name: testCaseData.title });
           }
@@ -1326,6 +1356,7 @@ export async function authorEvalSuite(args: {
         description: suiteDescription,
         environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
       }
     );
 
@@ -1335,7 +1366,7 @@ export async function authorEvalSuite(args: {
 
     resolvedSuiteId = createdSuite._id as string;
 
-    for (const [, testCaseData] of testCaseMap.entries()) {
+    for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
       try {
         await convexClient.mutation("testSuites:createTestCase" as any, {
           suiteId: resolvedSuiteId,
@@ -1356,6 +1387,14 @@ export async function authorEvalSuite(args: {
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
+          ...(idempotencyKey
+            ? {
+                idempotencyKey: deriveItemIdempotencyKey(
+                  idempotencyKey,
+                  caseDedupeKey
+                ),
+              }
+            : {}),
         });
         committedCases.push({ name: testCaseData.title });
       } catch (error) {
@@ -1649,6 +1688,11 @@ export async function prepareEvalRun(
       passCriteria,
       suiteRerun,
       refreshSnapshot,
+      // The SAME key the run creation uses. Without it, a retried
+      // /eval-runs call authors a second suite and duplicates its cases
+      // BEFORE the run-level idempotency check runs — and the new suite id
+      // then prevents that check from finding the original run at all.
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     });
   const committedCases = authoredCaseUpsert.committed;
   const failedCases = authoredCaseUpsert.failed;

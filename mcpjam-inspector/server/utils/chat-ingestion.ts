@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import type { ChatRewind } from "@/shared/chat-v2";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -178,7 +179,6 @@ interface PersistChatSessionOptions {
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   chatboxId?: string;
-  accessVersion?: number;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -195,6 +195,7 @@ interface PersistChatSessionOptions {
   timeoutMs?: number;
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
+  rewind?: ChatRewind;
   turnTrace?: PersistedTurnTrace;
   /**
    * §3: chat-backed harness resume-state commit. Applied ATOMICALLY with the
@@ -411,9 +412,11 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.chatboxId ? { chatboxId: options.chatboxId } : {}),
-        ...(options.chatboxId && Number.isFinite(options.accessVersion)
-          ? { accessVersion: options.accessVersion }
-          : {}),
+        // `accessVersion` is deliberately NOT sent: the backend's ingest
+        // query never reads it, and ingestion is deliberately NOT version
+        // enforced — it persists a turn that ALREADY ran, so a rebind
+        // landing mid-turn must not cost the transcript. Auth here stays the
+        // grant check (resolveHostedSessionAccess by chatboxId).
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }
@@ -441,6 +444,7 @@ export async function persistChatSessionToConvex(
         ...(options.expectedVersion !== undefined
           ? { expectedVersion: options.expectedVersion }
           : {}),
+        ...(options.rewind ? { rewind: options.rewind } : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
         ...(options.harnessSessionCommit
           ? { harnessSessionCommit: options.harnessSessionCommit }

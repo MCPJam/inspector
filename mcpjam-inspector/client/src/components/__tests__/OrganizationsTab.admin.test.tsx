@@ -23,10 +23,29 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+  // `SettingsNav` reaches `useGithubChecksAvailability`, which queries Convex.
+  // Without this the mock is missing an export the tree now needs.
+  useQuery: () => undefined,
+  useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
+}));
+
+// SettingsNav (rendered inside the members admin area) resolves GitHub
+// Checks tab availability itself via a hook that calls convex/react's
+// useQuery — which the blanket mock above doesn't provide. This suite
+// doesn't exercise that tab, so a stubbed "not available yet" is enough.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
 }));
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
+}));
+
+// SettingsNav asks the backend for GitHub Checks availability on every settings
+// surface, including this one. Stubbed to keep that query out of these tests.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
 }));
 
 vi.mock("@/hooks/useOrganizations", async () => {
@@ -244,6 +263,24 @@ describe("OrganizationsTab member management", () => {
     mockUpdateOrganizationLogo.mockResolvedValue({ success: true });
   });
 
+  // The org page is one of four Settings sections and has to render inside the
+  // same shell as the rest. It used to own its container and skip the page
+  // heading, so selecting Organization moved the tab strip out from under the
+  // pointer and dropped "Settings" off the page.
+  it("renders inside the shared settings shell", () => {
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Settings sections" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Organization settings sections" })
+    ).toBeInTheDocument();
+  });
+
   it("shows members section for owners and allows role changes", async () => {
     render(<OrganizationsTab organizationId="org-1" />);
 
@@ -287,10 +324,10 @@ describe("OrganizationsTab member management", () => {
 
     expect(screen.getByText("Members")).toBeInTheDocument();
     expect(
-      screen.queryByText("change-role-member@example.com"),
+      screen.queryByText("change-role-member@example.com")
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText("transfer-member@example.com"),
+      screen.queryByText("transfer-member@example.com")
     ).not.toBeInTheDocument();
   });
 
@@ -355,12 +392,23 @@ describe("OrganizationsTab member management", () => {
     expect(screen.getByText("Access restricted")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "You don't have permission to view organization settings. Contact an admin or owner for access.",
-      ),
+        "You don't have permission to view organization settings. Contact an admin or owner for access."
+      )
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Go to Servers" }),
+      screen.getByRole("button", { name: "Go to Servers" })
     ).toBeInTheDocument();
+    // Without the shell this state is a dead end — no way to any other
+    // Settings section.
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Settings sections" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Organization" })
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("lets a non-admin member leave from the access restricted screen", async () => {
@@ -405,11 +453,11 @@ describe("OrganizationsTab member management", () => {
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(
-      screen.getByText("Sign in to manage organizations"),
+      screen.getByText("Sign in to manage organizations")
     ).toBeInTheDocument();
     expect(mockUseOrganizationBilling).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(signIn).toHaveBeenCalledTimes(1);
   });
 
@@ -482,12 +530,12 @@ describe("OrganizationsTab member management", () => {
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(screen.getByTestId("pending-seat-payment-notice")).toHaveTextContent(
-      "Finish payment to add new@example.com",
+      "Finish payment to add new@example.com"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
     await waitFor(() =>
-      expect(finishSeatPayment).toHaveBeenCalledWith(undefined),
+      expect(finishSeatPayment).toHaveBeenCalledWith(undefined)
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -561,7 +609,9 @@ describe("OrganizationsTab member management", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByRole("button", { name: "Finish payment" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Finish payment" })
+    ).toBeDisabled();
     const cancelButton = screen.getByRole("button", { name: "Cancel" });
     expect(cancelButton).toBeEnabled();
 

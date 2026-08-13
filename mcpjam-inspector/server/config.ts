@@ -18,6 +18,18 @@ export const LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
 // Uses VITE_ prefix so the same variable works for both server and client build
 export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 
+/**
+ * Local computer engine (agents running bash on the machine that runs this
+ * inspector) — server-side kill switch, enforced independently of any client
+ * flag: the engine resolver, the consent routes, and the local terminal all
+ * check it. FORCED off in hosted mode regardless of env — a hosted server
+ * must never execute model-driven commands on itself. `MCPJAM_LOCAL_COMPUTER_ENABLED=false`
+ * is the emergency/managed-install off switch; default is on for local
+ * inspectors (the per-user gate is the consent capability, not this flag).
+ */
+export const LOCAL_COMPUTER_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
+
 export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
 
 /**
@@ -31,7 +43,6 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  */
 export const EVAL_WIDGET_MODEL_CONTEXT =
   process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
-
 
 export const EMPLOYEE_EMAIL_DOMAINS = (
   process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
@@ -115,7 +126,8 @@ export const ELICITATION_SERVICE_ROUTE_TIMEOUT_MS = 10_000;
  * sequential elicitations. Slack over the longest single TTL so a form answered
  * at the last second still lands.
  */
-export const ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 30_000;
+export const ELICITATION_TIMEOUT_EXTENSION_MS =
+  ELICITATION_FORM_TTL_MS + 30_000;
 
 // ── Hosted MRTR continuation transport (MCP 2026-07-28 §12.5) ────────────────
 //
@@ -187,5 +199,16 @@ export const CANIUSE_LANDING_HOSTS = new Set(
   (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev")
     .split(",")
     .map((h) => h.trim().toLowerCase())
-    .filter((h) => h.length > 0),
+    .filter((h) => h.length > 0)
+);
+
+// Vanity domains whose root path ("/") should land on the conformance-score
+// runner. score.mcpjam.com is this same service under another name — no
+// separate deploy — so the only thing it needs is a root redirect. Deep links
+// (`/results/<token>`) pass through untouched.
+export const SCORE_LANDING_HOSTS = new Set(
+  (process.env.SCORE_LANDING_HOSTS ?? "score.mcpjam.com,www.score.mcpjam.com")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h.length > 0)
 );

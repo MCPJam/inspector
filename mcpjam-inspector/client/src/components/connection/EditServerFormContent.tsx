@@ -1,5 +1,5 @@
 import { Input } from "@mcpjam/design-system/input";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -14,7 +14,10 @@ import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeContro
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
-import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
+import {
+  fetchServerSecretKeys,
+  fetchServerSecrets,
+} from "@/lib/apis/server-secrets-api";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
@@ -65,6 +68,50 @@ export function EditServerFormContent({
   );
   const [bearerRevealError, setBearerRevealError] = useState<string | null>(
     null
+  );
+
+  // Names of the stored env vars / headers, so the masked rows can say which
+  // ones are set. Held here rather than in form state: they are labels, not
+  // values, and rows built from them must never be saved back over the
+  // secrets they stand for.
+  const [storedEnvKeys, setStoredEnvKeys] = useState<string[]>([]);
+  const [storedHeaderNames, setStoredHeaderNames] = useState<string[]>([]);
+
+  const loadStoredKeys = useCallback(async () => {
+    if (!projectId || !hostedServerId) return;
+    try {
+      const { envKeys, headerKeys } = await fetchServerSecretKeys({
+        projectId,
+        serverId: hostedServerId,
+      });
+      setStoredEnvKeys(envKeys);
+      setStoredHeaderNames(headerKeys);
+    } catch {
+      // Leaves the rows unnamed: the section falls back to the single masked
+      // field, which doubles as the retry for the values themselves.
+    }
+  }, [hostedServerId, projectId]);
+
+  // A stored Authorization header only stops being a header row when the
+  // reveal would route it into the bearer field, and `revealStoredHeaders`
+  // does that for a bearer server whose stored Authorization actually carries
+  // a `Bearer ` token — which is exactly what `hasStoredBearerToken` flags.
+  // An OAuth/none server can hold an Authorization header of its own (Basic
+  // auth, say); dropping that from the names would hide a row that reappears
+  // the moment the values land. Derived rather than filtered at fetch time, so
+  // changing the auth type re-answers the question without another request.
+  const authorizationBecomesBearerToken =
+    formState.authType === "bearer" && formState.hasStoredBearerToken;
+  const storedHeaderKeys = useMemo(
+    () =>
+      storedHeaderNames.filter(
+        (key) =>
+          !(
+            authorizationBecomesBearerToken &&
+            key.trim().toLowerCase() === "authorization"
+          )
+      ),
+    [storedHeaderNames, authorizationBecomesBearerToken]
   );
 
   const revealSecrets = useCallback(
@@ -291,6 +338,10 @@ export function EditServerFormContent({
             onXaaAllowPathScopedIssuerChange={
               formState.setXaaAllowPathScopedIssuer
             }
+            oauthAllowPathScopedIssuer={formState.oauthAllowPathScopedIssuer}
+            onOauthAllowPathScopedIssuerChange={
+              formState.setOauthAllowPathScopedIssuer
+            }
             xaaSubject={formState.xaaSubject}
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}
@@ -325,6 +376,9 @@ export function EditServerFormContent({
             isRevealing={revealingEnv}
             revealError={envRevealError}
             onReveal={() => revealSecrets("env")}
+            storedEnvKeys={storedEnvKeys}
+            onRequestStoredKeys={loadStoredKeys}
+            maskingKey={hostedServerId}
           />
         )}
 
@@ -374,6 +428,9 @@ export function EditServerFormContent({
                 isRevealingHeaders: revealingHeaders,
                 headersRevealError,
                 onRevealHeaders: () => revealSecrets("headers"),
+                storedHeaderKeys,
+                onRequestStoredKeys: loadStoredKeys,
+                maskingKey: hostedServerId,
                 headersWarning: formState.oauthAuthorizationHeaderWarning,
               }
             : {})}

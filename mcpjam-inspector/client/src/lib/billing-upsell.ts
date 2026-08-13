@@ -31,10 +31,12 @@ function formatChatboxesPerProjectLabel(
   value: number | null | undefined,
 ): string {
   if (value == null) {
-    return "unlimited chatboxes per project";
+    return "unlimited user testing scenarios per project";
   }
 
-  return `${value} ${value === 1 ? "chatbox" : "chatboxes"} per project`;
+  return `${value} user testing ${
+    value === 1 ? "scenario" : "scenarios"
+  } per project`;
 }
 
 function formatPlanTeaserPrice(

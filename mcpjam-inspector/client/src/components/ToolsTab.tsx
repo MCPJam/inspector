@@ -48,6 +48,16 @@ import {
   driveScopeStepUpFromChallenge,
   resetScopeStepUp,
 } from "@/lib/scope-step-up";
+import {
+  isActionableStepUpChallenge,
+  parseInsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
+import {
+  claimPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  savePendingDirectScopeStepUpReplay,
+  type DirectScopeStepUpReplayDescriptor,
+} from "@/lib/scope-step-up-replay";
 import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig, TaskMode } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
@@ -61,6 +71,7 @@ import type { ToolQualityInfo } from "./tools/ToolItem";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -596,7 +607,11 @@ export function ToolsTab({
   // legitimate scope step-up starts fresh rather than inheriting a stale count
   // that would prematurely throw. Called from BOTH success paths — an immediate
   // `completed` result and a task-augmented `task_created`.
-  const resetStepUpOnSuccess = () => resetScopeStepUp(server);
+  const resetStepUpOnSuccess = (toolName: string) =>
+    resetScopeStepUp(server, {
+      method: "tools/call",
+      operation: toolName,
+    });
 
   // `scopeAtCall` is the auth/org scope captured when the ORIGINATING
   // execution started, threaded as a plain parameter: `executeTool` passes
@@ -607,7 +622,8 @@ export function ToolsTab({
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
     toolName: string,
-    scopeAtCall: string | undefined
+    scopeAtCall: string | undefined,
+    replayDescriptor?: DirectScopeStepUpReplayDescriptor,
   ) => {
     const durationMs =
       "durationMs" in response && typeof response.durationMs === "number"
@@ -620,7 +636,7 @@ export function ToolsTab({
       const callResult = response.result;
       setResult(callResult);
 
-      resetStepUpOnSuccess();
+      resetStepUpOnSuccess(toolName);
 
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
@@ -656,7 +672,7 @@ export function ToolsTab({
       // A task-augmented tool that succeeds lands here, not in the `completed`
       // branch — reset the step-up counter on this success path too so a stale
       // count doesn't prematurely throw a later legitimate step-up.
-      resetStepUpOnSuccess();
+      resetStepUpOnSuccess(toolName);
 
       // Track the task locally so it appears in the Tasks tab, under the
       // scope captured when the originating call started (`scopeAtCall`).
@@ -710,12 +726,69 @@ export function ToolsTab({
       // `manual` leave the surfaced error in place.
       // Dedup, the actionable-challenge gate and the in-flight guard all live
       // in the shared lifecycle, which every surface now routes through.
+      const challenge = parseInsufficientScopeChallenge(
+        (response as { insufficientScope?: unknown }).insufficientScope,
+      );
+      if (
+        replayDescriptor?.kind === "tool" &&
+        isActionableStepUpChallenge(challenge)
+      ) {
+        savePendingDirectScopeStepUpReplay({
+          operation: {
+            resourceUrl: String(
+              (server?.config as any)?.url ?? serverName ?? "",
+            ),
+            method: "tools/call",
+            operation: toolName,
+          },
+          descriptor: replayDescriptor,
+        });
+      }
       driveScopeStepUpFromChallenge(
         server,
-        (response as { insufficientScope?: unknown }).insufficientScope,
+        challenge,
+        { method: "tools/call", operation: toolName },
       );
     }
   };
+
+  useEffect(() => {
+    if (!serverName || !isServerConnected) return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "tools",
+    });
+    if (!pending || pending.descriptor.kind !== "tool") return;
+    const descriptor = pending.descriptor;
+    setSelectedTool(descriptor.toolName);
+    setLoadingExecuteTool(true);
+    setError("");
+    void executeToolApi(
+      descriptor.serverName,
+      descriptor.toolName,
+      descriptor.parameters,
+      descriptor.taskOptions,
+      descriptor.allowTaskResult,
+    )
+      .then((response) => {
+        handleExecutionResponse(
+          response,
+          descriptor.toolName,
+          getTrackedTaskScope(),
+        );
+      })
+      .catch((error) => {
+        setError(
+          `Authorization finished, but the tool could not be replayed safely: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      })
+      .finally(() => {
+        setLoadingExecuteTool(false);
+        clearPendingDirectScopeStepUpReplay();
+      });
+  }, [isServerConnected, serverName]);
 
   const executeTool = async () => {
     // Captured before ANY await, as a local owned by THIS execution: the
@@ -790,12 +863,27 @@ export function ToolsTab({
         taskOptions,
         allowTaskResult
       );
-      handleExecutionResponse(response, selectedTool, scopeAtCall);
+      handleExecutionResponse(response, selectedTool, scopeAtCall, {
+        kind: "tool",
+        surface: "tools",
+        serverName,
+        toolName: selectedTool,
+        parameters: params,
+        ...(taskOptions ? { taskOptions } : {}),
+        ...(allowTaskResult !== undefined ? { allowTaskResult } : {}),
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Tool execution network error", {
         toolName: selectedTool,
         error: message,
+      });
+      // The console line was the only trace this left. Gated and
+      // origin-filtered: a tool call failing because the user's server is down
+      // is not ours to hear about.
+      reportPossiblyOurFailure(err, {
+        source: "tools_tab_execute",
+        extra: { toolName: selectedTool },
       });
       setError(message);
     } finally {

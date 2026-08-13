@@ -4,6 +4,13 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
+import {
+  CloudUnreachableNotice,
+  EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
+} from "@/components/computer/CloudUnreachableNotice";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
 import { toast } from "sonner";
@@ -11,6 +18,7 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   buildHostNamesById,
   compareRunsBySequence,
+  evalSuitePinsSandboxImage,
   getLatestRunMetricSource,
   getRunMetricSource,
   runEnvironmentRef,
@@ -42,6 +50,9 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { ScheduleEditor } from "./schedule-editor";
+import { SuiteGithubChecksSection } from "./suite-github-checks-section";
+import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
@@ -158,6 +169,52 @@ function SettingsSection({
   );
 }
 
+/**
+ * The GitHub Checks section, availability read and chrome included.
+ *
+ * The read lives HERE rather than in `SuiteIterationsView` for one reason: it
+ * can throw, and it must be able to fail inside a boundary. Availability is
+ * backend-decided, and the backend REFUSES rather than answers for a caller who
+ * is not a signed-in member of the org (a guest actor, a stale org id in client
+ * state) — see `useGithubChecksSettings`. `useQuery` re-throws that during
+ * render, so a hook called in `SuiteIterationsView` itself takes the entire
+ * suite page down with it. It did: the two settings call sites have always
+ * wrapped this hook in an `ErrorBoundary`, the call site added here did not.
+ *
+ * A refused beta gate means "no section", never "no page", so the boundary at
+ * the render site below renders nothing. It still reports to Sentry — silence
+ * is the UI choice, not the telemetry one.
+ *
+ * Not a PostHog flag like its neighbours in the settings sheet: a client-side
+ * twin of a server-evaluated gate could disagree with it, offering a section
+ * whose every write the server then refuses. One authority, asked once.
+ */
+function SuiteGithubChecksSettingsSection({
+  suiteId,
+  projectId,
+  organizationId,
+}: {
+  suiteId: string;
+  projectId?: string | null;
+  organizationId?: string | null;
+}) {
+  const availability = useGithubChecksAvailability(organizationId);
+  if (availability?.state !== "enabled") return null;
+
+  return (
+    <SettingsSection
+      label="GitHub Checks"
+      hint="Run this suite on every pull request to a connected repository."
+    >
+      <SuiteGithubChecksSection
+        suiteId={suiteId}
+        projectId={projectId}
+        organizationId={organizationId}
+      />
+    </SettingsSection>
+  );
+}
+
 export function SuiteIterationsView({
   suite,
   cases,
@@ -182,6 +239,7 @@ export function SuiteIterationsView({
   route,
   userMap,
   projectId = null,
+  organizationId = null,
   navigation,
   onSetupCi,
   onCreateTestCase,
@@ -207,7 +265,7 @@ export function SuiteIterationsView({
   onContinueInChat,
   projectServers,
   generateTestCasesDisabledReason,
-  evalRunsDisabledReason,
+  evalRunsDisabledReason: evalRunsDisabledReasonProp,
   isDirectGuest = false,
   ensureServersReady,
 }: {
@@ -234,6 +292,8 @@ export function SuiteIterationsView({
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
+  /** Active org, for the backend-gated GitHub Checks section. Absent ⇒ hidden. */
+  organizationId?: string | null;
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
@@ -397,6 +457,23 @@ export function SuiteIterationsView({
   const computerEnvironments = useSandboxImages(
     computersEnabled && projectId ? projectId : null
   );
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  // Cloud-sandbox preflight, derived ONCE here — the parent owns every run
+  // control (header Run all, run-detail rerun/replay, per-case play buttons
+  // in both dashboards), so deriving any lower down leaves some of them
+  // ungated. Folded into the same disabled-reason channel billing uses.
+  const attachedEnvironments = useProjectEnvironments(
+    (suite.environmentIds?.length ?? 0) > 0 ? (projectId ?? null) : null
+  );
+  const suitePinsSandboxImage = evalSuitePinsSandboxImage(
+    suite,
+    attachedEnvironments ?? undefined
+  );
+  const evalRunsDisabledReason =
+    evalRunsDisabledReasonProp ??
+    (suitePinsSandboxImage && ephemeralCloudAvailable === false
+      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
+      : null);
   // Hosts available to attach in the header's "+ Attach host" picker. The
   // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
   // pure-props and renderable in test environments without a Convex provider.
@@ -673,7 +750,6 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
-  const ciEnabled = useFeatureFlagEnabled("evaluate-ci") === true;
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
 
@@ -830,6 +906,7 @@ export function SuiteIterationsView({
       onRunClick={handleRunClick}
       onDirectDeleteRun={onDirectDeleteRun}
       onRunTestCase={onRunTestCaseWithOverride}
+      quickRunIterationOverride={iterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={Boolean(
         rerunningSuiteId || replayingRunId || evalRunsDisabledReason
@@ -936,7 +1013,7 @@ export function SuiteIterationsView({
             aggregate={aggregate}
             testCases={cases}
             onSetupCi={onSetupCi}
-            onOpenExportSuite={ciEnabled ? handleOpenSuiteExport : undefined}
+            onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
@@ -954,7 +1031,6 @@ export function SuiteIterationsView({
             onSuiteHostAttachmentsUpdate={
               readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
-            projectHosts={projectHosts}
             omitRunDetailIdentity={omitRunDetailIdentity}
           />
         </div>
@@ -986,7 +1062,7 @@ export function SuiteIterationsView({
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
-                  onExportDraft={ciEnabled ? handleOpenDraftExport : undefined}
+                  onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
@@ -1212,6 +1288,7 @@ export function SuiteIterationsView({
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                       onRunTestCase={onRunTestCaseWithOverride}
+                      quickRunIterationOverride={iterationOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
@@ -1385,6 +1462,12 @@ export function SuiteIterationsView({
               {computersEnabled && projectId ? (
                 <SettingsSection
                   label="Computer environment"
+                  labelAccessory={
+                    <CloudRunBadge
+                      tooltip="Eval iterations run their computer commands in disposable MCPJam cloud sandboxes — never on the machine running this inspector."
+                      data-testid="suite-eval-cloud-run-badge"
+                    />
+                  }
                   layout="inline"
                   inlineSlot={
                     <select
@@ -1441,8 +1524,19 @@ export function SuiteIterationsView({
                     Each eval iteration boots a fresh sandbox from this image
                     and the agent gets a <span className="font-mono">bash</span>{" "}
                     tool in it. Build the environment before running, or the run
-                    fails fast.
+                    fails fast. Eval computer commands always run in MCPJam
+                    cloud sandboxes — never on the machine running this
+                    inspector.
                   </p>
+                  {suitePinsSandboxImage && ephemeralCloudAvailable === false ? (
+                    <div className="mt-2">
+                      <CloudUnreachableNotice
+                        data-testid="suite-eval-cloud-unreachable"
+                        message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
+                        detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
+                      />
+                    </div>
+                  ) : null}
                 </SettingsSection>
               ) : null}
 
@@ -1554,6 +1648,24 @@ export function SuiteIterationsView({
                   />
                 </SettingsSection>
               ) : null}
+
+              {/* ── GitHub Checks (backend-gated) ────────────────────── */}
+              {/* Keyed by org id: the boundary holds its error state forever
+                  once tripped (fallback={null} exposes no reset), and the org
+                  id here comes from client state — a stale value that later
+                  corrects itself must remount the boundary and re-ask, or the
+                  section stays hidden for the rest of the session. */}
+              <ErrorBoundary
+                key={organizationId ?? "no-organization"}
+                name="suite_github_checks"
+                fallback={null}
+              >
+                <SuiteGithubChecksSettingsSection
+                  suiteId={suite._id}
+                  projectId={projectId}
+                  organizationId={organizationId}
+                />
+              </ErrorBoundary>
 
               {/* ── LLM as Judge ─────────────────────────────────────── */}
               <SettingsSection

@@ -1221,7 +1221,7 @@ describe("useServerState OAuth callback failures", () => {
       errorToastMessage(
         "OAuth authorization failed: access_denied: User denied access",
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(window.location.pathname).toBe("/servers");
@@ -1251,7 +1251,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage("Error completing OAuth flow: Token exchange failed"),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
@@ -1797,7 +1797,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(
       dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST")
@@ -1821,7 +1821,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(testConnectionMock).not.toHaveBeenCalled();
     expect(mockCreateServer).not.toHaveBeenCalled();
@@ -1858,7 +1858,7 @@ describe("useServerState OAuth callback failures", () => {
     });
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
@@ -1931,6 +1931,176 @@ describe("useServerState OAuth callback failures", () => {
       },
     });
   });
+
+  it.each([
+    [
+      "http",
+      { type: "http", url: "https://example.com/mcp", timeout: 120000 },
+    ],
+    [
+      "stdio",
+      { type: "stdio", command: "node", args: ["server.js"], timeout: 120000 },
+    ],
+  ])(
+    "prefers a %s server's own timeout over the host-wide connection default",
+    async (_transport, serverConfig) => {
+      const { reconnectServer } = await import("@/state/mcp-api");
+      const { ensureAuthorizedForReconnect } = await import(
+        "@/state/oauth-orchestrator"
+      );
+      vi.mocked(reconnectServer).mockResolvedValue({
+        success: true,
+        initInfo: { clientCapabilities: {} },
+      } as any);
+
+      const appState = createAppState();
+      appState.projects.default.servers["demo-server"].config =
+        serverConfig as any;
+      appState.servers["demo-server"].config = serverConfig as any;
+
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, appState, {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+        },
+      });
+      vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+        kind: "ready",
+        serverConfig: appState.projects.default.servers["demo-server"].config,
+        tokens: undefined,
+      } as any);
+
+      await result.current.handleReconnect("demo-server");
+
+      await waitFor(() => {
+        expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+      });
+
+      const [, effectiveConfig] =
+        vi.mocked(reconnectServer).mock.calls.at(-1) ?? [];
+      expect(effectiveConfig).toMatchObject({ timeout: 120000 });
+    },
+  );
+
+  // Third distinct value on purpose: 45000 is neither the server row's 120000
+  // nor the host's 10000, so this fails if the override lookup is dropped OR
+  // if either lower-precedence value leaks through.
+  it.each([
+    [
+      "http",
+      { type: "http", url: "https://example.com/mcp", timeout: 120000 },
+    ],
+    [
+      "stdio",
+      { type: "stdio", command: "node", args: ["server.js"], timeout: 120000 },
+    ],
+  ])(
+    "prefers a %s server's requestTimeoutOverride over its own timeout",
+    async (_transport, serverConfig) => {
+      const { reconnectServer } = await import("@/state/mcp-api");
+      const { ensureAuthorizedForReconnect } = await import(
+        "@/state/oauth-orchestrator"
+      );
+      vi.mocked(reconnectServer).mockResolvedValue({
+        success: true,
+        initInfo: { clientCapabilities: {} },
+      } as any);
+
+      const appState = createAppState();
+      appState.projects.default.servers["demo-server"].config =
+        serverConfig as any;
+      appState.servers["demo-server"].config = serverConfig as any;
+
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, appState, {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+          // Keyed by the Convex serverId `tryResolveProjectServer` returns,
+          // not the display name.
+          serverConnectionOverrides: {
+            srv_demo: { requestTimeoutOverride: 45000 },
+          },
+        },
+      });
+      vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+        kind: "ready",
+        serverConfig: appState.projects.default.servers["demo-server"].config,
+        tokens: undefined,
+      } as any);
+
+      await result.current.handleReconnect("demo-server");
+
+      await waitFor(() => {
+        expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+      });
+
+      const [, effectiveConfig] =
+        vi.mocked(reconnectServer).mock.calls.at(-1) ?? [];
+      expect(effectiveConfig).toMatchObject({ timeout: 45000 });
+    },
+  );
+
+  // The initial connect probe resolves its config through the SAME precedence
+  // as a reconnect. It used to lose the per-server override: callers applied
+  // `withProjectConnectionDefaults` without a serverId (they only know the
+  // display name), so the `serverConnectionOverrides` lookup was skipped and
+  // the override only took effect on the *second* connection.
+  it.each([
+    [
+      "http",
+      {
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    ],
+    [
+      "stdio",
+      {
+        name: "demo-server",
+        type: "stdio",
+        command: "node",
+        args: ["server.js"],
+      },
+    ],
+  ])(
+    "applies a %s server's requestTimeoutOverride on the initial connect probe",
+    async (_transport, formData) => {
+      testConnectionMock.mockResolvedValueOnce({
+        success: true,
+        initInfo: null,
+      });
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, createAppState(), {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+          serverConnectionOverrides: {
+            srv_demo: { requestTimeoutOverride: 45000 },
+          },
+        },
+      });
+
+      await act(async () => {
+        await result.current.handleConnect(formData as any);
+      });
+
+      expect(testConnectionMock.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({ timeout: 45000 }),
+      );
+    },
+  );
 
   it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
     // Repro of the client-switch toast bug: when the user switches clients
@@ -2273,7 +2443,7 @@ describe("useServerState OAuth callback failures", () => {
       errorToastMessage(
         "Network error: Failed to resolve registry OAuth config: registry lookup failed",
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
@@ -2369,7 +2539,7 @@ describe("useServerState OAuth callback failures", () => {
       ...appState.servers["demo-server"],
       oauthFlowProfile: {
         serverUrl: "https://example.com/mcp",
-        resourceUrl: "https://fresh.example.com",
+        resourceUrl: "https://example.com/mcp",
         clientId: "fresh-client-id",
         clientSecret: "",
         scopes: "fresh profile",
@@ -2395,7 +2565,7 @@ describe("useServerState OAuth callback failures", () => {
         serverName: "demo-server",
         serverUrl: "https://example.com/mcp",
         scopes: ["fresh", "profile"],
-        resourceUrl: "https://fresh.example.com",
+        resourceUrl: "https://example.com/mcp",
         customHeaders: { "X-Fresh": "profile" },
         clientId: "fresh-client-id",
         clientSecret: undefined,
@@ -2406,6 +2576,47 @@ describe("useServerState OAuth callback failures", () => {
         protocolVersion: "2025-11-25",
         registrationMode: "preregistered",
         registrationStrategy: "preregistered",
+      })
+    );
+  });
+
+  // Invariant: a connect-like intent cannot opt into a foreign resource
+  // audience. The shared request builder refuses it BEFORE the redirect, so the
+  // user sees a configuration error instead of leaving the page and coming back
+  // to an opaque token rejection.
+  it("refuses a cross-origin configured resource before redirecting", async () => {
+    readStoredOAuthConfigMock.mockReturnValueOnce({});
+
+    const appState = createAppState();
+    const profiledServer = {
+      ...appState.servers["demo-server"],
+      oauthFlowProfile: {
+        serverUrl: "https://example.com/mcp",
+        resourceUrl: "https://attacker.example.com/mcp",
+        clientId: "fresh-client-id",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+    };
+    appState.servers["demo-server"] = profiledServer as any;
+    appState.projects.default.servers["demo-server"] = profiledServer as any;
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "demo-server",
+        error: expect.stringContaining("attacker.example.com"),
       })
     );
   });
@@ -3041,7 +3252,7 @@ describe("syncServerToConvex name-collision recovery", () => {
       errorToastMessage(
         'A server named "taken-name" already exists. Choose a different name.'
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
     expect(dispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "REMOVE_SERVER" })

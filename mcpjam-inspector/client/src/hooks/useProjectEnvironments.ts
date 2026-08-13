@@ -1,6 +1,14 @@
+import { useMemo } from "react";
 import { useMutation, useQuery, useConvexAuth } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import {
+  isNamedEnvironment,
+  type ProjectEnvironmentOrigin,
+} from "@/lib/environment-label";
+// NOTE the import direction: `environment-label` imports ONLY a type from this
+// module (`import type`, erased at build), so this value import does not create
+// a runtime cycle. Keep it that way — a value import back this way would.
 
 /**
  * Client hooks for **Project environments** (mcpjam-backend
@@ -33,7 +41,32 @@ export type ProjectEnvironmentSkillSelection = {
 export interface ProjectEnvironmentView {
   environmentId: string;
   projectId: string;
-  name: string;
+  /**
+   * ABSENT on ad-hoc rows, which have no name by construction.
+   *
+   * Never render this directly — call `environmentLabel()` from
+   * `@/lib/environment-label`, which derives a label from row data when the
+   * name is missing. Rendering it raw is how a nameless row becomes a blank
+   * cell or an `Archive "undefined"?` confirmation.
+   */
+  name?: string;
+  /**
+   * Which KIND of row this is — see `@/lib/environment-label`.
+   *
+   * OPTIONAL for deploy skew: a backend that predates the split omits it, and
+   * every row it returns is named. Read it through `environmentOrigin()`, which
+   * falls back to name-presence, rather than testing this field directly.
+   */
+  origin?: ProjectEnvironmentOrigin;
+  /** Backend content fingerprint; the ad-hoc dedupe key. Ad-hoc rows only. */
+  fingerprint?: string;
+  /**
+   * Denormalized usage counters, bumped by `ensureAdhocEnvironment`. ABSENT is
+   * NOT zero — an older backend omits them, and a surface must render nothing
+   * rather than "0 runs" when it cannot tell the difference.
+   */
+  lastUsedAt?: number;
+  runCount?: number;
   description?: string;
   /** Exactly one host per environment. */
   hostId: string;
@@ -47,6 +80,14 @@ export interface ProjectEnvironmentView {
    * (undefined = unchanged) rather than sending it and clearing the pins.
    */
   pluginVersionIds?: string[];
+  /**
+   * Sandbox-image pin: the `computerEnvironments` image (see
+   * `useSandboxImages.ts` — NOT another project environment, despite the
+   * backend field name) that reproducibility runs boot a fresh ephemeral
+   * sandbox from. Backend accepts project-shared images only. Absent ⇒
+   * provider default base image.
+   */
+  computerEnvironmentId?: string | null;
   /** Bumped on every effective edit; optimistic-concurrency token. */
   revision: number;
   /** Present ⇒ archived (hidden from pickers; launches fail fast). */
@@ -59,10 +100,27 @@ export interface ProjectEnvironmentView {
  * Environments for a project. The management route passes
  * `includeArchived: true`; suite/journey pickers use the live-only default.
  * `undefined` while loading or when the query is skipped.
+ *
+ * ## Ad-hoc rows are excluded by default
+ *
+ * Most surfaces — every picker, the Connect strip, the schedule editor — offer
+ * environments a human chose to name. Ad-hoc rows are machine-minted and would
+ * flood them, so `includeAdhoc` is opt-in and this hook filters them out
+ * otherwise.
+ *
+ * That filter is deliberately REDUNDANT with the backend's own default (which
+ * also returns named-only). Belt and braces, because the two protect different
+ * failure modes: the backend default is what keeps already-deployed clients and
+ * the public `/v1` list correct during rollout, and this filter is what keeps
+ * THIS client correct against a backend that ignores the argument.
+ *
+ * Note the argument is only SENT when opting in. A backend that predates the
+ * split rejects unknown args with a validation error, so passing the default
+ * explicitly would turn a harmless skew into a hard failure.
  */
 export function useProjectEnvironments(
   projectId: string | null,
-  options?: { includeArchived?: boolean }
+  options?: { includeArchived?: boolean; includeAdhoc?: boolean }
 ): ProjectEnvironmentView[] | undefined {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -72,15 +130,22 @@ export function useProjectEnvironments(
   const normalizedProjectId = projectId?.trim() || null;
   const enableQuery =
     isAuthenticated && isUserReady && shouldQueryProjectId(normalizedProjectId);
-  return useQuery(
+  const includeAdhoc = options?.includeAdhoc ?? false;
+  const rows = useQuery(
     "projectEnvironments:listEnvironments" as any,
     enableQuery
       ? ({
           projectId: normalizedProjectId,
           ...(options?.includeArchived ? { includeArchived: true } : {}),
+          ...(includeAdhoc ? { origin: "all" } : {}),
         } as any)
       : "skip"
   ) as ProjectEnvironmentView[] | undefined;
+  return useMemo(() => {
+    if (rows === undefined) return undefined;
+    if (includeAdhoc) return rows;
+    return rows.filter(isNamedEnvironment);
+  }, [rows, includeAdhoc]);
 }
 
 /**
@@ -131,8 +196,102 @@ export function useCreateProjectEnvironment(): (args: {
    * is REJECTED by the backend — omit the field to mean "no pins".
    */
   pluginVersionIds?: string[];
+  /** Sandbox-image pin; omit for the default base image (create never clears). */
+  computerEnvironmentId?: string;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:createEnvironment" as any) as never;
+}
+
+/**
+ * Get-or-create the AD-HOC environment for a composition, in one transaction.
+ *
+ * `name` is absent from the argument list on purpose: an ad-hoc row cannot
+ * carry one, and accepting-then-ignoring a name would let a caller believe it
+ * had named something. Naming is {@link usePromoteProjectEnvironment}.
+ *
+ * The backend fingerprints the composition and returns an existing row when one
+ * matches, so this is idempotent — running the same stack fifty times yields one
+ * row. The fingerprint is computed server-side and never crosses the wire,
+ * which is what makes a client/server canonicalizer drift impossible.
+ *
+ * MEMBER-gated, unlike `createEnvironment`'s admin escalation for plugin pins —
+ * except that pinning plugins escalates here too, for the same reason it does
+ * there: pinning a version is plugin-lifecycle authority, and this must not
+ * become a side door into it.
+ *
+ * `created` distinguishes a mint from a match. A backend that omits it reads as
+ * a reuse, which only costs a word in a toast.
+ */
+export function useEnsureAdhocEnvironment(): (args: {
+  projectId: string;
+  hostId: string;
+  serverAttachmentId?: string | null;
+  skillSelection?: ProjectEnvironmentSkillSelection | null;
+  computerEnvironmentId?: string;
+}) => Promise<{ environment: ProjectEnvironmentView; created?: boolean }> {
+  return useMutation(
+    "projectEnvironments:ensureAdhocEnvironment" as any
+  ) as never;
+}
+
+/**
+ * Batch form: get-or-create one ad-hoc environment per composition, atomically.
+ *
+ * Preferred over N sequential {@link useEnsureAdhocEnvironment} calls on the
+ * launch path. A swarm fans out to up to `MAX_ENVIRONMENTS_PER_JOURNEY` clients,
+ * and the per-call loop it replaces could fail midway and leave orphan rows
+ * behind. One transaction makes materialization all-or-nothing, and two
+ * identical stacks in one batch resolve to one row naturally (the second lookup
+ * sees the first insert).
+ *
+ * Results are returned in input order.
+ */
+export function useEnsureAdhocEnvironments(): (args: {
+  projectId: string;
+  stacks: Array<{
+    hostId: string;
+    serverAttachmentId?: string | null;
+    skillSelection?: ProjectEnvironmentSkillSelection | null;
+    computerEnvironmentId?: string;
+  }>;
+}) => Promise<
+  Array<{ environment: ProjectEnvironmentView; created?: boolean }>
+> {
+  return useMutation(
+    "projectEnvironments:ensureAdhocEnvironments" as any
+  ) as never;
+}
+
+/**
+ * Promote an ad-hoc row to a named environment, IN PLACE.
+ *
+ * The returned row keeps the SAME `environmentId`. That is not an
+ * implementation detail — synthetic swarm session ids are derived from it
+ * (`shared/swarm-session-id.ts`: `synth_<runId>_env_<environmentId>_<idx>`), so
+ * an implementation that inserted a new row and archived the old one would make
+ * every historical run's session cells unresolvable. Any change here must keep
+ * the id stable.
+ *
+ * MEMBER-gated, matching `createEnvironment`. Promotion touches only the name,
+ * description, and kind — by construction it cannot change what any existing
+ * suite or journey resolves to, which is what the admin gate on the MUTATING
+ * operations actually protects. Note the direction of travel: it moves a row
+ * from member-writable to admin-only, so it REDUCES the promoter's own power
+ * over it.
+ *
+ * Takes `expectedRevision` like every other environment write. Ad-hoc rows are
+ * immutable so the revision is always 1, which makes it look like ceremony — it
+ * is not: it closes the race where two people promote the same row from the same
+ * screen and the second silently clobbers the first's name.
+ */
+export function usePromoteProjectEnvironment(): (args: {
+  projectId: string;
+  environmentId: string;
+  expectedRevision: number;
+  name: string;
+  description?: string;
+}) => Promise<ProjectEnvironmentView> {
+  return useMutation("projectEnvironments:nameEnvironment" as any) as never;
 }
 
 /**
@@ -143,8 +302,14 @@ export function useCreateProjectEnvironment(): (args: {
  * overwrite a concurrent edit). On {@link isRevisionConflictError}, surface
  * the conflict and reinitialize only after user confirmation — never
  * auto-retry a stale patch.
+ *
+ * `projectId` is REQUIRED, like every other mutation here: the backend scopes
+ * the admin check and the row lookup by it, so it is not derivable from the
+ * environment id. Omitting it fails the Convex validator at RUNTIME (the
+ * mutation is referenced by string id, so nothing type-checks the payload).
  */
 export function useUpdateProjectEnvironment(): (args: {
+  projectId: string;
   environmentId: string;
   expectedRevision: number;
   name?: string;
@@ -160,115 +325,33 @@ export function useUpdateProjectEnvironment(): (args: {
    * the API or CLI. An empty array is rejected by the backend.
    */
   pluginVersionIds?: string[] | null;
+  /**
+   * Sandbox-image pin. Tri-state like the fields above: OMIT to leave the pin
+   * untouched, `null` to clear it, a value to set it. A form that does not
+   * RENDER the picker (e.g. the `computers-enabled` flag is off) must omit the
+   * field — sending `null` would silently drop a pin set through the API/CLI.
+   */
+  computerEnvironmentId?: string | null;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:updateEnvironment" as any) as never;
 }
 
+/** `projectId` is required — see {@link useUpdateProjectEnvironment}. */
 export function useArchiveProjectEnvironment(): (args: {
+  projectId: string;
   environmentId: string;
   expectedRevision: number;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:archiveEnvironment" as any) as never;
 }
 
+/** `projectId` is required — see {@link useUpdateProjectEnvironment}. */
 export function useRestoreProjectEnvironment(): (args: {
+  projectId: string;
   environmentId: string;
   expectedRevision: number;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:restoreEnvironment" as any) as never;
-}
-
-// ── Environment-backed chatbox (Phase 5, live-follow) ───────────────────────
-
-/**
- * Projection returned by `chatboxes:publishEnvironmentChatbox` /
- * carried per-row by `chatboxes:listChatboxes` for env-backed rows. The
- * chatbox is a POINTER to the environment (no host-config pin): editing the
- * environment updates the published chatbox immediately, so there is no
- * revision captured here on purpose.
- */
-export interface EnvironmentChatboxSummary {
-  chatboxId: string;
-  environmentId: string;
-  name: string;
-  mode: "anyone_with_link" | "invited_only" | "project_members";
-  allowGuestAccess: boolean;
-  link: { token: string; path: string; url: string } | null;
-}
-
-/**
- * The published chatbox for one environment, or `null` when unpublished.
- * Reads the project chatbox list (which carries `environmentId` per row since
- * mcpjam-backend #805) rather than a dedicated query — one-per-environment is
- * backend-enforced, so `find` is exact. `undefined` while loading; a backend
- * predating #805 never marks a row, which correctly reads as unpublished.
- */
-export function useEnvironmentChatbox(
-  projectId: string | null,
-  environmentId: string | null
-): EnvironmentChatboxSummary | null | undefined {
-  const { isAuthenticated } = useConvexAuth();
-  const isUserReady = useDbUserReady();
-  const normalizedProjectId = projectId?.trim() || null;
-  const enableQuery =
-    isAuthenticated &&
-    isUserReady &&
-    shouldQueryProjectId(normalizedProjectId) &&
-    Boolean(environmentId?.trim());
-  const chatboxes = useQuery(
-    "chatboxes:listChatboxes" as any,
-    enableQuery ? ({ projectId: normalizedProjectId } as any) : "skip"
-  ) as
-    | Array<{
-        chatboxId: string;
-        environmentId?: string | null;
-        name: string;
-        mode: EnvironmentChatboxSummary["mode"];
-        allowGuestAccess: boolean;
-        link?: { token: string; path: string; url: string } | null;
-      }>
-    | undefined;
-  if (!enableQuery || chatboxes === undefined) return undefined;
-  const row = chatboxes.find(
-    (chatbox) => chatbox.environmentId === environmentId?.trim()
-  );
-  if (!row) return null;
-  return {
-    chatboxId: row.chatboxId,
-    environmentId: environmentId!.trim(),
-    name: row.name,
-    mode: row.mode,
-    allowGuestAccess: row.allowGuestAccess,
-    link: row.link ?? null,
-  };
-}
-
-/**
- * Publish an environment as a chatbox (project-admin gated, idempotent:
- * a second publish returns the existing row with `created: false`).
- */
-export function usePublishEnvironmentChatbox(): (args: {
-  environmentId: string;
-}) => Promise<{
-  chatboxId: string;
-  environmentId: string;
-  name: string;
-  mode: EnvironmentChatboxSummary["mode"];
-  accessVersion: number;
-  link: { token: string; path: string; url: string } | null;
-  created: boolean;
-}> {
-  return useMutation("chatboxes:publishEnvironmentChatbox" as any) as never;
-}
-
-/**
- * Unpublish: deletes the chatbox row + its cascade ONLY — the host and the
- * environment both survive (backend-guarded).
- */
-export function useUnpublishEnvironmentChatbox(): (args: {
-  environmentId: string;
-}) => Promise<{ deleted: boolean; chatboxId?: string }> {
-  return useMutation("chatboxes:unpublishEnvironmentChatbox" as any) as never;
 }
 
 /**

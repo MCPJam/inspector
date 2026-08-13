@@ -87,8 +87,12 @@ export async function resolveTargetPluginServerIds(
    * run with no runner. Taking a thunk keeps the "no pins ⇒ no client" decision
    * in ONE place (the early return below) instead of duplicating it at the
    * callsite where it could drift.
+   *
+   * May be async: the swarm caller resolves a fresh bearer per session rather
+   * than reusing one minted at launch, because a client cached for the life of
+   * a multi-hour run carries an expired token. Sync thunks still work.
    */
-  getConvexClient: () => ConvexHttpClient,
+  getConvexClient: () => ConvexHttpClient | Promise<ConvexHttpClient>,
   args: {
     runId: string;
     targetId?: string;
@@ -108,7 +112,7 @@ export async function resolveTargetPluginServerIds(
  * from here.
  */
 async function resolveTargetPluginServers(
-  getConvexClient: () => ConvexHttpClient,
+  getConvexClient: () => ConvexHttpClient | Promise<ConvexHttpClient>,
   args: {
     runId: string;
     targetId?: string;

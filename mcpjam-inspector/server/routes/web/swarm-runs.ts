@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { isKnownProtocolVersion, type McpProtocolVersion } from "@mcpjam/sdk";
 import {
   ErrorCode,
   WebRouteError,
@@ -10,20 +9,14 @@ import {
   createAuthorizedManager,
   callerContextFromHono,
 } from "./auth.js";
-import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
-import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  getConvexBearerForRequest,
+  getConvexBearerThunkForRequest,
+} from "../../utils/v1-convex-token.js";
 import { WEB_STREAM_TIMEOUT_MS, HOSTED_MODE } from "../../config.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
-import {
-  createJourneyRun,
-  SwarmAgentError,
-  type PinnedHostExecutionSpec,
-} from "../../services/swarm-agent.js";
-import {
-  getRunningJourneyStreamHub,
-  startJourneyRun,
-} from "../../services/sessionSimulation/swarm-runner.js";
-import { resolveTargetPluginServerIds } from "../../services/journeys/plugin-servers.js";
+import { getRunningJourneyStreamHub } from "../../services/sessionSimulation/swarm-runner.js";
+import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
@@ -46,6 +39,48 @@ swarmRuns.get("/runs/:runId/stream", async (c) => {
   const runId = c.req.param("runId");
   if (!runId) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "runId required");
+  }
+
+  // AUTHORIZATION. `assertBearerToken` proves the caller is *someone*; it says
+  // nothing about whether this run is theirs. Without the check below, any
+  // authenticated user who knew (or guessed) a run id could subscribe to
+  // another organization's live journey stream — which carries full session
+  // transcripts, tool calls and tool results as they happen.
+  //
+  // `journeyRuns:getJourneyRun` is the authority: it resolves the run and
+  // enforces project membership, so a run in someone else's project comes back
+  // null (or throws) exactly like one that does not exist. Both collapse to
+  // 404 here, so this route is not an existence oracle either.
+  //
+  // Deliberately BEFORE `getRunningJourneyStreamHub`: the hub is in-process
+  // state, and subscribing first would leak events for the window between
+  // subscribe and rejection.
+  const bearerToken = await getConvexBearerForRequest(c);
+  let authorized = false;
+  try {
+    const run = await createConvexClient(bearerToken).query(
+      "journeyRuns:getJourneyRun" as never,
+      { runId } as never
+    );
+    authorized = run != null;
+  } catch (error) {
+    // Membership failure, malformed id, or Convex unreachable. Fail CLOSED —
+    // a stream is not worth serving on an unverified authorization.
+    //
+    // LOGGED, because this branch also swallows the causes that are ours:
+    // `createConvexClient` throws outright with `CONVEX_URL` unset, and an
+    // unreachable Convex lands here too. Silent, both of those make every
+    // stream in the deployment answer 404, which reads to an operator as "the
+    // runs disappeared" rather than "the dependency is down". The response
+    // stays 404 either way — only the record changes.
+    logger.warn("[swarm-runs] stream authorization lookup failed", {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    authorized = false;
+  }
+  if (!authorized) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Run not found");
   }
 
   const hub = getRunningJourneyStreamHub(runId);
@@ -108,153 +143,22 @@ swarmRuns.get("/runs/:runId/stream", async (c) => {
   });
 });
 
-function requireConvexHttpUrl(): string {
-  const url = process.env.CONVEX_HTTP_URL;
-  if (!url) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-  return url;
-}
-
 const startRunSchema = z.object({
   projectId: z.string().min(1),
   launchKey: z.string().min(1),
-});
-
-/**
- * Non-secret connection settings threaded into the manager for a pinned host
- * so a swarm run reconnects with the SAME transport behavior the snapshot
- * captured (per-request timeout + MCP protocol pins) rather than whatever the
- * host's CURRENT live config negotiates. Headers / credentials are deliberately
- * EXCLUDED — those stay live-resolved by the authorize batch (a run must use
- * fresh secrets, not a stale snapshot). Every field is read defensively: the
- * pinned `connectionDefaults` / `serverConnectionOverrides` are opaque
- * (`Record<string, unknown>`) snapshot blobs, so a malformed or absent value
- * simply falls back to the live default and never breaks the launch.
- */
-interface PinnedConnectionSettings {
-  timeoutMs: number;
-  initializePins?: {
-    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
-    supportedProtocolVersions?: string[];
-    mcpProtocolVersion?: McpProtocolVersion;
-  };
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   /**
-   * Per-server request-timeout pins (ms) from the snapshot's
-   * `serverConnectionOverrides[serverId].requestTimeoutOverride`. A server
-   * absent from this map uses the host-level `timeoutMs`.
+   * Opaque wave id linking the sibling runs of one co-launched swarm. Optional
+   * so an older client simply omits it; bounded here to match the backend's
+   * own cap rather than forwarding an unbounded string.
    */
-  requestTimeoutByServerId?: Record<string, number>;
-}
-
-function coerceTimeoutMs(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function coerceProtocolVersion(value: unknown): McpProtocolVersion | undefined {
-  return typeof value === "string" && isKnownProtocolVersion(value)
-    ? value
-    : undefined;
-}
-
-function buildPinnedConnectionSettings(
-  host: PinnedHostExecutionSpec,
-  fallbackTimeoutMs: number
-): PinnedConnectionSettings {
-  const defaults = asRecord(host.connectionDefaults);
-
-  // Timeout: read from the (scrubbed) `connectionDefaults` — the ONLY field the
-  // backend retains there is `requestTimeout` (header values are stripped).
-  // Accept either wire spelling defensively; require a positive finite number,
-  // else fall back to the live default.
-  const timeoutMs =
-    coerceTimeoutMs(defaults?.timeoutMs ?? defaults?.requestTimeout) ??
-    fallbackTimeoutMs;
-
-  // INITIALIZE pins come from the pinned `mcpProfile`, NOT `connectionDefaults`.
-  // The backend's `materializeHostSpec` copies the host's `mcpProfile` verbatim
-  // (`mcpProtocolVersion` + `initialize.{clientInfo,supportedProtocolVersions}`)
-  // and scrubs `connectionDefaults` down to just `{ requestTimeout }`, so reading
-  // the pins from `connectionDefaults` (the old behavior) always found nothing.
-  const initializePins: NonNullable<
-    PinnedConnectionSettings["initializePins"]
-  > = {};
-  const initialize = asRecord(host.mcpProfile?.initialize);
-  const clientInfo = asRecord(initialize?.clientInfo);
-  if (clientInfo) {
-    initializePins.clientInfo = clientInfo as {
-      name?: string;
-      version?: string;
-    } & Record<string, unknown>;
-  }
-  if (Array.isArray(initialize?.supportedProtocolVersions)) {
-    const versions = initialize.supportedProtocolVersions.filter(
-      (v): v is string => typeof v === "string"
-    );
-    if (versions.length > 0) {
-      initializePins.supportedProtocolVersions = versions;
-    }
-  }
-  const batchProtocol = coerceProtocolVersion(
-    host.mcpProfile?.mcpProtocolVersion
-  );
-  if (batchProtocol) {
-    initializePins.mcpProtocolVersion = batchProtocol;
-  }
-
-  // Per-server protocol pins from the pinned overrides. Accept both the
-  // resolver key (`mcpProtocolVersion`) and the project-config key
-  // (`mcpProtocolVersionOverride`); createAuthorizedManager re-validates.
-  const overrides = asRecord(host.serverConnectionOverrides);
-  let mcpProtocolVersionsByServerId:
-    | Record<string, McpProtocolVersion>
-    | undefined;
-  let requestTimeoutByServerId: Record<string, number> | undefined;
-  if (overrides) {
-    for (const [serverId, rawOverride] of Object.entries(overrides)) {
-      const override = asRecord(rawOverride);
-      if (!override) continue;
-      const pin = coerceProtocolVersion(
-        override.mcpProtocolVersion ?? override.mcpProtocolVersionOverride
-      );
-      if (pin) {
-        mcpProtocolVersionsByServerId ??= {};
-        mcpProtocolVersionsByServerId[serverId] = pin;
-      }
-      // Per-server request-timeout pin. Accept both the resolver spelling
-      // (`requestTimeout`) and the project-config override spelling
-      // (`requestTimeoutOverride`); a malformed value is simply skipped so the
-      // server falls back to the host-level timeout.
-      const perServerTimeout = coerceTimeoutMs(
-        override.requestTimeoutOverride ?? override.requestTimeout
-      );
-      if (perServerTimeout !== undefined) {
-        requestTimeoutByServerId ??= {};
-        requestTimeoutByServerId[serverId] = perServerTimeout;
-      }
-    }
-  }
-
-  return {
-    timeoutMs,
-    ...(Object.keys(initializePins).length > 0 ? { initializePins } : {}),
-    ...(mcpProtocolVersionsByServerId ? { mcpProtocolVersionsByServerId } : {}),
-    ...(requestTimeoutByServerId ? { requestTimeoutByServerId } : {}),
-  };
-}
+  swarmRunGroupId: z.string().min(1).max(64).optional(),
+  /**
+   * Per-run environment fan-out. Shape-checked here; the backend does the real
+   * validation (live, in-project, duplicate-free, capped) inside the launch
+   * transaction, since only it can see the project's environments.
+   */
+  environmentIds: z.array(z.string().min(1)).optional(),
+});
 
 /**
  * Launch a multi-host swarm (journey-execution) run (PR 3d).
@@ -277,9 +181,11 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // delegated JWT for API-key callers. Without this, an API-key launch
       // forwards the raw `sk_…` and every downstream action 401s.
       const bearerToken = await getConvexBearerForRequest(c);
-      // The drain + transcript persist forward this same bearer; build the
-      // header from the resolved JWT so the API-key path works there too.
-      const authHeader = `Bearer ${bearerToken}`;
+      // The runner detaches after the 202 and can fan out for hours, while a
+      // delegated JWT lives ~2h — so it gets a THUNK, resolved while `c` is
+      // still live, not the string above. Everything that stays inside this
+      // request keeps using `bearerToken`.
+      const getRunBearer = getConvexBearerThunkForRequest(c);
       const journeyId = c.req.param("journeyId");
       if (!journeyId) {
         throw new WebRouteError(
@@ -292,211 +198,26 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
         startRunSchema,
         await readJsonBody<unknown>(c)
       );
-      const convexHttpUrl = requireConvexHttpUrl();
-
-      // Create the run over the journey's full pinned host set (no maxHosts
-      // cap). A backend rejection (a hard host-count ceiling, a journey with no
-      // hosts, a duplicate launchKey, …) surfaces as a clear 4xx instead of a
-      // bare 500.
-      let created;
-      try {
-        created = await createJourneyRun(convexHttpUrl, bearerToken, {
+      return launchJourneyRun(
+        {
+          bearerToken,
+          getRunBearer,
+          // Resolved HERE, while the request Context is still live: it reads
+          // `x-forwarded-proto`, and the runner that needs it runs after the
+          // 202, by which point the Context may be finalized.
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+          callerContext: callerContextFromHono(c),
+        },
+        {
           projectId: body.projectId,
           journeyRefId: journeyId,
           launchKey: body.launchKey,
-        });
-      } catch (err) {
-        if (
-          err instanceof SwarmAgentError &&
-          err.status >= 400 &&
-          err.status < 500
-        ) {
-          throw new WebRouteError(
-            err.status,
-            ErrorCode.VALIDATION_ERROR,
-            err.bodyText || "This journey can't be launched."
-          );
+          ...(body.swarmRunGroupId ? { waveId: body.swarmRunGroupId } : {}),
+          ...(body.environmentIds?.length
+            ? { environmentIds: body.environmentIds }
+            : {}),
         }
-        throw err;
-      }
-
-      // The backend derives + authorizes projectId from the journey (and is
-      // LAUNCHER + project-member gated) — that is the authoritative gate. We do
-      // NOT re-check the client-supplied `body.projectId` here: a post-create
-      // reject would leave a durable run row with no runner (an orphan). Trust
-      // the backend's gating and always proceed to start the runner on a
-      // successful create.
-      const { runId, projectId, snapshot } = created;
-
-      // Deduped launch (launchKey replay onto an EXISTING run): the ORIGINAL
-      // launch's runner owns that run. Starting a second runner here would
-      // race it — duplicate claims (suppressed per-attempt by `applied:false`)
-      // and, worse, the duplicate's shutdown/cleanup (finalize-pending, abort
-      // finalizers, heartbeat stop) can kill attempts the owner is still
-      // executing. Acknowledge idempotently with the SAME runId and start
-      // nothing. If the original runner is dead, the backend stale-run cron
-      // finalizes the run; a retry then needs a FRESH launchKey.
-      if (created.deduped) {
-        logger.info("[swarm-runs] deduped launch — runner already owns run", {
-          runId,
-          projectId,
-        });
-        return { runId, deduped: true };
-      }
-
-      if (!Array.isArray(snapshot.hosts) || snapshot.hosts.length === 0) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          "This journey has no pinned hosts to run"
-        );
-      }
-      const hosts = snapshot.hosts;
-
-      // Resolve the MCPJam test-IdP issuer NOW, while the request `Context` is
-      // still live (it reads `x-forwarded-proto` off `c`). `createAuthorized
-      // Manager` fails closed for a `useXaa` server unless `options.xaaIssuer`
-      // is present, so a pinned host with a Cross-App-Access server would 500 in
-      // the manager factory without this. Resolved eagerly and captured so the
-      // fire-and-forget factory (which runs after the 202) doesn't depend on a
-      // possibly-finalized Context.
-      const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
-
-      // One client for the run's D2 re-gates, built LAZILY on first use.
-      // `managerFactory` runs once per SESSION attempt, so constructing per
-      // call would be wasteful — but constructing EAGERLY here is worse:
-      // `createConvexClient` throws when `CONVEX_URL` is unset, and we are past
-      // `createJourneyRun`, where any throw orphans a durable run with no
-      // runner (see the comment above). Memoized thunk gets both: at most one
-      // client per run, and none at all for a journey that pins no plugins.
-      let pluginRegateClient: ReturnType<typeof createConvexClient> | undefined;
-      const getPluginRegateClient = () =>
-        (pluginRegateClient ??= createConvexClient(bearerToken));
-
-      setImmediate(() => {
-        startJourneyRun({
-          runId,
-          projectId,
-          hosts,
-          personaSnapshot: snapshot.personaSnapshot,
-          sessionsPerHost: snapshot.sessionsPerHost,
-          maxTurns: snapshot.maxTurns,
-          convexHttpUrl,
-          bearer: bearerToken,
-          authHeader,
-          // Host-aware: each host connects ONLY its own pinned required servers
-          // (optionalServerIds stay off, matching a real no-opt-in visitor).
-          managerFactory: async (host) => {
-            // Decision D2 — re-gate the target's pinned plugin servers against
-            // the LIVE plugin, here at connect time, rather than trusting the
-            // snapshot's `pluginServerIds`. That stored list records what was
-            // PINNED; a plugin disabled or uninstalled since launch must stop
-            // contributing servers even though the snapshot still names them.
-            // Throwing fails this target's sessions as a config error — the
-            // same treatment an invalid stored xaaPolicy gets — because a
-            // silently shrunken server set runs an environment nobody
-            // configured.
-            //
-            // Re-gated per SESSION, not once per target: `managerFactory` is
-            // invoked per session attempt, so a plugin uninstalled mid-run
-            // stops contributing to the very next session rather than at the
-            // next launch. Deliberate — revocation should not wait for a run
-            // to finish — at the cost of one query per session.
-            const pluginServerIds = await resolveTargetPluginServerIds(
-              getPluginRegateClient,
-              {
-                runId,
-                targetId: host.targetId,
-                snapshotPluginServerIds: host.pluginServerIds,
-              }
-            );
-            // Deduped union: the backend keeps plugin ids out of `serverIds`,
-            // but an overlap would double-connect rather than fail, so guard it.
-            const hostServerIds = new Set(host.serverIds);
-            const pluginOnlyServerIds = pluginServerIds.filter(
-              (id) => !hostServerIds.has(id)
-            );
-            const serverIds =
-              pluginOnlyServerIds.length > 0
-                ? [...host.serverIds, ...pluginOnlyServerIds]
-                : host.serverIds;
-            // Reconnect with THIS host's non-secret connection settings
-            // (per-request timeout + MCP protocol pins) so the run reproduces
-            // the pinned snapshot rather than the host's current live config.
-            // Secrets/headers stay live-resolved by the authorize batch.
-            const connection = buildPinnedConnectionSettings(
-              host,
-              WEB_STREAM_TIMEOUT_MS
-            );
-            const { manager } = await createAuthorizedManager(
-              callerContextFromHono(c),
-              bearerToken,
-              projectId,
-              serverIds,
-              connection.timeoutMs,
-              undefined,
-              // Pinned MCP client capabilities from the snapshot — negotiate
-              // INITIALIZE with the SAME capabilities the host declared at
-              // run-create time (mirrors the chatbox path), not the current
-              // live config's.
-              host.clientCapabilities,
-              {
-                accessScope: "project_member",
-                // XAA servers fail closed without the issuer; resolved above
-                // from the live request Context.
-                xaaIssuer,
-                // Enterprise-managed policy from the PINNED host snapshot
-                // (server-side, mcpProfile copied verbatim at run-create) —
-                // the run reproduces the snapshot's policy, and an invalid
-                // stored policy fails the host's sessions as a config error
-                // rather than silently un-enforcing.
-                xaaPolicy: xaaPolicyFromMcpProfile(host.mcpProfile),
-                ...(connection.initializePins
-                  ? { initializePins: connection.initializePins }
-                  : {}),
-                ...(connection.mcpProtocolVersionsByServerId
-                  ? {
-                      mcpProtocolVersionsByServerId:
-                        connection.mcpProtocolVersionsByServerId,
-                    }
-                  : {}),
-                ...(connection.requestTimeoutByServerId
-                  ? {
-                      requestTimeoutByServerId:
-                        connection.requestTimeoutByServerId,
-                    }
-                  : {}),
-              }
-            );
-            return {
-              manager,
-              connectedServerIds: serverIds,
-              // The session connects these, but `resumeConfig` must never tell
-              // a later viewer to reconnect them without re-gating the plugin.
-              //
-              // Subtract anything ALSO in the host's own `serverIds`: D1 keeps
-              // plugin ids out of that list so the overlap should be empty, but
-              // the union above already guards for it, and marking such an id
-              // non-resumable would strip a legitimately host-pinned server
-              // from resume. An id that stands on its own in the host config
-              // does not need the plugin to justify reconnecting it.
-              ...(pluginOnlyServerIds.length > 0
-                ? { nonResumableServerIds: pluginOnlyServerIds }
-                : {}),
-              dispose: async () => {
-                await manager.disconnectAllServers();
-              },
-            };
-          },
-        }).catch((err) => {
-          logger.error("[swarm-runs] startJourneyRun failed", {
-            runId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-      });
-
-      return { runId };
+      );
     },
     202
   )

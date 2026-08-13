@@ -1,4 +1,8 @@
 import type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+} from "../conformance-outcome.js";
+import type {
   ManagedMcpClient,
   MCPClientManager,
 } from "../mcp-client-manager/index.js";
@@ -25,6 +29,12 @@ export const MCP_CHECK_IDS = [
   "capabilities-consistent",
   "tools-list",
   "tools-input-schemas-valid",
+  // SEP-2243 (2026-07-28): `x-mcp-header` declarations are part of the tool
+  // DEFINITION's validity, not of any one call — a conforming client "MUST
+  // treat the tool definition as invalid" when a declaration breaks any of the
+  // constraints. Modern-only, because the annotation has no meaning before
+  // 2026-07-28: flagging it on a 2025 run would invent a requirement.
+  "tools-x-mcp-header-declarations-valid",
   "prompts-list",
   "resources-list",
   "protocol-invalid-method-error",
@@ -33,6 +43,18 @@ export const MCP_CHECK_IDS = [
   "server-sse-polling-session",
   "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
+  // Streamable HTTP transport MUSTs stated verbatim by the 2025 revisions:
+  // a notification-only POST answers `202 Accepted` with no body, a GET either
+  // opens an SSE stream or answers 405, and a minted session id contains only
+  // visible ASCII (0x21–0x7E). All three mechanics were removed by 2026-07-28,
+  // so they are legacy-only.
+  "notification-post-accepted",
+  "get-stream-or-405",
+  "session-id-visible-ascii",
+  // Every revision, 2025-03-26 through 2026-07-28: the response to a JSON-RPC
+  // request MUST carry `Content-Type: application/json` or `text/event-stream`
+  // — the CHOICE between them is the server's, so this asserts membership only.
+  "post-response-content-type",
   // Phase 7 §15.3 — modern (2026-07-28) MUST checks. New ids rather than
   // reused legacy ones: each asserts a requirement that did not exist (or
   // changed materially) in the 2025 era, so a shared id would make a legacy
@@ -58,6 +80,12 @@ export const MCP_CHECK_IDS = [
 export type MCPCheckId = (typeof MCP_CHECK_IDS)[number];
 
 export type MCPCheckStatus = "passed" | "failed" | "skipped";
+
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type MCPCheckSkipReason = ConformanceSkipReason;
+
+/** @see {@link ConformanceRunOutcome} — the vocabulary is shared by every suite. */
+export type MCPRunOutcome = ConformanceRunOutcome;
 
 /**
  * Protocol era a conformance run targets. Derived once in
@@ -119,6 +147,11 @@ export const MCP_PROTOCOL_VERSION_ERA_IDS = Object.keys(
  *     surface / generic JSON-RPC behavior that is era-agnostic
  *     (`tools-list`, `tools-input-schemas-valid`, `prompts-list`,
  *     `resources-list`, `protocol-invalid-method-error`).
+ *   - `tools-x-mcp-header-declarations-valid` is modern-only WITHOUT a
+ *     `modern-` prefix: it belongs to the tools family (it judges tool
+ *     definitions a `tools/list` already returned, sending no probe), but
+ *     `x-mcp-header` has no meaning before 2026-07-28, so asserting it on a
+ *     2025 run would invent a requirement the revision never stated.
  *
  * The two `localhost-host-*` security checks are deliberately legacy-only for
  * now: their raw modern host-header probe could not be validated against the
@@ -153,10 +186,20 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "server-sse-polling-session": ["legacy"],
   "server-accepts-multiple-post-streams": ["legacy"],
   "server-sse-streams-functional": ["legacy"],
+  // Client-to-server notifications, the GET stream endpoint, and sessions were
+  // all removed by 2026-07-28 (the revision even states that header
+  // requirements for a notification POST are undefined), so these three have
+  // nothing to assert on a modern run.
+  "notification-post-accepted": ["legacy"],
+  "get-stream-or-405": ["legacy"],
+  "session-id-visible-ascii": ["legacy"],
+  // The response-Content-Type MUST is stated identically by every revision.
+  "post-response-content-type": ["legacy", "modern"],
   "localhost-host-rebinding-rejected": ["legacy"],
   "localhost-host-valid-accepted": ["legacy"],
   "tools-list": ["legacy", "modern"],
   "tools-input-schemas-valid": ["legacy", "modern"],
+  "tools-x-mcp-header-declarations-valid": ["modern"],
   "prompts-list": ["legacy", "modern"],
   "resources-list": ["legacy", "modern"],
   "logging-set-level": ["legacy", "modern"],
@@ -186,6 +229,8 @@ export interface MCPCheckResult {
   title: string;
   description: string;
   status: MCPCheckStatus;
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: MCPCheckSkipReason;
   durationMs: number;
   error?: {
     message: string;
@@ -286,6 +331,16 @@ export const MCP_READINESS_IDS = [
   "readiness-deprecated-feature-use",
   "readiness-cache-ttl-useful",
   "readiness-oauth-iss-advertised",
+  "readiness-x-mcp-header-declarations",
+  // No revision maps an unparseable POST body to any HTTP status or JSON-RPC
+  // error — the transports docs are silent — so answering garbage with a
+  // success status is ADVICE (JSON-RPC 2.0 names -32700 for it), never a
+  // violation.
+  "readiness-parse-error-handling",
+  // Explicit session termination is SHOULD (client-side) / MAY (server-side)
+  // on the 2025 revisions, and 405-on-GET/DELETE is the 2026 revision's
+  // backward-compat SHOULD; neither can fail a run.
+  "readiness-session-termination",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
@@ -308,8 +363,26 @@ export interface MCPReadinessWarning {
 }
 
 export interface MCPConformanceResult {
+  /**
+   * True ONLY when `outcome` is `"passed"`: every selected check either ran and
+   * passed or was inapplicable to this server. A check that could not run keeps
+   * this false, so a skip can never add up to a green run.
+   */
   passed: boolean;
+  outcome: MCPRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which checks did not run and what
+   * the caller has to change to make them run.
+   */
+  incompleteReason?: string;
   serverUrl: string;
+  /**
+   * The revision this run was judged against: the caller's pin, or the
+   * version the server negotiated when the run connected without one. Absent
+   * when an unpinned run never connected (raw-only selection) — the run
+   * established no version, and a score label must not invent one.
+   */
+  protocolVersion?: McpProtocolVersion;
   checks: MCPCheckResult[];
   summary: string;
   durationMs: number;
@@ -319,7 +392,10 @@ export interface MCPConformanceResult {
       total: number;
       passed: number;
       failed: number;
+      /** Every skip, of either reason. */
       skipped: number;
+      /** The subset of `skipped` that is `"could-not-run"`. */
+      couldNotRun: number;
     }
   >;
   /**

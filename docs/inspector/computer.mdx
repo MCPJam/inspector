@@ -4,6 +4,10 @@ description: "A personal cloud Linux workstation for your project — open a ter
 icon: "monitor"
 ---
 
+<Note>
+The Computer is available on accounts where the feature has been enabled. The **Computer** tab only appears when it is active for your account.
+</Note>
+
 Each project gives every member an opt-in **Computer**: a personal cloud Linux
 workstation with a web terminal and a `bash` tool your agents can call. It boots
 from a base image (Debian + Node + Python) or a custom [sandbox image](#sandbox-images)
@@ -111,6 +115,41 @@ Manage them from **Change** on the image strip.
   Image definitions (their blueprints) live in the project database, not on
   any one computer's disk — see [Data & persistence](#data-and-persistence).
 </Note>
+
+## Chatbox sandbox
+
+When a chatbox is backed by an environment that has a pinned computer image,
+the `bash` tool runs on a **per-conversation ephemeral sandbox** booted from
+that image — not on your personal computer.
+
+### How it works
+
+- **Per conversation.** Each new conversation gets its own isolated machine.
+  Files you write and packages you install in one conversation are not visible
+  to any other conversation.
+- **Persistent across turns.** Within a single conversation, the same sandbox
+  is reused on every turn — you can write a file on turn 1 and read it on
+  turn 5.
+- **Reaped after idle.** If a conversation goes idle for a long time, the
+  sandbox is deleted (not paused). When that happens, you'll see a notification
+  in the chat: *"This conversation's sandbox was reset after being idle — files
+  and shell state from earlier turns are gone."*
+- **Image from the environment.** All members on the same chatbox boot from the
+  same environment image, so the machine is consistent regardless of who is
+  chatting.
+- **No bash if the image is unavailable.** If the environment's image can't
+  boot right now, the chatbox loads normally without a `bash` tool — no error,
+  and no fallback to your personal computer.
+
+### What is unchanged
+
+- **Your personal computer** is unaffected. Nothing a chatbox conversation
+  writes lands on your personal computer, and nothing on your personal computer
+  is visible inside a chatbox sandbox.
+- **Host-backed chatboxes** (those not tied to an environment) continue to use
+  your personal computer as before.
+- **Environments with no pinned image** also continue to use your personal
+  computer as before.
 
 ## Data & persistence
 

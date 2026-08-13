@@ -36,9 +36,18 @@ vi.mock("../ProjectEnvironmentEditor", () => ({
 vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => mockConsumers.value,
 }));
-// The publish panel has its own Convex reads/mutations; out of scope here.
-vi.mock("../environment-chatbox-section", () => ({
-  EnvironmentChatboxSection: () => null,
+// Every case here clicks a row into DETAIL mode, which now mounts the
+// read-only Connect canvas. The real panel reads Convex (`useHost`), and this
+// suite has no ConvexProvider — stub it out; the consumer copy is the subject.
+vi.mock("../EnvironmentCanvasPanel", () => ({
+  EnvironmentCanvasPanel: () => <div data-testid="stub-env-canvas" />,
+}));
+
+// The detail pane links back to a published scenario, reading the shared
+// chatbox list. Unpublished here — the link's own behavior is covered in the
+// User Testing suites.
+vi.mock("@/hooks/useChatboxes", () => ({
+  useEnvironmentChatbox: () => ({ chatbox: null, isLoading: false }),
 }));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
@@ -59,7 +68,13 @@ function renderAndOpenArchiveConfirm() {
       <Routes>
         <Route
           path="/environments"
-          element={<ProjectEnvironmentsRoute projectId="proj-1" canManage />}
+          element={
+            <ProjectEnvironmentsRoute
+              isAuthenticated
+              projectId="proj-1"
+              canManage
+            />
+          }
         />
       </Routes>
     </MemoryRouter>
@@ -117,12 +132,12 @@ describe("archive-confirm consumer counts", () => {
     expect(screen.getByText(/checking references/i)).toBeInTheDocument();
   });
 
-  it("warns that a published chatbox link stops working immediately (Phase 5)", () => {
+  it("warns that a published tester link stops working immediately (Phase 5)", () => {
     mockConsumers.value = { suiteCount: 0, journeyCount: 0, chatboxCount: 1 };
     renderAndOpenArchiveConfirm();
 
     expect(
-      screen.getByText(/chatbox link stops working immediately/i)
+      screen.getByText(/tester link stops working immediately/i)
     ).toBeInTheDocument();
   });
 });

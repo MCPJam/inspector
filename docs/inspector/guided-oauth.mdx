@@ -20,7 +20,7 @@ The OAuth Debugger provides a visual, step-by-step interface for testing and deb
 The OAuth Debugger includes:
 
 - **Visual Step-by-Step Guide** - Interactive flow guide with detailed explanations for each OAuth step
-- **Multi-Protocol Support** - Test against OAuth spec versions 03-26, 06-18, 11-25, and 2026-07-28 (Draft)
+- **Multi-Protocol Support** - Test against OAuth spec versions 03-26, 06-18, 11-25, and 2026-07-28 (Latest)
 - **Full Registration Methods** - Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD)
 - **Network Inspection** - View all HTTP requests and responses with headers and body content
 - **Educational Context** - Built-in teachable moments and tips for common OAuth issues
@@ -33,11 +33,33 @@ When the server's Protected Resource Metadata (PRM) advertises a `resource` iden
 
 The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
+### Path-scoped authorization servers
+
+Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path — for example `https://<env>.example.com/resources/res_x` — while their metadata advertises the origin root as the `issuer`. By default, Inspector enforces the RFC 8414 §3.3 requirement that the advertised `issuer` exactly matches the URL discovery started from, so those servers fail discovery with an error that names the mismatch.
+
+To connect to a path-scoped authorization server, enable the **Path-scoped authorization server** switch in **Advanced settings**:
+
+- In the **OAuth Debugger**, open the **Configure** dialog and expand **Advanced settings**.
+- In the **Connect** server form, open **Authentication → Advanced settings**.
+
+The toggle is **off by default**. When off, the strict exact-match check applies and the error message names the toggle so you can find the fix from the error itself.
+
+When enabled, the following rules still apply:
+
+- The advertised issuer must be a same-origin, segment-aware path-prefix ancestor of the discovery URL. For example, `/resources` is accepted as an ancestor of `/resources/res_x`, but `/resources-evil` is not.
+- The `token_endpoint` and `registration_endpoint` in the server's metadata must stay on the advertised issuer's own origin. A present endpoint that points off-origin is rejected even with the toggle on.
+- A query string or fragment on either side of the comparison disqualifies the relaxation (RFC 8414 §2 forbids both in an issuer identifier).
+- Cross-origin issuers are always rejected.
+
+When the toggle accepts a path-scoped issuer, a **warning** is recorded in the OAuth flow log because strict MCP clients may still refuse to connect to the server being debugged.
+
+The setting is stored per server and applies to both the OAuth Debugger and the Connect flow, so the behavior is consistent across both surfaces.
+
 ### Authorization-response `iss` mismatch warnings
 
 When the authorization server returns an `iss` parameter on the callback that does not match the issuer recorded from its metadata, Inspector's behavior depends on the protocol version selected for the flow:
 
-- **2026-07-28 (Draft)** — The flow is blocked before the authorization code is redeemed. The error names both the recorded issuer and the one returned on the callback so you can compare them directly.
+- **2026-07-28 (Latest)** — The flow is blocked before the authorization code is redeemed. The error names both the recorded issuer and the one returned on the callback so you can compare them directly.
 - **2025-11-25 and earlier** — The flow continues and a warning toast is shown naming both issuers. These protocol versions do not mention `iss` or RFC 9207 issuer validation, so blocking would enforce a rule the selected version does not contain.
 
 In both cases the mismatch is recorded on the OAuth trace at the `received_authorization_code` step, visible in the **Last OAuth Trace** panel.
@@ -111,7 +133,13 @@ In hosted mode, a **Reveal** button appears next to the **Bearer Token** label. 
 Bearer tokens are stored securely and are never written to your browser's local storage in hosted mode. In local mode, the token is stored in your browser's local storage alongside the rest of your server configuration.
 </Note>
 
-## Pre-registered client secrets
+## Pre-registered clients
+
+When you select **Pre-registered** as the registration strategy, a **Client ID** is required before you can save the configuration. Because the pre-registered flow skips Dynamic Client Registration entirely, there is no way to obtain a client ID at runtime — the flow will fail without one.
+
+If you try to save without a Client ID, the form blocks the save and shows an inline error. The **Advanced settings** section expands automatically so you can enter the Client ID without having to find and open it yourself. Switching the **Registration** dropdown away from **Pre-registered** (for example, to **Dynamic (DCR)**) clears the error.
+
+### Pre-registered client secrets
 
 When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
 

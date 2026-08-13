@@ -1,21 +1,23 @@
 /**
  * MCP tools over the shared platform operation catalog. Each tool is a thin
  * adapter: parse args with the operation's schema, call the Platform API
- * with the session's bearer token, and emit the payload as both text and
+ * with the request's bearer token, and emit the payload as both text and
  * structured content. Operations listed in `PLATFORM_TOOL_WIDGET_VIEWS`
- * additionally register the shared MCP Apps bundle as their UI resource —
- * rendered only when the client supports MCP Apps, with the registrar
- * falling back to the plain (untagged) callback otherwise. The widget-backed
- * `show_servers` tool lives in `showServers.ts` and reuses the helpers here.
+ * additionally register the shared MCP Apps bundle as their UI resource. The
+ * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
+ * helpers here.
  */
 import {
   callServerToolOperation,
   checkHostCompatibilityOperation,
   createEvalCaseOperation,
   createEvalSuiteOperation,
+  createProjectServerOperation,
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   diagnoseServerOperation,
+  getMeOperation,
+  listModelsOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
   getChatboxOperation,
@@ -24,6 +26,9 @@ import {
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
+  getEnvironmentOperation,
+  getPluginVersionOperation,
+  getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
   listChatboxesOperation,
@@ -32,6 +37,8 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  listEnvironmentsOperation,
+  listProjectPluginsOperation,
   listProjectsOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
@@ -39,29 +46,41 @@ import {
   listServerToolsOperation,
   PlatformApiClient,
   readServerResourceOperation,
+  resolveEnvironmentOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
+  deleteProjectOperation,
+  ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
   PLATFORM_WIDGET_RESOURCE_URIS,
   tagPlatformWidgetPayload,
   type PlatformWidgetView,
 } from "../shared/platform-widgets.js";
-import type { McpJamMcpServer } from "../server.js";
+import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
 /** Every catalog operation registered as a tool, in list order. */
 export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   PlatformOperation<any, any>
 > = [
+  getMeOperation,
+  listModelsOperation,
   listProjectsOperation,
   listProjectServersOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -79,6 +98,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
+  setEvalSuiteEnvironmentsOperation,
   listEvalCasesOperation,
   getEvalCaseOperation,
   createEvalCaseOperation,
@@ -90,10 +110,132 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  listEnvironmentsOperation,
+  getEnvironmentOperation,
+  resolveEnvironmentOperation,
+  // Agent Plugins: the READ half only. Every plugin write (import, activate,
+  // enable/disable, uninstall) stays off this unattended surface by policy —
+  // there is no excluded write operation to list because the SDK ships none.
+  listProjectPluginsOperation,
+  getPluginVersionOperation,
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
 ];
+
+/** Every SDK operation not exposed by the generic MCP catalog, with policy. */
+export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  launch_journey_run: "Pre-GA product — expose at GA.",
+  cancel_journey_run: "Pre-GA product — expose with the launch it pairs with.",
+  // Scenarios (user testing) and journeys (Swarms) are held out of this
+  // catalog WHOLESALE until GA — a CATALOG policy, not the flag.
+  //
+  // The distinction matters, because a maintainer who reads "flag-gated" here
+  // will reach for the flag when deciding what to expose, and the flag does
+  // not cover most of this list. `sandboxes-enabled` gates only the
+  // exposure-CREATING writes (publish, launch, authoring); the reads,
+  // `cancel_journey_run` and `unpublish_scenario` are deliberately ungated, so
+  // an organization that has just lost the flag can still see what is running,
+  // stop it, and take a live scenario down. None of them ever answers
+  // FEATURE_UNAVAILABLE. What keeps them out is that this catalog is STATIC —
+  // one tool list for every caller, built with no organization in hand — so a
+  // beta cannot be advertised selectively here at all.
+  publish_scenario:
+    "Pre-GA product, and publishing exposes an environment publicly — not an unattended-catalog action.",
+  unpublish_scenario:
+    "Pre-GA product — expose at GA, with its publish counterpart.",
+  list_journeys: "Pre-GA product — expose at GA.",
+  list_journey_runs: "Pre-GA product — expose at GA.",
+  get_journey_run: "Pre-GA product — expose at GA.",
+  list_journey_run_sessions: "Pre-GA product — expose at GA.",
+
+  show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
+  create_project:
+    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  update_project:
+    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  delete_project:
+    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  validate_server:
+    "Server validation is available through the dedicated server diagnostics surface.",
+  export_server:
+    "Server export is available through the dedicated server diagnostics surface.",
+  list_hosts:
+    "Host administration is intentionally outside the generic MCP catalog.",
+  get_host:
+    "Host administration is intentionally outside the generic MCP catalog.",
+  set_host_servers:
+    "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
+  duplicate_host:
+    "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
+  list_sandbox_images:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  get_sandbox_image:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  validate_sandbox_image_blueprint:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  list_sandbox_image_builds:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  create_tunnel:
+    "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
+  close_tunnel:
+    "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
+  create_host:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  update_host:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  delete_host:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  create_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  update_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  archive_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  restore_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  create_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  update_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  build_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  promote_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  use_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  reset_computer:
+    "Computer lifecycle writes are not offered on the unattended catalog surface.",
+  delete_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+};
+
+const catalogOperationNames = new Set(
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+);
+const allOperationNames = new Set(
+  ALL_OPERATIONS.map((operation) => operation.name)
+);
+const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
+  (name) => !allOperationNames.has(name)
+);
+const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
+  (operation) =>
+    !catalogOperationNames.has(operation.name) &&
+    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
+);
+if (
+  staleCatalogExclusions.length > 0 ||
+  uncoveredCatalogOperations.length > 0
+) {
+  throw new Error(
+    `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
+      ","
+    )}; uncovered=${uncoveredCatalogOperations
+      .map((operation) => operation.name)
+      .join(",")}`
+  );
+}
 
 /**
  * Operations that PERMANENTLY destroy a known resource. They carry an
@@ -104,6 +246,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
+  deleteProjectServerOperation.name,
+  deleteProjectOperation.name,
   // Cancelling a run terminates in-flight work — state-changing, so clients
   // should be able to confirm before it fires.
   cancelEvalRunOperation.name,
@@ -131,7 +275,7 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  agent: McpJamMcpServer
+  context: PlatformToolContext
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -143,8 +287,8 @@ export function registerPlatformCatalogTools(
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
-      async (input) => runPlatformOperation(agent, operation, input),
-      view ? platformWidgetUi(agent, operation, view) : undefined
+      async (input) => runPlatformOperation(context, operation, input),
+      view ? platformWidgetUi(context, operation, view) : undefined
     );
   }
 }
@@ -152,11 +296,12 @@ export function registerPlatformCatalogTools(
 /**
  * UI registration for a widget-backed tool: the shared app bundle under the
  * view's own resource URI, and a callback whose payload carries the
- * `widget` tag the bundle routes on. The plain callback stays untagged so
- * non-MCP-Apps sessions see the bare operation payload.
+ * `widget` tag the bundle routes on. This is the callback a widget-backed
+ * tool actually registers; the untagged one passed alongside it is the
+ * fallback for tools that declare a UI resource but need no payload tag.
  */
 export function platformWidgetUi(
-  agent: McpJamMcpServer,
+  context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
   view: PlatformWidgetView
 ) {
@@ -170,7 +315,7 @@ export function platformWidgetUi(
       },
     },
     callback: async (input: unknown) =>
-      runPlatformOperation(agent, operation, input, (payload) =>
+      runPlatformOperation(context, operation, input, (payload) =>
         tagPlatformWidgetPayload(view, payload)
       ),
   };
@@ -199,7 +344,7 @@ export function operationAnnotations(
 }
 
 export async function runPlatformOperation<TInput, TOutput extends object>(
-  agent: McpJamMcpServer,
+  context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
   transformPayload?: (payload: TOutput) => object
@@ -207,13 +352,13 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
   // first tool execution), never at connect/list_tools.
-  const token = await agent.getBearerToken();
+  const token = await context.getBearerToken();
   if (!token) {
     return toolError("No bearer token on the request.");
   }
 
   const client = new PlatformApiClient({
-    baseUrl: agent.runtimeEnv.PLATFORM_API_URL,
+    baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
   });

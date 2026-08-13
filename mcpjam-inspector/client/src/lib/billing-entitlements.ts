@@ -33,8 +33,11 @@ export function getAnnualDiscountPercent(
 }
 
 export const BILLING_FEATURE_BY_TAB = {
+  // Both Evaluate lenses (Suites and Runs) gate on `evals`: they are one tab
+  // now, and this map is keyed by tab id. `cicd` still exists as a backend
+  // feature — server-side ingest enforces it — it just no longer gates a
+  // client route.
   evals: "evals",
-  "ci-evals": "cicd",
   chatboxes: "chatboxes",
   // The agent Swarm surface shares the human Chatbox's billing feature.
   swarms: "chatboxes",

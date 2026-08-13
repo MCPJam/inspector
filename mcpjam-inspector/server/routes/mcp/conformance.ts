@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MCP_PROTOCOL_VERSIONS,
   oauthConformanceProfileSchema,
   type HttpServerConfig,
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import "../../types/hono";
-import { logger } from "../../utils/logger";
 import {
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
@@ -19,6 +19,7 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const conformance = new Hono();
 
@@ -68,11 +69,13 @@ function handleUnsupportedTransport(
 
 const protocolSchema = z.object({
   serverId: z.string().min(1),
+  /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
 });
 
 conformance.post("/protocol", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = protocolSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -90,14 +93,20 @@ conformance.post("/protocol", async (c) => {
     }
 
     assertHttpSupported("protocol", resolved.config);
-    const { result } = await runProtocolConformance(
-      toHttpResolved(resolved.config as HttpServerConfig),
-    );
+    const { result } = await runProtocolConformance({
+      ...toHttpResolved(resolved.config as HttpServerConfig),
+      protocolVersion: parsed.data.protocolVersion,
+    });
     return c.json({ success: true, result });
   } catch (error) {
     const unsupported = handleUnsupportedTransport(c, error);
     if (unsupported) return unsupported;
-    logger.error("[Conformance Protocol]", error);
+    reportRouteFailure("[Conformance Protocol]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.protocol",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -116,7 +125,7 @@ const appsSchema = z.object({
 
 conformance.post("/apps", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = appsSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -142,7 +151,12 @@ conformance.post("/apps", async (c) => {
     const { result } = await runAppsConformance(serverConfig);
     return c.json({ success: true, result });
   } catch (error) {
-    logger.error("[Conformance Apps]", error);
+    reportRouteFailure("[Conformance Apps]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.apps",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -160,13 +174,13 @@ const tasksSchema = z.object({
   /** Tool used to provoke a task; required on the extension wire, where tools
    *  carry no task metadata to pick from. */
   toolName: z.string().min(1).optional(),
-  toolArguments: z.record(z.unknown()).optional(),
+  toolArguments: z.record(z.string(), z.unknown()).optional(),
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
 });
 
 conformance.post("/tasks", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = tasksSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -196,7 +210,12 @@ conformance.post("/tasks", async (c) => {
     });
     return c.json({ success: true, result });
   } catch (error) {
-    logger.error("[Conformance Tasks]", error);
+    reportRouteFailure("[Conformance Tasks]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.tasks",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -212,13 +231,12 @@ conformance.post("/tasks", async (c) => {
 const oauthStartSchema = z.object({
   serverId: z.string().min(1),
   oauthProfile: oauthConformanceProfileSchema.optional(),
-  runNegativeChecks: z.boolean().optional(),
   callbackOrigin: z.string().optional(),
 });
 
 conformance.post("/oauth/start", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = oauthStartSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -230,8 +248,7 @@ conformance.post("/oauth/start", async (c) => {
       );
     }
 
-    const { serverId, oauthProfile, runNegativeChecks, callbackOrigin } =
-      parsed.data;
+    const { serverId, oauthProfile, callbackOrigin } = parsed.data;
     const resolved = resolveServerConfig(c.mcpClientManager, serverId);
     if ("error" in resolved) {
       return c.json({ success: false, ...resolved }, 400);
@@ -257,13 +274,17 @@ conformance.post("/oauth/start", async (c) => {
       defaultCustomHeaders: http.customHeaders,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
-      runNegativeChecks,
     });
     return c.json(result);
   } catch (error) {
     const unsupported = handleUnsupportedTransport(c, error);
     if (unsupported) return unsupported;
-    logger.error("[Conformance OAuth Start]", error);
+    reportRouteFailure("[Conformance OAuth Start]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.oauth.start",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,
@@ -284,7 +305,7 @@ const oauthAuthorizeSchema = z.object({
 
 conformance.post("/oauth/authorize", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = oauthAuthorizeSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -308,7 +329,13 @@ conformance.post("/oauth/authorize", async (c) => {
     }
     return c.json({ success: true });
   } catch (error) {
-    logger.error("[Conformance OAuth Authorize]", error);
+    reportRouteFailure("[Conformance OAuth Authorize]", error, {
+      // Unlike its siblings, this handler contacts nothing: it parses the
+      // request and hands the code to a local conformance session. A failure
+      // is our session bookkeeping.
+      source: "mcp.conformance.oauth.authorize",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -327,7 +354,7 @@ const oauthCompleteSchema = z.object({
 
 conformance.post("/oauth/complete", async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     const parsed = oauthCompleteSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
@@ -348,7 +375,12 @@ conformance.post("/oauth/complete", async (c) => {
     if (error instanceof OAuthConformanceSessionFailedError) {
       return c.json({ success: false, error: error.message }, 500);
     }
-    logger.error("[Conformance OAuth Complete]", error);
+    reportRouteFailure("[Conformance OAuth Complete]", error, {
+      // Conformance probes EXIST to make a user's server misbehave. Paging
+      // on that would be paging on the feature working.
+      source: "mcp.conformance.oauth.complete",
+      hop: "user_server_hop",
+    });
     return c.json(
       {
         success: false,

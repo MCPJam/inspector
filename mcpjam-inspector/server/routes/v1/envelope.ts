@@ -7,8 +7,9 @@
  * public code union, upgrading MCP auth failures to OAUTH_REQUIRED.
  */
 import type { Context } from "hono";
-import { isMCPAuthError } from "@mcpjam/sdk";
+import { describeError, isMCPAuthError } from "@mcpjam/sdk";
 import { ErrorCode, mapRuntimeError } from "../web/errors.js";
+import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
 import {
   v1ErrorBody,
   v1Page,
@@ -60,12 +61,25 @@ export function mapErrorToV1(error: unknown): {
   message: string;
   details?: Record<string, unknown>;
 } {
+  // The two branches below return BEFORE `mapRuntimeError`, which is where the
+  // v1 chain would otherwise make its capture decision. Classify them here so
+  // no path out of this function escapes unclassified — both are non-MCPJam in
+  // practice (an upstream server demanding a grant, or not implementing a
+  // primitive), so in practice this records the verdict and pages on nothing.
   if (safeIsMcpAuthError(error)) {
     const message = error instanceof Error ? error.message : String(error);
+    maybeCaptureOriginError(error, describeError(error), {
+      source: "v1.mapErrorToV1",
+      extra: { code: "OAUTH_REQUIRED" },
+    });
     return { code: "OAUTH_REQUIRED", message };
   }
   if (isMcpMethodNotFound(error)) {
     const message = error instanceof Error ? error.message : String(error);
+    maybeCaptureOriginError(error, describeError(error), {
+      source: "v1.mapErrorToV1",
+      extra: { code: "FEATURE_NOT_SUPPORTED" },
+    });
     return { code: "FEATURE_NOT_SUPPORTED", message };
   }
   const routeError = mapRuntimeError(error);
@@ -75,6 +89,30 @@ export function mapErrorToV1(error: unknown): {
   ) {
     return {
       code: "OAUTH_REQUIRED",
+      message: routeError.message,
+      details: routeError.details,
+    };
+  }
+  // The upstream server refused the credentials we presented. Mapped HERE
+  // rather than in the shared `INTERNAL_TO_V1_CODE` table on purpose:
+  // `UPSTREAM_AUTH_FAILED` is an Inspector-internal code that the Convex
+  // backend never emits, and that table is a SHARED contract the backend
+  // keeps a byte-identical copy of (see ./contract.ts) — pushing an
+  // Inspector-only concept into it would make the two surfaces drift for a
+  // value one of them can never produce. Without this branch `mapInternalCode`
+  // falls through its unknown-code default and answers 500 INTERNAL_ERROR, the
+  // exact misreport this classification exists to remove, on the surface the
+  // CLI and the MCP worker read.
+  //
+  // FORBIDDEN, not OAUTH_REQUIRED: a genuine `MCPAuthError` was already
+  // promoted to OAUTH_REQUIRED at the top of this function, so what reaches
+  // here did NOT identify as an MCP auth failure (a transport error carrying
+  // 403, or a message-pattern match) and carries no grant for the caller to
+  // drive. 403 also matches the status the hosted `/api/web/*` twin returns
+  // for the same throw.
+  if (routeError.code === ErrorCode.UPSTREAM_AUTH_FAILED) {
+    return {
+      code: "FORBIDDEN",
       message: routeError.message,
       details: routeError.details,
     };

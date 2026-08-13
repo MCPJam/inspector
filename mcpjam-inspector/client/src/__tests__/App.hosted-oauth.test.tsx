@@ -57,7 +57,7 @@ const {
   mockPosthogCapture,
   mockPosthogState,
   mockTrack,
-  mockChatboxesTab,
+  mockUserTestingTab,
   mockGetGuestBearerToken,
   mockUseAuth,
   mockUseAppState,
@@ -158,7 +158,7 @@ const {
     mockUseConvexAuth: vi.fn(),
     mockUseFeatureFlagEnabled: vi.fn(),
     mockUseQuery: vi.fn() as unknown as ReturnType<typeof vi.fn>,
-    mockChatboxesTab: vi.fn(() => <div>Chatboxes Tab</div>),
+    mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
     mockHeader: vi.fn((_props: unknown) => <div data-testid="app-header" />),
     mockWorkOsAuthState: {
       getAccessToken: vi.fn(),
@@ -294,6 +294,11 @@ vi.mock("../lib/theme-utils", () => ({
 }));
 
 vi.mock("../lib/oauth/mcp-oauth", () => ({
+  // Literal rather than the real export: the module under mock is the one
+  // being stubbed out. Drift is caught by the ratchet in
+  // lib/oauth/__tests__/oauth-callback-recovery.test.ts, which pins the
+  // constant to this exact value.
+  OAUTH_PENDING_STORAGE_KEY: "mcp-oauth-pending",
   completeHostedOAuthCallback: mockCompleteHostedOAuthCallback,
   hasOAuthConfig: vi.fn(() => false),
   handleOAuthCallback: mockHandleOAuthCallback,
@@ -352,8 +357,8 @@ vi.mock("../components/EvalsTab", () => ({
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
-vi.mock("../components/ChatboxesTab", () => ({
-  ChatboxesTab: (props: unknown) => mockChatboxesTab(props),
+vi.mock("../components/UserTestingTab", () => ({
+  UserTestingTab: (props: unknown) => mockUserTestingTab(props),
 }));
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
@@ -363,9 +368,6 @@ vi.mock("../components/client-config/ProjectClientConfigSync", () => ({
 }));
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
-}));
-vi.mock("../components/AuthTab", () => ({
-  AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
   OAuthFlowTab: (props: unknown) => {
@@ -518,8 +520,8 @@ describe("App hosted OAuth callback handling", () => {
     mockGetGuestBearerToken.mockResolvedValue("guest-bearer");
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
-    mockChatboxesTab.mockReset();
-    mockChatboxesTab.mockImplementation(() => <div>Chatboxes Tab</div>);
+    mockUserTestingTab.mockReset();
+    mockUserTestingTab.mockImplementation(() => <div>User Testing Tab</div>);
     mockHeader.mockReset();
     mockHeader.mockImplementation((_props: unknown) => (
       <div data-testid="app-header" />
@@ -2238,7 +2240,7 @@ describe("App hosted OAuth callback handling", () => {
   // has its own billing gate for creation — no longer exists, so the
   // test was deleted rather than rewritten.
 
-  it("navigates back to the chatboxes tab after callback completion", async () => {
+  it("navigates back to the User Testing tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
@@ -2253,6 +2255,11 @@ describe("App hosted OAuth callback handling", () => {
       serverUrl: "https://mcp.asana.com/sse",
       returnPath: "#chatboxes",
     });
+    // User Testing is flag-gated at the route, not just in the sidebar — the
+    // callback can only land back on it for a user who has the flag.
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "sandboxes-enabled",
+    );
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
       serverName: "asana",
@@ -2265,8 +2272,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/chatboxes");
-      expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
+      // A legacy `#chatboxes` return path resolves to the tab id `chatboxes`,
+      // whose canonical path is now `/user-testing`.
+      expect(window.location.pathname).toBe("/user-testing");
+      expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
     });
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
@@ -2664,7 +2673,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("keeps Playground available when evaluate-ci is disabled", async () => {
+  it("renders Suites mode on /evals", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/evals");
@@ -2683,92 +2692,27 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("waits on ci-evals while the evaluate-ci flag is still loading", async () => {
+  it("renders Runs mode on /evals/runs with no flag gate", async () => {
+    // Runs used to sit behind `evaluate-ci` at its own /ci-evals tab. It is a
+    // mode under Evaluate now and ships to everyone, so there is no flag read,
+    // no "Loading Runs..." spinner, and no redirect back to Suites.
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/ci-evals");
+    window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
-
-    const evaluateRunsState: { value: boolean | undefined } = {
-      value: undefined,
-    };
-    mockPosthogState.featureFlags.hasLoadedFlags = false;
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-ci"
-        ? evaluateRunsState.value
-        : flag === "playground-enabled"
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
     );
 
     render(<App />);
-
-    expect(window.location.pathname).toBe("/ci-evals");
-    expect(screen.getByText("Loading Runs...")).toBeInTheDocument();
-    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
-
-    act(() => {
-      mockPosthogState.featureFlags.hasLoadedFlags = true;
-      evaluateRunsState.value = true;
-      mockPosthogState.emitFeatureFlags();
-    });
 
     await waitFor(() => {
       expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/ci-evals");
+    expect(window.location.pathname).toBe("/evals/runs");
     expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
-  });
-
-  it("redirects ci-evals to evals when evaluate-ci is disabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/ci-evals");
-    mockHandleOAuthCallback.mockReset();
-
-    mockPosthogState.featureFlags.hasLoadedFlags = false;
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-ci"
-        ? undefined
-        : flag === "playground-enabled" || flag === "evaluate-ui"
-    );
-
-    render(<App />);
-
-    expect(screen.getByText("Loading Runs...")).toBeInTheDocument();
-
-    act(() => {
-      mockPosthogState.featureFlags.hasLoadedFlags = true;
-      mockPosthogState.emitFeatureFlags();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/evals");
-    expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
-  });
-
-  it("redirects nested ci-evals routes to evals when evaluate-ci is disabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/ci-evals/suite/s_123?view=runs");
-    mockHandleOAuthCallback.mockReset();
-
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-ci"
-        ? undefined
-        : flag === "playground-enabled" || flag === "evaluate-ui"
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/evals");
-    expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
   it("redirects conformance to home when the feature flag is disabled", async () => {
@@ -2820,18 +2764,44 @@ describe("App hosted OAuth callback handling", () => {
         },
       },
     }));
+    // Convex-shaped ids on purpose: only a real document id is synced and
+    // persisted now, so that a catalog slug in the URL (`/hosts/chatgpt`)
+    // can't be stored as this project's previewed host — see
+    // `HostsRoute.non-id-url.test.tsx`.
+    //
+    // The route only PERSISTS a host id the project's list confirms, so the
+    // list has to actually contain it — the suite default leaves every query
+    // but `getCurrentUser` unresolved, which reads as "still loading" and is
+    // not the state a real direct-URL visit lands in.
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser"
+        ? existingConvexUser
+        : ref === "hosts:listHosts"
+          ? [
+              {
+                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+                name: "Slack",
+                hostConfigId: "host-config-slack",
+                modelId: "claude-sonnet-4",
+                serverCount: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              },
+            ]
+          : undefined
+    );
     localStorage.setItem(
       "mcp-previewed-host-id",
-      JSON.stringify({ project_shared: "host-claude" })
+      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" })
     );
-    window.history.replaceState({}, "", "/hosts/host-slack");
+    window.history.replaceState({}, "", "/hosts/m17b6q9xw2tv4kz8p3r5s0dc");
 
     render(<App />);
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"))
         .toEqual({
-          project_shared: "host-slack",
+          project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
         });
     });
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
@@ -3006,10 +2976,12 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("still applies the CI billing redirect when evaluate-ci is enabled", async () => {
+  it("applies the evals billing gate to Runs mode", async () => {
+    // Runs used to gate on `cicd` because it was its own tab. Both lenses are
+    // one tab now, so the tab-keyed gate is `evals` for both.
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/ci-evals");
+    window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
@@ -3028,7 +3000,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) =>
-        flag === "billing-entitlements-ui" || flag === "evaluate-ci"
+        flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
@@ -3058,7 +3030,7 @@ describe("App hosted OAuth callback handling", () => {
           decisionRequired: false,
           gates: [
             {
-              gateKey: "cicd",
+              gateKey: "evals",
               kind: "feature",
               scope: "organization",
               canAccess: false,
@@ -3090,5 +3062,6 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 });

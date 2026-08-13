@@ -1,6 +1,9 @@
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
-import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
+import type {
+  EvalTraceBlobV1,
+  EvalTraceBrowserInteractionStepView,
+} from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
 import type {
   EvalMatchOptions,
@@ -450,6 +453,19 @@ export type CompareRunRecord = {
   streamingTrace?: EvalTraceBlobV1;
   /** In-flight messages collected after the last authoritative snapshot. */
   streamingDraftMessages?: TraceMessage[];
+  /**
+   * Live browser frames from the headless-Chromium harness, projected onto the
+   * persisted step-view shape. Merged into the streaming trace envelope as
+   * `browserInteractionSteps` so the Replay filmstrip fills in while the run is
+   * still going.
+   */
+  streamingLiveBrowserSteps?: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Highest live-frame `sequence` accepted, carried alongside the steps so the
+   * reducer's monotonic guard survives being rebuilt from this record on every
+   * event (otherwise every frame would look like the first one).
+   */
+  streamingLiveBrowserFrameSequence?: number;
   /** Live actual tool calls collected from streamed snapshots. */
   streamingActualToolCalls?: EvalStreamToolCall[];
   /** Live metrics from stream events. */
@@ -585,7 +601,7 @@ export type EvalSuiteRun = {
     | "run_timeout"
     | "iteration_timeout"
     | "stale_worker";
-  source?: "ui" | "sdk" | "api" | "schedule";
+  source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;

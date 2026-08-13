@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // NewJourneyButton's Advanced → Judge section pulls the model catalog via
@@ -34,7 +40,7 @@ const journey = {
   personaRefId: "persona-1",
   goal: "Book a flight",
   hostIds: ["host-1", "host-2"],
-  config: { sessionsPerHost: 2, maxTurns: 6 },
+  config: { sessionsPerTarget: 2, maxTurns: 6 },
 };
 const host = { hostId: "host-1", name: "Host One" };
 const hostTwo = { hostId: "host-2", name: "Host Two" };
@@ -184,11 +190,19 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: ({
     threadId,
     sessionLink,
+    promote,
   }: {
     threadId: string;
     sessionLink: string;
+    promote?: { projectId: string; canPromote: boolean };
   }) => (
-    <div data-testid="viewer" data-thread-id={threadId} data-link={sessionLink}>
+    <div
+      data-testid="viewer"
+      data-thread-id={threadId}
+      data-link={sessionLink}
+      data-promote-project={promote?.projectId ?? ""}
+      data-can-promote={promote ? String(promote.canPromote) : ""}
+    >
       viewer
     </div>
   ),
@@ -201,32 +215,15 @@ vi.mock("@/hooks/useViews", () => ({
     serverAttachments: [],
     isLoading: false,
   }),
+  useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-// Stub the promote dialog (it owns its own Convex action wiring — covered by
-// convert-swarm-session-dialog.test.tsx) but surface open/session so we can
-// assert the promote affordance hands it the SELECTED row.
-vi.mock("@/components/swarms/convert-swarm-session-dialog", () => ({
-  ConvertSwarmSessionDialog: ({
-    open,
-    session,
-  }: {
-    open: boolean;
-    session: { id: string } | null;
-  }) => (
-    <div
-      data-testid="promote-dialog"
-      data-open={String(open)}
-      data-session-id={session?.id ?? ""}
-    />
-  ),
-}));
-
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   paginatedCalls.length = 0;
@@ -243,27 +240,27 @@ afterEach(() => {
  * latest, so the cell click alone opens it.
  */
 async function expandJourneyAndOpenRunSessions(
-  target: "completed" | "partial" = "completed",
+  target: "completed" | "partial" = "completed"
 ) {
   fireEvent.click(
     await screen.findByRole("button", {
       name: /open runs for book a flight on host one/i,
-    }),
+    })
   );
   if (target === "completed") {
     fireEvent.click(
       await screen.findByRole("button", {
         name: /open run completed .* on host one/i,
-      }),
+      })
     );
   }
 }
 
 async function selectFirstDoneCell() {
   const matrix = await screen.findByTestId("swarm-sessions-matrix");
-  const doneCell = within(matrix).getAllByTestId("swarm-host-cell").find(
-    (el) => el.getAttribute("data-outcome") === "succeeded",
-  );
+  const doneCell = within(matrix)
+    .getAllByTestId("swarm-host-cell")
+    .find((el) => el.getAttribute("data-outcome") === "succeeded");
   expect(doneCell).toBeTruthy();
   fireEvent.click(doneCell!);
 }
@@ -272,7 +269,7 @@ function openSessionsTab() {
   fireEvent.click(
     within(screen.getByLabelText("Swarm view")).getByRole("button", {
       name: /^sessions$/i,
-    }),
+    })
   );
 }
 
@@ -285,6 +282,7 @@ async function selectPersonaFilter(name: string) {
 describe("SwarmsTab — sessions-by-run query contract", () => {
   it("queries listSessionsByJourneyRun with { journeyRunId } and opens the viewer on the row's `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     await expandJourneyAndOpenRunSessions();
@@ -305,7 +303,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
     await selectFirstDoneCell();
     fireEvent.click(
-      await screen.findByRole("button", { name: /open full session detail/i }),
+      await screen.findByRole("button", { name: /open full session detail/i })
     );
 
     // CONTRACT: the viewer + deep-link consume the row's `id` (thread-xyz).
@@ -314,29 +312,32 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     expect(viewer.getAttribute("data-link")).toContain("thread-xyz");
   });
 
-  it("opens the promote dialog with the selected session row", async () => {
+  it("hands the selected session's promote capability to the detail pane", async () => {
+    // The affordance itself lives in ShareUsageThreadDetail (shared with User
+    // Testing); SwarmsTab's remaining job is supplying the project scope and
+    // the member-tier verdict the thread row can't carry.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
-    // The dialog is mounted closed until a session is selected + promoted.
-    const dialog = await screen.findByTestId("promote-dialog");
-    expect(dialog.getAttribute("data-open")).toBe("false");
-
     await selectFirstDoneCell();
     fireEvent.click(
-      await screen.findByRole("button", { name: /open full session detail/i }),
+      await screen.findByRole("button", { name: /open full session detail/i })
     );
-    fireEvent.click(await screen.findByText("Promote to test case"));
 
     await waitFor(() => {
-      expect(dialog.getAttribute("data-open")).toBe("true");
-      expect(dialog.getAttribute("data-session-id")).toBe("thread-xyz");
+      const viewer = screen.getByTestId("viewer");
+      expect(viewer.getAttribute("data-thread-id")).toBe("thread-xyz");
+      expect(viewer.getAttribute("data-promote-project")).toBe("proj-1");
+      // Swarms is member-gated at the route, so being here is the check.
+      expect(viewer.getAttribute("data-can-promote")).toBe("true");
     });
   });
 
   it("opens a specific run when its trend segment is clicked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     // Host One's strip has one segment per run; clicking the completed (run-1)
@@ -344,7 +345,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     fireEvent.click(
       await screen.findByRole("button", {
         name: /open run completed .*on host one/i,
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -358,12 +359,13 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("surfaces failed attempts that never persisted a session transcript", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions("partial");
     fireEvent.click(
       await screen.findByRole("button", {
         name: /open runs for book a flight on host two/i,
-      }),
+      })
     );
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
@@ -377,6 +379,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("maps sticky chat-session 'active' to 'done' once the run completed", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
@@ -395,27 +398,37 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
     await selectFirstDoneCell();
 
     const tabs = await screen.findByTestId("swarm-live-trace-view-tabs");
-    expect(within(tabs).getByRole("button", { name: /^trace$/i })).toBeInTheDocument();
-    expect(within(tabs).getByRole("button", { name: /^chat$/i })).toBeInTheDocument();
-    expect(within(tabs).getByRole("button", { name: /^raw$/i })).toBeInTheDocument();
+    expect(
+      within(tabs).getByRole("button", { name: /^trace$/i })
+    ).toBeInTheDocument();
+    expect(
+      within(tabs).getByRole("button", { name: /^chat$/i })
+    ).toBeInTheDocument();
+    expect(
+      within(tabs).getByRole("button", { name: /^raw$/i })
+    ).toBeInTheDocument();
     // Playground parity: no Tool Calls / Steps / App tabs on this surface.
-    expect(within(tabs).queryByRole("button", { name: /tool calls/i })).toBeNull();
+    expect(
+      within(tabs).queryByRole("button", { name: /tool calls/i })
+    ).toBeNull();
   });
 });
 
 describe("SwarmsTab — top-level Journeys view", () => {
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
 
     await waitFor(() => {
       const call = paginatedCalls.find(
-        (c) => c.name === "journeyRuns:listSessionsByProject",
+        (c) => c.name === "journeyRuns:listSessionsByProject"
       );
       expect(call).toBeTruthy();
       expect(call!.args).toEqual({ projectId: "proj-1" });
@@ -423,7 +436,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
     const panel = await screen.findByTestId("swarms-sessions-panel");
     expect(
-      within(panel).getByTestId("swarms-sessions-persona-filter"),
+      within(panel).getByTestId("swarms-sessions-persona-filter")
     ).toHaveTextContent("All personas");
 
     // Select via preview text — name appears twice (title + persona badge).
@@ -438,6 +451,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("filters the visible list by client (host) without changing the query", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
 
     // Both hosts' sessions are listed before filtering.
@@ -459,8 +473,8 @@ describe("SwarmsTab — top-level Journeys view", () => {
       paginatedCalls.every(
         (c) =>
           c.name !== "journeyRuns:listSessionsByHost" &&
-          c.name !== "journeyRuns:listSessionsByClient",
-      ),
+          c.name !== "journeyRuns:listSessionsByClient"
+      )
     ).toBe(true);
 
     fireEvent.click(screen.getByTestId("swarms-sessions-host-filter"));
@@ -472,12 +486,13 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
     await selectPersonaFilter("Persona One");
 
     await waitFor(() => {
       const call = paginatedCalls.find(
-        (c) => c.name === "journeyRuns:listSessionsByPersona",
+        (c) => c.name === "journeyRuns:listSessionsByPersona"
       );
       expect(call).toBeTruthy();
       expect(call!.args).toEqual({ personaRefId: "persona-1" });
@@ -489,7 +504,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
       const filter = screen.getByTestId("swarms-sessions-persona-filter");
       expect(filter).toHaveTextContent("All personas");
       const projectCalls = paginatedCalls.filter(
-        (c) => c.name === "journeyRuns:listSessionsByProject",
+        (c) => c.name === "journeyRuns:listSessionsByProject"
       );
       expect(projectCalls.length).toBeGreaterThan(0);
     });

@@ -59,9 +59,10 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
-import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
+import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
+import { countSuiteRunPlans } from "./helpers";
+import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
-import type { HostListItem } from "@/hooks/useClients";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
@@ -120,8 +121,6 @@ interface SuiteHeaderProps {
   onSuiteHostAttachmentsUpdate?: (
     attachments: HostAttachmentDraft[]
   ) => Promise<void>;
-  /** Hosts available to attach (from `useHostList`). Optional for legacy callers. */
-  projectHosts?: HostListItem[];
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -166,6 +165,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onGenerateTestCases,
     canGenerateTestCases = false,
     generateTestCasesDisabledReason,
+    // Effective reason, derived by the PARENT (suite-iterations-view) — it
+    // owns every run control, so the cloud-sandbox preflight is folded in
+    // there, not here (deriving here left the per-case buttons ungated).
     evalRunsDisabledReason = null,
     isGeneratingTestCases = false,
     onCreateTestCase,
@@ -173,7 +175,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runningTestCaseId = null,
     runsViewMode = "runs",
     onSuiteHostAttachmentsUpdate,
-    projectHosts = [],
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
   } = props;
@@ -361,6 +362,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               cancellingRunId={cancellingRunId}
               hasServersConfigured={hasServersConfigured}
               missingServers={missingServers}
+              runsDisabledReason={evalRunsDisabledReason}
               showCloseButton
               onBackToOverview={() => onViewModeChange("overview")}
             />
@@ -425,6 +427,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 cancellingRunId={cancellingRunId}
                 hasServersConfigured={hasServersConfigured}
                 missingServers={missingServers}
+                runsDisabledReason={evalRunsDisabledReason}
                 showCloseButton
                 onBackToOverview={() => onViewModeChange("overview")}
               />
@@ -439,17 +442,16 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     return null;
   }
 
-  // Hosts bar is rendered whenever the suite overview is visible, regardless
-  // of whether any cases exist yet — the empty "Attach host" affordance is
-  // the whole point of surfacing the axis up front. The model-axis bar was
-  // removed: a host's `modelId` is the source of truth for what each run
-  // runs against, so a separate suite-wide model selector is just noise.
+  // Rendered whenever the suite overview is visible, regardless of whether any
+  // cases exist yet — the empty "pick a client" affordance is the whole point of
+  // surfacing the axis up front. The model-axis bar was removed: a host's
+  // `modelId` is the source of truth for what each run runs against, so a
+  // separate suite-wide model selector is just noise.
   const suiteOverviewHostBar = (
-    <SuiteOverviewClientBar
+    <SuiteEnvironmentComposerBar
       containerVariant="inline"
       className="py-1.5 md:py-2"
       suite={suite}
-      projectHosts={projectHosts}
       readOnly={readOnlyConfig}
       onUpdate={onSuiteHostAttachmentsUpdate}
       onUpdateServerAttachment={handleServerAttachmentUpdate}
@@ -460,17 +462,25 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     hideRunActions && showTestCaseCtas
       ? (() => {
           const testCaseCount = testCases?.length ?? 0;
+          // Environment suites launch through the server's authoritative
+          // resolution — `handleRerunSuite` skips the local server gate for
+          // them (`!isEnvironmentSuite && suiteServers.length === 0`), so the
+          // browser never needs to know their closed server set. Requiring
+          // local servers here made Run all unclickable for an env-only suite.
+          const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
+          const runAllNeedsLocalServers =
+            !isEnvironmentSuite && !hasServersConfigured;
           const isRunAllDisabled = Boolean(
             isRerunning ||
               replayingRunId != null ||
               runningTestCaseId != null ||
               evalRunsDisabledReason ||
               testCaseCount === 0 ||
-              !hasServersConfigured
+              runAllNeedsLocalServers
           );
           const runAllDisabledReasonTooltip = evalRunsDisabledReason
             ? evalRunsDisabledReason
-            : !hasServersConfigured
+            : runAllNeedsLocalServers
             ? "Configure suite servers before running the full suite."
             : testCaseCount === 0
             ? "Add a test case first."
@@ -479,8 +489,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             : runningTestCaseId != null
             ? "Finish the in-progress test case run first."
             : null;
+          // `missingServers` compares the LOCAL server list against connected
+          // ones. An environment suite launches against the server-side resolved
+          // set instead, so a disconnected legacy entry says nothing about
+          // whether its run can proceed — and now that env suites are runnable,
+          // showing "Connect and run." for them would be actively misleading.
           const runAllConnectionHint =
-            missingServers.length > 0 ? "Connect and run." : null;
+            !isEnvironmentSuite && missingServers.length > 0
+              ? "Connect and run."
+              : null;
           const hasRunOverride =
             (runMatchOptionsOverride &&
               Object.keys(runMatchOptionsOverride).length > 0) ||
@@ -592,8 +609,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Popover>
             </div>
           );
-          if (isRunAllDisabled && runAllDisabledReasonTooltip) {
-            return (
+          const runAllControl =
+            isRunAllDisabled && runAllDisabledReasonTooltip ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">{runAllButton}</span>
@@ -606,10 +623,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {runAllDisabledReasonTooltip}
                 </TooltipContent>
               </Tooltip>
-            );
-          }
-          if (!isRunAllDisabled && runAllConnectionHint) {
-            return (
+            ) : !isRunAllDisabled && runAllConnectionHint ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">{runAllButton}</span>
@@ -622,9 +636,32 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {runAllConnectionHint}
                 </TooltipContent>
               </Tooltip>
+            ) : (
+              runAllButton
             );
-          }
-          return runAllButton;
+          // The estimate rides BESIDE the CTA (never inside its disabled
+          // tooltip trigger) so it stays readable whether or not Run all is
+          // currently runnable, and it never gates the run. `countSuiteRunPlans`
+          // is the same fan-out width `buildSuiteRunPlans` produces; the hint
+          // renders nothing — and fetches nothing — when the flag is off.
+          return (
+            <span className="inline-flex items-center gap-1.5">
+              {runAllControl}
+              <SuiteRunCostEstimateHint
+                suiteId={suite._id}
+                planCount={countSuiteRunPlans(suite)}
+                // Structural blockers only: with no cases there is nothing to
+                // price, and with no servers configured Run all can never
+                // launch. The transient blockers (a rerun/replay in flight, a
+                // case running, an entitlement block) keep the estimate — it
+                // stays accurate for the run that follows.
+                suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
+                {...(iterationOverride !== undefined
+                  ? { iterationOverride }
+                  : {})}
+              />
+            </span>
+          );
         })()
       : null;
 
@@ -638,9 +675,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     overviewRunAllCta != null ||
     (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
     (showTestCaseCtas && Boolean(onCreateTestCase));
-  const overviewHasExportOrRun =
-    Boolean(onOpenExportSuite) ||
-    (!hideRunActions && (replayableLatestRun || !readOnlyConfig));
 
   const overviewSuiteNavButtons =
     overviewHasSuiteNav ? (
@@ -705,121 +739,119 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       </Tooltip>
     ) : null;
 
-  const overviewCaseToolsCluster = overviewHasCaseTools ? (
-    <div className="flex shrink-0 flex-nowrap items-center gap-2 border-l border-border/40 pl-3">
-      {overviewRunAllCta}
-      {showTestCaseCtas && onGenerateTestCases ? (
-        <div className="inline-flex items-center">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1.5 rounded-r-none"
-                  onClick={onGenerateTestCases}
-                  disabled={!canGenerateTestCases || isGeneratingTestCases}
-                  aria-busy={isGeneratingTestCases}
-                >
-                  {isGeneratingTestCases ? (
-                    <Loader2
-                      className="h-3.5 w-3.5 shrink-0 animate-spin"
-                      aria-hidden
-                    />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  )}
-                  Generate
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent
-              variant="muted"
-              side="bottom"
-              align="start"
-              sideOffset={8}
-              className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
-            >
-              {isGeneratingTestCases
-                ? "Generating test cases…"
-                : !canGenerateTestCases
-                  ? (generateTestCasesDisabledReason ??
-                    "Configure suite servers before generating cases.")
-                  : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
-            </TooltipContent>
-          </Tooltip>
-          <GenerateCasesConfigPopover
-            suiteId={suite._id}
-            onGenerate={onGenerateTestCases}
-            disabled={!canGenerateTestCases}
-            isGenerating={isGeneratingTestCases}
-            disabledReason={generateTestCasesDisabledReason}
-          />
-        </div>
-      ) : null}
-      {showTestCaseCtas && onCreateTestCase ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 gap-1.5"
-          onClick={onCreateTestCase}
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          New case
-        </Button>
-      ) : null}
-    </div>
-  ) : null;
-
-  const overviewExportRunCluster = overviewHasExportOrRun ? (
-    <div className="flex shrink-0 flex-nowrap items-center gap-2">
-      {onOpenExportSuite ? (
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 gap-1.5"
-          onClick={onOpenExportSuite}
-        >
-          <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          Setup SDK
-        </Button>
-      ) : null}
-
-      {!hideRunActions && !readOnlyConfig && hasServersConfigured ? (
+  const overviewGenerateButton =
+    showTestCaseCtas && onGenerateTestCases ? (
+      <div className="inline-flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex">
               <Button
-                variant="ghost"
+                type="button"
+                variant="outline"
                 size="sm"
-                className="h-8 gap-1.5 text-muted-foreground"
-                disabled={Boolean(isRerunning || evalRunsDisabledReason)}
-                onClick={() => onRerun(suite, { refreshSnapshot: true })}
+                className="h-8 gap-1.5 rounded-r-none"
+                onClick={onGenerateTestCases}
+                disabled={!canGenerateTestCases || isGeneratingTestCases}
+                aria-busy={isGeneratingTestCases}
               >
-                <RotateCw
-                  className={`h-3.5 w-3.5 shrink-0 ${
-                    isRerunning ? "animate-spin" : ""
-                  }`}
-                  aria-hidden
-                />
-                Update snapshot
+                {isGeneratingTestCases ? (
+                  <Loader2
+                    className="h-3.5 w-3.5 shrink-0 animate-spin"
+                    aria-hidden
+                  />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                )}
+                Generate
               </Button>
             </span>
           </TooltipTrigger>
           <TooltipContent
             variant="muted"
             side="bottom"
-            className="max-w-[16rem]"
+            align="start"
+            sideOffset={8}
+            className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
           >
-            {evalRunsDisabledReason ??
-              "Re-saves the suite's current server list as the frozen execution snapshot and starts a run."}
+            {isGeneratingTestCases
+              ? "Generating test cases…"
+              : !canGenerateTestCases
+                ? (generateTestCasesDisabledReason ??
+                  "Configure suite servers before generating cases.")
+                : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
           </TooltipContent>
         </Tooltip>
-      ) : null}
+        <GenerateCasesConfigPopover
+          suiteId={suite._id}
+          onGenerate={onGenerateTestCases}
+          disabled={!canGenerateTestCases}
+          isGenerating={isGeneratingTestCases}
+          disabledReason={generateTestCasesDisabledReason}
+        />
+      </div>
+    ) : null;
 
-      {!hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
+  const overviewNewCaseButton =
+    showTestCaseCtas && onCreateTestCase ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5"
+        onClick={onCreateTestCase}
+      >
+        <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        New case
+      </Button>
+    ) : null;
+
+  const overviewSetupSdkButton = onOpenExportSuite ? (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-8 gap-1.5"
+      onClick={onOpenExportSuite}
+    >
+      <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      Setup SDK
+    </Button>
+  ) : null;
+
+  const overviewLegacyRunActions =
+    !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
+      <>
+        {!readOnlyConfig && hasServersConfigured ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1.5 text-muted-foreground"
+                  disabled={Boolean(isRerunning || evalRunsDisabledReason)}
+                  onClick={() => onRerun(suite, { refreshSnapshot: true })}
+                >
+                  <RotateCw
+                    className={`h-3.5 w-3.5 shrink-0 ${
+                      isRerunning ? "animate-spin" : ""
+                    }`}
+                    aria-hidden
+                  />
+                  Update snapshot
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent
+              variant="muted"
+              side="bottom"
+              className="max-w-[16rem]"
+            >
+              {evalRunsDisabledReason ??
+                "Re-saves the suite's current server list as the frozen execution snapshot and starts a run."}
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex">
@@ -881,63 +913,75 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     : "Run all cases"}
           </TooltipContent>
         </Tooltip>
-      ) : null}
-    </div>
-  ) : null;
+      </>
+    ) : null;
+
+  const overviewHasRightActions =
+    overviewHasCaseTools ||
+    Boolean(overviewSetupSdkButton) ||
+    Boolean(overviewLegacyRunActions);
 
   return (
     <div
       data-testid="suite-overview-header"
-      className="mb-4 flex min-w-0 items-center gap-x-3"
+      className="mb-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2"
     >
-      <div className="min-w-0 max-w-[38%] shrink overflow-hidden sm:max-w-[45%] md:max-w-none md:flex-1">
-        <div className="flex min-w-0 items-center gap-3">
-          {isEditingName ? (
-            <input
-              type="text"
-              value={editedName}
-              onChange={(e) => setEditedName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={handleNameKeyDown}
-              autoFocus
-              className="min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg h-8 py-0"
-            />
-          ) : readOnlyConfig ? (
-            <h2
-              className="min-w-0 flex-1 truncate px-2 text-base font-semibold leading-none md:text-lg flex h-8 items-center"
-              title={suite.name}
-            >
-              {suite.name}
-            </h2>
-          ) : (
-            <Button
-              variant="ghost"
-              onClick={handleNameClick}
-              className="h-8 min-w-0 max-w-full flex-1 justify-start gap-0 px-2 text-left text-base font-semibold leading-none hover:bg-accent md:text-lg"
-              title={suite.name}
-            >
-              <span className="min-w-0 truncate text-left">{suite.name}</span>
-            </Button>
-          )}
-          {latestRunForMetadata ? (
-            <span className="shrink-0">
-              <CiMetadataDisplay
-                ciMetadata={latestRunForMetadata.ciMetadata}
-                compact={true}
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0 max-w-[20rem] shrink overflow-hidden sm:max-w-md">
+          <div className="flex min-w-0 items-center gap-2">
+            {isEditingName ? (
+              <input
+                type="text"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                onBlur={handleNameBlur}
+                onKeyDown={handleNameKeyDown}
+                autoFocus
+                className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
               />
-            </span>
-          ) : null}
+            ) : readOnlyConfig ? (
+              <h2
+                className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
+                title={suite.name}
+              >
+                {suite.name}
+              </h2>
+            ) : (
+              <Button
+                variant="ghost"
+                onClick={handleNameClick}
+                className="h-8 min-w-0 max-w-full flex-1 justify-start gap-0 px-2 text-left text-base font-semibold leading-none hover:bg-accent md:text-lg"
+                title={suite.name}
+              >
+                <span className="min-w-0 truncate text-left">{suite.name}</span>
+              </Button>
+            )}
+            {latestRunForMetadata ? (
+              <span className="shrink-0">
+                <CiMetadataDisplay
+                  ciMetadata={latestRunForMetadata.ciMetadata}
+                  compact={true}
+                />
+              </span>
+            ) : null}
+          </div>
         </div>
+        <div className="min-w-0 shrink">{suiteOverviewHostBar}</div>
+        {overviewSettingsButton}
+        {overviewSuiteNavButtons}
       </div>
-      <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="flex w-max min-w-full flex-nowrap items-center justify-end gap-x-3">
-          <div className="shrink-0">{suiteOverviewHostBar}</div>
-          {overviewSuiteNavButtons}
-          {overviewSettingsButton}
-          {overviewCaseToolsCluster}
-          {overviewExportRunCluster}
+      {overviewHasRightActions ? (
+        <div
+          data-testid="suite-overview-actions"
+          className="ml-auto flex shrink-0 flex-nowrap items-center gap-2"
+        >
+          {overviewSetupSdkButton}
+          {overviewLegacyRunActions}
+          {overviewGenerateButton}
+          {overviewNewCaseButton}
+          {overviewRunAllCta}
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

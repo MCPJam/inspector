@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 State Machine for MCP - 2025-11-25 Protocol (Draft)
+ * OAuth 2.0 State Machine for MCP - 2025-11-25 Protocol
  *
  * This implementation follows the 2025-11-25 MCP OAuth specification:
  * - Registration priority: CIMD (SHOULD) > Pre-registered > DCR (MAY)
@@ -19,6 +19,7 @@ import type {
   RegistrationStrategy2025_11_25,
 } from "./types.js";
 import type { DiagramAction } from "./shared/types.js";
+import { buildOAuthSequenceDiagramActions } from "./shared/sequence-diagram.js";
 import {
   addInfoLog,
   markLatestHttpEntryAsError,
@@ -36,6 +37,11 @@ import {
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  describePkceMetadataNonConformance,
+  selectAuthorizationServerFromResourceMetadata,
+} from "./shared/required-metadata.js";
+import {
   resolveDiscoveryResourceIndicator,
   resolveFlowResourceValue,
 } from "./shared/resource-indicator.js";
@@ -46,7 +52,6 @@ import {
 import {
   parseBearerAuthenticateParameters,
   parseScopeString,
-  resolveRequestedScopeValue,
 } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
@@ -58,6 +63,13 @@ import {
   executeDynamicClientRegistration,
 } from "./shared/dynamic-client-registration.js";
 import { validateClientIdMetadataUrl } from "./shared/client-id-metadata.js";
+import {
+  applyEmulationToDcrMetadata,
+  resolveEmulatedMcpVersion,
+  resolveEmulatedScopeValue,
+  resolveEmulatedTokenAuthMethod,
+  shouldSendResourceIndicator,
+} from "./shared/emulation.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 export type { OAuthFlowStep, OAuthFlowState };
@@ -85,390 +97,22 @@ export function buildActions_2025_11_25(
   flowState: OAuthFlowState,
   registrationStrategy: "cimd" | "dcr" | "preregistered"
 ): DiagramAction[] {
-  return [
-    {
-      id: "request_without_token",
-      label: "MCP request without token",
-      description: "Client makes initial request without authorization",
-      from: "client",
-      to: "mcpServer",
-      details: flowState.serverUrl
-        ? [
-            { label: "POST", value: flowState.serverUrl },
-            { label: "method", value: "initialize" },
-          ]
-        : undefined,
-    },
-    {
-      id: "received_401_unauthorized",
-      label: "HTTP 401 Unauthorized with WWW-Authenticate header",
-      description: "Server returns 401 with WWW-Authenticate header",
-      from: "mcpServer",
-      to: "client",
-      details: flowState.resourceMetadataUrl
-        ? [{ label: "Note", value: "Extract resource_metadata URL" }]
-        : undefined,
-    },
-    {
-      id: "request_resource_metadata",
-      label: "Request Protected Resource Metadata",
-      description: "Client requests metadata from well-known URI",
-      from: "client",
-      to: "mcpServer",
-      details: flowState.resourceMetadataUrl
-        ? [
-            {
-              label: "GET",
-              value: new URL(flowState.resourceMetadataUrl).pathname,
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "received_resource_metadata",
-      label: "Return metadata",
-      description: "Server returns OAuth protected resource metadata",
-      from: "mcpServer",
-      to: "client",
-      details: flowState.resourceMetadata?.authorization_servers
-        ? [
-            {
-              label: "Auth Server",
-              value: flowState.resourceMetadata.authorization_servers[0],
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "request_authorization_server_metadata",
+  return buildOAuthSequenceDiagramActions(flowState, registrationStrategy, {
+    protocolVersion: "2025-11-25",
+    includesProtectedResourceMetadata: true,
+    initialMcpMethod: "initialize",
+    authorizationServerMetadata: {
       label: "GET Authorization server metadata endpoint",
       description:
         "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
-      from: "client",
-      to: "authServer",
-      details: flowState.authorizationServerUrl
-        ? [
-            { label: "URL", value: flowState.authorizationServerUrl },
-            { label: "Protocol", value: "2025-11-25" },
-          ]
-        : undefined,
     },
-    {
-      id: "received_authorization_server_metadata",
-      label: "Authorization server metadata response",
-      description: "Authorization Server returns metadata",
-      from: "authServer",
-      to: "client",
-      details: flowState.authorizationServerMetadata
-        ? [
-            {
-              label: "Token",
-              value: new URL(
-                flowState.authorizationServerMetadata.token_endpoint
-              ).pathname,
-            },
-            {
-              label: "Auth",
-              value: new URL(
-                flowState.authorizationServerMetadata.authorization_endpoint
-              ).pathname,
-            },
-          ]
-        : undefined,
-    },
-    // CIMD steps
-    ...(registrationStrategy === "cimd"
-      ? [
-          {
-            id: "cimd_prepare",
-            label: "Client uses HTTPS URL as client_id",
-            description:
-              "Client prepares to use URL-based client identification",
-            from: "client",
-            to: "client",
-            details: flowState.clientId
-              ? [
-                  {
-                    label: "client_id (URL)",
-                    value: flowState.clientId.includes("http")
-                      ? flowState.clientId
-                      : "https://www.mcpjam.com/.well-known/oauth/client-metadata.json",
-                  },
-                  {
-                    label: "Method",
-                    value: "Client ID Metadata Document (CIMD)",
-                  },
-                ]
-              : [
-                  {
-                    label: "Note",
-                    value: "HTTPS URL points to metadata document",
-                  },
-                ],
-          },
-          {
-            id: "cimd_fetch_request",
-            label: "Fetch metadata from client_id URL",
-            description:
-              "Authorization Server fetches client metadata from the URL",
-            from: "authServer",
-            to: "client",
-            details: [
-              {
-                label: "Action",
-                value: "GET client_id URL",
-              },
-              {
-                label: "Note",
-                value: "Server initiates metadata fetch during authorization",
-              },
-            ],
-          },
-          {
-            id: "cimd_metadata_response",
-            label: "JSON metadata document",
-            description:
-              "Client hosting returns metadata with redirect_uris and client info",
-            from: "client",
-            to: "authServer",
-            details: [
-              {
-                label: "Content-Type",
-                value: "application/json",
-              },
-              {
-                label: "Contains",
-                value: "client_id, client_name, redirect_uris, etc.",
-              },
-            ],
-          },
-          {
-            id: "received_client_credentials",
-            label: "Validate metadata and redirect_uris",
-            description: "Authorization Server validates fetched metadata",
-            from: "authServer",
-            to: "authServer",
-            details: [
-              {
-                label: "Validates",
-                value: "client_id matches URL, redirect_uris are valid",
-              },
-              {
-                label: "Security",
-                value: "SSRF protection, domain trust policies",
-              },
-            ],
-          },
-        ]
-      : registrationStrategy === "dcr"
-        ? [
-            {
-              id: "request_client_registration",
-              label: "POST /register (2025-11-25)",
-              description:
-                "Client registers dynamically with Authorization Server",
-              from: "client",
-              to: "authServer",
-              details: [
-                {
-                  label: "Note",
-                  value: "Dynamic client registration (DCR)",
-                },
-              ],
-            },
-            {
-              id: "received_client_credentials",
-              label: "Client Credentials",
-              description:
-                "Authorization Server returns client ID and credentials",
-              from: "authServer",
-              to: "client",
-              details: flowState.clientId
-                ? [
-                    {
-                      label: "client_id",
-                      value: flowState.clientId.substring(0, 20) + "...",
-                    },
-                  ]
-                : undefined,
-            },
-          ]
-        : [
-            {
-              id: "received_client_credentials",
-              label: "Use Pre-registered Client (2025-11-25)",
-              description:
-                "Client uses pre-configured credentials (skipped DCR)",
-              from: "client",
-              to: "client",
-              details: flowState.clientId
-                ? [
-                    {
-                      label: "client_id",
-                      value: flowState.clientId.substring(0, 20) + "...",
-                    },
-                    {
-                      label: "Note",
-                      value: "Pre-registered (no DCR needed)",
-                    },
-                  ]
-                : [
-                    {
-                      label: "Note",
-                      value: "Pre-registered client credentials",
-                    },
-                  ],
-            },
-          ]),
-    {
-      id: "generate_pkce_parameters",
+    pkce: {
       label: "Generate PKCE (REQUIRED)\nInclude resource parameter",
       description:
         "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
-      from: "client",
-      to: "client",
-      details: flowState.codeChallenge
-        ? [
-            {
-              label: "code_challenge",
-              value: flowState.codeChallenge.substring(0, 15) + "...",
-            },
-            {
-              label: "method",
-              value: flowState.codeChallengeMethod || "S256",
-            },
-            {
-              label: "resource",
-              value: previewResourceValue(flowState) || "—",
-            },
-            { label: "Protocol", value: "2025-11-25" },
-          ]
-        : undefined,
     },
-    {
-      id: "authorization_request",
-      label: "Open browser with authorization URL",
-      description:
-        "Client opens browser with authorization URL + code_challenge + resource",
-      from: "client",
-      to: "browser",
-      details: flowState.authorizationUrl
-        ? [
-            {
-              label: "code_challenge",
-              value:
-                flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
-            },
-            {
-              label: "resource",
-              value: previewResourceValue(flowState) || "",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "browser_to_auth_server",
-      label: "Authorization request with resource parameter",
-      description: "Browser navigates to authorization endpoint",
-      from: "browser",
-      to: "authServer",
-      details: flowState.authorizationUrl
-        ? [{ label: "Note", value: "User authorizes in browser" }]
-        : undefined,
-    },
-    {
-      id: "auth_redirect_to_browser",
-      label: "Redirect to callback with authorization code",
-      description:
-        "Authorization Server redirects browser back to callback URL",
-      from: "authServer",
-      to: "browser",
-      details: flowState.authorizationCode
-        ? [
-            {
-              label: "code",
-              value: flowState.authorizationCode.substring(0, 20) + "...",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "received_authorization_code",
-      label: "Authorization code callback",
-      description: "Browser redirects back to client with authorization code",
-      from: "browser",
-      to: "client",
-      details: flowState.authorizationCode
-        ? [
-            {
-              label: "code",
-              value: flowState.authorizationCode.substring(0, 20) + "...",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "token_request",
-      label: "Token request + code_verifier + resource",
-      description: "Client exchanges authorization code for access token",
-      from: "client",
-      to: "authServer",
-      details: flowState.codeVerifier
-        ? [
-            { label: "grant_type", value: "authorization_code" },
-            {
-              label: "resource",
-              value: previewResourceValue(flowState) || "",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "received_access_token",
-      label: "Access token (+ refresh token)",
-      description: "Authorization Server returns access token",
-      from: "authServer",
-      to: "client",
-      details: flowState.accessToken
-        ? [
-            { label: "token_type", value: flowState.tokenType || "Bearer" },
-            {
-              label: "expires_in",
-              value: flowState.expiresIn?.toString() || "3600",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "authenticated_mcp_request",
-      label: "MCP request with access token",
-      description: "Client makes authenticated request to MCP server",
-      from: "client",
-      to: "mcpServer",
-      details: flowState.accessToken
-        ? [
-            { label: "POST", value: "tools/list" },
-            {
-              label: "Authorization",
-              value: "Bearer " + flowState.accessToken.substring(0, 15) + "...",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "complete",
-      label: "MCP response",
-      description: "MCP Server returns successful response",
-      from: "mcpServer",
-      to: "client",
-      details: flowState.accessToken
-        ? [
-            { label: "Status", value: "200 OK" },
-            { label: "Content", value: "tools, resources, prompts" },
-          ]
-        : undefined,
-    },
-  ];
+    resourceValue: previewResourceValue,
+  });
 }
 
 // Helper: Build authorization server metadata URLs to try (RFC 8414 + OIDC Discovery)
@@ -539,12 +183,28 @@ export const createDebugOAuthStateMachine = (
     hasClientSecret = false,
     strictConformance = false,
     resourceIndicatorEnforcement = "warn",
+    requiredMetadataEnforcement = "reject",
     registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
+    emulation,
   } = config;
 
   const redirectUri = redirectUrl;
-  const initializeProtocolVersion = resolveInitializeProtocolVersion("2025-11-25");
-  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
+  // MCP-leg protocol version: an emulated pinned client overrides both the
+  // `MCP-Protocol-Version` header and the `initialize` body version; absent
+  // emulation keeps today's exact values.
+  const mcpProtocolVersion = resolveEmulatedMcpVersion(
+    emulation,
+    "2025-11-25"
+  );
+  const initializeProtocolVersion = resolveEmulatedMcpVersion(
+    emulation,
+    resolveInitializeProtocolVersion("2025-11-25")
+  );
+  const sendResource = shouldSendResourceIndicator(emulation);
+  const dynamicRegistrationDefaults = applyEmulationToDcrMetadata(
+    dynamicRegistration ?? {},
+    emulation
+  );
   let cimdClientId = clientIdMetadataUrl ?? "";
 
   if (
@@ -655,7 +315,7 @@ export const createDebugOAuthStateMachine = (
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
-              "MCP-Protocol-Version": "2025-11-25",
+              "MCP-Protocol-Version": mcpProtocolVersion,
             });
             const initializeRequestBody = buildInitializeRequestBody({
               protocolVersion: initializeProtocolVersion,
@@ -707,7 +367,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
-                  "MCP-Protocol-Version": "2025-11-25",
+                  "MCP-Protocol-Version": mcpProtocolVersion,
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -981,13 +641,57 @@ export const createDebugOAuthStateMachine = (
               const finalHistory = [...historyWithoutPlaceholder, ...attempts];
 
               const lastAttempt = attempts[attempts.length - 1];
+              // RFC 9728 `authorization_servers` is where the resource names
+              // who may issue tokens for it. Substituting the MCP server's own
+              // URL invents an authorization server the resource never named,
+              // and does it invisibly — so under the current profile the
+              // substitution is an error, not a fallback.
+              const authorizationServerSelection =
+                selectAuthorizationServerFromResourceMetadata({
+                  authorizationServers: resourceMetadata.authorization_servers,
+                  fallbackServerUrl: serverUrl,
+                  protocolVersion: "2025-11-25",
+                });
               const authorizationServerUrl =
-                resourceMetadata.authorization_servers?.[0] || serverUrl;
+                authorizationServerSelection.authorizationServerUrl;
+
+              if (
+                authorizationServerSelection.error &&
+                requiredMetadataEnforcement !== "observe"
+              ) {
+                updateState({
+                  resourceMetadata,
+                  resourceMetadataUrl:
+                    lastAttempt?.request?.url || state.resourceMetadataUrl,
+                  lastRequest: lastAttempt?.request,
+                  lastResponse: lastAttempt?.response,
+                  httpHistory: finalHistory,
+                  error: authorizationServerSelection.error,
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
 
               // The response card is the complete protected-resource metadata.
               // Keep existing logs only for distinct findings, such as a
               // resource identifier mismatch below.
               let infoLogs = state.infoLogs ?? [];
+
+              // Only reachable under `"observe"`. The substitution is not a
+              // silent fallback even there — the debugger's whole value is
+              // showing that this server did not name an authorization server.
+              if (authorizationServerSelection.error) {
+                infoLogs = addInfoLog(
+                  { ...getCurrentState(), infoLogs },
+                  "received_resource_metadata",
+                  "authorization-server-substituted",
+                  "Derived: Authorization Server (not advertised)",
+                  {
+                    Finding: authorizationServerSelection.error,
+                    "Using instead": authorizationServerUrl,
+                  }
+                );
+              }
 
               // Resolve the resource indicator ONCE (rejecting/warning per
               // the surface's enforcement mode); every later request and
@@ -1145,7 +849,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields per RFC 8414
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field"
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
@@ -1183,18 +887,21 @@ export const createDebugOAuthStateMachine = (
                 Date.now() - (lastEntry.timestamp || Date.now());
             }
 
-            // Validate PKCE support (REQUIRED for 2025-11-25)
+            // Validate PKCE support (REQUIRED for 2025-11-25).
+            //
+            // The MCP client requirement is to VERIFY S256 support before
+            // proceeding, so both shapes of failure — no advertised methods at
+            // all, and a list that omits S256 — stop the flow. BOTH go through
+            // the one enforcement branch below rather than one throwing here:
+            // the debugger's whole purpose is showing what a nonconforming
+            // server did, and "advertises no PKCE metadata" is precisely such a
+            // server. Connect still fails closed; only `"observe"` continues.
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
-
-            // 2025-11-25 spec: MUST verify PKCE support
-            if (!supportedMethods || supportedMethods.length === 0) {
-              throw new Error(
-                "PKCE is REQUIRED for 2025-11-25 protocol, but authorization server " +
-                  "does not advertise code_challenge_methods_supported. " +
-                  "Server is not compliant with 2025-11-25 spec."
-              );
-            }
+            const pkceNonConformance = describePkceMetadataNonConformance(
+              supportedMethods,
+              "2025-11-25",
+            );
 
             // The response card already shows the complete metadata document.
             // Keep only the CIMD decision, which is derived from an absent-or-
@@ -1212,16 +919,16 @@ export const createDebugOAuthStateMachine = (
               { "CIMD Supported": cimdSupported }
             );
 
-            if (!supportedMethods.includes("S256")) {
-              const s256Error =
-                "Authorization server metadata must advertise S256 in code_challenge_methods_supported for 2025-11-25 conformance.";
-
-              if (strictConformance) {
+            if (pkceNonConformance) {
+              // Fail closed unless the caller explicitly asked to observe a
+              // nonconforming server. Continuing without S256 is a silent PKCE
+              // downgrade, and the downgrade is invisible on the wire.
+              if (strictConformance || requiredMetadataEnforcement !== "observe") {
                 updateState({
                   lastResponse: authServerResponseData,
                   httpHistory: updatedHistoryFinal,
                   infoLogs,
-                  error: s256Error,
+                  error: pkceNonConformance,
                   isInitiatingAuth: false,
                 });
                 return;
@@ -1343,7 +1050,7 @@ export const createDebugOAuthStateMachine = (
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
-              const requestedScopeValue = resolveRequestedScopeValue({
+              const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
                 customScopes,
                 challengedScopes: state.challengedScopes,
                 supportedScopes: scopesSupported,
@@ -1666,7 +1373,12 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: resolveResourceParameter(),
+                ...(sendResource
+                  ? { resource: resolveResourceParameter() }
+                  : {
+                      resource:
+                        "(omitted — emulated client does not send RFC 8707 resource)",
+                    }),
               }
             );
 
@@ -1675,6 +1387,7 @@ export const createDebugOAuthStateMachine = (
               codeVerifier,
               codeChallenge,
               codeChallengeMethod: "S256",
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               state: generateRandomString(16),
               infoLogs: pkceInfoLogs,
               isInitiatingAuth: false,
@@ -1702,9 +1415,11 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            authUrl.searchParams.set("resource", resolveResourceParameter());
+            if (sendResource) {
+              authUrl.searchParams.set("resource", resolveResourceParameter());
+            }
 
-            const requestedScopeValue = resolveRequestedScopeValue({
+            const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
               customScopes,
               challengedScopes: state.challengedScopes,
               supportedScopes:
@@ -1772,7 +1487,10 @@ export const createDebugOAuthStateMachine = (
             const previewClientAuth = buildTokenRequestClientAuth({
               clientId: state.clientId,
               clientSecret: state.clientSecret,
-              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                emulation,
+                state.tokenEndpointAuthMethod
+              ),
             });
 
             const tokenRequestBodyObj: Record<string, string> = {
@@ -1786,7 +1504,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            tokenRequestBodyObj.resource = resolveResourceParameter();
+            if (sendResource) {
+              tokenRequestBodyObj.resource = resolveResourceParameter();
+            }
 
             const tokenRequest = {
               method: "POST",
@@ -1803,6 +1523,7 @@ export const createDebugOAuthStateMachine = (
               currentStep: "token_request",
               lastRequest: tokenRequest,
               lastResponse: undefined,
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               accessToken: undefined, // Clear old token
               refreshToken: undefined, // Clear old refresh token
               httpHistory: [
@@ -1842,7 +1563,10 @@ export const createDebugOAuthStateMachine = (
               const clientAuth = buildTokenRequestClientAuth({
                 clientId: state.clientId,
                 clientSecret: state.clientSecret,
-                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+                tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                  emulation,
+                  state.tokenEndpointAuthMethod
+                ),
               });
 
               const tokenRequestBody = new URLSearchParams({
@@ -1855,7 +1579,9 @@ export const createDebugOAuthStateMachine = (
 
               // Add resource parameter (per RFC 8707; prefers the PRM-advertised
               // resource identifier, falling back to the canonical server URL)
-              tokenRequestBody.set("resource", resolveResourceParameter());
+              if (sendResource) {
+                tokenRequestBody.set("resource", resolveResourceParameter());
+              }
 
               // Make the token request via backend proxy. The client-auth
               // Authorization header is applied AFTER the merge: the merge
@@ -2109,7 +1835,7 @@ export const createDebugOAuthStateMachine = (
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
                 Accept: "application/json, text/event-stream",
-                "MCP-Protocol-Version": "2025-11-25",
+                "MCP-Protocol-Version": mcpProtocolVersion,
               },
               body: buildInitializeRequestBody({
                 protocolVersion: initializeProtocolVersion,
@@ -2168,6 +1894,7 @@ export const createDebugOAuthStateMachine = (
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": mcpProtocolVersion,
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({

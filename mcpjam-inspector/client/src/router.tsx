@@ -1,10 +1,11 @@
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
+import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
   ApiKeysSettingsRoute,
-  AuthRoute,
+  GithubChecksSettingsRoute,
+  IntegrationsSettingsRoute,
   ChatAliasRoute,
   ChatboxesRoute,
-  CiEvalsRoute,
   ConformanceRoute,
   CaniuseCapabilityRoute,
   EnvironmentsRoute,
@@ -23,6 +24,8 @@ import App, {
   PromptsRoute,
   RegistryRoute,
   ResourcesRoute,
+  ScoreResultsRoute,
+  ScoreRunnerRoute,
   ServersRedirectRoute,
   ServersRoute,
   SettingsRoute,
@@ -35,12 +38,23 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
-import { buildHostsPath } from "./lib/app-navigation";
+import {
+  buildHostsPath,
+  legacyCiEvalsPathToRunsPath,
+  routePaths,
+} from "./lib/app-navigation";
 import { APP_ROUTES } from "./lib/app-routes";
 
 export { getAppRouter };
 
 type AppRouter = ReturnType<typeof createBrowserRouter>;
+
+function ciEvalsRedirect({ request }: { request: Request }) {
+  const url = new URL(request.url);
+  return redirect(
+    legacyCiEvalsPathToRunsPath(url.pathname, url.search, url.hash)
+  );
+}
 
 /**
  * The element each route renders, keyed by the path declared in
@@ -72,6 +86,13 @@ const ROUTE_ELEMENTS: Record<
   // first-run onboarding redirect. `bare` forces the no-sub-nav render
   // even for signed-in users.
   "embed/host-compare": { element: <HostCompareRoute bare /> },
+  // score.mcpjam.com: paste a server URL, run the four conformance suites,
+  // get one 0-100 number on a private shareable link. Chrome-less like the
+  // caniuse surface above, and reachable by guests with no sign-in.
+  "embed/score": { element: <ScoreRunnerRoute /> },
+  // A stored run, addressable only by its secret token. Deliberately
+  // readable with no session at all — the link IS the credential.
+  "results/:runToken": { element: <ScoreResultsRoute /> },
   "capabilities/:capabilitySlug": { element: <CaniuseCapabilityRoute /> },
   computer: { element: <ComputerRoute /> },
   hosts: { element: <HostsRoute /> },
@@ -81,7 +102,6 @@ const ROUTE_ELEMENTS: Record<
   resources: { element: <ResourcesRoute /> },
   prompts: { element: <PromptsRoute /> },
   tasks: { element: <TasksRoute /> },
-  auth: { element: <AuthRoute /> },
   skills: { element: <SkillsRoute /> },
   learning: { element: <LearningRoute /> },
   conformance: { element: <ConformanceRoute /> },
@@ -95,15 +115,31 @@ const ROUTE_ELEMENTS: Record<
   // render ServersRoute while `pathnameToActiveTab` still resolves
   // "chat" → "playground" — sidebar/content mismatch).
   "chat/*": { element: <ChatAliasRoute /> },
-  // `/chatboxes` — publish-surface tab (Publish / Sessions / Clusters)
-  // for the chatbox bound 1:1 to the currently-selected host. The
-  // Hosts hub at `/hosts` is the primary navigation entry; tests
-  // exercise the hosted-OAuth callback path via `/hosts` rather
-  // than this route directly.
-  chatboxes: { element: <ChatboxesRoute /> },
+  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` detail
+  // (Insights | Sessions); `/user-testing/:scenarioId/edit` setup/share.
+  // Same element: the route param is what selects the view, so a deep-linked
+  // scenario survives the auth-gate remounts a cold boot puts it through.
+  "user-testing": { element: <ChatboxesRoute /> },
+  // Static segment, so it outranks `:scenarioId` in React Router's matcher.
+  "user-testing/new": { element: <ChatboxesRoute /> },
+  "user-testing/:scenarioId/edit": { element: <ChatboxesRoute /> },
+  "user-testing/:scenarioId": { element: <ChatboxesRoute /> },
+  // Old bookmarks and every session link copied before the rename. Search and
+  // hash come along: `/chatboxes?host=X&session=Y` has to land on that
+  // scenario's session, not just on the list.
+  chatboxes: {
+    loader: ({ request }: { request: Request }) => {
+      const url = new URL(request.url);
+      return redirect(`${routePaths.userTesting}${url.search}${url.hash}`);
+    },
+  },
   // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
   // with Journeys + Sessions views. Same billing feature as chatboxes.
+  // `/swarms/:swarmId` — one Swarm Run (wave) detail; same surface element.
   swarms: { element: <SwarmsRoute /> },
+  // Static segment, so it outranks `:swarmId`.
+  "swarms/new": { element: <SwarmsRoute /> },
+  "swarms/:swarmId": { element: <SwarmsRoute /> },
   // `/environments` — project environments management. The route component
   // enforces the `project-environments-enabled` flag itself (redirects when
   // off), so registration here does not expose the dark feature.
@@ -112,6 +148,15 @@ const ROUTE_ELEMENTS: Record<
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
+  "settings/integrations": { element: <IntegrationsSettingsRoute /> },
+  "settings/integrations/github": { element: <GithubChecksSettingsRoute /> },
+  // Legacy: the page moved under Integrations. Kept as a redirect because the
+  // path shipped in docs and in the backend runbook, so links to it exist
+  // outside this app. A loader redirect (not an element) so it resolves before
+  // anything renders — same shape as the `/clients` → `/hosts` rename above.
+  "settings/github-checks": {
+    loader: () => redirect("/settings/integrations/github"),
+  },
   profile: { element: <ProfileRoute /> },
   "project-settings": { element: <ProjectSettingsRoute /> },
   "client-config": { element: <ServersRedirectRoute /> },
@@ -119,6 +164,8 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId": { element: <OrganizationsRoute /> },
   "organizations/:orgId/billing": { element: <OrganizationsRoute /> },
   "organizations/:orgId/models": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },
@@ -126,14 +173,31 @@ const ROUTE_ELEMENTS: Record<
   "evals/suite/:suiteId/test/:testId": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/test/:testId/edit": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
-  "ci-evals": { element: <CiEvalsRoute /> },
-  "ci-evals/create": { element: <CiEvalsRoute /> },
-  "ci-evals/commit/:commitSha": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/runs/:runId": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/test/:testId": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/test/:testId/edit": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/edit": { element: <CiEvalsRoute /> },
+  // Runs mode. `mode` comes from the route table rather than sniffing the URL
+  // inside the component, so the two lenses stay one route element with one
+  // billing gate.
+  "evals/runs": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/create": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/commit/:commitSha": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId/runs/:runId": {
+    element: <EvalsRoute mode="runs" />,
+  },
+  "evals/runs/suite/:suiteId/test/:testId": {
+    element: <EvalsRoute mode="runs" />,
+  },
+  "evals/runs/suite/:suiteId/test/:testId/edit": {
+    element: <EvalsRoute mode="runs" />,
+  },
+  "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
+  // Legacy `/ci-evals/*` → `/evals/runs/*`. Rewrite the raw pathname rather
+  // than rebuilding from params: the sub-tree is matched with a splat, and the
+  // string form preserves commit SHAs and suite ids exactly as encoded.
+  // Search and hash come along — commit links carry `?suite=&iteration=`, run
+  // links carry `?iteration=&case=&compareTo=`, and anything can carry
+  // `?project=`.
+  "ci-evals": { loader: ciEvalsRedirect },
+  "ci-evals/*": { loader: ciEvalsRedirect },
   billing: { element: <ServersRoute /> },
   callback: { element: <ServersRoute /> },
   "oauth/callback/*": { element: <ServersRoute /> },
@@ -147,7 +211,9 @@ function buildRouteChildren() {
     if (!rendered) {
       // A route table entry with nothing to render is a first-party bug —
       // the coverage test catches it, but fail loudly if one slips through.
-      throw new Error(`[router] no element registered for route "${route.path}"`);
+      throw new Error(
+        `[router] no element registered for route "${route.path}"`
+      );
     }
     const isIndex = route.path === "/";
     return {
@@ -181,6 +247,10 @@ export function createAppRouter(): AppRouter {
       : []),
     {
       element: <App />,
+      // The data router catches route render errors itself and renders the
+      // nearest errorElement — the throw never reaches a React boundary above
+      // <RouterProvider>. Without this a crashing route just blanks the app.
+      errorElement: <RouteErrorScreen />,
       children: buildRouteChildren(),
     },
   ]);

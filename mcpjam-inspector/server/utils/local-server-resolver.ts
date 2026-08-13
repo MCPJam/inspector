@@ -8,6 +8,7 @@ import {
 import {
   describeError,
   isKnownProtocolVersion,
+  isStatelessProtocolVersion,
   isUnauthorized401,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
@@ -21,6 +22,7 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import {
   parseXaaPolicyValue,
   resolveEffectiveAuthMethod,
@@ -48,18 +50,28 @@ import {
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
-import { getLocalConfidentialCimdProvider } from "@mcpjam/sdk";
+import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
+import {
+  getLocalConfidentialCimdProvider,
+  withSkillsExtensionCapability,
+} from "@mcpjam/sdk";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 import { HOSTED_MODE } from "../config.js";
 import {
   materializePluginStdioForConnect,
   releasePluginLease,
 } from "../services/plugins/local-stdio.js";
+import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
 
 type LocalAuthorizeServerConfig =
   | {
       transportType: "http";
       url: string;
+      // Declared wire transport from a plugin manifest (parser
+      // `httpVariant`), once the backend persists + serves it. Absent on
+      // every ordinary row and on older backends — absence means "no
+      // declaration", never a default.
+      httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
       timeout?: number;
@@ -93,6 +105,12 @@ type LocalAuthorizeServerConfig =
       command: string;
       args: string[];
       env: Record<string, string>;
+      /**
+       * Working directory for the child process. For plugin components this
+       * arrives as a `${PLUGIN_ROOT}`-rooted template and is substituted at
+       * materialization, immediately before the SDK config is built.
+       */
+      cwd?: string;
       hasEnv?: boolean;
       timeout?: number;
       clientCapabilities?: unknown;
@@ -153,16 +171,35 @@ function hasNonEmptyStringRecord(value: unknown): boolean {
 }
 
 /**
+ * Delegated-identity exchange for callers authenticated via a WorkOS API key
+ * (the harness proxy passes an EMPTY bearer on that path): Inspector swaps
+ * the bearer for `INSPECTOR_SERVICE_TOKEN` + acting-as headers, exactly as
+ * `fetchRuntimeServerSecrets` and the hosted `authorizeBatch` exchange do.
+ * The backend resolves delegation before JWT verification, so the local
+ * authorize endpoint honors the same trust model.
+ */
+export interface WorkosApiKeyActingAs {
+  /** WorkOS user id (Convex `externalId`), NOT the Convex user `_id`. */
+  workosUserId: string;
+  mcpjamOrganizationId: string;
+}
+
+/**
  * Call Convex `/web/authorize-batch-local` with the user's bearer.
  * Returns the full server config for each requested serverId, including
  * STDIO command/args/env. Hosted-only fields (share/chatbox tokens) are not
  * accepted by this endpoint by design.
+ *
+ * `c` is only a request-log sink; callers without a live Hono context (the
+ * web-route stdio divert inside `createAuthorizedManager`, whose caller
+ * already logged attribution from the hosted batch) pass `null` and skip it.
  */
 export async function authorizeBatchLocal(
-  c: Context,
+  c: Context | null,
   bearerToken: string,
   projectId: string,
-  serverIds: string[]
+  serverIds: string[],
+  workosApiKeyActingAs?: WorkosApiKeyActingAs
 ): Promise<LocalAuthorizeBatchResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -184,14 +221,31 @@ export async function authorizeBatchLocal(
     AUTHORIZE_BATCH_LOCAL_TIMEOUT_MS
   );
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (workosApiKeyActingAs) {
+    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+    if (!serviceToken) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
+      );
+    }
+    headers["Authorization"] = `Bearer ${serviceToken}`;
+    headers["x-mcpjam-acting-as"] = workosApiKeyActingAs.workosUserId;
+    headers["x-mcpjam-acting-in-org"] =
+      workosApiKeyActingAs.mcpjamOrganizationId;
+  } else {
+    headers["Authorization"] = `Bearer ${bearerToken}`;
+  }
+
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch-local`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${bearerToken}`,
-      },
+      headers,
       body: JSON.stringify({ projectId, serverIds }),
       signal: controller.signal,
     });
@@ -242,7 +296,7 @@ export async function authorizeBatchLocal(
   );
   const sourceCtx = successful.find(([, r]) => r.internalLogContext)?.[1]
     .internalLogContext;
-  if (sourceCtx) {
+  if (sourceCtx && c) {
     const partial = mapInternalToRequestContext(sourceCtx);
     if (successful.length > 1) {
       // Multi-server batch: a single per-server identifier on the request log
@@ -279,19 +333,24 @@ export async function authorizeBatchLocal(
  * payload directly. Throws WebRouteError for any non-ok result.
  */
 export async function authorizeServerLocal(
-  c: Context,
+  c: Context | null,
   bearerToken: string,
   projectId: string,
-  serverId: string
+  serverId: string,
+  workosApiKeyActingAs?: WorkosApiKeyActingAs
 ): Promise<
   LocalAuthorizeBatchSuccess & {
     organizationId?: string | null;
     isAnonymous?: boolean;
   }
 > {
-  const batch = await authorizeBatchLocal(c, bearerToken, projectId, [
-    serverId,
-  ]);
+  const batch = await authorizeBatchLocal(
+    c,
+    bearerToken,
+    projectId,
+    [serverId],
+    workosApiKeyActingAs
+  );
   const result = batch.results[serverId];
   if (!result) {
     throw new WebRouteError(
@@ -403,6 +462,23 @@ export function parseConnectionDefaults(
     out.mcpProtocolVersion = input.mcpProtocolVersion;
   }
 
+  // SEP-2243 mirroring knob. Only an explicit `false` is honored: `true` and
+  // absent both mean "mirror", which is what the SDK does with no field, and
+  // an unrecognized value must fail closed into the conforming default rather
+  // than into the simulation.
+  if (input.mirrorToolParamHeaders === false) {
+    out.mirrorToolParamHeaders = false;
+  }
+
+  // Sibling client-conformance knobs, same fail-closed reading: only the
+  // explicit non-default value opts into the simulation.
+  if (input.firstPageOnly === true) {
+    out.firstPageOnly = true;
+  }
+  if (input.supportsMrtr === false) {
+    out.supportsMrtr = false;
+  }
+
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
   // would un-enforce a policy the host believes is on (fail-open), so the
@@ -412,6 +488,56 @@ export function parseConnectionDefaults(
   if (xaaPolicy) out.xaaPolicy = xaaPolicy;
 
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Can this connection land on the 2026-era (modern) protocol?
+ *
+ * Deliberately asks the NEGATIVE question — "is a modern landing ruled out?" —
+ * and defaults to `true`. That is the difference from the `isModernOnlyLocalConnection`
+ * predicate this supersedes (see `withLocalMrtrElicitationCapability` in
+ * `routes/mcp/mrtr.ts`): proving a connection *must* land modern is impossible
+ * for the common case, an unpinned auto-negotiated connection, where auto in
+ * fact lands modern against a modern server. Proving it *cannot* is decidable
+ * from the config alone, which is all this needs — the only cost of a `true`
+ * here is that a url the host config already declared stays declared.
+ *
+ * Ruled out by:
+ * - **stdio** — the SDK factory throws `StatelessRequiresHttpTransport`; the
+ *   modern era is HTTP-only, so a stdio connection is always legacy.
+ * - **a legacy protocol pin** — an explicit non-stateless `mcpProtocolVersion`.
+ * - **a legacy-only accept-list** — a `supportedProtocolVersions` naming no
+ *   stateless version, so negotiation cannot arrive at one.
+ *
+ * ## Why every version goes through `isKnownProtocolVersion` first
+ *
+ * `isStatelessProtocolVersion` is a DENY-list (`!STATEFUL.has(v)`), so it
+ * answers `true` for any unrecognized string — its own docblock says to call
+ * it only after the membership check. `supportedProtocolVersions` is taken
+ * verbatim from the host profile and validated for non-emptiness only, so a
+ * typo (`"2025-11-52"`) would otherwise classify as stateless and put `url` on
+ * a connection that lands legacy — inverting this predicate's fail-closed
+ * direction on exactly the malformed input where it matters most.
+ */
+function canLandModernEra(
+  serverConfig: { transportType?: string },
+  options?: {
+    mcpProtocolVersion?: McpProtocolVersion;
+    supportedProtocolVersions?: string[];
+  }
+): boolean {
+  const isModernVersion = (version: string): boolean =>
+    isKnownProtocolVersion(version) && isStatelessProtocolVersion(version);
+
+  if (serverConfig.transportType !== "http") return false;
+  if (options?.mcpProtocolVersion) {
+    return isModernVersion(options.mcpProtocolVersion);
+  }
+  const acceptList = options?.supportedProtocolVersions;
+  if (acceptList && acceptList.length > 0) {
+    return acceptList.some(isModernVersion);
+  }
+  return true;
 }
 
 /**
@@ -476,6 +602,24 @@ export function toMCPServerConfig(
      */
     mcpProtocolVersion?: McpProtocolVersion;
     /**
+     * SEP-2243 `Mcp-Param-*` mirroring policy, already reduced to the boolean
+     * the SDK config takes: `false` when the host asked to simulate a client
+     * that does not mirror (`mcpProfile.toolParamHeaderMirroring: "omit"`),
+     * `undefined` for the conforming default.
+     *
+     * HTTP-only, like the pin above — mirroring is a Streamable HTTP concern
+     * and the flag is inert on stdio, so it is not forwarded there.
+     */
+    mirrorToolParamHeaders?: boolean;
+    /**
+     * Client-conformance knobs. UNLIKE the mirroring flag above these are NOT
+     * HTTP-only — pagination truncation is enforced on JSON-RPC frames and
+     * the MRTR knob works through capability advertisement — so they are
+     * forwarded on the stdio branch too.
+     */
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
      * this host — including explicit-OAuth overrides and stdio servers: the
@@ -502,11 +646,24 @@ export function toMCPServerConfig(
       resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
-  // Advertise = enforce: the local elicitation bridge is form-only, so a config
-  // declaring `elicitation.url` (the host toggle can write it) must not put url
-  // on the wire — the SDK would accept the request and the bridge would drop
-  // the URL, leaving the user a form they cannot complete.
-  const clientCapabilities = narrowElicitationToLocalSupport(xaaMerged);
+  // Skills over MCP (SEP-2640). In LOCAL mode the inspector IS the MCPJam
+  // client, and it ships the fulfiller: the verified read path in
+  // `server-skills.ts` plus the chat wrapper in `server-skill-tools.ts`. So
+  // advertise = enforce is satisfied unconditionally here, and the declaration
+  // is not gated on the `skills-enabled` product flag — that flag controls UI
+  // rollout, and gating a PROTOCOL declaration on a client-evaluated flag would
+  // make the wire depend on a hidden switch (and would be unreadable from the
+  // server anyway). Hosted connections get the declaration from the host's
+  // stored `clientCapabilities` instead, which is why only the MCPJam persona
+  // advertises there.
+  const skillsMerged = withSkillsExtensionCapability(xaaMerged);
+  // Advertise = enforce, per era. The MODERN fulfiller (the MRTR bridge)
+  // completes url rounds; the LEGACY one (the inbound `elicitation/create` SSE
+  // bridge) is form-only. So `elicitation.url` — which the host toggle writes —
+  // may go on the wire only for a connection that can actually land modern.
+  const clientCapabilities = narrowElicitationToLocalSupport(skillsMerged, {
+    urlCapable: canLandModernEra(serverConfig, options),
+  });
 
   if (serverConfig.transportType === "stdio") {
     const stdio: any = {
@@ -514,6 +671,10 @@ export function toMCPServerConfig(
       args: serverConfig.args ?? [],
       env: serverConfig.env ?? {},
     };
+    // A plugin component's substituted working directory (or any declared
+    // cwd) must reach the transport — the MCPClientManager forwards it to
+    // the child process spawn.
+    if (serverConfig.cwd !== undefined) stdio.cwd = serverConfig.cwd;
     if (typeof timeout === "number") stdio.timeout = timeout;
     if (clientCapabilities) {
       stdio.capabilities = clientCapabilities;
@@ -529,6 +690,10 @@ export function toMCPServerConfig(
     ) {
       stdio.supportedProtocolVersions = options.supportedProtocolVersions;
     }
+    // The conformance knobs DO apply on stdio (see the options docblock), so
+    // unlike the mirroring flag they are forwarded here as well as on HTTP.
+    if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
+    if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
     return stdio as MCPServerConfig;
   }
 
@@ -567,6 +732,22 @@ export function toMCPServerConfig(
     url,
     requestInit: { headers },
   };
+  // Plugin-declared transports are authoritative: `sse` skips the Streamable
+  // HTTP attempt, `streamable-http` rules out the silent SSE downgrade. Rows
+  // without a declaration keep the SDK's URL-heuristic + fallback behavior.
+  //
+  // `preferSSE: false` is load-bearing on the streamable-http branch: the SDK
+  // resolves `config.preferSSE ?? url.pathname.endsWith("/sse")`, so a
+  // DECLARED streamable-http server served at a `/sse` path would otherwise
+  // be routed straight to SSE by the URL heuristic and never attempt
+  // Streamable HTTP at all — `disableSseFallback` only guards the fallback
+  // AFTER an attempt, so it cannot rescue that case.
+  if (serverConfig.httpVariant === "sse") {
+    http.preferSSE = true;
+  } else if (serverConfig.httpVariant === "streamable-http") {
+    http.preferSSE = false;
+    http.disableSseFallback = true;
+  }
   if (typeof timeout === "number") http.timeout = timeout;
   if (clientCapabilities) {
     http.capabilities = clientCapabilities;
@@ -585,6 +766,13 @@ export function toMCPServerConfig(
   // = SDK default (legacy upstream Client + initialize).
   if (options?.mcpProtocolVersion)
     http.mcpProtocolVersion = options.mcpProtocolVersion;
+  // Only `false` says anything — `undefined` and `true` both mean "mirror",
+  // and writing `true` would put a field on every connection that never
+  // carried one.
+  if (options?.mirrorToolParamHeaders === false)
+    http.mirrorToolParamHeaders = false;
+  if (options?.firstPageOnly === true) http.firstPageOnly = true;
+  if (options?.supportsMrtr === false) http.supportsMrtr = false;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -624,6 +812,318 @@ export function toMCPServerConfig(
   }
 
   return http as MCPServerConfig;
+}
+
+/**
+ * Runtime resolution shared by every local connect surface, applied AFTER
+ * authorization and BEFORE the SDK config is built:
+ *
+ *   1. Vault-backed runtime secrets — fill in env (stdio) / headers (http)
+ *      the authorize batch deliberately omitted (`hasEnv` / `hasHeaders`
+ *      with no values).
+ *   2. Plugin bundle materialization — stdio components whose config still
+ *      carries the SDK's `${PLUGIN_ROOT}` placeholders (the parser preserves
+ *      them verbatim; substitution belongs at spawn) resolve against the
+ *      verified local bundle cache, so a launch can never inherit a stale
+ *      root and a component whose plugin was just disabled fails closed
+ *      instead of running from cached files.
+ *
+ * Order matters: materialization substitutes over the COMPLETE env, so
+ * secrets must land first.
+ */
+async function applyLocalRuntimeResolution<
+  T extends LocalAuthorizeBatchSuccess
+>(
+  result: T,
+  args: {
+    bearerToken: string;
+    projectId: string;
+    serverId: string;
+    /**
+     * The key THIS surface's manager registers the server under — the plugin
+     * bundle lease is bound to it, so acquire and any later release always
+     * agree. /api/mcp managers key by display name; web-route managers key
+     * by serverId (display names are user-entered and can collide across
+     * servers, which would let one server's reconnect drop another's lease).
+     */
+    managerKey: string;
+    serverDisplayName?: string;
+    /** Secret-reveal scope; must match what the hosted mint path would send. */
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+    accessVersion?: number;
+    workosApiKeyActingAs?: WorkosApiKeyActingAs;
+    /**
+     * Caller-held plugin bundle lease (see `materializePluginStdioForConnect`).
+     * Absent ⇒ the process-wide registry, which is what the /api/mcp
+     * long-lived manager wants.
+     */
+    onPluginLease?: (release: () => void) => void;
+  }
+): Promise<T> {
+  const { bearerToken, projectId, serverId } = args;
+  const needsRuntimeSecrets =
+    (result.serverConfig.transportType === "stdio" &&
+      result.serverConfig.hasEnv === true &&
+      !hasNonEmptyStringRecord(result.serverConfig.env)) ||
+    (result.serverConfig.transportType === "http" &&
+      result.serverConfig.hasHeaders === true &&
+      !hasNonEmptyStringRecord(result.serverConfig.headers));
+  if (needsRuntimeSecrets) {
+    const secrets = await fetchRuntimeServerSecrets({
+      bearerToken,
+      projectId,
+      serverId,
+      accessScope: args.accessScope,
+      chatboxId: args.chatboxId,
+      accessVersion: args.accessVersion,
+      workosApiKeyActingAs: args.workosApiKeyActingAs,
+    });
+    result = {
+      ...result,
+      serverConfig:
+        result.serverConfig.transportType === "stdio"
+          ? {
+              ...result.serverConfig,
+              env: secrets.env ?? result.serverConfig.env ?? {},
+            }
+          : {
+              ...result.serverConfig,
+              headers: {
+                ...(result.serverConfig.headers ?? {}),
+                ...(secrets.headers ?? {}),
+              },
+            },
+    };
+  }
+
+  if (result.serverConfig.transportType === "stdio") {
+    const stdioConfig = result.serverConfig;
+    const materialized = await materializePluginStdioForConnect({
+      // Lazy: an ordinary stdio server must not pay a Convex read — or
+      // require Convex configuration at all — to connect.
+      createClient: () => {
+        // The plugin runtime reads ride the Convex QUERY protocol (a user
+        // JWT via setAuth) — the service-token acting-as exchange is an
+        // HTTP-route header mechanism and cannot authenticate
+        // `client.query()`. A delegated (WorkOS API key) caller's bearer is
+        // deliberately empty, so fail closed with the real reason instead of
+        // letting the reads run unauthenticated into a confusing 401.
+        if (args.workosApiKeyActingAs) {
+          throw new WebRouteError(
+            501,
+            ErrorCode.FEATURE_NOT_SUPPORTED,
+            `Server "${
+              args.serverDisplayName ?? args.managerKey
+            }" is a plugin component; plugin materialization is not yet supported for API-key (delegated) callers.`,
+            { serverId }
+          );
+        }
+        return createPluginRuntimeConvexClient(bearerToken);
+      },
+      projectId,
+      serverId,
+      serverName: args.managerKey,
+      displayName: args.serverDisplayName ?? args.managerKey,
+      onLease: args.onPluginLease,
+      spec: {
+        command: stdioConfig.command,
+        args: stdioConfig.args ?? [],
+        env: stdioConfig.env ?? {},
+        // A plugin component's declared cwd rides the config as a
+        // `${PLUGIN_ROOT}`-rooted template; substitution happens with the
+        // rest of the launch spec.
+        ...(stdioConfig.cwd !== undefined
+          ? { workingDirectory: stdioConfig.cwd }
+          : {}),
+      },
+    });
+    if (materialized) {
+      logger.debug("[plugin-stdio] materialized bundle for launch", {
+        serverId,
+        pluginId: materialized.origin.pluginId,
+        bundleHash: materialized.origin.bundleHash,
+      });
+      result = {
+        ...result,
+        serverConfig: {
+          ...stdioConfig,
+          command: materialized.command,
+          args: materialized.args,
+          env: materialized.env,
+          ...(materialized.workingDirectory !== undefined
+            ? { cwd: materialized.workingDirectory }
+            : {}),
+        },
+      };
+    }
+  }
+
+  return result;
+}
+
+/**
+ * The stdio launch spec exactly as CONFIGURED — full command/args/env with
+ * runtime secrets applied, placeholders still verbatim.
+ *
+ * Same re-read and same trust model as {@link resolveLocalStdioServerConfig}
+ * (`/web/authorize-batch-local` with the caller's own bearer, so authorization
+ * is re-checked rather than assumed), stopping one step earlier: no plugin
+ * materialization and no SDK config. Hosted plugin execution needs precisely
+ * this, because it substitutes the placeholders for paths inside a SANDBOX and
+ * never builds a local spawn config at all.
+ *
+ * Refuses an http row for the same reason the local resolver does: a transport
+ * mismatch between the two authorize reads means the row changed mid-request.
+ *
+ * Takes NO delegated-identity (WorkOS API key) option, unlike its siblings: the
+ * one caller refuses those callers outright before reaching here, because the
+ * plugin-runtime reads that follow ride the Convex query protocol and cannot be
+ * authenticated by the service-token exchange. A threaded-but-unreachable knob
+ * would only suggest otherwise.
+ */
+export async function readAuthorizedStdioLaunchSpec(args: {
+  bearerToken: string;
+  projectId: string;
+  serverId: string;
+  serverDisplayName?: string;
+  accessScope?: "project_member" | "chat_v2";
+  chatboxId?: string;
+  accessVersion?: number;
+}): Promise<PluginStdioLaunchSpec> {
+  const result = await authorizeServerLocal(
+    null,
+    args.bearerToken,
+    args.projectId,
+    args.serverId
+  );
+  if (result.serverConfig.transportType !== "stdio") {
+    throw new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      `Server "${
+        args.serverDisplayName ?? args.serverId
+      }" changed transport while the request was in flight. Retry the request.`,
+      { serverId: args.serverId }
+    );
+  }
+  const config = result.serverConfig;
+  // Same redaction rule the local path applies: the authorize read returns
+  // `hasEnv` with no values when the env is secret-backed, and the reveal is
+  // what fills it in.
+  const env =
+    config.hasEnv === true && !hasNonEmptyStringRecord(config.env)
+      ? (
+          await fetchRuntimeServerSecrets({
+            bearerToken: args.bearerToken,
+            projectId: args.projectId,
+            serverId: args.serverId,
+            accessScope: args.accessScope,
+            chatboxId: args.chatboxId,
+            accessVersion: args.accessVersion,
+          })
+        ).env ?? config.env ?? {}
+      : config.env ?? {};
+
+  return {
+    command: config.command,
+    args: config.args ?? [],
+    env,
+    ...(config.cwd !== undefined ? { workingDirectory: config.cwd } : {}),
+  };
+}
+
+/**
+ * Resolve ONE stdio server to a connectable SDK config for a web-route
+ * surface running as the LOCAL binary (`createAuthorizedManager`'s stdio
+ * divert). The hosted authorize batch strips `command`/`args`/`env` by
+ * contract, so this re-reads the full config through
+ * `/web/authorize-batch-local` — with the same bearer, so authorization is
+ * re-checked, not assumed — then applies runtime secrets, materializes
+ * plugin bundles, and builds the stdio `MCPServerConfig` exactly as the
+ * /api/mcp connect path would.
+ *
+ * Refuses an http row rather than silently building one: the caller routes
+ * http servers through the hosted mint path (OAuth/XAA), so a transport
+ * mismatch between the two authorize reads means the row changed
+ * mid-request — connecting either way would race the edit.
+ */
+export async function resolveLocalStdioServerConfig(
+  bearerToken: string,
+  projectId: string,
+  serverId: string,
+  options?: {
+    timeoutMs?: number;
+    clientCapabilities?: Record<string, unknown>;
+    serverDisplayName?: string;
+    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+    supportedProtocolVersions?: string[];
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    xaaPolicy?: XaaEnterprisePolicy;
+    /**
+     * Secret-reveal scope + delegated identity, threaded from
+     * `createAuthorizedManager`'s options and caller context so the local
+     * reread and reveal follow the same trust model as the hosted batch —
+     * a chatbox-scoped or WorkOS-API-key caller must not get a lesser (or
+     * failing) resolution just because the deployment is local.
+     */
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+    accessVersion?: number;
+    workosApiKeyActingAs?: WorkosApiKeyActingAs;
+    /**
+     * Receives the plugin bundle release closure when this server is a
+     * plugin component. Ephemeral web-route managers MUST pass this and
+     * release at teardown — the process-wide registry's replace-on-retain
+     * semantics assume one long-lived manager per key.
+     */
+    onPluginLease?: (release: () => void) => void;
+  }
+): Promise<MCPServerConfig> {
+  let result = await authorizeServerLocal(
+    null,
+    bearerToken,
+    projectId,
+    serverId,
+    options?.workosApiKeyActingAs
+  );
+  if (result.serverConfig.transportType !== "stdio") {
+    throw new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      `Server "${
+        options?.serverDisplayName ?? serverId
+      }" changed transport while the request was in flight. Retry the request.`,
+      { serverId }
+    );
+  }
+  result = await applyLocalRuntimeResolution(result, {
+    bearerToken,
+    projectId,
+    serverId,
+    // Web-route managers register servers under their serverId, so the
+    // plugin bundle lease is keyed by it here (see managerKey docs).
+    managerKey: serverId,
+    serverDisplayName: options?.serverDisplayName,
+    accessScope: options?.accessScope,
+    chatboxId: options?.chatboxId,
+    accessVersion: options?.accessVersion,
+    workosApiKeyActingAs: options?.workosApiKeyActingAs,
+    onPluginLease: options?.onPluginLease,
+  });
+  return toMCPServerConfig(result, {
+    timeoutMs: options?.timeoutMs,
+    clientCapabilities: options?.clientCapabilities,
+    clientInfo: options?.clientInfo,
+    supportedProtocolVersions: options?.supportedProtocolVersions,
+    firstPageOnly: options?.firstPageOnly,
+    supportsMrtr: options?.supportsMrtr,
+    // Advertises the EMA extension host-wide on stdio too, matching the
+    // /api/mcp path; stdio never gets OAuth/XAA hooks, so no
+    // refreshContext / xaaUnauthorizedHandler here.
+    xaaPolicy: options?.xaaPolicy,
+  });
 }
 
 /**
@@ -790,18 +1290,20 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    const xaaFailureTarget = {
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      ...(sc.url ? { serverUrl: sc.url } : {}),
+    };
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
+    // Framed for this surface (the stored sentence is written for the server's
+    // auth form and names neither the server nor where to fix it).
     if (sc.xaaIdentityError) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        sc.xaaIdentityError,
-        {
-          serverId,
-          serverName: options?.serverDisplayName ?? null,
-        }
+      throw toXaaConnectFailure(
+        new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError),
+        xaaFailureTarget
       );
     }
     const mintArgs = buildXaaMintArgs({
@@ -837,7 +1339,10 @@ export async function resolveLocalServerForConnect(
           resource: sc.url,
         });
       }
-      throw error;
+      // Re-framed AFTER the log above: the debugger-worded original still
+      // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
+      // names this server and the action that fixes it.
+      throw toXaaConnectFailure(error, xaaFailureTarget);
     }
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
     // 401 surfaces to the caller rather than looping mint→401→mint.
@@ -853,81 +1358,25 @@ export async function resolveLocalServerForConnect(
         );
       }
       reMinted = true;
-      const minted = await mintXaaAccessToken(mintArgs);
-      return { accessToken: minted.accessToken };
+      try {
+        const minted = await mintXaaAccessToken(mintArgs);
+        return { accessToken: minted.accessToken };
+      } catch (error) {
+        throw toXaaConnectFailure(error, xaaFailureTarget);
+      }
     };
   }
 
-  const needsRuntimeSecrets =
-    (result.serverConfig.transportType === "stdio" &&
-      result.serverConfig.hasEnv === true &&
-      !hasNonEmptyStringRecord(result.serverConfig.env)) ||
-    (result.serverConfig.transportType === "http" &&
-      result.serverConfig.hasHeaders === true &&
-      !hasNonEmptyStringRecord(result.serverConfig.headers));
-  if (needsRuntimeSecrets) {
-    const secrets = await fetchRuntimeServerSecrets({
-      bearerToken,
-      projectId,
-      serverId,
-    });
-    result = {
-      ...result,
-      serverConfig:
-        result.serverConfig.transportType === "stdio"
-          ? {
-              ...result.serverConfig,
-              env: secrets.env ?? result.serverConfig.env ?? {},
-            }
-          : {
-              ...result.serverConfig,
-              headers: {
-                ...(result.serverConfig.headers ?? {}),
-                ...(secrets.headers ?? {}),
-              },
-            },
-    };
-  }
-
-  // Plugin components reach this path as ordinary stdio servers whose
-  // command/args/env still carry the SDK's `${PLUGIN_ROOT}` placeholders (the
-  // parser preserves them verbatim; substitution belongs at spawn). Resolve
-  // them against the verified local bundle cache HERE — after authorization,
-  // after secrets, immediately before the SDK config is built — so a launch
-  // can never inherit a stale root and a component whose plugin was just
-  // disabled fails closed instead of running from cached files.
-  if (result.serverConfig.transportType === "stdio") {
-    const stdioConfig = result.serverConfig;
-    const materialized = await materializePluginStdioForConnect({
-      // Lazy: an ordinary stdio server must not pay a Convex read — or
-      // require Convex configuration at all — to connect.
-      createClient: () => createPluginRuntimeConvexClient(bearerToken),
-      projectId,
-      serverId,
-      serverName: options?.serverDisplayName ?? serverId,
-      spec: {
-        command: stdioConfig.command,
-        args: stdioConfig.args ?? [],
-        env: stdioConfig.env ?? {},
-      },
-    });
-    if (materialized) {
-      logger.debug("[plugin-stdio] materialized bundle for launch", {
-        serverId,
-        pluginId: materialized.origin.pluginId,
-        bundleHash: materialized.origin.bundleHash,
-      });
-      result = {
-        ...result,
-        serverConfig: {
-          ...stdioConfig,
-          command: materialized.command,
-          args: materialized.args,
-          env: materialized.env,
-        },
-      };
-    }
-  }
+  result = await applyLocalRuntimeResolution(result, {
+    bearerToken,
+    projectId,
+    serverId,
+    // /api/mcp managers register servers under their display name — the same
+    // key `releasePluginLease` gets on the disconnect route and on connect
+    // failure — so the lease binds to it here.
+    managerKey: options?.serverDisplayName ?? serverId,
+    serverDisplayName: options?.serverDisplayName,
+  });
 
   const config = toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs,
@@ -945,6 +1394,11 @@ export async function resolveLocalServerForConnect(
     // runs client-side, the literal is wire-serialized via
     // ConnectionDefaults, and lands on the SDK config here.
     mcpProtocolVersion: options?.defaults?.mcpProtocolVersion,
+    // Same path again for the SEP-2243 mirroring knob.
+    mirrorToolParamHeaders: options?.defaults?.mirrorToolParamHeaders,
+    // Same path again for the sibling conformance knobs.
+    firstPageOnly: options?.defaults?.firstPageOnly,
+    supportsMrtr: options?.defaults?.supportsMrtr,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,
@@ -1092,12 +1546,29 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
   const normalized = error.normalized ?? describeError(error);
+  // Skip-if-stamped by construction: most callers reach here holding a
+  // `WebRouteError` that `mapRuntimeError` already ruled on, and the helper
+  // short-circuits on the stamp. The call is still made so the local-mode
+  // paths that build a `WebRouteError` by hand — never passing through the
+  // mapper — are classified too.
+  const { origin } = maybeCaptureOriginError(error, normalized, {
+    source: "mcp.localRouteError",
+    extra: { status: error.status, code: error.code },
+  });
+  c.set("webErrorMeta", {
+    status: error.status,
+    code: error.code,
+    message: error.message,
+    origin,
+    slug: normalized.slug,
+  });
   return c.json(
     {
       success: false,
       error: error.message,
       ...(error.details ?? {}),
       normalized,
+      origin,
     },
     error.status as any
   );
@@ -1317,7 +1788,9 @@ export async function executeLocalServerConnect(
  * attribution). Same bearer the authorize call used — plugin reads are
  * project-scoped and re-authorized backend-side on every query.
  */
-function createPluginRuntimeConvexClient(bearerToken: string): ConvexHttpClient {
+export function createPluginRuntimeConvexClient(
+  bearerToken: string
+): ConvexHttpClient {
   const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl) {
     throw new WebRouteError(

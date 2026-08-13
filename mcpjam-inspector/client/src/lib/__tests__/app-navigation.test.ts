@@ -1,15 +1,25 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildOrganizationPath,
+  buildSwarmPath,
+  buildUserTestingScenarioEditPath,
+  buildUserTestingScenarioPath,
   captureCurrentReturnPath,
   isDebugOAuthCallbackPath,
+  isLegacyUserTestingEditTab,
+  legacyCiEvalsPathToRunsPath,
   legacyHashBookmarkToPath,
   navigationTargetToPath,
   normalizeInitialLegacyHashBookmark,
   normalizeReturnTargetPath,
+  parseSwarmDetailTab,
+  parseUserTestingDetailTab,
   pathnameToActiveTab,
   shouldSnapToServersOnActiveProjectChange,
   useActiveTab,
+  useCurrentOrgRoute,
+  useCurrentSearchParam,
 } from "../app-navigation";
 
 describe("isDebugOAuthCallbackPath", () => {
@@ -31,6 +41,60 @@ describe("isDebugOAuthCallbackPath", () => {
   });
 });
 
+describe("buildSwarmPath / parseSwarmDetailTab", () => {
+  it("builds a swarm detail path and encodes the id", () => {
+    expect(buildSwarmPath("wave-1")).toBe("/swarms/wave-1");
+    expect(buildSwarmPath("a/b")).toBe("/swarms/a%2Fb");
+  });
+
+  it("omits insights (default) from the query and includes sessions", () => {
+    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe("/swarms/wave-1");
+    expect(buildSwarmPath("wave-1", { tab: "sessions" })).toBe(
+      "/swarms/wave-1?tab=sessions",
+    );
+    expect(
+      buildSwarmPath("wave-1", {
+        tab: "sessions",
+        session: "thread/1",
+        sel: "outcome:goal%3Areached,sentiment:calm",
+      }),
+    ).toBe(
+      "/swarms/wave-1?tab=sessions&session=thread%2F1&sel=outcome%3Agoal%253Areached%2Csentiment%3Acalm",
+    );
+  });
+
+  it("parses known tabs, maps legacy aliases to insights, defaults to insights", () => {
+    expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
+    expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
+    expect(parseSwarmDetailTab("")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
+    expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
+  });
+});
+
+describe("User Testing detail / edit navigation", () => {
+  it("defaults to Insights and opens Sessions for a session deep-link", () => {
+    expect(parseUserTestingDetailTab("")).toBe("insights");
+    expect(parseUserTestingDetailTab("?tab=insights")).toBe("insights");
+    expect(parseUserTestingDetailTab("?tab=sessions")).toBe("sessions");
+    expect(parseUserTestingDetailTab("?session=thread-1")).toBe("sessions");
+    expect(parseUserTestingDetailTab("?tab=clusters")).toBe("insights");
+  });
+
+  it("builds the edit path and recognizes legacy edit/share/preview tabs", () => {
+    expect(buildUserTestingScenarioEditPath("cb-1")).toBe(
+      "/user-testing/cb-1/edit",
+    );
+    expect(buildUserTestingScenarioPath("cb-1")).toBe("/user-testing/cb-1");
+    expect(isLegacyUserTestingEditTab("?tab=edit")).toBe(true);
+    expect(isLegacyUserTestingEditTab("?tab=share")).toBe(true);
+    expect(isLegacyUserTestingEditTab("?tab=preview")).toBe(true);
+    expect(isLegacyUserTestingEditTab("?tab=insights")).toBe(false);
+  });
+});
+
 describe("pathnameToActiveTab", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
@@ -40,6 +104,7 @@ describe("pathnameToActiveTab", () => {
   it("returns known app tabs", () => {
     expect(pathnameToActiveTab("/servers")).toBe("servers");
     expect(pathnameToActiveTab("/tools")).toBe("tools");
+    expect(pathnameToActiveTab("/swarms/wave-1")).toBe("swarms");
     expect(pathnameToActiveTab("/organizations/org-a/billing")).toBe(
       "organizations",
     );
@@ -110,6 +175,20 @@ describe("shouldSnapToServersOnActiveProjectChange", () => {
         previousActiveProjectId: "p1",
         nextActiveProjectId: "p2",
         activeTab: "organizations",
+      }),
+    ).toBe(false);
+  });
+
+  it("does NOT snap while on project settings", () => {
+    // Regression: the switcher's per-row gear switches project and opens that
+    // project's settings as one gesture. Snapping here flashed the settings
+    // page and bounced the user to Servers. Project settings renders whichever
+    // project is active, so it is still correct after the switch.
+    expect(
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId: "p1",
+        nextActiveProjectId: "p2",
+        activeTab: "project-settings",
       }),
     ).toBe(false);
   });
@@ -205,5 +284,119 @@ describe("path navigation compatibility helpers", () => {
     window.history.replaceState({}, "", "/");
 
     expect(captureCurrentReturnPath()).toBeNull();
+  });
+});
+
+describe("organization route sections", () => {
+  it("builds a path for each section, defaulting to the overview", () => {
+    expect(buildOrganizationPath("org_1")).toBe("/organizations/org_1");
+    expect(buildOrganizationPath("org_1", "billing")).toBe(
+      "/organizations/org_1/billing",
+    );
+    expect(buildOrganizationPath("org_1", "models")).toBe(
+      "/organizations/org_1/models",
+    );
+    expect(buildOrganizationPath("org_1", "slack")).toBe(
+      "/organizations/org_1/slack",
+    );
+    expect(buildOrganizationPath("org_1", "discord")).toBe(
+      "/organizations/org_1/discord",
+    );
+  });
+
+  it("parses the slack section off the URL", () => {
+    window.history.replaceState({}, "", "/organizations/org_1/slack");
+    const { result } = renderHook(() => useCurrentOrgRoute());
+    expect(result.current).toEqual({ orgId: "org_1", orgSection: "slack" });
+  });
+
+  it("parses the discord section off the URL", () => {
+    // Its own section rather than a `?tab=` on Slack's: they are two
+    // integrations, not two views of one.
+    window.history.replaceState({}, "", "/organizations/org_1/discord");
+    const { result } = renderHook(() => useCurrentOrgRoute());
+    expect(result.current).toEqual({ orgId: "org_1", orgSection: "discord" });
+  });
+
+  it("keeps the sub-tab in the query string, not the path", () => {
+    // Three views of one settings section — a path segment per view would mean
+    // three route entries and three surface patterns for one screen.
+    window.history.replaceState(
+      {},
+      "",
+      "/organizations/org_1/slack?tab=activity",
+    );
+    const { result } = renderHook(() => ({
+      route: useCurrentOrgRoute(),
+      tab: useCurrentSearchParam("tab"),
+    }));
+    expect(result.current.route?.orgSection).toBe("slack");
+    // The section comes from the path, the view from the query string.
+    expect(result.current.tab).toBe("activity");
+  });
+
+  it("falls back to the overview for an unknown section segment", () => {
+    window.history.replaceState({}, "", "/organizations/org_1/nope");
+    const { result } = renderHook(() => useCurrentOrgRoute());
+    expect(result.current?.orgSection).toBe("overview");
+  });
+});
+
+describe("legacy /ci-evals redirects", () => {
+  // These URLs shipped in CI logs, bookmarks, and the SDK quickstart's
+  // post-sign-in return path. Without an explicit redirect they fall through
+  // to the router's catch-all, which renders Servers — silently wrong, not a
+  // 404 the user can recognize.
+  it("rewrites every legacy shape onto /evals/runs", () => {
+    const cases: Array<[string, string]> = [
+      ["/ci-evals", "/evals/runs"],
+      ["/ci-evals/create", "/evals/runs/create"],
+      ["/ci-evals/commit/abc1234567890", "/evals/runs/commit/abc1234567890"],
+      ["/ci-evals/suite/s_123", "/evals/runs/suite/s_123"],
+      ["/ci-evals/suite/s_123/edit", "/evals/runs/suite/s_123/edit"],
+      ["/ci-evals/suite/s_123/runs/r_9", "/evals/runs/suite/s_123/runs/r_9"],
+      ["/ci-evals/suite/s_123/test/t_7", "/evals/runs/suite/s_123/test/t_7"],
+      [
+        "/ci-evals/suite/s_123/test/t_7/edit",
+        "/evals/runs/suite/s_123/test/t_7/edit",
+      ],
+    ];
+    for (const [from, to] of cases) {
+      expect(legacyCiEvalsPathToRunsPath(from), from).toBe(to);
+    }
+  });
+
+  it("carries query and hash through", () => {
+    expect(
+      legacyCiEvalsPathToRunsPath(
+        "/ci-evals/commit/abc123",
+        "?suite=s_1&iteration=i_4",
+      ),
+    ).toBe("/evals/runs/commit/abc123?suite=s_1&iteration=i_4");
+    expect(
+      legacyCiEvalsPathToRunsPath(
+        "/ci-evals/suite/s_1/runs/r_2",
+        "?iteration=i_4&case=c_1&compareTo=r_1&project=p_9",
+      ),
+    ).toBe(
+      "/evals/runs/suite/s_1/runs/r_2?iteration=i_4&case=c_1&compareTo=r_1&project=p_9",
+    );
+    expect(
+      legacyCiEvalsPathToRunsPath("/ci-evals", "?project=p_9", "#frag"),
+    ).toBe("/evals/runs?project=p_9#frag");
+  });
+
+  it("preserves encoded path segments verbatim", () => {
+    // Rebuilding from decoded router params would split an id containing a
+    // reserved character into extra segments and fail to match.
+    expect(
+      legacyCiEvalsPathToRunsPath("/ci-evals/suite/suite%20one"),
+    ).toBe("/evals/runs/suite/suite%20one");
+  });
+
+  it("only rewrites the leading segment", () => {
+    expect(
+      legacyCiEvalsPathToRunsPath("/ci-evals/suite/ci-evals"),
+    ).toBe("/evals/runs/suite/ci-evals");
   });
 });

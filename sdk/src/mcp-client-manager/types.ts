@@ -267,6 +267,61 @@ export type BaseServerConfig = {
    * string`) collapsed this to a singleton and silently broke that case.
    */
   supportedProtocolVersions?: string[];
+  /**
+   * Whether `tools/call` mirrors the tool's `x-mcp-header`-annotated
+   * arguments into `Mcp-Param-{Name}` request headers (SEP-2243, `2026-07-28`
+   * Streamable HTTP: "clients **MUST** mirror the designated parameter values
+   * into HTTP headers").
+   *
+   * `undefined` (the default) and `true` both mirror. `false` deliberately
+   * simulates a NON-CONFORMING client that never sends them, so a server can
+   * be exercised against one — a conforming server should answer
+   * `-32020 HeaderMismatch`, and MCPJam surfaces that failure unmasked rather
+   * than recovering from it.
+   *
+   * Wired into the inspector via
+   * `hostConfig.mcpProfile.toolParamHeaderMirroring` (`"mirror"` | `"omit"`).
+   * Streamable-HTTP + modern-era only, like the mirroring itself: stdio and
+   * 2025-era connections never mirror, so the flag is inert there.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
+   * Whether the client walks a paginated list to exhaustion, or reads page
+   * one and stops.
+   *
+   * `undefined` (the default) and `false` both walk every page. `true`
+   * deliberately simulates the real hosts that read only the first page, so a
+   * server author can see what their server looks like through one — tools
+   * beyond page one are invisible, and (on `2026-07-28`) a `tools/call` on
+   * such a tool carries no mirrored `Mcp-Param-*`, because the SEP-2243
+   * mirroring source is the page-one-only aggregate the client cached.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.paginationTraversal`
+   * (`"full"` | `"firstPageOnly"`). Applies on every era and every transport —
+   * pagination predates 2026 and is not HTTP-specific. Only the cursor-less
+   * aggregation is truncated; an explicit-cursor request (the debugger's own
+   * manual paging) is left alone.
+   */
+  firstPageOnly?: boolean;
+  /**
+   * Whether the client drives MRTR (`resultType: "input_required"`) retry
+   * rounds at all.
+   *
+   * `undefined` (the default) and `true` both drive them. `false` simulates a
+   * client that never implemented the 2026 pattern: it stops advertising
+   * `elicitation` on a modern connection — where the MRTR bridge is the only
+   * fulfiller, so advertising would be a capability nothing can honor — and
+   * an `input_required` result surfaces as the upstream client's
+   * `UNSUPPORTED_RESULT_TYPE` error instead of silently looping.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.mrtrSupport`
+   * (`"full"` | `"none"`). Modern-era only: MRTR does not exist before
+   * `2026-07-28`, and a legacy connection keeps fulfilling elicitation
+   * through the inbound `elicitation/create` bridge, which this knob does not
+   * touch. WHICH elicitation modes an MRTR-capable client fulfills is a
+   * separate, already-modeled fact (`clientCapabilities.elicitation`).
+   */
+  supportsMrtr?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
@@ -307,6 +362,7 @@ export type StdioServerConfig = BaseServerConfig & {
   reconnectionOptions?: never;
   sessionId?: never;
   preferSSE?: never;
+  disableSseFallback?: never;
   refreshToken?: never;
   clientId?: never;
   clientSecret?: never;
@@ -357,6 +413,17 @@ export type HttpServerConfig = BaseServerConfig & {
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
   /** Prefer SSE transport over Streamable HTTP */
   preferSSE?: boolean;
+  /**
+   * Opt out of the silent Streamable-HTTP → SSE downgrade. By default a
+   * failed Streamable HTTP connect falls back to SSE, which is right for
+   * ad-hoc URLs but wrong for a server whose transport was DECLARED
+   * streamable-http (e.g. an Agent Plugins manifest): connecting over SSE
+   * would misrepresent the server under test. When set, the Streamable HTTP
+   * failure surfaces instead of being retried over SSE. Meaningful only when
+   * Streamable HTTP is attempted first — inert alongside `preferSSE`, which
+   * makes SSE the declared transport rather than a fallback.
+   */
+  disableSseFallback?: boolean;
   /**
    * Pinned MCP protocol version (wire literal that lands in `_meta` +
    * `MCP-Protocol-Version` header). Absent → SDK default at request

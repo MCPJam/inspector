@@ -245,7 +245,12 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
       ...(options?.guestUnsupportedMessage
         ? { guestUnsupportedMessage: options.guestUnsupportedMessage }
         : {}),
-      ...(rpcCollector ? { rpcLogger: rpcCollector.rpcLogger } : {}),
+      ...(rpcCollector
+        ? {
+            rpcLogger: rpcCollector.rpcLogger,
+            httpLogger: rpcCollector.httpLogger,
+          }
+        : {}),
       ...(mrtrInputCollectorForServer ? { mrtrInputCollectorForServer } : {}),
     });
     managerHolder.manager = manager;

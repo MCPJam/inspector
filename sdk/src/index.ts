@@ -42,6 +42,23 @@ export type {
   HttpExchangeLogger,
 } from "./mcp-client-manager/index.js";
 
+// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring helpers. The send path
+// uses these internally; they are public so the CLI and the conformance
+// runner judge tool declarations with the SAME walk the wire does.
+export {
+  buildMcpParamHeaders,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
+  encodeMcpHeaderValue,
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
+} from "./mcp-client-manager/index.js";
+export type {
+  McpParamCrossCheck,
+  XMcpHeaderDeclaration,
+  XMcpHeaderScan,
+} from "./mcp-client-manager/index.js";
+
 // Tool and task types
 // The schema validator the manager itself uses for elicitation content, so a
 // downstream surface can check an answer against the same authority it will be
@@ -104,11 +121,69 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  withSkillsExtensionCapability,
+} from "./mcp-client-manager/index.js";
+
+// io.modelcontextprotocol/skills (SEP-2640).
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  SKILL_NOT_FOUND_ERROR_CODE,
+  SkillsExtDirectoryReadMethod,
+  SkillsExtGetMethod,
+  SkillsExtListMethod,
+  INODE_DIRECTORY_MIME_TYPE,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+  isSkillNotFoundError,
+  InvalidSkillsPayloadError,
+  isInvalidSkillsPayloadError,
+  MCPSkillsWireError,
+  isMCPSkillsWireError,
+  assertSkillEntry,
+  assertSkillsGetResult,
+  assertSkillsListResult,
+  assertDirectoryReadResult,
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  // Aliased to match the browser entrypoint: one symbol with two public names
+  // is a trap, and `canonicalJson` is too broad for a skills-specific
+  // serializer.
+  canonicalJson as canonicalSkillJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./mcp-client-manager/index.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillsDirectoryEntry,
+  SkillsDirectoryReadResult,
+  SkillIdentityFrontmatter,
+  SkillsSupport,
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
   type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
 
@@ -138,10 +213,12 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  extractInsufficientScopeChallenge,
   unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
+export type { InsufficientScopeChallenge } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,
@@ -226,7 +303,19 @@ export type {
   ToolCallOutcomeEvaluationResult,
   ToolCallValidationResult,
 } from "./response-validation.js";
-export { redactSensitiveValue } from "./redaction.js";
+export { redactForTelemetry } from "./telemetry-redaction.js";
+/**
+ * @deprecated Renamed to `redactForTelemetry`. Kept as an alias so external
+ * consumers do not break on the rename; there is no plan to remove it soon.
+ *
+ * The rename exists because this is the SENTRY redactor: it over-redacts on
+ * purpose, replacing whole values rather than preserving a correlatable
+ * prefix. The OAuth *display* redactor is
+ * `sanitizeOAuthTraceValue` in `oauth/state-machines/trace-redaction.ts`, and
+ * the two must never be confused for each other — one being used where the
+ * other belongs is how a credential either leaks or becomes unusable.
+ */
+export { redactForTelemetry as redactSensitiveValue } from "./telemetry-redaction.js";
 export {
   resolveAuthorizationPlan,
   resolveRegistrationStrategies,
@@ -281,6 +370,40 @@ export type {
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+export {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isInapplicableCheck,
+  isUnrunCheck,
+} from "./conformance-outcome.js";
+export type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+  OutcomeCheckLike,
+} from "./conformance-outcome.js";
+export {
+  computeConformanceScore,
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+} from "./conformance-score.js";
+export type {
+  ConformanceAdvisoryTier,
+  ConformanceScore,
+  ScoredAdvisory,
+} from "./conformance-score.js";
+// Redaction for reports that leave the machine that produced them (a stored,
+// shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
+// key sweep — see the module header for why both layers exist.
+export {
+  REDACTED,
+  redactConformanceReportForSharing,
+  redactSharedServerUrl,
+  redactUrlSecrets,
+} from "./conformance-redaction.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
@@ -299,6 +422,35 @@ export {
   generateRandomString,
 } from "./oauth/state-machines/shared/pkce.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
+// client-name-free — per-client profiles live in the private backend.
+export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
+export type { DerivedOAuthEmulation } from "./oauth/emulation/derive.js";
+export type {
+  OAuthEmulationConfig,
+  OAuthEmulationCoverage,
+  OAuthEmulationDivergence,
+  OAuthEmulationField,
+  OAuthEmulationFieldStatus,
+} from "./oauth/emulation/types.js";
+export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
+export type {
+  EmulatedAuthAttempt,
+  EmulatedRegistrationPreference,
+} from "./oauth/emulation/types.js";
+export {
+  isInvalidRedirectUriRejection,
+  planCompletionSafeRedirects,
+} from "./oauth/emulation/redirects.js";
+export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
+// Node-only: runs the emulated ladder over the hardened OAuth networking path.
+export { runEmulatedOAuthPreflight } from "./oauth/emulation/preflight.js";
+export type {
+  EmulatedAuthAttemptResult,
+  EmulatedOAuthPreflightConfig,
+  EmulatedOAuthPreflightOutcome,
+  EmulatedOAuthPreflightResult,
+} from "./oauth/emulation/preflight.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
@@ -551,11 +703,14 @@ export {
   describeError,
   describeAsSlug,
   isNormalizedError,
+  originOf,
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,
 } from "./error-describer/index.js";
 export type {
+  DescribeContext,
+  ErrorOrigin,
   NormalizedError,
   ErrorCatalogEntry,
   ErrorCatalogSlug,
@@ -736,6 +891,7 @@ export {
   listTools,
   withEphemeralClient,
   withDisposableManager,
+  listAllServerSkills,
 } from "./operations.js";
 
 export type {
@@ -746,6 +902,8 @@ export type {
   GetPromptParams,
   ListToolsParams,
   WithEphemeralClientOptions,
+  ListAllServerSkillsParams,
+  ListAllServerSkillsResult,
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
@@ -794,6 +952,9 @@ export type {
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+  ToolParamHeaderMirroring,
+  PaginationTraversalMode,
+  MrtrSupport,
 } from "./host-config/index.js";
 
 // MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire

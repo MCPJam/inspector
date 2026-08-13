@@ -15,6 +15,8 @@ import {
   ResizablePanelGroup,
 } from "./ui/resizable";
 import { track } from "@/lib/analytics";
+import { toast } from "@/lib/toast";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   OAuthProfileModal,
   type OAuthProfileAgentSeed,
@@ -204,6 +206,9 @@ export const OAuthFlowTab = ({
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  // Continue is in flight. Purely presentational — the flow state machine
+  // remains the source of truth for where the flow actually is.
+  const [isAdvancing, setIsAdvancing] = useState(false);
   const [isRefreshTokensModalOpen, setIsRefreshTokensModalOpen] =
     useState(false);
   const [isApplyingTokens, setIsApplyingTokens] = useState(false);
@@ -303,6 +308,23 @@ export const OAuthFlowTab = ({
     setFocusedStep(null);
   }, [oauthFlowState.currentStep]);
 
+  // Surface flow errors as a toast exactly once per NEW error. The state
+  // machine catches its own step failures and writes them into flow state,
+  // where they previously only appeared as inline log text — easy to miss
+  // while watching the sequence diagram. Keyed off the transition (ref
+  // comparison), not the render, so a re-render never re-toasts.
+  const lastToastedErrorRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const error = oauthFlowState.error;
+    if (!error) {
+      lastToastedErrorRef.current = undefined;
+      return;
+    }
+    if (lastToastedErrorRef.current === error) return;
+    lastToastedErrorRef.current = error;
+    toast.error(error);
+  }, [oauthFlowState.error]);
+
   const updateOAuthFlowState = useCallback(
     (updates: Partial<OAuthFlowState>) => {
       oauthFlowStateRef.current = { ...oauthFlowStateRef.current, ...updates };
@@ -372,6 +394,7 @@ export const OAuthFlowTab = ({
       serverName: serverIdentifier,
       customScopes: profile.scopes.trim() || undefined,
       customHeaders,
+      allowPathScopedIssuer: activeServer?.oauthAllowPathScopedIssuer === true,
       registrationStrategy,
       preregisteredClientId: profile.clientId.trim() || undefined,
       // Preserve the exact typed secret — trimming would silently change a
@@ -389,6 +412,7 @@ export const OAuthFlowTab = ({
     profile.scopes,
     profile.clientId,
     profile.clientSecret,
+    activeServer?.oauthAllowPathScopedIssuer,
     serverIdentifier,
     customHeaders,
     registrationStrategy,
@@ -403,6 +427,7 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine]);
 
   const handleAdvance = useCallback(async () => {
+    setIsAdvancing(true);
     track("oauth_flow_tab_next_step_button_clicked", {
       location: "oauth_flow_tab",
       currentStep: oauthFlowState.currentStep,
@@ -412,16 +437,32 @@ export const OAuthFlowTab = ({
       targetUrlConfigured: Boolean(profile.serverUrl),
     });
 
-    if (
-      oauthFlowState.currentStep === "authorization_request" ||
-      oauthFlowState.currentStep === "generate_pkce_parameters"
-    ) {
-      if (oauthFlowState.currentStep === "generate_pkce_parameters") {
+    try {
+      if (
+        oauthFlowState.currentStep === "authorization_request" ||
+        oauthFlowState.currentStep === "generate_pkce_parameters"
+      ) {
+        if (oauthFlowState.currentStep === "generate_pkce_parameters") {
+          await proceedToNextStep();
+        }
+        setIsAuthModalOpen(true);
+      } else {
         await proceedToNextStep();
       }
-      setIsAuthModalOpen(true);
-    } else {
-      await proceedToNextStep();
+    } catch (err) {
+      // The state machine normally catches its own step errors and surfaces
+      // them through flow state; anything that escapes to here is a bug in the
+      // adapter or an unreachable target, and used to reject silently while
+      // Continue sat there looking clickable.
+      reportCaught(err, {
+        source: "oauth_debugger_advance",
+        extra: { step: oauthFlowState.currentStep, protocolVersion },
+      });
+      toast.error(
+        err instanceof Error ? err.message : "Failed to advance the OAuth flow",
+      );
+    } finally {
+      setIsAdvancing(false);
     }
   }, [
     hasProfile,
@@ -678,7 +719,7 @@ export const OAuthFlowTab = ({
     const processOAuthCallback = (
       code: string,
       state: string | undefined,
-      iss?: string | undefined
+      iss?: string | null
     ) => {
       if (processedCodeRef.current === code) {
         return;
@@ -721,13 +762,32 @@ export const OAuthFlowTab = ({
         // 2R-iss / review F8: record the RFC 9207 `iss` so the machine's
         // authorization-response issuer step validates it (it reads
         // `state.authorizationResponseIss`) instead of leaving it unset.
-        authorizationResponseIss: iss,
+        // Absence is `undefined`, never `null`: the machine's presence check
+        // must route a missing `iss` to the "absent" rows, and flow state
+        // types the field as `string | undefined`.
+        authorizationResponseIss: iss ?? undefined,
         error: undefined,
       });
 
       exchangeTimeoutRef.current = setTimeout(() => {
-        oauthStateMachine?.proceedToNextStep();
         exchangeTimeoutRef.current = null;
+        setIsAdvancing(true);
+        // This promise had no rejection handler: a token exchange that threw
+        // left the UI frozen mid-flow with nothing logged anywhere.
+        Promise.resolve(oauthStateMachine?.proceedToNextStep())
+          .catch((err) => {
+            reportCaught(err, {
+              source: "oauth_debugger_auto_advance",
+              extra: { protocolVersion },
+            });
+            updateOAuthFlowState({
+              error:
+                err instanceof Error
+                  ? err.message
+                  : "Failed to exchange the authorization code",
+            });
+          })
+          .finally(() => setIsAdvancing(false));
       }, 500);
     };
 
@@ -737,7 +797,14 @@ export const OAuthFlowTab = ({
       }
 
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        processOAuthCallback(event.data.code, event.data.state, event.data.iss);
+        // `event.data` is untyped: older callback pages (and any page reading
+        // URLSearchParams directly) send `iss: null` when the param is absent.
+        // Coalesce so the machine sees absence, not a null "present" value.
+        processOAuthCallback(
+          event.data.code,
+          event.data.state,
+          event.data.iss ?? undefined,
+        );
       }
     };
 
@@ -775,6 +842,13 @@ export const OAuthFlowTab = ({
         }
       } catch (error) {
         console.error("Failed to process Electron OAuth callback:", error);
+        reportCaught(error, { source: "oauth_debugger_electron_callback" });
+        updateOAuthFlowState({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to process the OAuth callback",
+        });
       }
     };
 
@@ -786,7 +860,7 @@ export const OAuthFlowTab = ({
           processOAuthCallback(
             event.data.code,
             event.data.state,
-            event.data.iss
+            event.data.iss ?? undefined
           );
         }
       };
@@ -881,6 +955,7 @@ export const OAuthFlowTab = ({
                   continueDisabled: Boolean(
                     canApplyTokens || continueDisabled
                   ),
+                  continuePending: isAdvancing,
                   resetDisabled:
                     !hasProfile || oauthFlowState.isInitiatingAuth,
                   onConnectServer:

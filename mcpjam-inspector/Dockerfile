@@ -41,6 +41,23 @@ ARG VITE_WORKOS_API_HOSTNAME
 ARG VITE_CONVEX_URL
 ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
+# Not a VITE_ var — it is never bundled. `sentryVitePlugin` in
+# client/vite.config.ts reads it at BUILD time to upload source maps for the
+# release, and without it every hosted prod stack trace stays minified
+# (`index-<hash>.js:8:117100`) while Sentry falls back to scraping the asset
+# URL, which the SPA answers with index.html. Absent, the plugin warns and
+# skips the upload, so local and desktop builds are unaffected.
+#
+# ARG, and not a BuildKit secret mount, because Railway builds this image and
+# does not support `--mount=type=secret`: declaring an ARG of the same name as
+# a service variable is the only supported way to reach a build-time secret
+# there. The exposure that buys is bounded — the ARG is scoped to this build
+# stage, the token is never written to disk or promoted to ENV, and the runtime
+# image below is a separate stage that copies artifacts rather than layers. It
+# would surface in this stage's build history and in `mode=max` provenance,
+# neither of which Railway publishes. Mark the variable Sealed in Railway so it
+# is not readable back out of the dashboard or API.
+ARG SENTRY_AUTH_TOKEN
 
 COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ./sdk/
 COPY cli/package.json ./cli/package.json
@@ -60,26 +77,26 @@ RUN npm run build:lib -w @mcpjam/inspector
 
 COPY mcpjam-inspector/server ./mcpjam-inspector/server
 COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
+# This image enumerates the bundle steps instead of running `npm run build`, so
+# every generated-and-gitignored module `build:server` imports has to be listed
+# here by hand. `bundle:plugin-shim` emits the in-VM plugin shim as a TS const
+# that `services/plugins/computer-stdio.ts` imports at top level: without it the
+# server bundle does not resolve and the image fails to build.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
-    npm run bundle:sandbox-proxies -w @mcpjam/inspector
+    npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
+    npm run bundle:plugin-shim -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
 # client tree. It therefore has to run AFTER `mcpjam-inspector/client` is on
 # disk; `build:server` consumes the generated harness bundle so it runs in the
 # same step.
+# chat-ui and widget-react are aliased to their SOURCE by client/vite.config.ts
+# (and Tailwind scans the same source), so they must be on disk before
+# `build:client` — but they are consumed from source, so neither needs a build.
 COPY design-system ./design-system
-# The inspector client aliases `@mcpjam/chat-ui` to `../chat-ui/src/index.ts`
-# (see client/vite.config.ts) and Tailwind scans the same source, so the
-# chat-ui workspace must be on disk before `build:client` runs. It is consumed
-# from source, not from a built dist, so no chat-ui build step is needed.
 COPY chat-ui ./chat-ui
-# The inspector client aliases `@mcpjam/widget-react` to
-# `../widget-react/src/index.ts` (see client/vite.config.ts), so — like chat-ui —
-# the widget-react workspace source must be on disk before `build:client` runs.
-# Consumed from source, not from a built dist, so no widget-react build step is
-# needed.
 COPY widget-react ./widget-react
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
@@ -92,6 +109,7 @@ RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; f
     if [ -n "$VITE_CONVEX_URL" ]; then export VITE_CONVEX_URL; fi; \
     if [ -n "$VITE_WORKOS_CLIENT_ID" ]; then export VITE_WORKOS_CLIENT_ID; fi; \
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
+    if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
     npm run build:client -w @mcpjam/inspector
 
 ################################################################################

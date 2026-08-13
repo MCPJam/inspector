@@ -150,6 +150,29 @@ export function buildSuiteRunPlans(
   return buildSuiteHostRunPlans(suite, fallbackServerIds);
 }
 
+/**
+ * Number of plans `buildSuiteRunPlans` produces for this suite — it delegates and
+ * reads `.length`, so parity holds by construction. Used by the pre-run credit
+ * estimate to tell the backend how wide the Run-all fan-out is (environments,
+ * then hosts, then the single default plan).
+ *
+ * Kept immediately beside `buildSuiteRunPlans` and covered by a parity test
+ * against `buildSuiteRunPlans(...).length`: if the plan shape ever gains another
+ * axis, a count that silently lags would understate every estimate.
+ */
+export function countSuiteRunPlans(
+  suite: {
+    environment?: { servers?: string[] } | undefined;
+    hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
+    environmentIds?: string[];
+  },
+  environments?: Array<{ environmentId: string; name: string }>,
+  fallbackServerIds?: string[],
+): number {
+  return buildSuiteRunPlans(suite, environments, fallbackServerIds).length;
+}
+
 export function getSelectedSuiteHostRunPlan(
   suite: {
     environment?: { servers?: string[] } | undefined;
@@ -1123,5 +1146,32 @@ export function pickLatestCompletedRun(
   }
   return completed.reduce((best, r) =>
     r.runNumber > best.runNumber ? r : best,
+  );
+}
+
+/**
+ * Does anything about this suite pin a sandbox image for its NEXT run?
+ *
+ * Two sources, both checked: the suite's own
+ * `environment.computerEnvironmentId` (the migration-era override) and any
+ * ATTACHED project environment's pin — env-backed suites resolve their image
+ * server-side at launch, so checking only the suite field would miss exactly
+ * the suites that increasingly carry the pin. Historical runs' frozen
+ * snapshot pins are deliberately NOT consulted here: they gate REPLAY of that
+ * run, not fresh runs (see `RunDetailPlaygroundActions`).
+ */
+export function evalSuitePinsSandboxImage(
+  suite: Pick<EvalSuite, "environment" | "environmentIds">,
+  attachedEnvironments:
+    | Array<{ environmentId: string; computerEnvironmentId?: string | null }>
+    | undefined,
+): boolean {
+  if (suite.environment?.computerEnvironmentId) return true;
+  return (suite.environmentIds ?? []).some((environmentId) =>
+    Boolean(
+      (attachedEnvironments ?? []).find(
+        (environment) => environment.environmentId === environmentId,
+      )?.computerEnvironmentId,
+    ),
   );
 }

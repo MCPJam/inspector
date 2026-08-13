@@ -10,13 +10,28 @@
 import { SwarmAgentError } from "./swarm-agent.js";
 import { logger } from "../utils/logger.js";
 
-// LLM-backed generation calls; generous timeout to cover slower completions
-// (generate-persona makes two model calls behind one request).
-const GENERATE_TIMEOUT_MS = 120_000;
+// LLM-backed generation calls; generous timeout to cover slower completions.
+// A batch persona request is one slate call plus one journey call per persona
+// — the backend fans the journey calls out concurrently, so wall-clock is
+// roughly two sequential calls regardless of slate size, but the largest
+// slates still need more room than a single completion.
+const GENERATE_TIMEOUT_MS = 180_000;
+
+/**
+ * A deterministic check the backend suggests for a generated journey, in the
+ * client's predicate wire shape. Only `toolCalledAtLeastOnce` is ever
+ * suggested — the backend allowlists the tool name against the grounding
+ * snapshot, so the tool is guaranteed to exist on the server.
+ */
+export interface SwarmSuggestedCheck {
+  type: "toolCalledAtLeastOnce";
+  toolName: string;
+}
 
 export interface SwarmGeneratedJourney {
   name?: string;
   goal: string;
+  suggestedChecks?: SwarmSuggestedCheck[];
 }
 
 export interface SwarmGeneratedPersona {
@@ -28,6 +43,17 @@ export interface SwarmGeneratedPersona {
 export interface GenerateSwarmPersonaResult {
   persona: SwarmGeneratedPersona;
   journeys: SwarmGeneratedJourney[];
+}
+
+/** Free-text audience description + dedup hints, both optional and both
+ * forwarded verbatim to the backend prompts. */
+export interface SwarmGenerationGrounding {
+  description?: string;
+  existingPersonas?: { name: string; role: string }[];
+}
+
+export interface GenerateSwarmPersonaBatchResult {
+  personas: GenerateSwarmPersonaResult[];
 }
 
 export interface GenerateSwarmJourneysResult {
@@ -109,12 +135,49 @@ function isGeneratedJourneyList(
   });
 }
 
+/** Mirrors the backend's own per-journey cap. */
+const MAX_SUGGESTED_CHECKS = 2;
+
+/**
+ * Whitelist-copy one journey for the client. `suggestedChecks` are advisory —
+ * the journey is complete without them — so unlike a malformed goal (which
+ * fails the whole response above), a malformed suggestion is dropped, and any
+ * other field the backend starts emitting is stripped rather than forwarded.
+ */
+function sanitizeGeneratedJourney(
+  journey: SwarmGeneratedJourney
+): SwarmGeneratedJourney {
+  // Typed as SwarmSuggestedCheck[] but sourced from an unvalidated response
+  // body — widen back to unknown and prove the shape instead of trusting it.
+  const raw: unknown = journey.suggestedChecks;
+  const suggestedChecks = Array.isArray(raw)
+    ? raw
+        .filter((entry): entry is SwarmSuggestedCheck => {
+          if (!entry || typeof entry !== "object") return false;
+          const check = entry as Record<string, unknown>;
+          return (
+            check.type === "toolCalledAtLeastOnce" &&
+            typeof check.toolName === "string" &&
+            check.toolName.trim().length > 0
+          );
+        })
+        .slice(0, MAX_SUGGESTED_CHECKS)
+    : [];
+  return {
+    goal: journey.goal,
+    ...(journey.name !== undefined ? { name: journey.name } : {}),
+    ...(suggestedChecks.length > 0 ? { suggestedChecks } : {}),
+  };
+}
+
 export async function generateSwarmPersona(
   convexHttpUrl: string,
   bearer: string,
   args: {
     projectId: string;
-    serverAttachmentId: string;
+    /** Exactly one grounding source — the route's zod refine enforces it. */
+    serverAttachmentId?: string;
+    environmentId?: string;
     journeyCount: number;
     signal?: AbortSignal;
   }
@@ -128,7 +191,10 @@ export async function generateSwarmPersona(
     bearer,
     {
       projectId: args.projectId,
-      serverAttachmentId: args.serverAttachmentId,
+      ...(args.serverAttachmentId
+        ? { serverAttachmentId: args.serverAttachmentId }
+        : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
       journeyCount: args.journeyCount,
     },
     args.signal
@@ -150,7 +216,101 @@ export async function generateSwarmPersona(
   // rejecting) mirrors the backend's own slate contract.
   return {
     persona: data.persona,
-    journeys: data.journeys.slice(0, args.journeyCount),
+    journeys: data.journeys
+      .slice(0, args.journeyCount)
+      .map(sanitizeGeneratedJourney),
+  };
+}
+
+/**
+ * Batch sibling of {@link generateSwarmPersona}: one request, a slate of
+ * `personaCount` personas, each with its own journeys.
+ *
+ * Sending `personaCount` is what selects the batch response shape backend-side
+ * — its absence keeps the legacy single-persona shape for deployed clients —
+ * so this function and `generateSwarmPersona` hit the same URL and differ only
+ * in that field.
+ *
+ * The backend drops a persona whose journey slate failed rather than failing
+ * the whole request, so a short slate is a normal (partial) success. Only an
+ * empty one is an error.
+ */
+export async function generateSwarmPersonaBatch(
+  convexHttpUrl: string,
+  bearer: string,
+  args: {
+    projectId: string;
+    /** Exactly one grounding source — the route's zod refine enforces it. */
+    serverAttachmentId?: string;
+    environmentId?: string;
+    personaCount: number;
+    journeyCount: number;
+    signal?: AbortSignal;
+  } & SwarmGenerationGrounding
+): Promise<GenerateSwarmPersonaBatchResult> {
+  const data = await postGenerate<{
+    ok?: boolean;
+    personas?: unknown;
+    // Tolerated for a backend that predates the batch shape: the deploy order
+    // makes this unreachable, but a one-element wrap is cheaper than a
+    // confusing 502 if the two repos ever ship out of order.
+    persona?: SwarmGeneratedPersona;
+    journeys?: SwarmGeneratedJourney[];
+  }>(
+    `${convexHttpUrl}/swarms/generate-persona`,
+    bearer,
+    {
+      projectId: args.projectId,
+      ...(args.serverAttachmentId
+        ? { serverAttachmentId: args.serverAttachmentId }
+        : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+      personaCount: args.personaCount,
+      journeyCount: args.journeyCount,
+      ...(args.description ? { description: args.description } : {}),
+      ...(args.existingPersonas?.length
+        ? { existingPersonas: args.existingPersonas }
+        : {}),
+    },
+    args.signal
+  );
+
+  const rawEntries = Array.isArray(data.personas)
+    ? data.personas
+    : data.ok && isGeneratedPersona(data.persona)
+    ? [{ persona: data.persona, journeys: data.journeys }]
+    : null;
+  const valid =
+    data.ok &&
+    rawEntries !== null &&
+    rawEntries.length > 0 &&
+    rawEntries.every((entry) => {
+      if (!entry || typeof entry !== "object") return false;
+      const e = entry as Record<string, unknown>;
+      return (
+        isGeneratedPersona(e.persona) && isGeneratedJourneyList(e.journeys)
+      );
+    });
+  if (!valid) {
+    throw new SwarmAgentError(
+      502,
+      JSON.stringify(data),
+      "Persona generation returned an unexpected response"
+    );
+  }
+
+  // Both counts are enforced locally for the same reason the single-persona
+  // path clamps journeys: the user's choice is authoritative, and
+  // over-delivery would silently write more rows than were asked for.
+  return {
+    personas: (rawEntries as GenerateSwarmPersonaResult[])
+      .slice(0, args.personaCount)
+      .map((entry) => ({
+        persona: entry.persona,
+        journeys: entry.journeys
+          .slice(0, args.journeyCount)
+          .map(sanitizeGeneratedJourney),
+      })),
   };
 }
 
@@ -159,11 +319,13 @@ export async function generateSwarmJourneys(
   bearer: string,
   args: {
     projectId: string;
-    serverAttachmentId: string;
+    /** Exactly one grounding source — the route's zod refine enforces it. */
+    serverAttachmentId?: string;
+    environmentId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
     signal?: AbortSignal;
-  }
+  } & SwarmGenerationGrounding
 ): Promise<GenerateSwarmJourneysResult> {
   const data = await postGenerate<{
     ok?: boolean;
@@ -173,9 +335,13 @@ export async function generateSwarmJourneys(
     bearer,
     {
       projectId: args.projectId,
-      serverAttachmentId: args.serverAttachmentId,
+      ...(args.serverAttachmentId
+        ? { serverAttachmentId: args.serverAttachmentId }
+        : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
       journeyCount: args.journeyCount,
       persona: args.persona,
+      ...(args.description ? { description: args.description } : {}),
     },
     args.signal
   );
@@ -187,5 +353,9 @@ export async function generateSwarmJourneys(
     );
   }
   // See generateSwarmPersona: the requested count is enforced locally.
-  return { journeys: data.journeys.slice(0, args.journeyCount) };
+  return {
+    journeys: data.journeys
+      .slice(0, args.journeyCount)
+      .map(sanitizeGeneratedJourney),
+  };
 }

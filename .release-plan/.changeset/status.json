@@ -3,26 +3,42 @@
     {
       "releases": [
         {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Stop pasting a gateway's error page into the chat, and offer a retry instead of only a reset.\n\nAn upstream hop answering with HTML was already summarized in the banner headline, but the page itself was kept — truncated to 4KB — as the \"More details\" payload, so a momentary 502 in front of `app.mcpjam.com` still put `<!DOCTYPE html>` onward, a Cloudflare status table and a datacentre name into a User Testing transcript. The banner's only action was `Reset chat`, which for a User Testing session means discarding the data the session existed to collect.\n\nThe page body is now discarded outright. The banner says the useful thing — \"MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again.\" — and \"More details\" carries status plus the gateway's own request id (Cloudflare's `Ray ID`, or the `Request ID` / `Correlation ID` its peers print), which are the only two facts on such a page anyone can act on.\n\nThe formatted error also carries `code: \"upstream_error_page\"` and `isRetryable`, and the chat surfaces render a Retry beside the reset for it — resending the last message is the entire fix for a transient upstream failure. The retry is gated on that code rather than on `isRetryable` alone, which the server also sets on failures a blind resend cannot help with.\n\nOrdinary error text and oversized-but-readable messages are untouched: only a response body that is an error page takes this path.",
+      "id": "chat-upstream-error-page-retry"
+    },
+    {
+      "releases": [
+        {
           "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
+          "type": "patch"
+        }
+      ],
+      "summary": "Collapse ~1,300 lines of duplicated sequence-diagram action builders into one era-parameterized builder.\n\n`buildActions_2025_03_26` / `_2025_06_18` / `_2025_11_25` / `_2026_07_28` were four near-identical array literals totaling ~1,700 lines. They are pure presentation — the arrows in the debugger's sequence diagram — with zero effect on the wire, which makes them the one part of the era machines where consolidation is all upside: maximum maintenance cost, no protocol risk. (The wire step tables are the opposite trade and deliberately stay separate.)\n\nThe eras genuinely differ in five places, and each is now a field on an era spec rather than a conditional buried in a shared body: whether the ladder opens with the RFC 9728 protected-resource preamble (2025-03-26 does not), the MCP method on the unauthenticated probe, how the authorization-server metadata document is discovered, PKCE's requirement wording, and 2026-07-28's three additions (the DCR-deprecation note, the issuer the credentials are bound to, and the SEP-2350 scope union).\n\nVerified rather than asserted: `sequence-actions-goldens.test.ts` snapshots the rendered actions for every era × every supported registration strategy × populated and empty flow state — 24 snapshots — and they are byte-identical across the change. One quirk is preserved deliberately, with a comment saying so: an operator-precedence artifact that renders `\"undefined...\"` for an absent code challenge. Fixing it would move the goldens, and this change's job is to not move them.",
+      "id": "oauth-consolidate-diagram-actions"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "minor"
         }
       ],
-      "summary": "Make automatic MCP era negotiation always-on for unconfigured connections and extend it to stdio. An unconfigured connection (no explicit `mcpProtocolVersion` pin) resolves to `versionNegotiation: { mode: \"auto\" }` on **both HTTP and stdio** — the client probes `server/discover` for a modern server and conservatively falls back to the legacy `initialize` handshake otherwise. This preserves the HTTP auto-detection already shipped in #3441 and extends the same behavior to stdio (where the probe runs on a sibling process). There is no flag and no OFF path.\n\nExplicit pins are unchanged: an explicit modern pin negotiates modern with no legacy fallback, and an explicit legacy pin runs that version's exact handshake.\n\nAdditive value: per-connection negotiation telemetry (configured mode + negotiated era + transport + surface + outcome + failure class) is emitted to Axiom via the existing system-event pipeline (`mcp.connection.negotiated`) through the new optional `MCPClientManagerOptions.negotiationOutcomeLogger`. New SDK exports (additive): `unwrapEraNegotiationCause` and the types `NegotiationOutcomeEvent`, `NegotiationOutcomeLogger`, `ConfiguredNegotiationMode`. `isUnauthorized401`/`isAuthError` now see through an `SdkError(EraNegotiationFailed)` wrapper so an auto-probe 401 still triggers OAuth.",
-      "id": "auto-negotiation-activation-flag"
+      "summary": "Delete the legacy Auth tab and the two OAuth implementations only it used.\n\nThe Auth tab was reachable by URL but absent from the sidebar and blocked in hosted mode. It was also the only importer of `lib/oauth/oauth-state-machine.ts` (385 lines, one commit in six months) and the only production caller of `refreshOAuthTokens`. Three of the five client-side OAuth implementations existed to serve one unlinked screen — and every one of them was another place the same user action could behave differently.\n\nRemoved: `components/AuthTab.tsx`, `lib/oauth/oauth-state-machine.ts`, `refreshOAuthTokens`, the `auth` route and its `AuthRoute` component, and the `auth` app surface.\n\nNo replacement is needed. The main connect path never called `refreshOAuthTokens`, and hosted refresh goes through Convex (`server/utils/hosted-oauth-refresh.ts`). If local manual refresh is wanted later, it belongs as an era-parameterized SDK refresh step — not as a revived `fetchToken` + `loadCallbackDiscoveryState` pair, which bypassed every era rule the state machines enforce.",
+      "id": "oauth-delete-legacy-auth-tab"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Thread the SEP-2549 response-cache disposition (`cacheMode`) through the manager's cacheable read verbs and add a local cache-serve provenance channel.\n\n- `ClientRequestOptions` now carries an optional `cacheMode` (`\"use\" | \"refresh\" | \"bypass\"`); the type is re-exported as `CacheMode` (plus `CacheScope`). `listTools` / `listResources` / `listResourceTemplates` / `listPrompts` / `readResource` (and the `operations.ts` params) forward it to the underlying client.\n- New `MCPClientManagerOptions.cacheEventLogger` reports fresh cache serves (`{ serverId, method, params, ageMs, scope }`) via a new `ObservableResponseCache` store wrapper. This is a channel DISTINCT from `rpcLogger`: a cache hit never touches the wire and is never a wire-log entry.\n- Raw-evidence surfaces (`server-snapshot`, `server-doctor`, `mcp-conformance` list/read checks) pass `cacheMode: \"bypass\"` so they always exercise the live wire.\n- `defaultCacheTtlMs` is left at its `0` default: a result without a server-sent `ttlMs` is stored but never served. Persisted-discovery (`prior` DiscoverResult) reconnect is explicitly deferred.",
-      "id": "cache-policy-core"
+      "summary": "Add a differential golden harness across every era, registration strategy, and branch.\n\n`no-emulation-goldens.test.ts` covers one happy ladder per era, `dcr` only, no error branches. That notices an accidental change to the default path and nothing else — a thin basis for trusting four ~50%-duplicated state machines, and far too thin to justify consolidating them.\n\n`era-differential-goldens.test.ts` widens it to 4 eras × each supported registration strategy (`dcr`, `preregistered`, and `cimd` where the era supports it) × a catalog of the branches that actually differ: DCR failure, DCR failure with a pre-registered fallback, `strictConformance` refusing that fallback, present-but-mismatched and absent RFC 9207 `iss`, issuer mismatch, `allowPathScopedIssuer` on and off, each `resourceIndicatorEnforcement` mode, and — for the current-profile eras — missing PKCE metadata, `S256` absent, `plain` alongside `S256`, and empty or absent `authorization_servers`.\n\nTwo layers on purpose. The full request-sequence snapshot is a review aid: it shows what changed, and accepting an update is one keystroke. The named assertions are the gate — S256 PKCE end to end, one `redirect_uri` reused, the same validated canonical resource on both the authorization and token requests, a CSRF state always issued, and no MCP bearer credential on any OAuth endpoint. A snapshot update cannot normalize away a violation of those.\n\nEra differences are pinned rather than tolerated. The issuer-mismatch branch asserts that only 2026-07-28 hard-rejects it, so a change to shared code cannot quietly give an older era the strict behavior or take it from the newest one.",
+      "id": "oauth-era-differential-harness"
     },
     {
       "releases": [
@@ -31,66 +47,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Add a light and dark theme toggle to the public host comparison page.",
-      "id": "calm-caniuse-themes"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Add `mcpjam subscriptions listen` — a terminal mode for the MCP 2026-07-28\n`subscriptions/listen` stream, driving the SDK's `SubscriptionCoordinator`.\nInterests are selected with `--tools-list-changed` / `--prompts-list-changed` /\n`--resources-list-changed` / `--list-changed` / `--resource-uri`, the\nacknowledgement is printed as its own `subscription.acknowledged` event\n(distinct from notifications, which are each tagged with their local and MCP\nsubscription ids), and Ctrl-C cancels the subscription locally and exits 0.\nClose reasons are distinct outcomes: `graceful` and `cancelled` exit 0, while a\nremote loss exits 1 with `SUBSCRIPTION_REMOTE_CLOSED`. `--relisten <count>`\nopts into a bounded re-listen with exponential backoff. stdout carries only\nNDJSON events (no human progress text, in either `--format`); human status goes\nto stderr.\n\n`SubscriptionCoordinator` now treats a re-listen whose `listen()` itself throws\nas the same remote loss rather than a terminal `error`, so a server that is\nstill down when the backoff expires keeps consuming the attempt budget instead\nof ending the sequence after one try. The coordinator surface is also\nre-exported from the SDK package root so the CLI can drive it without a subpath\nimport.",
-      "id": "cli-subscriptions-listen"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "CLI: manual MCP Tasks loop matching the Inspector Tasks tab. New commands `tasks capabilities | get | list | result | cancel | update | watch`, plus `tools call --task` / `--task-watch` (with `--task-ttl`, `--wire`, and watch-tuning flags) driving a created task to a terminal status over one connection on both the legacy 2025-11-25 wire and the SEP-2663 extension wire. Watch exit codes: 0 completed, 6 input-required, 7 timeout, 130 aborted, 1 otherwise.\n\nSDK (additive): task manual-drive surface re-exported at the package root — `LEGACY_TASK_STATUSES`, `canDeclareTasksExtension`, `readDeclaredInputCapabilities`, `TaskInputRejectedError`, `DEFAULT_TASK_INPUT_LIMITS`, `createStrictElicitationContentValidator` (the strict dialect-aware elicitation self-validation rule the manager's MRTR path uses, as a shared factory), `retryAfterMsFromError`, and the associated types. The CLI statically imports these exports, which do not exist in published 2.0.x — coupling both packages in this changeset makes `changeset version` (via `updateInternalDependencies`) rewrite the CLI's `@mcpjam/sdk` range to `^2.1.0` in the same release, so a consumer upgrading the CLI against an old lockfile cannot pair it with an SDK that lacks them. The in-repo range stays `^2.0.0` until then because npm only links the workspace SDK while the range is satisfied by the workspace version.\n\nBehavior fixes in the shared task machinery: the await driver now honors a `Retry-After` recovered from a failed read's error object as the engine's scheduling floor (previously the engine supported it but nothing fed it, and the plain-record header lookup is case-insensitive per RFC 9110); an abort that fires during interactive `input_required` collection settles the drive as `aborted` instead of `input-required`; task `input_required` requests and handler responses are now validated against the canonical spec-type schemas (`ElicitRequest`/`ElicitResult`, `ListRootsRequest`/`ListRootsResult`, `CreateMessageRequest`/`CreateMessageResult`) — the same validation the upstream client applies on the standalone channel — with a new `\"malformed-response\"` rejection reason, and accepted elicitation answers are additionally self-validated against the request's `requestedSchema` with the same strict dialect-aware rule as standalone MRTR; `setElicitationHandler` no longer requires prior server registration, restoring handler registration before connect.",
-      "id": "cli-tasks-manual-drive"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix `modern-server-discover` failing every spec-correct 2026 server. The check demanded a top-level `serverInfo` in the `server/discover` result, but `DiscoverResult` has no such member — the 2026 encode seam stamps identity into `_meta[\"io.modelcontextprotocol/serverInfo\"]` on every result instead (spec PR #3002). Any server built on the official server SDK, MCPJam's own stateless reference server included, failed the check.\n\nThe check now reads the `_meta` stamp, keeps a top-level `serverInfo` as a lenient fallback, and treats identity as the SHOULD it is: a present-but-malformed stamp still fails, an absent one does not, and either way the value is reported in the check details so a silent server stays visible in the run artifact. `supportedVersions` and `capabilities` remain hard MUST failures.\n\nAlso repairs test rot from the 2.0.0 client bump so the SDK suite is green again: `connect({ prior })` is now era-discriminated (`{ kind: \"modern\", discover }`), and upstream's default validators no longer reject a declared draft-07 dialect — that assertion is re-pointed at the boundary that is still real (draft-04). Upstream now covering draft-06/07/2019-09/2020-12 makes `DialectAwareJsonSchemaValidator` and its CSP-safe twin redundant for the dialects they dispatch; retiring them touches the client factory and the browser/workerd bundles, so it is left as a separate deliberate change.",
-      "id": "discover-identity-meta-stamp"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Enable automatic MCP protocol negotiation for unpinned HTTP connections. MCPJam now probes `server/discover` for modern servers and conservatively falls back to the legacy `initialize` handshake, while explicit protocol pins and stdio connections retain their existing behavior.\n\nFallback is deliberately conservative: definitive legacy signals **and anything unrecognized** (opaque `400`, `404`, `405`, `406`, `5xx`, `-32601`) fall back to the plain `initialize` handshake on the same connection, byte-equivalent to a 2025 client. Only two outcomes fail the connect: a network outage, and an HTTP probe timeout (on HTTP, silence from a deployed server indicates an outage rather than a legacy server).\n\nOAuth protocol resolution changes for servers left on **Auto**. Auto is now stored as intent rather than baked into a concrete pin at save time, and resolves per flow from: explicit OAuth selection → explicit wire pin → freshly negotiated version → `2025-11-25` when a `401` blocks detection. One consequence worth calling out: an Auto server pinned to an older wire version (for example `2025-06-18`) now runs **that** version's OAuth flow, where it previously always ran `2025-11-25`. Tokens are re-obtained from the top on each login, so no stored credential needs migrating.",
-      "id": "enable-http-protocol-auto-detection"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Make `pingServer` era-aware: probe modern (2026-07-28) connections with\n`server/discover` instead of the retired `ping` method.\n\n`ping` was removed from the 2026 vocabulary (SEP-2575), so the upstream client refuses to\nsend it on a modern-classified connection (`MethodNotSupportedByProtocolVersion`).\nEvery caller that health-checked a modern connection — most visibly the MRTR\nresume path, which pings before driving the retry leg — failed with\n\"Method 'ping' is not supported by the negotiated protocol version\" right after\nthe user answered an elicitation dialog.\n\n`pingServer` now probes with `server/discover` (the modern era's only\nuniversally available request) when the connection's era is modern, discarding\nthe result and returning the ping contract's `EmptyResult` so callers stay\nera-agnostic. Legacy connections keep the wire-identical `ping`. `discover` is\nforwarded through the managed-client surface (adapter + both meta decorators)\nas an optional member; the decorators bind it only when the inner client\ncarries it, so absence propagates through the stack and a client without\n`discover` falls back to `ping` rather than reporting a health check that\nnever touched the wire.",
-      "id": "era-aware-ping"
+      "summary": "Cover the executor ↔ state-machine seam with a real integration test, and gate the MCP OAuth wire invariants on named assertions.\n\nEvery OAuth test mocked one side of the joint the #3865 bug lived in: the inspector's tests mock `@mcpjam/sdk/browser`, and the SDK's tests stub the request executor. Nobody wired the real pair, which is how a redactor applied to live response bodies reached production.\n\n`client/src/lib/oauth/__tests__/oauth-refresh-integration.test.ts` mocks only what cannot exist in a unit process — `@/lib/config` pinned to the hosted configuration that exhibited the bug, and `authFetch` replaced by a forwarder that performs the same unwrap the real `/api/web/oauth` proxy does before making a real request. `@mcpjam/sdk/browser` is deliberately not mocked; `client/vitest.config.ts` already aliases it to SDK source, so the real state machines run. The whole flow — initiate, authorize, callback — takes about two seconds and needs no browser.\n\nThe oracle is the fixture rather than our own options object. `e2e/fixtures/fake-oauth-mcp-server.ts` returns 401 from `/mcp` unless `Authorization` matches byte-for-byte, so the happy-path test proves the token is usable rather than merely non-empty. The wire invariants are asserted by name against the requests the fixture actually received: same canonical `resource` on the authorization and token requests, S256 PKCE end to end, one `redirect_uri` reused across registration/authorization/exchange, no MCP bearer token on any OAuth endpoint, zero token requests when callback `state` is missing or mismatched, no raw nonce in the published trace, fail-closed on missing PKCE or protected-resource metadata, and no foreign configured `resourceUrl` reaching the wire.\n\nNamed assertions rather than snapshots alone: accepting an updated snapshot must not be able to make a missing `S256`, a broken resource binding, or a forwarded credential look normal.\n\nThe fixture gains an opt-in `tokenFailure` and metadata overrides, plus full URL, query, and headers on its request log. Defaults are byte-identical, so both Playwright projects are unaffected.",
+      "id": "oauth-executor-machine-integration"
     },
     {
       "releases": [
@@ -100,21 +58,35 @@
         },
         {
           "name": "@mcpjam/inspector",
-          "type": "patch"
+          "type": "minor"
         }
       ],
-      "summary": "Add the post-negotiation capability re-resolution seam (`eraCapabilities.modern`),\nand use it to declare url-mode elicitation on auto-negotiated modern connections.\n\nClient capabilities are resolved at connect time, before era negotiation has\nrun, so the base set must be honest under the most conservative era the\nconnection could land on. That forced auto-negotiated (Client default)\nconnections to under-advertise on 2026-07-28: url-mode elicitation — which the\nlocal MRTR bridge fully fulfils — stayed undeclared because the connect-time\nresolver could not rule out a legacy landing, so every url-mode `input_required`\nround died at the server's mode-aware capability gate (`-32021`) unless the\nuser explicitly pinned the protocol version.\n\n`MCPServerConfig.eraCapabilities.modern` is a merge-style capability overlay\nthe manager applies exactly once, immediately after era classification, when\nthe connection lands on a 2026-era revision. The 2026 wire re-declares\ncapabilities on every request's `_meta` envelope (the upstream client stamps it\nfrom the live set), so the widened declaration flows outward from the next\nrequest on and then stays stable for the connection's lifetime — MRTR rounds of\none logical operation always see one consistent set. Legacy landings never\napply the overlay (their `initialize` already carried the conservative base:\nfail-closed), exact `clientCapabilities` pins ignore it entirely, and the\noverlay's `elicitation` key is subject to the same advertise=enforce gate as\nthe runtime-added one.\n\nThe Inspector's local MRTR helper (`withLocalMrtrElicitationCapability`) now\nrides the seam instead of guessing \"provably modern\" from the pin and the\naccept-list — a predicate that had to answer \"no\" for the common unpinned\nconnection. url-mode elicitation (`open-dashboard`-style tools) now works on\nClient-default connections that auto-negotiate onto 2026-07-28.",
-      "id": "era-capability-reresolution"
+      "summary": "Give OAuth trace redaction one owner, and make `state` a secret in traces.\n\nThe redaction policy — which field names are secret, what a redacted value looks like, how a free-form error string is scrubbed — existed in six places, and the copies had already drifted. The SDK's sensitive-field set omitted `state` while the client's included it, so the same value was published or redacted depending on which code path rendered it; the SDK's error-string redactor was a naive subset that turned \"Bearer token is expired\" into \"Bearer [redacted] is expired\", destroying the word that says what went wrong.\n\nThere is now one source of truth: `oauth/state-machines/trace-redaction.ts` in the SDK, exported from `@mcpjam/sdk/browser`. The inspector's `lib/oauth/trace-redaction.ts` re-exports it and adds the `SANITIZE_OAUTH_TRACES` gate; `mcp-oauth.ts`, `oauth-trace.ts`, and `App.tsx`'s OAuth-debugger error boundary all call it instead of their own copies. The surviving error redactor is the debugger's, which already handled URL userinfo, named parameters, echoed `Authorization` headers, JSON credential fields, and truncation tails — and preserves diagnostic wording.\n\nConsolidating on it dropped two cases the SDK's redactor did have, both restored here. A credential after a bare `:` — `access_token: <value>` is how prose in an `error_description` writes it, and the surviving rule matched `=` only. And short opaque `Bearer`/`Basic` values carrying no base64url punctuation, such as `Basic dXNlcjpwYXNz`, which the surviving rule skipped because it keyed on punctuation-or-length to avoid eating \"Bearer token is expired\". That test is now inverted rather than dropped: redact unless the value is a plain lowercase word, so the diagnostic wording survives and short credentials do not.\n\nThree leaks closed on the way:\n\n- **`state` in sanitized traces.** It is not a bearer credential, which is why it was easy to leave out, but a still-live `state` is the CSRF correlation secret for an in-flight authorization. It is now redacted as a structured field, in URL queries, in form and JSON bodies, and inside error strings. Diagnostics use the new `describeOAuthStateMatch`, which reports `statePresent`/`stateMatched` instead of the nonce.\n- **Request URLs in HTTP history.** `sanitizeHttpHistoryEntry` redacted headers and bodies but not `request.url`, so every recorded authorization request kept its `state` (and a callback URL its `code`).\n- **Prose reshaped into fields.** `URLSearchParams` never fails, so `\"rejected: access_token=ntn_live\"` was parsed into a single field whose key (`\"rejected: access_token\"`) is not in the sensitive set — losing redaction the plain-string path would have applied. Reshaping now requires parameter-shaped keys; everything else goes to the error-string redactor.\n\nTelemetry redaction stays separate and is renamed to `redactForTelemetry` (`src/telemetry-redaction.ts`). It over-redacts deliberately and is length-capped for Sentry; merging it with the display redactor would weaken one or the other. `redactSensitiveValue` remains exported as a deprecated alias so external consumers do not break.\n\nA ratchet test (`lib/__tests__/oauth-redaction-ratchet.test.ts`) keeps redaction identifiers inside the trace modules. Vitest runs in CI; the lint workflow only runs typecheck and build, so an eslint rule would never have fired.",
+      "id": "oauth-one-redaction-owner"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/sdk",
+          "type": "major"
+        },
+        {
+          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Scope the RFC 9207 authorization-response `iss` mismatch rejection to the protocol era that mandates it. `MUST validate a present iss` is introduced by SEP-2468 in the 2026-07-28 draft; 2025-11-25 and earlier never mention `iss`, RFC 9207, or issuer identification, so enforcing there applied a rule the selected version does not contain. A mismatch still hard-blocks before code redemption on 2026-07-28; pre-draft flows now surface it as a non-blocking warning and complete.\n\nThis completes the era gating started in #3441, which scoped only the reject-on-absence row and deliberately left the present-but-mismatched row firing on every version.\n\nWarning-not-blocking on pre-draft eras is narrow by design: PKCE S256 is already mandatory there, the token endpoint always comes from the recorded metadata (never the callback, so a hostile `iss` cannot redirect the code), and tokens are persisted issuer-keyed to the recorded issuer. RFC 9207 Section 2.4 leaves an unadvertised `iss` to local policy. `validateAuthorizationResponseIssuer` gains an optional `enforcePresentIssMismatch` that defaults to enforcing, so an omitted flag fails closed.\n\nMismatch diagnostics now name both issuers — the recorded one and the one returned on the callback — because an exact comparison fails on differences too small to infer from \"does not match\" alone.",
-      "id": "era-gate-rfc9207-iss-mismatch"
+      "summary": "Fail closed when metadata an MCP authorization profile requires a client to verify is missing or unusable.\n\nTwo checks used to warn and continue, which means the flow proceeded without the protection the check exists to guarantee, and the downgrade was invisible on the wire:\n\n- **Protected-resource metadata.** An empty or missing RFC 9728 `authorization_servers` list was replaced by the MCP server's own URL, inventing an authorization server the resource never named. Now an error from **2025-06-18** onward — that revision already required the PRM document to \"include the `authorization_servers` field containing at least one authorization server,\" and 2025-11-25 and 2026-07-28 repeat it verbatim.\n- **PKCE.** An authorization server whose `code_challenge_methods_supported` omits `S256` was accepted with a `console.warn` unless `strictConformance` was set. Continuing is a silent downgrade to a weaker code challenge method, so the flow now stops. Gated at **2025-11-25**, because 2025-06-18 says nothing about `code_challenge_methods_supported` and inventing a rule it does not state would make that machine unfaithful to its era. Advertising `plain` in addition to `S256` is still fine — the client picks `S256`.\n\nThe two gates are deliberately different, and each is scoped to the eras whose spec text actually states the requirement. Gating both at 2025-11-25 would have left the version selector as a one-click bypass: a user blocked by the PRM check could pick 2025-06-18 and connect anyway, against a revision carrying the same MUST. 2025-03-26 predates the profile's adoption of RFC 9728 and keeps the historical fallback.\n\nThe debugger keeps the warn-and-continue behavior, because showing what a half-built server actually does is the point of pointing MCPJam at one. It gets it by passing the new `requiredMetadataEnforcement: \"observe\"`, an explicit non-connect intent: the default is `\"reject\"`, so connect, reconnect, hosted connect, and callback completion fail closed without opting in. Under `\"observe\"` an authorization-server substitution is recorded as an info log rather than applied silently.\n\nBoth gates live in `oauth/state-machines/shared/required-metadata.ts` and are consulted by every era's machine, so a machine cannot drift from its era's policy and a new era file cannot silently omit the check.",
+      "id": "oauth-required-metadata-fails-closed"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Retire the legacy callback token exchange, and give `clearOAuthData` ownership of the pending marker.\n\n`handleOAuthCallback` branched on whether a stored flow session existed: with one, the era state machine redeemed the code; without one, a second complete implementation rediscovered metadata and called `exchangeAuthorization` directly. That is how the same user action took two different code paths — prod and staging shipped byte-identical code and behaved differently — and the legacy path was era-blind. It skipped the era machine and with it the callback-state checks the machine performs, the resource binding, and the issuer policy, so each of those protections had to be re-implemented and separately tested on the fallback.\n\nThe fallback is gone. A callback with no stored flow session now clears the pending marker, records `oauth_callback_no_session_recovery`, and returns an explicit \"please connect again to reauthorize\" — it makes no token request at all. A session that straddles a deploy will land here, and a clear reauthorization is strictly safer than redeeming a code without the protections the current era requires.\n\nThe branch was reachable because `clearOAuthData(serverName)` cleared every per-server key but never the global `mcp-oauth-pending` marker, leaving a server name with no session behind it. `clearOAuthData` now owns the full key list, and removes the global marker **only when it names the server being cleaned** — the marker is global, so cleanup for one server must never strand another server's in-flight authorization (a real two-tab shape). A test enumerates every `mcp-*` key an OAuth flow writes, so a new key has to be added to the cleanup too.\n\nFive tests that each defended one protection on the retired path are replaced by one that asserts every such shape now asks for reauthorization and redeems nothing.",
+      "id": "oauth-retire-legacy-callback-exchange"
     },
     {
       "releases": [
@@ -127,98 +99,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Resolve VS Code host style variables to the captured light and dark theme colors when emulating the VS Code client.",
-      "id": "fresh-vscode-themes"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Harden generic OAuth proxy requests by validating and pinning DNS results, checking every followed redirect before connecting, and bounding response bodies. Explicit local loopback flows may redirect to validated public hosts, while redirects to other private or reserved destinations remain blocked.\n\n`OAuthProxyResponse` gains a required `finalUrl` field reporting the effective URL after redirects. Reading a proxy response is unaffected; code that constructs an `OAuthProxyResponse` (typically test doubles) must add `finalUrl`.",
-      "id": "harden-oauth-proxy-transport"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Wire the BROWSER consumer leg of the hosted MCP 2026-07-28 multi-round-trip (`input_required`) transport (spec §12.5). The hosted server side (durable continuation store, suspend collector, `/api/web/mrtr/*` resume + cancel routes, `data-mrtr-input-required` part, version handshake) already shipped fail-closed; this makes it user-drivable. New exports only.\n\n- **Handshake on the wire.** Hosted chat turns and hosted direct `tools/execute` / `prompts/get` / `resources/read` requests now carry `hostedMrtrVersion: HOSTED_MRTR_VERSION`. The server only registers the suspending collector when it sees this, so a stale bundle is never handed a `continuationId` it can neither render nor resume.\n- **A hosted round rail** (`stores/hosted-mrtr-store.ts` + `components/elicitation/HostedMrtrHost.tsx`): the durable-continuation counterpart of the local SSE-backed `MrtrElicitationHost`, reusing the SAME `ElicitationDialog` / `UrlElicitationConsent` (form + modern URL variant) behind the same single-active-dialog election. Rounds dedupe by `continuationId:round`, collect one keyed request at a time, and submit the whole round's `ElicitResult`s together; decline/cancel are responses, not withdrawals.\n- **Per-round transport**, because the two hosted surfaces resume differently: a chat round re-drives the turn with an `mrtrResume` descriptor (so the server splices the driven tool result into the suspended tool-call and the agent loop continues), while a direct op resumes over `/api/web/mrtr/resume` — `driveHostedDirectMrtr` runs that loop transparently, so existing call sites still await one result in the verb's own envelope.\n- **Terminal outcomes are surfaced, not swallowed:** `completed` / `failed` / `cancelled` / `expired` close the rail, and an `indeterminate` outcome tells the user the call may or may not have run instead of auto-retrying a side effect.\n- **Mixed-version rollout fails fast.** An incompatible `version` on a round withdraws the continuation and tells the user to refresh rather than rendering a dialog this bundle could never complete. A user abort — and a resume with no unresolved tool call left in the transcript — likewise withdraws the continuation instead of leaving it to time out.",
-      "id": "hosted-mrtr-browser-consumer"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "feat(oauth-conformance): add three server-side spec-obligation checks (HP-17 findings 3/4/5)\n\nThe OAuth conformance suite now verifies obligations the MCP server owes every\nclient, gated behind `oauthConformanceChecks` alongside the existing negative\nchecks:\n\n- `oauth_unauthenticated_challenge` — an unauthenticated request must be\n  answered with HTTP 401 and a `WWW-Authenticate: Bearer` challenge, never a\n  500 (RFC 6750 §3). A 2xx skips as unverifiable — anonymous `initialize` with\n  authorization enforced on later requests is spec-legal.\n- `oauth_resource_metadata_challenge` — the Bearer challenge must advertise an\n  absolute `resource_metadata` URL (RFC 9728 §5.1). Skipped on 2025-03-26,\n  which predates RFC 9728 in the MCP authorization spec.\n- `oauth_stale_session_rejection` — a request carrying an unknown\n  `Mcp-Session-Id` must be rejected with a 4xx (404 preferred), never a 500\n  (Streamable HTTP transport). Skipped on the stateless 2026-07-28 wire.\n\nThese are hard failures against normative spec text, distinct from the\nhost-capability readiness matrix.\n\n`StepResult` gains an optional `warnings` array for non-fatal evidence on a\npassing step (e.g. a stale session rejected with 400 instead of the\nspec-preferred 404). Warnings surface in conformance report details and render\ndistinctly from errors in the inspector UI.",
-      "id": "hp-45-oauth-server-obligation-checks"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Record *why* a server 5xx failed, not just that one did.\n\n`http.request.failed` previously carried a status code and a blanket\n`errorCode: \"internal_error\"`, with the message discarded. That made a week of\nhosted-connect 502s (`/api/web/servers/validate`, `/api/web/tools/list`,\n`/api/web/chat-v2`) undiagnosable — Axiom could count them but never explain\nthem.\n\nThe cause was structural rather than a missing field: Hono runs `onError`\n*inside* `next()`, so `requestLogContextMiddleware` never observes a route's\nthrow. Its `thrown` branch is unreachable whenever an error handler is\nregistered, which is always, so every 5xx fell through to the catch-all label.\n\nThe handlers now hand the cause over explicitly via a `webErrorMeta` context\nvar — set by `webError()` and by the global `onError` — and the middleware\nemits the route's real `ErrorCode` (`SERVER_UNREACHABLE`, `TIMEOUT`, …) plus a\nnew `errorMessage` field. The meta is bound to its status and ignored on\nmismatch, so a route that emits a 4xx and later fails with an unrelated 500\ncannot mislabel the 500. Messages are capped at 500 chars.\n\nAlso hardens `scrubLogPayload`: secrets carried in a URL query string\n(`?access_token=`, `?code=`, `?api_key=`, …) are now redacted inside string\nvalues. Key-based redaction only walked object keys, so a URL embedded in an\nerror message previously survived into Axiom intact.\n\nLogging only — no status codes, response bodies, or routing change.",
-      "id": "log-5xx-error-cause"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix MRTR elicitation silently dying for the rest of the process after one\nfailed connect.\n\n`MCPClientManager.removeServer()` purges `mrtrInputCollectors` by design, and\nthe local connect route runs with `removeOnFailure: true` — so any failed\nconnect (or an explicit remove from the servers route) drops the collector.\n`registerLocalMrtrCollector` mirrored \"already registered\" in a module-level\n`WeakMap<manager, Set<serverId>>` that could not observe that purge, so after\nthe first failure it answered \"already registered\" forever and never restored\nthe collector.\n\nDownstream, `buildCapabilities` advertises `elicitation` exactly when a\ncollector is registered, so every subsequent connection advertised none. A\n2026-07-28 server then correctly refuses to embed `elicitation/create` in an\n`input_required` result, and every MRTR surface — `tools/call`,\n`resources/read`, `prompts/get` — fails with \"the request's client capabilities\ndo not declare the required capability\". The connection succeeds and the tool\nlist populates, so nothing looks broken until a tool is actually run.\n\nThe mirror is removed: the manager's own collector map is now the single source\nof truth, and registration is unconditional. Re-registering is a `Map.set` with\na pure factory closure (all round state lives in the module-level\n`pendingRounds`), so the repeat cost is nil.",
-      "id": "mrtr-collector-reregister"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add the SDK core for the MCP 2026-07-28 multi-round-trip (`input_required`) interaction — the manual driver that lets `tools/call`, `prompts/get`, and `resources/read` return embedded elicitation requests, collect input, and retry the original operation (spec §12). New exports only.\n\n- **Manual mode.** The manager constructs its client with `inputRequired: { autoFulfill: false }`, so an `input_required` result surfaces to MCPJam's own driver instead of the SDK's automatic one.\n- **Serializable stepper** (`mrtr-driver.ts`): `executeInputRequiredLeg` / `resumeInputRequiredOperation` operate on a data-only `MrtrOperationState` (stable id, method, immutable original params, round, echoed `requestState`, current round's pending requests) — never a client, promise, closure, or `AbortSignal` — so hosted surfaces can persist and resume it. `runInputRequiredOperation` layers a local/CLI convenience loop on top.\n- **MCPJam owns the round cap** (`DEFAULT_MAX_MRTR_ROUNDS = 10`, persisted in the state); exceeding it raises the upstream `SdkError(InputRequiredRoundsExceeded, …, { rounds })` shape. Guards `isMaxRoundsExceeded` / `isUnsupportedResultType`.\n- **Per-round replacement** of `inputResponses` (never accumulated) with byte-exact `requestState` echo; state-only, inputs-without-state, and no-state rounds all supported. Response maps are built with a null prototype (server keys are untrusted).\n- **Undeclared-request rejection (Decision 8):** embedded `roots/list` / `sampling/createMessage` and unsupported elicitation modes are rejected at the result — before any UI — via `MrtrUndeclaredInputError` / `MrtrUnsupportedElicitationModeError`.\n- **Strict self-validation (§12.1.11):** accepted elicitation content is validated against the request's `requestedSchema` (unknown dialect → invalid, not fail-open) before it is sent; decline/cancel are responses, not errors.\n- **New `requestWithSchema` seam** on `ManagedMcpClient`, `OfficialSdkClientAdapter`, and the `LogLevelMetaClient` decorator (which injects the modern per-request logging `_meta`) — the type-correct explicit-schema path for the loop.\n- **Three verbs wired** through per-server MRTR input collectors (`setMrtrInputCollector`) without regressing Phase-3 helper semantics: resource reads keep the response cache, prompt/tool legs carry the per-request log level, and the final tool result is re-validated against its output schema. `buildCapabilities` now advertises `elicitation` when an MRTR collector is registered; roots/sampling stay unadvertised.",
-      "id": "mrtr-sdk-driver-core"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Propagate OpenTelemetry trace context over MCP `_meta` (SEP-414).\n\nThe 2026-07-28 spec reserves the unprefixed `traceparent`, `tracestate` and\n`baggage` `_meta` keys for OpenTelemetry trace context. The requirement is\nconditional on presence — when the keys are sent their values MUST follow W3C\nTrace Context / W3C Baggage format — so this is propagation support, not a\nmandate to emit.\n\n`TraceContextMetaClient` is a `ManagedMcpClient` decorator built as a sibling of\n`LogLevelMetaClient`: it merges a caller-supplied context into outbound\n`params._meta` only on a negotiated `modern` era, caller-supplied `_meta` keys\nalways win, and a malformed `traceparent` rejects the whole context rather than\nforwarding it. The context comes from the new optional\n`MCPClientManagerOptions.traceContextProvider`, read fresh per request; with no\nprovider the decorator is never constructed, so legacy (2025-\\*) wire output is\nbyte-identical and modern connections send nothing.\n\nInbound, a valid trace context on a result's `_meta` is surfaced in the tools\nResponse panel — collapsed to the trace id, expanding to span id, sampled flag\nand the raw header values. `baggage` is arbitrary server-controlled data and is\ntreated as untrusted display-only: it is never sent to analytics.",
-      "id": "otel-trace-context-meta"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Expand the MCP conformance suite to judge 2026-07-28 (draft) servers.\n\n- Protocol versions are now classified by era in a `satisfies Record<McpProtocolVersion, MCPCheckEra>` map, so adding a supported version is a compile-time obligation to assign its check set. An unknown `protocolVersion` fails configuration instead of silently falling back to legacy.\n- New modern MUST checks (`modern-*`), covering `server/discover`, wire `resultType`, cacheable `ttlMs`/`cacheScope`, reserved-header mismatches (`-32020`), unsupported envelope versions (`-32022`), undeclared client capabilities on `input_required` (`-32021`), removed methods (`-32601`), unknown resources (`-32602`), level-gated logging, and sessionless responses. Each raw check asserts the HTTP status and the in-band JSON-RPC code as separate facts.\n- New `MCPConformanceResult.readiness`: SHOULD/RECOMMENDED/MAY interoperability advice (tool ordering, metadata quality, deprecated features, cache TTL usefulness, OAuth `iss`) reported as warnings that never affect the conformance verdict.\n- New optional `logProbe` config, alongside `inputRequiredProbe`, naming a tool that emits log records.\n- Raw frame inspection is consolidated on one production capture primitive (`sdk/src/mcp-conformance/raw-capture.ts`), replacing the private SSE parser in the transport checks.\n\nLegacy runs (absent pin and a 2025-era pin) keep their existing statuses; modern-only checks era-skip on legacy, and legacy-only checks era-skip on modern.",
-      "id": "phase7-modern-conformance"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "`@mcpjam/sdk/plugin-bundle` exports two pure MCP-config shape primitives:\n`selectPluginMcpServerMap` resolves which of the three compatible document\nshapes a config uses (direct map, `mcp_servers`, `mcpServers`) and returns its\nentries verbatim, and `detectPluginMcpTransport` classifies a single server\nconfig as stdio or http.\n\nBoth are policy-free: they report what the shape says and apply none of the\nplugin import path's stricter rules (HTTPS-only URLs, server-name format,\nsecret stripping), so a consumer with different policy — the inspector's\nMCP-JSON import, which must keep plain-HTTP URLs and free-form server names\nworking — can share the shape and transport handling without inheriting them.\n`normalizePluginMcpConfig` now delegates to both, so the strict path and every\nother consumer can never drift.\n\nA selection failure also carries a typed `reason` (`document-not-an-object` |\n`duplicate-wrapper` | `bare-server-config` | `server-map-not-an-object`) so\ncallers can render their own guidance without matching on message text —\nseveral of these share one persisted issue code.\n\nTransport spelling is now normalized by folding away separators rather than\nonly underscores, so `streamable-http`, `streamable_http`, and\n`streamableHttp` all classify as http. The MCP spec fixes the transport's name\nbut leaves the config spelling to each implementation, and all three appear in\nthe wild. This only ADDS accepted spellings; nothing that classified before\nnow fails.",
-      "id": "plugin-mcp-shape-primitives"
+      "summary": "Close four ways a credential could still reach a sanitized OAuth trace.\n\nEach was found by probing the redactor with the shape rather than by reading it, and each is now pinned by a test that fails on the unredacted string:\n\n- **Underscore-prefixed credential names.** `user_access_token=…` in a query string or error body did not match, because the name heuristic anchored on a word boundary and `_` is a word character. Names are matched on `_`-delimited segments now, so a vendor prefix no longer defeats the check.\n- **Colon-bearing keys.** A key containing `:` let ordinary prose be parsed as a structured field record and skip the field-name policy entirely. The key charset for that detection no longer admits `:`.\n- **Credential-shaped names outside the enumerated set.** `session_token`, `refresh_secret` and friends were not on the sensitive-field list, so a body containing them serialized in the clear. The heuristic now covers `token`/`secret`/`password`/`credential`/`cookie`/`auth`/`api_key` as name segments — with an explicit exemption for descriptive suffixes (`_type`, `_endpoint`, `_supported`, `_uri`, `_methods`, …) so `token_type: \"Bearer\"` and `token_endpoint` stay legible. Redacting those would make a trace useless for the thing it exists for. The exemption is on the NAME alone — the value behind it is still sanitized, so a descriptive-looking `session_token_url=…%3Faccess_token%3D…` cannot carry a credential through a name the policy waved past.\n- **URL userinfo.** `https://user:s3cret@auth.example.com/token` survived `sanitizeOAuthUrl`, because `new URL().toString()` preserves credentials in the authority. They are cleared before serialization, and HTTP-history entries now route their `request.url` through the same sanitizer instead of copying it verbatim.\n\n`sanitizeTraceErrorMessage` takes `maxLength`/`maxScanned` options so a long stack is redacted in one pass rather than line by line — line-splitting was itself the leak, since a credential spanning a wrap escaped every per-line scan.\n\nAlso in this pass: the connect-time `resourceUrl` is checked for provenance against the configured server URL before it is used (`selectStoredResourceUrl`), so a stale or foreign stored value cannot bind the flow to a resource the user never configured; it is rejected before the browser is redirected.",
+      "id": "oauth-review-redaction-gaps"
     },
     {
       "releases": [
@@ -227,62 +109,18 @@
           "type": "patch"
         }
       ],
-      "summary": "Close a silent SEP-2243 (`x-mcp-header`) spec MUST violation on cold clients.\n\nThe 2026-07-28 Streamable HTTP spec requires conforming clients to mirror\n`x-mcp-header`-annotated tool parameters into `Mcp-Param-*` headers. Upstream\n`@modelcontextprotocol/client` reads the tool's `inputSchema` for that scan from\nexactly two places: an explicit `CallToolRequestOptions.toolDefinition`, or the\naggregated `tools/list` entry in its response cache — and on a miss it sends the\ncall with no headers and no warning.\n\nMCPJam surfaces that call a tool without first listing tools on the same\nconnection (hosted `/api/web/tools/execute` and `/api/v1 … /tools/call`\nper-request connections, `mcpjam tools call`) therefore skipped the MUST\nsilently, as did any surface that walks `tools/list` pagination by hand (an\nexplicit-`{ cursor }` list writes no cache).\n\n`MCPClientManager.executeTool` now warms that source once per connection before\na modern-era `tools/call` over a non-stdio transport, so upstream keeps\nownership of freshness, `list_changed` eviction and its `HEADER_MISMATCH`\nrecovery retry. Surfaces that already called `listTools()` pay no extra round\ntrip, and legacy (2025-*) connections and stdio transports are byte-identical —\nmirroring is 2026-07-28 + Streamable-HTTP only.",
-      "id": "sep-2243-mirroring-cold-client"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Wire the three `subscriptions/listen` conformance checks for real.\n\n`modern-subscription-ack-precedes-notifications`, `modern-subscription-filter-and-tagging` and `modern-subscription-graceful-close` were authored as explicit skips pending the subscription surface. They now observe one live listen stream per run and judge it:\n\n- New `observeListenStream` primitive (`sdk/src/mcp-conformance/raw-listen.ts`): reads an SSE listen body INCREMENTALLY, frame by frame, and stops on the first of completion result / stream end / idle window / deadline. The existing raw capture buffers a whole response and so cannot hold a subscription open. The three facts under test — frame ORDER, the `_meta` subscription-id tag, and the completion result — are all normalized away before app code sees them, so only the wire can prove them.\n- The probe requests exactly what the server advertises (`tools`/`prompts`/`resources` `listChanged`, `resources.subscribe`), then asserts: the acknowledgement precedes every notification; every message carries the subscription id and no notification falls outside the requested filter; a stream that ends does so with the `subscriptions/listen` completion result.\n- Safety is asymmetric by design: nothing subscribable advertised, a refused stream, an unreadable body, or a subscription still open at the end of the observation window are SKIPS with a reason, never failures. A graceful close is server-initiated and cannot be induced by a client-side probe.\n\nThe three checks stay modern-only in `CHECK_ERAS`; legacy runs (absent pin and a 2025-era pin) keep their existing statuses.",
-      "id": "subscriptions-listen-conformance"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add an era-neutral subscription coordinator for MCP 2026-07-28\n`subscriptions/listen` (`SubscriptionCoordinator`, new exports only). Modern\nconnections drive an explicit `client.listen(filter)` stream — requested vs\nacknowledged filter tracked separately, active only after\n`notifications/subscriptions/acknowledged`, notifications demultiplexed by\nsubscription id, graceful/remote/local close reasons distinguished, bounded\nre-listen (never resume) after unexpected loss. Legacy connections keep the\nexisting list-changed handlers plus per-URI `resources/subscribe`.\n`ManagedMcpClient` gains an optional `listen` passthrough.",
-      "id": "subscriptions-listen-coordinator"
+      "summary": "Pin the \"no raw secret in a sanitized trace\" criterion, and fence the XAA redact-into-live-state instance.\n\n`sanitized-trace-contains-no-secrets.test.ts` asks the whole question at once: a sanitized projection carrying an access token, refresh token, ID token, client secret, authorization code, PKCE verifier, cookie, and OAuth `state` — in request URLs, headers, form and JSON bodies, response bodies, transport errors, info-log data, and the free-form flow error — must contain none of them. Each leak fixed in this series was found somewhere different; what they had in common was that nobody was asking about all of them together. It also asserts the trace stays useful (step, endpoint, and non-secret parameters survive) and that local dev still shows everything raw, which is the point of the inspector.\n\nSeparately, XAA's `sanitizeDiagnosticUpdates` redacts secrets and writes the result back into live flow state — structurally the same shape as the OAuth bug this series started from. It is inert today for two reasons, now written down next to the code: every redacted key is a display surface, and the only one read back as behavior (`lastResponse.body.status`) is a number the redactor does not touch. The key list is extracted as `REDACTED_DIAGNOSTIC_KEYS` and pinned by a test, so widening it to a credential field cannot happen as a one-word edit. This is a fence, not a refactor — the instance is provably harmless and does not need changing.",
+      "id": "oauth-secret-sweep-and-xaa-pin"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
         }
       ],
-      "summary": "Surface the MCP 2026-07-28 `subscriptions/listen` lifecycle in the LOCAL\nInspector. A new `/api/mcp/subscriptions` bridge (SSE + desired-interest POSTs,\nmirroring the elicitation/MRTR bridges) exposes the `SubscriptionCoordinator`\nthe local manager owns: stream status (opening / active / graceful-closed /\nremote-closed / cancelled / error), the MCP subscription id and how it was\nbound, the requested filter next to the acknowledged one, close reasons, and\nrefused notifications. The Resources tab renders those facts plus a History\nlog, and branches on the negotiated era: modern connections edit a desired\nfilter (which closes and reopens the stream, since a listen filter is\nimmutable), while legacy connections keep the per-URI Subscribe / Unsubscribe\nbuttons backed by `resources/subscribe`. The SDK re-exports the coordinator\nfrom the package root (new exports only).",
-      "id": "subscriptions-listen-local-ui"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix every modern `subscriptions/listen` failing with `'notifications/tasks' is not a spec notification method`. The v2 client bump to 2.0.0 tightened the two-argument `setNotificationHandler(method, handler)` overload to methods carried by one of its two spec codecs, and the tasks extension's `notifications/tasks` (SEP-2663) is by definition not one — so the registration threw a `TypeError` and took the whole subscription down, with or without a `taskIds` filter.\n\n`OfficialSdkClientAdapter` now routes extension notification methods through upstream's three-argument schema form and unwraps the handler back to the raw notification the manager and coordinator read. The params schema is a pass-through: upstream has no wire schema for an extension payload, and validating `notifications/tasks` is already MCPJam's job in `tasks-ext-guards.ts`, so narrowing here would strip extension members before those guards run. Because the adapter is the innermost wrapper, this covers both registration sites — the subscription coordinator's `ensureHandlers()` and `MCPClientManager.addNotificationHandler` (reached by the Inspector's `onTaskStatusChanged`). The legacy `notifications/tasks/status` is 2025-11-25 spec and stays on the codec-validated path.",
-      "id": "tasks-notification-schema-overload"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop the Tasks tab sticking on \"Tasks not supported\" when the capabilities\nprobe races the connect.\n\nThe probe fails closed to `wire: \"none\"` against a server that is still\nconnecting, and the fetch was keyed only on server identity — so a probe that\nlanded before the connection came up left the tab permanently claiming the\nserver has no tasks support. The effect is now keyed on the connection status\ntoo, re-probing once the connection is actually up (and again after a\nreconnect).\n\nA probe that THROWS (network, auth, connect race) is also no longer conflated\nwith a server declaring no tasks support: it renders a retryable error state\ninstead of a false \"Tasks not supported\".",
-      "id": "tasks-tab-capability-probe-race"
+      "summary": "One typed builder for every OAuth initiation, so the same server cannot behave differently depending on which button started it.\n\nFour production paths hand-rolled their own `initiateOAuth` options, and they disagreed. The hosted gate omitted `allowPathScopedIssuer`, `clientSecret`, `hasClientSecret`, `customHeaders`, `resourceUrl`, and `registrationMode`; the initial-connect path omitted `resourceUrl`. A server with a path-scoped authorization server or a configured resource indicator therefore authorized correctly from one entry point and failed from another — the most expensive shape an OAuth bug can take, because it only reproduces on one path and nobody knows which.\n\n`lib/oauth/oauth-request.ts` now assembles every security-sensitive field once. Callers supply what they resolved from their own source — connect form, stored server record, hosted bootstrap — and the builder decides what reaches the wire. Intent is explicit (`connect`, `reconnect`, `hosted-connect`, `step-up`, `debug`, `emulation`); the four connect-like intents produce identical shared fields, and the intentional differences (step-up's widened scopes and challenge metadata URL) are asserted separately so they stay intentional.\n\n`initiateOAuth` accepts only a `BuiltOAuthRequest` — a branded type nothing but the builder can produce — so a fifth divergent bag is a compile error rather than a bug report.\n\nConnect-like intents now reject a configured `resourceUrl` that does not identify the configured MCP server, **before** the redirect, and report it as a configuration failure at each entry point. Previously the mismatch surfaced only after the user had left the page. `debug` and `emulation` may still carry nonconforming values, because exercising them is what those surfaces are for — but they have to say so by name, and the deviation is an observation rather than conformance.\n\n`allowPathScopedIssuer` remains a per-server opt-in and reads as off when absent; it never becomes a default.\n\nThe proof is not options-object equality alone: the test also drives a built request into the real state machine and re-checks the wire invariants — same canonical resource, S256 PKCE, and one `redirect_uri` reused across registration and authorization.",
+      "id": "oauth-typed-request-builder"
     },
     {
       "releases": [
@@ -291,8 +129,8 @@
           "type": "minor"
         }
       ],
-      "summary": "Add an HTTP-exchange log channel: `httpLogger` on the manager options and per\nserver config, plus `wrapFetchForHttpLogging` and the SEP-2243 header helpers\n(`classifyMcpHeader`, `decodeMcpHeaderValue`, `findMcpHeaderIssues`, exported\nfrom `@mcpjam/sdk/browser`).\n\n`rpcLogger` carries JSON-RPC bodies; from `2026-07-28` the routing and\ncross-check metadata a `-32020 HeaderMismatch` is about rides in HTTP headers\ninstead, which a body-only log cannot show. The new channel captures the header\nhalves of each exchange — never bodies — with credential headers redacted at\nthe capture point. Capture is opt-in and applies to every protocol version:\n`MCP-Protocol-Version` exists from `2025-06-18`, and the session/resumption\nheaders exist only in the legacy eras.",
-      "id": "tracing-http-headers"
+      "summary": "Add `@mcpjam/sdk/oauth/node`, a Node-only entry point for SSRF-hardened OAuth networking.\n\nThe guard that keeps an outbound OAuth fetch from reaching private infrastructure is already written, tested, and complete — it just isn't reachable from a Node consumer that isn't the Inspector. Both existing doors are the wrong shape:\n\n- The root `@mcpjam/sdk` entry exports the DNS-pinned proxy (`executeOAuthProxy`, `fetchOAuthMetadata`, `validateUrl`), but importing it pulls in the entire SDK graph — `ai`, every provider package, the eval runtime, the client manager. `dist/index.js` is 1.69 MB. A backend action that only wants to fetch an authorization-server metadata document safely should not have to load a model factory to do it.\n- `@mcpjam/sdk/browser` exports the RFC 6890 classifier (`isPrivateHost`, `isDisallowedIpAddress`, `assertOutboundOAuthUrlAllowed`), and stops there deliberately. Classification alone does not close the DNS-rebinding window: a bare public hostname passes the classifier by design, on the understanding that the caller will resolve it, validate every answer, and pin the surviving addresses into the socket. That resolution step needs `node:dns` and has always lived on the Node side.\n\nSo a Node consumer outside this repo could have the cheap half or the complete half, never a cheap complete half. `@mcpjam/sdk/oauth/node` is that: the classifier and the pinned transport together, with `node:dns`, `node:http`, and `node:https` as the only imports in the whole graph. The built entry is 29.58 KB.\n\nThe immediate consumer is `mcpjam-backend`, whose hosted OAuth discovery, token exchange, and refresh paths still use unrestricted `fetch`. Those are the requests where an attacker-influenced URL — a hostile server's `resource_metadata` pointer, a redirect hop — is most worth steering at 169.254.169.254 or a LAN address, and they are the ones with a credential attached. Giving the backend an import instead of a port is the point: a second copy of an SSRF policy is a copy that drifts, and the drift is silent until it is a vulnerability.\n\nNothing else changes. This is additive — a new export map entry, a new tsup entry, and a file that contains only re-exports. Existing imports from the root entry and from `/browser` are untouched.\n\nTwo things are locked down by tests rather than convention. The re-exports are asserted by **identity** against `oauth-proxy.ts` and `oauth/ssrf-guard.ts`, so a future fork fails the suite instead of quietly diverging while still type-checking. And the import graph is walked transitively and asserted to reach only `node:` builtins, so the \"safe for a backend action\" property survives someone adding a heavy import three modules deep in `oauth-proxy.ts` — the check fires there, not in a backend deploy months later.",
+      "id": "sdk-oauth-node-entry"
     },
     {
       "releases": [
@@ -301,78 +139,65 @@
           "type": "patch"
         },
         {
-          "name": "@mcpjam/cli",
+          "name": "@mcpjam/inspector",
           "type": "patch"
-        },
+        }
+      ],
+      "summary": "Stop reporting an upstream MCP auth rejection as a 500 on the public v1 API.\n\n`UPSTREAM_AUTH_FAILED` landed as an internal Inspector `ErrorCode` — the target MCP server refused the credentials MCPJam presented, which the hosted routes now answer with a 403 instead of burying in the INTERNAL_ERROR bucket. `INTERNAL_TO_V1_CODE` had no entry for it, and `mapInternalCode` defaults to `INTERNAL_ERROR`, so the public surface kept telling API callers that MCPJam had broken when the user's own server had refused us. It now collapses onto `FORBIDDEN` (403): the public union has no upstream-auth member, and FORBIDDEN carries the property that matters to a caller — retrying with a different MCPJam credential will not help.\n\nThis is the second code to fall into that default (`ENVIRONMENT_REVISION_CONFLICT` was the first), because the test meant to catch it could not: `mapInternalCode` always returns a valid public code, so asserting the result is a member of the union passes for an unmapped code too. The contract suite now pins the unmapped set explicitly, so adding an `ErrorCode` without deciding its public mapping fails instead of silently widening the INTERNAL_ERROR bucket. That check documents six codes as a known, accepted gap — `BILLING_LIMIT_REACHED` (the public union has no billing member), plus `XAA_CONNECTION_NOT_CONFIGURED`, `TASK_NOT_FOUND`, `TASKS_UNSUPPORTED`, `CHATBOX_ACCESS_DENIED` and `CHATBOX_ACCESS_STALE`, whose reachability from `/api/v1` is unconfirmed and whose mappings are contract decisions rather than mechanical ones.\n\n`mcpjam-backend` keeps a byte-identical copy of this map in `convex/publicApi/contract.ts` until its pinned SDK version includes the subpath, so it needs the same entry and fixture line to stay in step.",
+      "id": "v1-upstream-auth-failed-code"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Bump `zod` to `^4.2.0` across the workspace (resolves to 4.3.x). No API changes; the existing `z.toJSONSchema` tool-schema paths (including `describe()`-into-`inputSchema`) are preserved and covered by a regression test.",
-      "id": "zod-4-2-bump"
+      "summary": "Serve WorkOS client config at runtime instead of baking it into the bundle, and delete the dead `VITE_WORKOS_DEV_MODE` knob.\n\n`VITE_WORKOS_CLIENT_ID` and `VITE_WORKOS_API_HOSTNAME` were inlined by Vite at build time, which meant every environment needed the value listed in two hand-maintained places that nobody diffs: the Railway service variables, and the `ARG` allowlist in `mcpjam-inspector/Dockerfile`. Miss either one and the client does not fail to build — it ships silently misconfigured.\n\nThat is what happened to staging. It carried no `VITE_WORKOS_API_HOSTNAME`, so `resolveWorkosClientOptions` fell through to the default `api.workos.com`. From `staging.mcpjam.com` that host is cross-site, so the AuthKit session cookie was never sent; `#refreshSession` posted `{client_id, grant_type: \"refresh_token\"}` with no credential, got a 400, and `#doRefresh`'s catch called `removeSessionData()`. Because AuthKit stores the refresh token in `memoryStorage` outside dev mode, nothing survived the page load and every single navigation logged the user out. Production was unaffected only because it sets the variable to `auth.mcpjam.com`, which shares a registrable domain with `app.mcpjam.com`.\n\nThe downstream symptoms all traced back to that one 400: the hosted shell showed its `logged-out` gate (staging runs `NON_PROD_LOCKDOWN`, so there is no guest fallback to absorb it), `AppReadyProvider` never left `resolving-auth`, and MCP server OAuth appeared to fail — tokens are persisted through `/api/web/oauth/import-tokens`, which forwards the caller's bearer, so with no session the credential could not be written and the next connect attempt replayed the consent screen.\n\nBoth values now ride the existing `window.__MCP_RUNTIME_CONFIG__` channel that already carries the Convex URLs (`getInspectorClientRuntimeConfig` in `server/env.ts`, read by `client/src/lib/runtime-config.ts`). The serving process knows which WorkOS environment it belongs to; the bundle no longer has to. A Railway variable change now takes effect on restart, in every environment, with no rebuild and no Dockerfile edit.\n\nThis is backward compatible and needs no deploy-config change: the server reads the canonical unprefixed `WORKOS_CLIENT_ID` / `WORKOS_API_HOSTNAME` first and falls back to the `VITE_`-prefixed names, which Railway already injects into the running container. The client still falls back to its build-time value when no runtime config is present, so npx and Electron builds are unchanged. The Dockerfile `ARG`s are deliberately left in place for now — removing them is a separate cleanup once every environment has been confirmed on the runtime path.\n\nTwo smaller fixes ride along:\n\n- **`getInspectorClientRuntimeConfigScript` keyed its \"inject anything at all?\" guard off the two Convex fields.** An environment with WorkOS config but no Convex URL would have emitted no script and silently fallen back to build-time values. It now checks every field.\n- **`resolveWorkosDevMode` is gone.** It read `VITE_WORKOS_DEV_MODE`, which was set in no environment and was absent from the Dockerfile `ARG` allowlist, so no deployed build could set it — a config knob that could not be configured. It was added in the same change as the first-party AuthKit proxy at `/user_management`, which is what actually gives local dev cookie mode, and it existed only to opt out of the mode that proxy made universal. It is replaced by an exported `WORKOS_DEV_MODE = false` constant, still passed explicitly to `AuthKitProvider`, because `@workos-inc/authkit-js` defaults `devMode` to `location.hostname === \"localhost\"` — omitting the prop would move local dev onto a different session-storage path than every deployed environment.",
+      "id": "workos-client-config-runtime-injection"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "2.0.1",
-      "changesets": [
-        "auto-negotiation-activation-flag",
-        "cache-policy-core",
-        "cli-subscriptions-listen",
-        "cli-tasks-manual-drive",
-        "discover-identity-meta-stamp",
-        "enable-http-protocol-auto-detection",
-        "era-aware-ping",
-        "era-capability-reresolution",
-        "era-gate-rfc9207-iss-mismatch",
-        "fresh-vscode-themes",
-        "harden-oauth-proxy-transport",
-        "hp-45-oauth-server-obligation-checks",
-        "mrtr-sdk-driver-core",
-        "otel-trace-context-meta",
-        "phase7-modern-conformance",
-        "plugin-mcp-shape-primitives",
-        "sep-2243-mirroring-cold-client",
-        "subscriptions-listen-conformance",
-        "subscriptions-listen-coordinator",
-        "subscriptions-listen-local-ui",
-        "tasks-notification-schema-overload",
-        "tracing-http-headers",
-        "zod-4-2-bump"
-      ],
-      "newVersion": "2.1.0"
-    },
-    {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.30.0",
+      "oldVersion": "2.35.1",
       "changesets": [
-        "auto-negotiation-activation-flag",
-        "calm-caniuse-themes",
-        "era-capability-reresolution",
-        "fresh-vscode-themes",
-        "hosted-mrtr-browser-consumer",
-        "log-5xx-error-cause",
-        "mrtr-collector-reregister",
-        "subscriptions-listen-local-ui",
-        "tasks-tab-capability-probe-race",
-        "zod-4-2-bump"
+        "chat-upstream-error-page-retry",
+        "oauth-delete-legacy-auth-tab",
+        "oauth-executor-machine-integration",
+        "oauth-one-redaction-owner",
+        "oauth-required-metadata-fails-closed",
+        "oauth-retire-legacy-callback-exchange",
+        "oauth-review-redaction-gaps",
+        "oauth-typed-request-builder",
+        "v1-upstream-auth-failed-code",
+        "workos-client-config-runtime-injection"
       ],
-      "newVersion": "2.31.0"
+      "newVersion": "2.36.0"
+    },
+    {
+      "name": "@mcpjam/sdk",
+      "type": "major",
+      "oldVersion": "3.1.0",
+      "changesets": [
+        "oauth-consolidate-diagram-actions",
+        "oauth-era-differential-harness",
+        "oauth-one-redaction-owner",
+        "oauth-required-metadata-fails-closed",
+        "oauth-review-redaction-gaps",
+        "oauth-secret-sweep-and-xaa-pin",
+        "sdk-oauth-node-entry",
+        "v1-upstream-auth-failed-code"
+      ],
+      "newVersion": "4.0.0"
     },
     {
       "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.15.2",
-      "changesets": [
-        "cli-subscriptions-listen",
-        "cli-tasks-manual-drive",
-        "zod-4-2-bump"
-      ],
-      "newVersion": "3.16.0"
+      "type": "patch",
+      "oldVersion": "3.20.0",
+      "changesets": [],
+      "newVersion": "3.20.1"
     },
     {
       "name": "@mcpjam/mcp",
@@ -380,6 +205,13 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
+    },
+    {
+      "name": "@mcpjam/widget-react",
+      "type": "patch",
+      "oldVersion": "0.1.4",
+      "changesets": [],
+      "newVersion": "0.1.5"
     }
   ]
 }

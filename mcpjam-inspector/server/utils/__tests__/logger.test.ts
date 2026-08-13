@@ -53,14 +53,20 @@ describe("logger", () => {
   });
 
   describe("axiom ingestion", () => {
-    it("initializes Axiom client when AXIOM_TOKEN and AXIOM_DATASET are set", async () => {
+    it("initializes the Axiom client on first ingest, not at import", async () => {
       vi.stubEnv("AXIOM_TOKEN", "test-token");
       vi.stubEnv("AXIOM_DATASET", "test-dataset");
       vi.stubEnv("NODE_ENV", "production");
 
       const { Axiom } = await import("@axiomhq/js");
-      await import("../logger.js");
+      const { logger: freshLogger } = await import("../logger.js");
 
+      // Lazy on purpose: server/index.ts statically imports this module, so a
+      // module-load construction would read AXIOM_* / DO_NOT_TRACK before
+      // loadInspectorEnv() has populated them from .env.
+      expect(Axiom).not.toHaveBeenCalled();
+
+      freshLogger.info("first log");
       expect(Axiom).toHaveBeenCalledWith({ token: "test-token" });
     });
 
@@ -108,7 +114,7 @@ describe("logger", () => {
           {
             level: "error",
             message: "fail",
-            environment: "unknown",
+            environment: "prod",
             requestId: "abc",
             error: "something broke",
           },
@@ -134,9 +140,92 @@ describe("logger", () => {
           {
             level: "warn",
             message: "watch out",
-            environment: "unknown",
+            environment: "prod",
             userId: "123",
           },
+        ]);
+      });
+
+      it("does not ship to Axiom when DO_NOT_TRACK is set", () => {
+        // Read at INGEST time, not module load: server/index.ts statically
+        // imports the logger, so a module-load read would run before
+        // loadInspectorEnv() and miss a DO_NOT_TRACK coming from .env.
+        vi.stubEnv("DO_NOT_TRACK", "1");
+        mockIngest.mockClear();
+
+        logger.error("fail", new Error("x"));
+        logger.warn("watch out");
+        logger.info("started");
+        logger.debug("dbg");
+
+        expect(mockIngest).not.toHaveBeenCalled();
+      });
+
+      it("does NOT send warnings to Sentry", async () => {
+        // Every logger.warn in the tree used to become a Sentry event. Across
+        // self-hosted installs that is the largest quota-spike vector we have,
+        // and a warning is by definition something we chose not to fail on.
+        const Sentry = await import("@sentry/node");
+        logger.warn("watch out", { userId: "123" });
+
+        expect(Sentry.captureMessage).not.toHaveBeenCalled();
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+      });
+
+      it("still sends errors to Sentry", async () => {
+        const Sentry = await import("@sentry/node");
+        const error = new Error("boom");
+        logger.error("fail", error, { userId: "123" });
+
+        expect(Sentry.captureException).toHaveBeenCalledWith(
+          error,
+          expect.objectContaining({
+            extra: expect.objectContaining({ message: "fail", userId: "123" }),
+          }),
+        );
+      });
+
+      it("skips Sentry for an error an origin capture point already ruled on", async () => {
+        // Routes commonly log an error and then serialize the SAME object into
+        // an envelope. The envelope's origin policy may have deliberately
+        // declined to page (a user's dead MCP server); without this skip,
+        // `logger.error` would re-capture it here and the noise the policy
+        // exists to remove would come straight back through the side door.
+        const Sentry = await import("@sentry/node");
+        const { markOriginCaptureHandled } = await import(
+          "../error-origin-capture.js"
+        );
+        const error = new Error("their server refused the connection");
+        markOriginCaptureHandled(error);
+
+        logger.error("connect failed", error);
+
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+        // Axiom still gets it — the row stays queryable, only the page is gone.
+        expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+          expect.objectContaining({
+            level: "error",
+            message: "connect failed",
+            error: "their server refused the connection",
+          }),
+        ]);
+      });
+
+      it("tags free-form logs with the same canonical environment as typed events", async () => {
+        // These two used to disagree. `logger.event` resolved the environment
+        // through the allowlist; the free-form path read `ENVIRONMENT` raw. A
+        // deploy setting `ENVIRONMENT=production` therefore split Axiom in
+        // half — typed rows `"prod"`, free-form rows `"production"` — and a
+        // query filtered on either one silently missed the other.
+        vi.stubEnv("ENVIRONMENT", "production");
+        vi.resetModules();
+        const { logger: freshLogger } = await import("../logger.js");
+        mockIngest.mockClear();
+
+        freshLogger.info("started");
+
+        expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+          expect.objectContaining({ environment: "prod" }),
         ]);
       });
 
@@ -147,7 +236,7 @@ describe("logger", () => {
           {
             level: "info",
             message: "started",
-            environment: "unknown",
+            environment: "prod",
             port: 3000,
           },
         ]);
@@ -160,7 +249,7 @@ describe("logger", () => {
           {
             level: "debug",
             message: "trace",
-            environment: "unknown",
+            environment: "prod",
             args: ["arg1", "arg2"],
           },
         ]);

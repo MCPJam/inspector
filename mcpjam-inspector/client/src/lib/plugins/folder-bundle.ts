@@ -107,8 +107,8 @@ const FOLDER_JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX(\/|$))/;
  * Map a `webkitdirectory` selection to bundle-relative paths. Browser folder
  * selections prefix every `webkitRelativePath` with the picked folder's own
  * name; when every entry shares that single top-level segment it is stripped
- * so the manifest lands at `.codex-plugin/plugin.json` relative to the
- * bundle root, exactly as it would inside a ZIP of the folder's CONTENTS.
+ * so the manifest lands at `plugin.json` relative to the bundle root,
+ * exactly as it would inside a ZIP of the folder's CONTENTS.
  * This is a UI affordance mapping, not validation — the shared parser judges
  * the resulting paths.
  */

@@ -6,6 +6,7 @@ import resources from "./resources";
 import resourceTemplates from "./resource-templates";
 import prompts from "./prompts";
 import chatV2 from "./chat-v2";
+import computers from "./computers";
 import oauth from "./oauth";
 import exporter from "./export";
 import evals from "./evals";
@@ -19,6 +20,7 @@ import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
+import serverSkills from "./server-skills";
 import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
@@ -28,6 +30,7 @@ import widgetRender from "./widget-render";
 import widgetSession from "./widget-session";
 import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
+import { buildHealthMeta } from "../../utils/health-payload.js";
 
 const mcp = new Hono();
 
@@ -37,11 +40,15 @@ mcp.get("/health", (c) => {
     service: "MCP API",
     status: "ready",
     timestamp: new Date().toISOString(),
+    ...buildHealthMeta(),
   });
 });
 
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);
+
+// Local computer engine — consent capability (grant/verify/revoke)
+mcp.route("/computers", computers);
 
 // Speech-to-text endpoint
 mcp.route("/audio", audioTranscriptions);
@@ -118,6 +125,10 @@ mcp.route("/tasks", tasks);
 
 // Skills endpoints - Agent skills from .mcpjam/skills/
 mcp.route("/skills", skills);
+// Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
+// `/skills` above, which scans the local filesystem — same word, different
+// thing, and the routes must not blur that.
+mcp.route("/server-skills", serverSkills);
 
 // Conformance endpoints - Protocol, Apps, OAuth checks
 mcp.route("/conformance", conformance);

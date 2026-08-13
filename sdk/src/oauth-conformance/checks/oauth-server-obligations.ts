@@ -23,9 +23,14 @@ import type {
 // conformance suite where a violation is a hard FAIL against normative spec
 // text, not a readiness warning.
 //
-//   Finding 3 — the `WWW-Authenticate` challenge must carry an absolute
-//     `resource_metadata` URL (RFC 9728 §5.1). RFC 9728 entered the MCP spec
-//     at 2025-06-18, so this check skips on a 2025-03-26 target.
+//   Finding 3 — resource-metadata discovery must work. RFC 9728 entered the
+//     MCP spec at 2025-06-18 (this check skips on a 2025-03-26 target), where
+//     the WWW-Authenticate `resource_metadata` parameter is a flat MUST. From
+//     2025-11-25 the spec names TWO sanctioned mechanisms — the header, or
+//     protected-resource metadata at a well-known URI — so on those revisions
+//     a missing header only fails after both well-known URIs come up empty.
+//     A PRESENT-but-relative resource_metadata stays a violation everywhere
+//     the mechanism exists (RFC 9728 §5.1 requires an absolute URL).
 //   Finding 4 — an unauthenticated request must be answered with 401 + a Bearer
 //     challenge, never a 500 (RFC 6750 §3 / MCP authorization). A 2xx is not a
 //     violation — the spec permits anonymous `initialize` with authorization
@@ -209,7 +214,10 @@ function bodyIsParseable(body: unknown): boolean {
   return true;
 }
 
-function buildUnauthenticatedMcpRequest(
+// Exported for the runner's pre-flight authorization-requirement probe, which
+// needs exactly this request: version-aware (no `MCP-Protocol-Version` on
+// 2025-03-26) and deliberately tokenless.
+export function buildUnauthenticatedMcpRequest(
   config: NormalizedOAuthConformanceConfig,
 ): {
   method: string;
@@ -433,15 +441,54 @@ export async function runResourceMetadataChallengeCheck(
 
   const resourceMetadata = extractResourceMetadata(wwwAuthenticate);
 
-  if (!resourceMetadata) {
+  // Strictly ABSENT, not falsy: `resource_metadata=""` is a present-but-empty
+  // parameter, and the absolute-URL branch below owns rejecting every present
+  // invalid value. Folding empty into "omitted" would let a valid well-known
+  // document launder a malformed challenge into a pass on 2025-11-25+.
+  if (resourceMetadata === undefined) {
+    // Version-sensitive: 2025-06-18 states a flat MUST — "MCP servers MUST
+    // use the HTTP header WWW-Authenticate … to indicate the location of the
+    // resource server metadata URL" — so the omission is a violation there.
+    // 2025-11-25 (and 2026-07-28, verbatim) replaced it with "MCP servers
+    // MUST implement ONE of the following discovery mechanisms": the header,
+    // OR protected-resource metadata at a well-known URI (path-scoped first,
+    // then root). On those revisions the omission is only a violation when
+    // neither well-known URI serves the metadata either.
+    if (input.config.protocolVersion === "2025-06-18") {
+      return {
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        durationMs,
+        error: {
+          message:
+            "WWW-Authenticate Bearer challenge omitted the resource_metadata parameter; 2025-06-18 requires the header to indicate the resource metadata location (RFC 9728 §5.1)",
+          details: { wwwAuthenticate },
+        },
+      };
+    }
+
+    const wellKnown = await probeWellKnownResourceMetadata(input);
+    if (wellKnown.served) {
+      return {
+        step: "oauth_resource_metadata_challenge",
+        status: "passed",
+        durationMs: Date.now() - startedAt,
+        warnings: [
+          `The Bearer challenge omitted resource_metadata; discovery relies on the well-known URI (${wellKnown.url}), the second mechanism ${input.config.protocolVersion} sanctions`,
+        ],
+      };
+    }
+
     return {
       step: "oauth_resource_metadata_challenge",
       status: "failed",
-      durationMs,
+      durationMs: Date.now() - startedAt,
       error: {
-        message:
-          "WWW-Authenticate Bearer challenge omitted the resource_metadata parameter (RFC 9728 §5.1)",
-        details: { wwwAuthenticate },
+        message: `${input.config.protocolVersion} requires one of two discovery mechanisms, and the server provides neither: the WWW-Authenticate Bearer challenge omitted resource_metadata, and no well-known URI served protected-resource metadata`,
+        details: {
+          wwwAuthenticate,
+          wellKnownAttempts: wellKnown.attempts,
+        },
       },
     };
   }
@@ -463,6 +510,132 @@ export async function runResourceMetadataChallengeCheck(
     status: "passed",
     durationMs,
   };
+}
+
+/**
+ * RFC 9728 well-known probing, in the order 2025-11-25 lists: the path-scoped
+ * URI first (the well-known segment inserted before the endpoint's path AND
+ * query, per RFC 9728 §3), then the root. "Served" is held to what RFC 9728
+ * requires of a successful metadata response, or lookalikes would satisfy the
+ * one-of-two MUST:
+ *
+ *   - a 200 with an `application/json` media type (§3.2) — an SPA answering
+ *     unknown paths with its index page is not metadata;
+ *   - a JSON object whose REQUIRED `resource` member (§3.3) identifies the
+ *     resource actually under test — metadata published for a DIFFERENT
+ *     resource proves nothing about this one. Compared on normalized URLs so
+ *     cosmetic differences (default ports, trailing slash) don't false-fail.
+ *
+ * The probe carries the run's custom headers (a gateway bypass, a routing
+ * header) exactly like every other conformance request, minus any
+ * Authorization variant — discovery is defined unauthenticated.
+ */
+async function probeWellKnownResourceMetadata(
+  input: OAuthServerObligationInput,
+): Promise<{
+  served: boolean;
+  url?: string;
+  attempts: Array<{ url: string; status?: number; reason: string }>;
+}> {
+  const endpoint = new URL(input.config.serverUrl);
+  const origin = `${endpoint.protocol}//${endpoint.host}`;
+  const pathAndQuery = `${endpoint.pathname.replace(/\/$/, "")}${endpoint.search}`;
+  const candidates = [
+    ...(pathAndQuery
+      ? [`${origin}/.well-known/oauth-protected-resource${pathAndQuery}`]
+      : []),
+    `${origin}/.well-known/oauth-protected-resource`,
+  ];
+
+  const headers: Record<string, string> = {
+    ...(input.config.customHeaders ?? {}),
+    Accept: "application/json",
+  };
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "authorization") {
+      delete headers[key];
+    }
+  }
+
+  const attempts: Array<{ url: string; status?: number; reason: string }> = [];
+  for (const url of candidates) {
+    try {
+      const response = await input.trackedRequest({
+        method: "GET",
+        url,
+        headers,
+      });
+      if (response.status !== 200) {
+        attempts.push({ url, status: response.status, reason: "non-200" });
+        continue;
+      }
+      const contentType = getHeaderValue(response.headers, "content-type");
+      const mediaType = (contentType ?? "").split(";")[0]?.trim().toLowerCase();
+      if (mediaType !== "application/json") {
+        attempts.push({
+          url,
+          status: response.status,
+          reason: `200 but Content-Type "${contentType ?? "(none)"}" is not application/json (RFC 9728 §3.2)`,
+        });
+        continue;
+      }
+      const body =
+        typeof response.body === "string"
+          ? safeJsonParse(response.body)
+          : response.body;
+      const resource =
+        body !== null && typeof body === "object" && !Array.isArray(body)
+          ? (body as Record<string, unknown>).resource
+          : undefined;
+      if (typeof resource !== "string") {
+        attempts.push({
+          url,
+          status: response.status,
+          reason:
+            "200 but not RFC 9728 protected-resource metadata (no `resource` member)",
+        });
+        continue;
+      }
+      if (!urlsIdentify(resource, input.config.serverUrl)) {
+        attempts.push({
+          url,
+          status: response.status,
+          reason: `metadata identifies a different resource ("${resource}", not the server under test) — RFC 9728 §3.3 binds a document to its resource`,
+        });
+        continue;
+      }
+      return { served: true, url, attempts };
+    } catch (error) {
+      attempts.push({
+        url,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { served: false, attempts };
+}
+
+/** URL identity on normalized form, so `https://a.example:443/mcp/` and
+ * `https://a.example/mcp` identify the same resource. */
+function urlsIdentify(left: string, right: string): boolean {
+  try {
+    const normalize = (value: string) => {
+      const url = new URL(value);
+      url.pathname = url.pathname.replace(/\/$/, "");
+      return url.href;
+    };
+    return normalize(left) === normalize(right);
+  } catch {
+    return false;
+  }
+}
+
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // Unlike every other check, this request carries the REAL access token.

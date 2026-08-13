@@ -53,8 +53,11 @@ describe("NavMain", () => {
       <NavMain
         items={[
           {
-            title: "Skills",
-            url: "#skills",
+            // Any nav item whose url maps to a learn-more entry with a preview
+            // video works here; Playground is one (Skills used to be, before it
+            // moved out of the sidebar into the Servers tab switcher).
+            title: "Playground",
+            url: "#playground",
             icon: FakeIcon,
             disabled: true,
             disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
@@ -66,7 +69,7 @@ describe("NavMain", () => {
     );
 
     // Should show learn-more hover card with disabled message
-    expect(screen.getByTestId("learn-more-skills")).toBeInTheDocument();
+    expect(screen.getByTestId("learn-more-playground")).toBeInTheDocument();
     expect(screen.getByTestId("disabled-message")).toHaveTextContent(
       HOSTED_LOCAL_ONLY_TOOLTIP
     );
@@ -75,7 +78,7 @@ describe("NavMain", () => {
       screen.queryByTitle(HOSTED_LOCAL_ONLY_TOOLTIP)
     ).not.toBeInTheDocument();
 
-    const button = screen.getByRole("button", { name: "Skills" });
+    const button = screen.getByRole("button", { name: "Playground" });
     expect(button).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(button);

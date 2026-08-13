@@ -1,6 +1,6 @@
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import type { ClusterRunState } from "@/hooks/useUsageInsights";
+import type { ClusterRunState, InsightsScope } from "@/hooks/useUsageInsights";
 
 export type TopicMapCluster = {
   _id: string;
@@ -25,7 +25,8 @@ export type TopicMapSnapshotMetadata = {
 
 export type TopicMapSnapshot = {
   version: number;
-  chatboxId: string;
+  chatboxId?: string;
+  projectId?: string;
   runId: string;
   generatedAt: number;
   isSampled: boolean;
@@ -57,6 +58,14 @@ export type TopicMapSnapshot = {
     startedAt: number;
     lastActivityAt: number;
     modelId?: string;
+    /** Swarm wave filter. Absent on chatbox snapshots. */
+    journeyRunId?: string;
+    /**
+     * Present from snapshot `version` 2 onward. Absent on older blobs AND on
+     * sessions whose signals never extracted — color-by-outcome must render
+     * both as "unknown" rather than substituting a bucket.
+     */
+    outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
   }>;
   edges: Array<{
     source: string;
@@ -71,17 +80,41 @@ type TopicMapQueryResult = {
   clusters: TopicMapCluster[];
 } | null;
 
-export function useChatboxTopicMap({
-  chatboxId,
+export type TopicMapScope =
+  | { kind: "chatbox"; chatboxId: string }
+  | { kind: "swarm"; projectId: string };
+
+/**
+ * Fetch topic-map metadata + blob for a chatbox or swarm insights scope.
+ */
+export function useTopicMap({
+  scope,
   enabled = true,
 }: {
-  chatboxId: string | null;
+  scope: TopicMapScope | null;
   enabled?: boolean;
 }) {
-  const metadata = useQuery(
+  const chatboxArgs =
+    enabled && scope?.kind === "chatbox"
+      ? ({ chatboxId: scope.chatboxId } as any)
+      : "skip";
+  const swarmArgs =
+    enabled && scope?.kind === "swarm"
+      ? ({ projectId: scope.projectId } as any)
+      : "skip";
+
+  const chatboxMetadata = useQuery(
     "chatSessions:getTopicMapSnapshot" as any,
-    enabled && chatboxId ? ({ chatboxId } as any) : "skip",
+    chatboxArgs,
   ) as TopicMapQueryResult | undefined;
+  const swarmMetadata = useQuery(
+    "chatSessions:getSwarmTopicMapSnapshot" as any,
+    swarmArgs,
+  ) as TopicMapQueryResult | undefined;
+
+  const metadata =
+    scope?.kind === "swarm" ? swarmMetadata : chatboxMetadata;
+
   const [snapshot, setSnapshot] = useState<TopicMapSnapshot | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
@@ -144,8 +177,41 @@ export function useChatboxTopicMap({
     snapshot,
     snapshotMetadata: metadata?.snapshot ?? null,
     snapshotError,
+    // Only wait for a blob fetch that actually started. A done run with
+    // `topicMapBlobUrl: null` (legacy swarm rebuilds) must not look like
+    // loading forever — that blocks the empty/CTA branch.
     isLoading:
       enabled &&
-      (metadata === undefined || snapshotLoading || (metadata?.snapshot != null && snapshot == null && !snapshotError)),
+      (metadata === undefined ||
+        snapshotLoading ||
+        (metadata?.snapshot?.topicMapBlobUrl != null &&
+          snapshot == null &&
+          !snapshotError)),
   };
+}
+
+/** Chatbox-only convenience wrapper around `useTopicMap`. */
+export function useChatboxTopicMap({
+  chatboxId,
+  enabled = true,
+}: {
+  chatboxId: string | null;
+  enabled?: boolean;
+}) {
+  const scope = useMemo<TopicMapScope | null>(
+    () => (chatboxId ? { kind: "chatbox", chatboxId } : null),
+    [chatboxId],
+  );
+  return useTopicMap({ scope, enabled });
+}
+
+/** Build a topic-map scope from an insights scope (drops journeyRunIds). */
+export function topicMapScopeFromInsights(
+  scope: InsightsScope | null,
+): TopicMapScope | null {
+  if (!scope) return null;
+  if (scope.kind === "chatbox") {
+    return { kind: "chatbox", chatboxId: scope.chatboxId };
+  }
+  return { kind: "swarm", projectId: scope.projectId };
 }

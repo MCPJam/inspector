@@ -10,6 +10,9 @@
   "ignore": [
     "@mcpjam/soundcheck",
     "@mcpjam/mcp",
-    "@mcpjam/design-system"
+    "@mcpjam/design-system",
+    "@mcpjam/slack-app",
+    "@mcpjam/surface-core",
+    "@mcpjam/discord-app"
   ]
 }

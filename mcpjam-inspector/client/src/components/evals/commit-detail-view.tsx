@@ -11,10 +11,11 @@ import type {
 import {
   formatDuration,
   formatRunId,
+  getRunMetricSource,
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
-import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvalsRunsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { useRunDetailData } from "./use-suite-data";
 import { RunDetailView } from "./run-detail-view";
@@ -79,7 +80,7 @@ export function CommitDetailView({
   const handleSelectIteration = (iterationId: string) => {
     if (selectedSuiteId) {
       navigateApp(
-        buildCiEvalsPath({
+        buildEvalsRunsPath({
           type: "commit-detail",
           commitSha: commitGroup.commitSha,
           suite: selectedSuiteId,
@@ -265,7 +266,14 @@ function CommitSuiteRunDetail({
       <RunDetailView
         selectedRunDetails={run}
         caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-        source={run.source as "ui" | "sdk" | undefined}
+        // RESOLVED, not cast. `RunDetailView.source` is the metric MODE
+        // ("Pass rate" vs "Accuracy"), a 2-valued prop — but `run.source` is
+        // the 5-valued launch origin, so the old cast silently handed it
+        // `"api"` / `"schedule"` / `"github_check"`, which are neither mode
+        // and fell through to the accuracy branch by accident rather than by
+        // decision. `getRunMetricSource` is the mapping every other reader
+        // already uses.
+        source={getRunMetricSource(run)}
         runDetailSortBy={runDetailSortBy}
         onSortChange={onSortChange}
         serverNames={run.configSnapshot?.environment?.servers ?? []}
@@ -273,7 +281,7 @@ function CommitSuiteRunDetail({
         onSelectIteration={onSelectIteration}
         onSelectRun={(runId) =>
           navigateApp(
-            buildCiEvalsPath({
+            buildEvalsRunsPath({
               type: "run-detail",
               suiteId: run.suiteId,
               runId,

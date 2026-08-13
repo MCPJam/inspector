@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import * as Sentry from "@sentry/react";
+import { usePostHog } from "posthog-js/react";
+import { setSentryActor } from "@/lib/sentry-identity";
 import {
   getExistingGuestId,
   getGuestPromotionProof,
@@ -19,12 +20,40 @@ const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
 
 type EnsureUserArgs = {
   guestProofJwt?: string;
+  /**
+   * The browser's pre-signup anonymous PostHog id ($device_id — stable even
+   * if usePostHogIdentify already identified the browser as a guest,
+   * unlike get_distinct_id() which changes on identify). Lets the backend
+   * merge the anonymous click funnel into the signed-in actor via
+   * identifyProductActor server-side, independent of whether the client's
+   * own posthog.identify() call ever fires (it doesn't on every path —
+   * Electron system-browser OAuth, closed tabs, old builds).
+   */
+  posthogAnonDistinctId?: string;
 };
 
 type EnsureUserMutation = (args: EnsureUserArgs) => Promise<unknown>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * "First Last" when AuthKit has both halves, otherwise whichever half it has.
+ * Undefined rather than an empty string when it has neither — a blank `name`
+ * would render as an empty line in Sentry's user block instead of falling back
+ * to the email.
+ */
+function displayName(
+  user: {
+    firstName?: string | null;
+    lastName?: string | null;
+  } | null
+): string | undefined {
+  const parts = [user?.firstName, user?.lastName].filter(
+    (part): part is string => typeof part === "string" && part.trim() !== ""
+  );
+  return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
 function isConvexWriteConflictError(err: unknown): boolean {
@@ -100,6 +129,7 @@ async function ensureUserWithRetry(
 export function useEnsureDbUser() {
   const { user } = useAuth();
   const workosUserId = user?.id ?? null;
+  const posthog = usePostHog();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const actorKey = useActorKey();
   const ensureUser = useMutation(
@@ -155,13 +185,40 @@ export function useEnsureDbUser() {
     }
   }, [isAuthenticated]);
 
-  // WorkOS signout now falls back to Convex guest auth, so Convex can remain
-  // authenticated while the Sentry user must be cleared.
+  // Identity boundary for Sentry.
+  //
+  // Keyed on the actor, NOT on the ensureUser round-trip below. The previous
+  // placement set the user only after `await ensurePromise` resolved, so a
+  // crash during boot — or any crash on a session whose ensureUser was still
+  // in flight or had failed outright — arrived anonymous. Those are precisely
+  // the events worth attributing.
+  //
+  // WorkOS signout falls back to Convex guest auth, so Convex can stay
+  // authenticated while the actor changes underneath it. `setSentryActor`
+  // replaces the user object wholesale, so the previous account's email cannot
+  // survive that switch.
+  // Signed-in is checked FIRST, and on `workosUserId` rather than on
+  // `actorKey`. `useActorKey` happens to return the WorkOS id ahead of the
+  // guest id, so the two can never disagree for a signed-in render — but
+  // ordering the branches the other way would silently make this identity
+  // depend on that precedence, and a change over there would go quiet here.
+  // Only the guest branch needs the key.
   useEffect(() => {
-    if (!workosUserId) {
-      Sentry.setUser(null);
+    if (workosUserId) {
+      setSentryActor({
+        kind: "signedIn",
+        id: workosUserId,
+        email: user?.email ?? undefined,
+        name: displayName(user),
+      });
+      return;
     }
-  }, [workosUserId]);
+    if (!actorKey) {
+      setSentryActor(null);
+      return;
+    }
+    setSentryActor({ kind: "guest", id: actorKey });
+  }, [actorKey, workosUserId, user?.email, user?.firstName, user?.lastName]);
 
   useEffect(() => {
     if (isLoading) {
@@ -199,7 +256,28 @@ export function useEnsureDbUser() {
       // stolen bearer cannot be used to absorb a victim's projects.
       const isWorkOsAuth = !!workosUserId;
       let guestProofJwt: string | null = null;
+      // Device id survives even when usePostHogIdentify already identified
+      // this browser (e.g. as a guest) — get_distinct_id() would return the
+      // post-identify id instead of the original anonymous one. Best-effort:
+      // an absent/throwing posthog instance must never block ensureUser.
+      let posthogAnonDistinctId: string | undefined;
       if (isWorkOsAuth) {
+        // Each getter is tried independently — a throw from $device_id
+        // (e.g. an unusual posthog-js build) must not skip the
+        // get_distinct_id() fallback, only the getter that actually failed.
+        try {
+          posthogAnonDistinctId = posthog?.get_property?.("$device_id");
+        } catch {
+          posthogAnonDistinctId = undefined;
+        }
+        if (!posthogAnonDistinctId) {
+          try {
+            posthogAnonDistinctId = posthog?.get_distinct_id?.();
+          } catch {
+            posthogAnonDistinctId = undefined;
+          }
+        }
+
         // Gate promotion on *activation*, not mere cookie presence. The
         // server-rendered guest bootstrap (Pillar 1) can leave an incidental
         // guest cookie on a browser whose user then signs in; that guest was
@@ -241,7 +319,10 @@ export function useEnsureDbUser() {
         return;
       }
 
-      const ensureArgs = guestProofJwt ? { guestProofJwt } : {};
+      const ensureArgs: EnsureUserArgs = {
+        ...(guestProofJwt ? { guestProofJwt } : {}),
+        ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
+      };
       let ensurePromise = inFlightEnsureRef.current?.promise;
       if (inFlightEnsureRef.current?.identityKey !== identityKey) {
         ensurePromise = ensureUserWithRetry(ensureUser, ensureArgs, () => {
@@ -276,9 +357,6 @@ export function useEnsureDbUser() {
 
       lastEnsuredIdentityRef.current = identityKey;
       setEnsuredIdentityKey(identityKey);
-      if (workosUserId) {
-        Sentry.setUser({ id: workosUserId });
-      }
 
       // If we just authenticated as a WorkOS user and a guest cookie was
       // in play, retire it. Safe to call unconditionally — if no cookie
@@ -303,7 +381,14 @@ export function useEnsureDbUser() {
         activeEnsureIdentityRef.current = null;
       }
     };
-  }, [identityKey, isAuthenticated, isLoading, workosUserId, ensureUser]);
+  }, [
+    identityKey,
+    isAuthenticated,
+    isLoading,
+    workosUserId,
+    ensureUser,
+    posthog,
+  ]);
 
   return { isEnsuringUser, isUserReady };
 }

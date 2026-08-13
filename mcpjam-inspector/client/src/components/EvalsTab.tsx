@@ -40,6 +40,7 @@ import {
   getEffectiveSuiteServers,
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
+import { EvalsHeader } from "./evals/evals-header";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
@@ -187,6 +188,12 @@ function EvalsTabContent({
     name: string;
     serverIds: string[];
   }) => Promise<{ _id: string }>;
+  const setSuiteEnvironments = useMutation(
+    "testSuites:setSuiteEnvironments" as any
+  ) as unknown as (args: {
+    suiteId: string;
+    environmentIds: string[] | null;
+  }) => Promise<unknown>;
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -466,6 +473,27 @@ function EvalsTabContent({
           throw new Error("Suite was created without an id");
         }
 
+        // `createTestSuite` cannot take environments, so a suite born in
+        // environment mode needs a second call. The dialog already resolved
+        // these ids and sent the matching clients as legacy rollback data, so a
+        // failure here leaves a runnable legacy suite the header can convert —
+        // worth a toast, not worth discarding the suite.
+        if (payload.environmentIds && payload.environmentIds.length > 0) {
+          try {
+            await setSuiteEnvironments({
+              suiteId: createdSuite._id,
+              environmentIds: payload.environmentIds,
+            });
+          } catch (error) {
+            toast.error(
+              getBillingErrorMessage(
+                error,
+                "Suite created, but attaching its environments failed"
+              )
+            );
+          }
+        }
+
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
           type: "suite-overview",
@@ -476,7 +504,7 @@ function EvalsTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId]
+    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments]
   );
 
   const handleSelectSuite = useCallback((suiteId: string) => {
@@ -578,7 +606,7 @@ function EvalsTabContent({
   // The evals tool group + this screen's command handlers and snapshot.
   // Lives HERE, in the surface component, and NEVER in use-eval-handlers or
   // any hook CiEvalsTab also mounts — a shared-hook bridge would register
-  // the evals group under the wrong surface on /ci-evals (see
+  // the evals group under the wrong surface on Runs mode (see
   // use-surface-agent-bridge's contract). Handlers reuse the EXACT callbacks
   // the buttons use: the quota-gated run wrapper, handleCancelRun,
   // setSuiteToDelete → confirmDelete, and generateTestsForSuite.
@@ -844,8 +872,7 @@ function EvalsTabContent({
       }
       const currentRun =
         route.type === "run-detail"
-          ? (runsForSelectedSuite.find((run) => run._id === route.runId) ??
-            null)
+          ? runsForSelectedSuite.find((run) => run._id === route.runId) ?? null
           : null;
       return {
         view: route.type,
@@ -1060,16 +1087,8 @@ function EvalsTabContent({
     }
 
     if (hasDetailRoute) {
-      const breadcrumb = renderPlaygroundBreadcrumb();
       return (
         <div className="flex h-full min-h-0 flex-col">
-          {breadcrumb ? (
-            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-                {breadcrumb}
-              </div>
-            </div>
-          ) : null}
           {queries.isSuiteDetailsLoading ? (
             <div className="flex min-h-0 flex-1 items-center justify-center">
               <div className="text-center">
@@ -1104,6 +1123,7 @@ function EvalsTabContent({
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
         <SuiteIterationsView
+          organizationId={organizationId}
           isDirectGuest={isDirectGuest}
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
@@ -1190,6 +1210,9 @@ function EvalsTabContent({
       user={user}
       projectId={projectId}
       isDirectGuest={isDirectGuest}
+      header={
+        <EvalsHeader mode="suites">{renderPlaygroundBreadcrumb()}</EvalsHeader>
+      }
     >
       <>
         <CreateSuiteDialog

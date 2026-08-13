@@ -3,6 +3,8 @@
  */
 
 import type { ResourceIndicatorDecision } from "../resource-policy.js";
+import type { OAuthEmulationConfig } from "../emulation/types.js";
+import type { RequiredMetadataEnforcement } from "./shared/required-metadata.js";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -59,6 +61,10 @@ export interface OAuthFlowState {
   // (resource-policy.ts). Every later request/preview site reads this value
   // instead of re-deriving it.
   resourceIndicator?: ResourceIndicatorDecision;
+  // Set by the machines when emulation suppresses the RFC 8707 `resource`
+  // parameter, so display surfaces (sequence diagram) — which see only flow
+  // state, never the config — stay truthful about what the wire carries.
+  resourceIndicatorSuppressed?: boolean;
   authorizationServerUrl?: string;
   authorizationServerMetadata?: {
     issuer: string;
@@ -243,6 +249,7 @@ export function buildResetFlowState(): OAuthFlowState {
     resourceMetadataUrl: undefined,
     resourceMetadata: undefined,
     resourceIndicator: undefined,
+    resourceIndicatorSuppressed: undefined,
     authorizationServerUrl: undefined,
     authorizationServerMetadata: undefined,
 
@@ -322,7 +329,34 @@ export interface BaseOAuthStateMachineConfig {
    */
   resourceMetadataUrl?: string;
   authMode?: OAuthAuthMode;
+  /**
+   * What to do when metadata the current MCP profile REQUIRES a client to
+   * verify is missing or unusable — the authorization server's advertised PKCE
+   * methods, and the protected resource's `authorization_servers` list.
+   *
+   * `"reject"` (the default) fails closed before the browser is sent to an
+   * authorization server, which is what every connect-like path needs.
+   * `"observe"` warns and continues so the debugger can show a nonconforming
+   * server's actual behavior; it is a non-connect intent and must be asked for
+   * explicitly. Only eras governed by the current profile (2025-11-25 and
+   * later) consult this — see `shared/required-metadata.ts`.
+   *
+   * Orthogonal to `strictConformance` (registration strictness) and to
+   * `resourceIndicatorEnforcement` (the advertised resource indicator).
+   */
+  requiredMetadataEnforcement?: RequiredMetadataEnforcement;
   strictConformance?: boolean;
+  /**
+   * Opt-in: accept authorization-server metadata whose advertised `issuer` is
+   * the same-origin path-prefix ancestor (typically the origin root) of the
+   * URL discovery started from — the shape of multi-tenant AS deployments
+   * that scope endpoints under a path while issuing from the origin root
+   * (e.g. Scalekit's `/resources/res_x`). Off (the default) keeps the strict
+   * RFC 8414 §3.3 exact issuer match. Mirrors the XAA debugger's per-server
+   * "Path-scoped authorization server" toggle. Only enforced by eras that
+   * hard-reject the mismatch (2026-07-28); earlier machines ignore it.
+   */
+  allowPathScopedIssuer?: boolean;
   // What to do at PRM discovery when the advertised resource indicator is not
   // `valid`: the debugger defaults to "warn" (log and continue with the
   // advertised value so real server behavior stays observable); connect-like
@@ -331,6 +365,13 @@ export interface BaseOAuthStateMachineConfig {
   // "reject-rfc9728" to additionally reject HTTP and strict-binding gaps.
   // Orthogonal to `strictConformance`, which governs registration strictness.
   resourceIndicatorEnforcement?: "warn" | "reject" | "reject-rfc9728";
+  /**
+   * OAuth client emulation wire knobs (see oauth/emulation/) — generic,
+   * client-name-free, derived from an evidence-backed profile by
+   * `deriveOAuthEmulation`. Absent = exactly today's wire behavior (the
+   * no-emulation goldens pin that contract).
+   */
+  emulation?: OAuthEmulationConfig;
 }
 
 // Registration strategies

@@ -42,6 +42,22 @@ Each case has four moving parts:
   A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
 </Note>
 
+## Case attachments
+
+<Note>
+  Case attachments require a **pinned computer environment** on the suite. The attachments panel is hidden for draft cases and appears only after a case is saved.
+</Note>
+
+Each saved test case has an **Attachments** section at the bottom of the case editor. Files you upload here are seeded into the iteration's fresh sandbox at `/home/user/attachments/<filename>` before the model's first turn runs — so the model finds the same files on every iteration, model, and re-run.
+
+**Limits:** up to 20 files and 30 MB total per case.
+
+To add files, click **Add file** and pick one or more files. To remove a file, click the **×** next to its name. Changes take effect on the next run.
+
+When attachments are present, a note is automatically prepended to the case's first user turn listing each file's path, so the model knows where to find them without you having to mention it in the prompt.
+
+**Fail-honest behavior:** if a file cannot be seeded — because its stored content is no longer available, the download fails, or a cap is exceeded — the iteration fails immediately rather than running silently without the file. This prevents a case that relies on a file from producing a misleading passing result.
+
 ## Recording widget interactions
 
 If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
@@ -142,6 +158,29 @@ A run needs three things, all picked from the suite header:
 <Tip>
   If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
 </Tip>
+
+### Pre-run credit estimate
+
+When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
+
+The estimate appears on:
+
+- **Run all** in the suite header — prices every case × model × iterations × run plans.
+- **Per-case Run** buttons in the cases list and case sidebar — prices that case's configured models for one quick run.
+- **Run / Run compare** in the template editor — prices the currently selected models and the current (possibly unsaved) prompt.
+- **Swarm journey cards** — prices the journey's next run across its live targets.
+
+The tooltip shows a headline figure and a per-model or per-component breakdown. Copy varies by how well-grounded the estimate is:
+
+| Copy | Meaning |
+|------|---------|
+| Estimated: ~N credits — based on your recent runs | Full coverage, grounded in your own run history |
+| Estimated: ~N credits — partly based on recent runs | Full coverage, partially grounded in history |
+| Rough estimate: ~N credits — improves after first run | Full coverage, heuristic only (no history yet) |
+| At least ~N credits — part of this run is unpriced | Some models or run slices could not be priced |
+| Estimate unavailable for these models | No pricing data available |
+
+1 credit = $0.01. Your free daily allowance and any BYOK keys change what is actually deducted. The estimate is informational only — it never blocks or gates a run.
 
 ### Frozen execution snapshots
 

@@ -89,11 +89,10 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
       role: "tester",
       notes: "",
     },
-    sessionsPerHost: 2,
+    sessionsPerTarget: 2,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
-    bearer: "token",
-    authHeader: "Bearer token",
+    getBearer: async () => "token",
     managerFactory: async () => ({
       manager: {} as never,
       connectedServerIds: ["server-1"],
@@ -146,7 +145,7 @@ describe("swarm single-host runner — attempt ordering", () => {
   });
 
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
-    await startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     expect(adapter.chatSessionId).toBe("synth_run-1_host-1_0");
@@ -228,13 +227,35 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
   });
 
+  // A connect-time XAA failure is not a crashed session: the thrown route
+  // error classified itself (`details.reason`), the shared core hands that tag
+  // back, and it must reach the attempt row as the errorCode — otherwise the
+  // run banner can only re-guess it from the sentence it is about to render.
+  it("stores the thrown failure's classified reason as the attempt errorCode", async () => {
+    const message =
+      'Your sign-in no longer proves your identity to "Billing MCP", so its enterprise access token couldn\'t be issued — sign in again, then re-run.';
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "failed",
+      errorMessage: message,
+      errorReason: "xaa_reauth_required",
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal.errorCode).toBe("xaa_reauth_required");
+    expect(terminal.errorMessage).toBe(message);
+  });
+
   it("maps a rate-limited session to a rate_limited terminal", async () => {
     runSyntheticHostSessionMock.mockResolvedValue({
       outcome: "rate_limited",
       errorMessage: "Daily spend cap reached",
     });
 
-    await startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
     const terminal = reportAttemptMock.mock.calls
       .map((c) => c[2] as any)
@@ -293,6 +314,29 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
   });
 });
 
+/**
+ * Wait for an observable condition rather than counting microtask ticks.
+ *
+ * These tests used to advance with a fixed number of `await Promise.resolve()`
+ * calls, which pinned them to the exact number of awaits on the runner's path
+ * to its first claim. That count is not part of the contract: the bearer
+ * re-mint added one, and the tests started shutting the run down before it had
+ * claimed anything. Waiting on the thing the test actually depends on is both
+ * more robust and more honest about what it is synchronizing with.
+ */
+async function waitFor(
+  predicate: () => boolean,
+  label: string,
+  timeoutMs = 5_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline)
+      throw new Error(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 describe("swarm fan-out runner — shutdown unwinds via cancellable persona", () => {
   it("forwards the run signal into the persona call so a PARKED session unwinds and self-reports its terminal ONCE via the normal path (no eager runner_shutdown race)", async () => {
     // The persona driver models the previously-uncancellable park: it resolves
@@ -327,11 +371,10 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
       }
     });
 
-    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
-    // Let the claim resolve and the core enter the (parked) persona call.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+    // Wait until the claim has resolved and the core has entered the (parked)
+    // persona call — that is the state this test is about.
+    await waitFor(() => personaSignal !== undefined, "the parked persona call");
 
     // Graceful shutdown aborts the run — this must cancel the parked persona
     // fetch so the session unwinds promptly.
@@ -360,8 +403,13 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
       return { outcome: "succeeded" };
     });
 
-    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
-    await Promise.resolve();
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+    // Abort once the attempt has been CLAIMED, so the shutdown genuinely races
+    // a session that is already running rather than one that never started.
+    await waitFor(
+      () => reportAttemptMock.mock.calls.length > 0,
+      "the attempt claim"
+    );
     await shutdownRunningJourneyRuns(1_000);
     await runPromise;
 
@@ -385,9 +433,9 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       .map((c) => c[2] as any)
       .filter((a) => a.status !== "running");
 
-  it("fans out sessionsPerHost sessions per host across a 2-host journey (2/host = 4)", async () => {
+  it("fans out sessionsPerTarget sessions per host across a 2-host journey (2/host = 4)", async () => {
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(4);
@@ -421,7 +469,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       serverIds: [`server-${i}`],
     }));
 
-    await startJourneyRun(baseOpts({ hosts, sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ hosts, sessionsPerTarget: 1 }));
 
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(5);
     expect(maxActive).toBeLessThanOrEqual(MAX_CONCURRENT_HOSTS);
@@ -442,7 +490,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 3 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 })
     );
 
     expect(maxPerHost).toBe(1);
@@ -458,7 +506,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // Every session on both hosts ran — a failure isolates to its attempt.
@@ -484,7 +532,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // host-1: only session 0 EXECUTED; session 1 short-circuited (never ran).
@@ -515,7 +563,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
@@ -539,7 +587,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       });
 
       await startJourneyRun(
-        baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
       );
 
       expect(
@@ -566,7 +614,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // No whole-run finalize — it stayed a per-host provider rate-limit.
@@ -588,7 +636,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // The other host completed all its sessions — the pool was not aborted.
@@ -657,7 +705,7 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerHost: 1 })
+      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerTarget: 1 })
     );
 
     const terminals = reportAttemptMock.mock.calls
@@ -698,7 +746,7 @@ describe("swarm single-host runner — heartbeat", () => {
           })
       );
 
-      const done = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
       // Session is still running (its core promise is pending) — the heartbeat
       // must still fire purely on the interval.
@@ -736,7 +784,7 @@ describe("swarm runner — live stream emit", () => {
       return { outcome: "succeeded" };
     });
 
-    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
     // Wait until the hub is registered and the attempt has been claimed.
     let hub = getRunningJourneyStreamHub("run-1");
@@ -758,7 +806,7 @@ describe("swarm runner — live stream emit", () => {
   });
 
   it("wires emit on the adapter for every session", async () => {
-    await startJourneyRun(baseOpts({ sessionsPerHost: 2 }));
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
     for (const call of runSyntheticHostSessionMock.mock.calls) {
       expect(typeof (call[0] as { emit?: unknown }).emit).toBe("function");
@@ -803,7 +851,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
     );
 
     const sessionIds = runSyntheticHostSessionMock.mock.calls
@@ -839,7 +887,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
     );
 
     const adapters = runSyntheticHostSessionMock.mock.calls.map(
@@ -888,7 +936,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     };
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerHost: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerTarget: 1 })
     );
 
     expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(1);
@@ -902,7 +950,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     );
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
     );
 
     // Env A (the pinned target) never executed a session.
@@ -927,7 +975,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
   });
 
   it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkills undefined", async () => {
-    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 1 }));
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // Legacy: undefined (live-pool semantics downstream), and no pinned fetch.
     expect(adapter.runtime.pinnedSkills).toBeUndefined();
@@ -942,7 +990,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       // …but the pinned entries carry NO channel provenance (pre-P0.2).
     };
     await startJourneyRun(
-      baseOpts({ hosts: [preP02Target], sessionsPerHost: 1 })
+      baseOpts({ hosts: [preP02Target], sessionsPerTarget: 1 })
     );
     // No session executed; attempts finalized failed.
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
@@ -972,7 +1020,9 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         },
       ],
     };
-    await startJourneyRun(baseOpts({ hosts: [p02Target], sessionsPerHost: 1 }));
+    await startJourneyRun(
+      baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 })
+    );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
   });
 
@@ -994,7 +1044,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerHost: 1 })
+      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerTarget: 1 })
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
     expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
@@ -1021,8 +1071,96 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [partialTarget], sessionsPerHost: 1 })
+      baseOpts({ hosts: [partialTarget], sessionsPerTarget: 1 })
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("swarm fan-out runner — bearer re-resolution", () => {
+  /**
+   * A swarm run outlives its token. Delegated JWTs (`sk_`, Slack, Discord
+   * callers) live ~2h; a wide fan-out runs longer. The runner used to capture
+   * the launch-time string, so every call after expiry — attempt claims,
+   * terminal reports, transcript persists, the heartbeat — failed, leaving the
+   * run looking half-finished and the backend's stale sweep the only thing
+   * that ever settled it.
+   *
+   * The contract is per UNIT OF WORK, not per outbound call: once per target,
+   * once per session attempt, once per run-level finalizer. That bounds
+   * staleness to a single session, which is the property that matters.
+   */
+  it("resolves a fresh bearer for every session attempt, and forwards the latest one", async () => {
+    let mints = 0;
+    const getBearer = async () => `token-${++mints}`;
+
+    runSyntheticHostSessionMock.mockImplementation(async () => ({
+      outcome: "succeeded",
+    }));
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 3, getBearer }));
+
+    // One per target (setup: harness admission + pinned skills) plus one per
+    // session. A single mint for the whole run is the bug this closes.
+    expect(mints).toBeGreaterThanOrEqual(4);
+
+    // And the value is actually threaded through, not merely computed: the
+    // last claim carries a later token than the first.
+    const bearers = reportAttemptMock.mock.calls.map((c) => c[1] as string);
+    expect(bearers.length).toBeGreaterThan(1);
+    expect(bearers[bearers.length - 1]).not.toBe(bearers[0]);
+  });
+
+  it("re-resolves on every heartbeat — a silent heartbeat is what the backend reads as a dead runner", async () => {
+    // Fake timers so the heartbeat ACTUALLY TICKS. A version of this test that
+    // only asserted the token matched `/^token-\d+$/` passed even when the
+    // runner reused its launch-time bearer, because `token-1` matches that
+    // too — it proved the shape and nothing about freshness. What has to be
+    // true is that a heartbeat carries a LATER mint than the run started with.
+    vi.useFakeTimers();
+    try {
+      let mints = 0;
+      const getBearer = async () => `token-${++mints}`;
+      let resolveRun!: () => void;
+      runSyntheticHostSessionMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveRun = () => resolve({ outcome: "succeeded" });
+          })
+      );
+
+      const done = startJourneyRun(
+        baseOpts({ sessionsPerTarget: 1, getBearer })
+      );
+
+      // Let the run reach its first session, so the per-target and per-session
+      // mints are already spent before any heartbeat fires.
+      await vi.advanceTimersByTimeAsync(0);
+      const mintsBeforeFirstBeat = mints;
+      expect(mintsBeforeFirstBeat).toBeGreaterThan(0);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(heartbeatJourneyRunMock.mock.calls.length).toBeGreaterThanOrEqual(
+        2
+      );
+
+      const beatTokens = heartbeatJourneyRunMock.mock.calls.map((call) =>
+        String(call[1])
+      );
+      // Every beat's token was minted AFTER the run's own startup mints — the
+      // assertion a captured bearer cannot satisfy.
+      for (const token of beatTokens) {
+        const mintNumber = Number(token.replace("token-", ""));
+        expect(mintNumber).toBeGreaterThan(mintsBeforeFirstBeat);
+      }
+      // And consecutive beats do not share one.
+      expect(new Set(beatTokens).size).toBe(beatTokens.length);
+
+      resolveRun();
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

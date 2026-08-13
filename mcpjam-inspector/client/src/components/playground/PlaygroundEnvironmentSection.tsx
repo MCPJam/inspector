@@ -1,10 +1,14 @@
 import { useEffect, useRef } from "react";
-import { AlertTriangle, Loader2, RotateCcw, X } from "lucide-react";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Label } from "@mcpjam/design-system/label";
+import { AlertTriangle, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import { ErrorCard } from "@/components/ui/error-card";
+import {
+  describeEnvironmentError,
+  isNoServersError,
+} from "@/lib/environment-error";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { pluralize } from "@/components/chat-v2/shared/chat-helpers";
 import { PlaygroundPluginSelector } from "./PlaygroundPluginSelector";
 import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
@@ -45,16 +49,13 @@ export function PlaygroundEnvironmentSection({
     preview,
     isPreviewLoading,
     previewError,
-    hasExplicitOverride,
-    servers,
     selectEnvironment,
     clearEnvironment,
-    resetServersToEnvironment,
-    setServerEnabled,
     plugins,
     hasExplicitPluginOverride,
     resetPluginsToEnvironment,
     setPluginVersionEnabled,
+    refreshPreview,
   } = environment;
 
   // Telemetry: an environment resolving is also a host becoming the presented
@@ -130,13 +131,26 @@ export function PlaygroundEnvironmentSection({
       ) : null}
 
       {isEnvironmentMode && previewError ? (
-        <div className="flex min-w-0 flex-col gap-1">
-          <p
-            className="text-[11px] text-destructive"
-            data-testid="playground-environment-error"
-          >
-            {previewError}
-          </p>
+        <div
+          className="flex min-w-0 flex-col gap-1"
+          data-testid="playground-environment-error"
+        >
+          <ErrorCard
+            error={describeEnvironmentError(previewError)}
+            variant="inline"
+            // Retry is pointless for a zero-servers failure — the resolve is
+            // deterministic and would fail identically. Offer the thing that
+            // actually fixes it instead. Note the preview FAILED, so there is
+            // no resolved host to deep-link to; Servers is where the fix lives.
+            {...(isNoServersError(previewError)
+              ? {
+                  action: {
+                    label: "Open Servers",
+                    onClick: () => navigateApp(routePaths.servers),
+                  },
+                }
+              : { onRetry: refreshPreview })}
+          />
           {/* The most common reason an environment refuses to resolve is a
               pinned plugin that is no longer runnable, and the failed preview
               cannot say which one. The probe reads the row's pins directly, so
@@ -155,44 +169,13 @@ export function PlaygroundEnvironmentSection({
 
       {isEnvironmentMode && preview ? (
         <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-            <span className="font-medium text-foreground">
-              Environment: {preview.environment.name}
-            </span>
-            <span className="font-mono">
-              rev {preview.environment.revision}
-            </span>
-            <span>·</span>
-            <span data-testid="playground-environment-host">
-              {preview.host.hostName ?? preview.host.hostId}
-            </span>
-            <span>·</span>
-            <span data-testid="playground-environment-counts">
-              {pluralize(preview.capabilities.serverCount, "server")} ·{" "}
-              {pluralize(preview.capabilities.skillCount, "skill")} ·{" "}
-              {pluralize(preview.capabilities.pluginCount, "plugin")}
-            </span>
-            {hasExplicitOverride ? (
-              <span
-                className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
-                data-testid="playground-environment-modified-badge"
-              >
-                Modified
-              </span>
-            ) : null}
-            {hasExplicitOverride ? (
-              <button
-                type="button"
-                onClick={resetServersToEnvironment}
-                disabled={disabled}
-                className="inline-flex items-center gap-1 rounded px-1 text-[11px] text-primary underline-offset-4 hover:underline disabled:opacity-60"
-                data-testid="playground-environment-reset"
-              >
-                <RotateCcw className="size-3" aria-hidden />
-                Reset to environment
-              </button>
-            ) : null}
-          </div>
+          {/* No summary line and no server chips here anymore: the composer's
+              "+" menu owns the environment server rows and their per-turn
+              toggles (including the Modified/reset affordance), and the Tools
+              rail lists the resolved tools. Repeating them in the header only
+              duplicated state three ways. What REMAINS here is what no other
+              surface says: warnings about the resolved bundle, and the plugin
+              chips with their preflight probe. */}
 
           {/* Skills exist but this client's harness has no skill channel, so
               they would NOT be delivered. Said out loud rather than shown as a
@@ -225,44 +208,6 @@ export function PlaygroundEnvironmentSection({
             onTogglePlugin={setPluginVersionEnabled}
             onResetPlugins={resetPluginsToEnvironment}
           />
-
-          {servers.length > 0 ? (
-            <div
-              // One scrolling row instead of an unbounded wrap: an environment
-              // can resolve to a dozen servers (host picks + plugin-contributed
-              // ones), and stacking them would push the chat surface down the
-              // page on every render of the header.
-              className="flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5"
-              data-testid="playground-environment-servers"
-            >
-              {servers.map((server) => (
-                <Label
-                  key={server.serverId}
-                  className={cn(
-                    "flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border/60 px-1.5 py-0.5 text-[11px] font-normal",
-                    server.enabled ? "bg-muted/40" : "opacity-55",
-                    disabled && "cursor-not-allowed opacity-60"
-                  )}
-                  data-testid={`playground-environment-server-${server.serverId}`}
-                >
-                  <Checkbox
-                    checked={server.enabled}
-                    onCheckedChange={(next) =>
-                      setServerEnabled(server.serverId, next === true)
-                    }
-                    disabled={disabled}
-                    aria-label={server.name}
-                  />
-                  <span className="max-w-[160px] truncate">{server.name}</span>
-                  {server.source === "plugin" ? (
-                    <span className="rounded-full bg-muted px-1 text-[9px] uppercase tracking-wide text-muted-foreground">
-                      plugin
-                    </span>
-                  ) : null}
-                </Label>
-              ))}
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>

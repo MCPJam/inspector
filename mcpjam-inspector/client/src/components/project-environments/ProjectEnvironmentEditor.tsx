@@ -5,6 +5,11 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
+import { SandboxImagePicker } from "@/components/computer/SandboxImagePicker";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { convexErrMessage } from "@/lib/convex-error";
 import {
   isRevisionConflictError,
@@ -21,15 +26,21 @@ type EnvironmentDraft = {
   hostId: string | null;
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  computerEnvironmentId: string | null;
 };
 
 function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
   return {
-    name: env.name,
+    // The editor only ever mounts for a NAMED row (ad-hoc rows get the
+    // read-only detail view instead), so the fallback is unreachable in
+    // practice — it exists so the draft type stays a plain `string` and the
+    // dirty check below can compare without threading `undefined` through it.
+    name: env.name ?? "",
     description: env.description ?? "",
     hostId: env.hostId,
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    computerEnvironmentId: env.computerEnvironmentId ?? null,
   };
 }
 
@@ -59,6 +70,7 @@ export function ProjectEnvironmentEditor({
   projectId,
   environment,
   canManage,
+  initialDraft,
   onCreated,
   onCancelCreate,
 }: {
@@ -67,11 +79,34 @@ export function ProjectEnvironmentEditor({
   environment: ProjectEnvironmentView | null;
   /** Admin-gated writes; members get a read-only form. */
   canManage: boolean;
+  /**
+   * Create-mode-only pre-seed (the Connect "Save as environment" handoff).
+   * Merged into the create initializer ONLY — deliberately NOT into the
+   * projectId-reset effect, whose whole job is wiping cross-project host ids;
+   * a seed surviving that reset would reintroduce exactly that hazard.
+   * Ignored in edit mode.
+   */
+  initialDraft?: Partial<EnvironmentDraft>;
   onCreated?: (env: ProjectEnvironmentView) => void;
   onCancelCreate?: () => void;
 }) {
   const createEnvironment = useCreateProjectEnvironment();
   const updateEnvironment = useUpdateProjectEnvironment();
+  // Double gate: the editor already sits behind `project-environments-enabled`
+  // (the route); the sandbox-image section additionally requires
+  // `computers-enabled` and the skills section `skills-enabled` (both
+  // fail-closed) — so environments can launch before hosted skills/computers.
+  //
+  // These flags are load-bearing for the WRITE path, not just visibility: while
+  // a picker is hidden its field must be treated as if it weren't part of this
+  // form at all — excluded from `dirty` and omitted from both payloads — so a
+  // flag-off save can never set or clear a value configured through the
+  // API/CLI. Draft divergence alone is NOT a sufficient guard, because a flag
+  // can flip false after an edit and leave a diverged value behind a vanished
+  // control.
+  const computersEnabled = useComputersEnabled();
+  const skillsEnabled = useSkillsEnabled();
+  const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
 
   const [draft, setDraft] = useState<EnvironmentDraft>(() =>
     environment
@@ -82,6 +117,8 @@ export function ProjectEnvironmentEditor({
           hostId: null,
           serverAttachmentId: null,
           skillSelection: null,
+          computerEnvironmentId: null,
+          ...initialDraft,
         }
   );
   // Captured at draft init/reset — the ONLY revision update may send.
@@ -101,15 +138,24 @@ export function ProjectEnvironmentEditor({
       trimmedDescription !== (environment.description ?? "") ||
       draft.hostId !== environment.hostId ||
       draft.serverAttachmentId !== (environment.serverAttachmentId ?? null) ||
-      !sameSkillSelection(
-        draft.skillSelection,
-        environment.skillSelection ?? null
-      )
+      // Flag-gated fields only count while their picker is rendered —
+      // otherwise a flag flip would leave Save enabled for a field the
+      // payload deliberately omits, i.e. a "Saved." that changes nothing but
+      // bumps the revision.
+      (skillsEnabled &&
+        !sameSkillSelection(
+          draft.skillSelection,
+          environment.skillSelection ?? null
+        )) ||
+      (computersEnabled &&
+        draft.computerEnvironmentId !==
+          (environment.computerEnvironmentId ?? null))
     : trimmedName.length > 0 ||
       trimmedDescription.length > 0 ||
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
-      draft.skillSelection !== null;
+      (skillsEnabled && draft.skillSelection !== null) ||
+      (computersEnabled && draft.computerEnvironmentId !== null);
 
   // Reactivity observed someone else's edit while this draft diverged.
   const stale =
@@ -142,6 +188,7 @@ export function ProjectEnvironmentEditor({
             hostId: null,
             serverAttachmentId: null,
             skillSelection: null,
+            computerEnvironmentId: null,
           }
     );
     setBaseRevision(environment?.revision ?? null);
@@ -171,8 +218,15 @@ export function ProjectEnvironmentEditor({
           ...(draft.serverAttachmentId
             ? { serverAttachmentId: draft.serverAttachmentId }
             : {}),
-          ...(draft.skillSelection
+          // Gated on the LIVE flags, not just the draft: PostHog can flip
+          // `skills-enabled` / `computers-enabled` false after the user made a
+          // pick, which unmounts the picker but leaves the draft value —
+          // shipping it then would contradict the fail-closed contract.
+          ...(skillsEnabled && draft.skillSelection
             ? { skillSelection: draft.skillSelection }
+            : {}),
+          ...(computersEnabled && draft.computerEnvironmentId
+            ? { computerEnvironmentId: draft.computerEnvironmentId }
             : {}),
         });
         toast.success(`Created “${created.name}”.`);
@@ -181,6 +235,9 @@ export function ProjectEnvironmentEditor({
       }
       if (baseRevision === null) return;
       const updated = await updateEnvironment({
+        // Scopes the admin check and the row lookup on the backend; the update
+        // is not addressable by environment id alone.
+        projectId,
         environmentId: environment.environmentId,
         // The revision captured at draft init — NOT environment.revision,
         // which may have moved under a dirty draft.
@@ -196,11 +253,24 @@ export function ProjectEnvironmentEditor({
         (environment.serverAttachmentId ?? null)
           ? { serverAttachmentId: draft.serverAttachmentId }
           : {}),
-        ...(!sameSkillSelection(
+        // Flag-gated fields are included only when CHANGED **and** their
+        // picker is currently rendered. Draft divergence alone is not enough:
+        // if the flag flips false after an edit the picker unmounts while the
+        // diverged draft value survives, and a "flag-off" save would then set
+        // or clear the value — exactly what the fail-closed contract promises
+        // it cannot do. Gating on the live flag makes a hidden picker always
+        // omit the field (tri-state: omitted = unchanged, null = clear).
+        ...(skillsEnabled &&
+        !sameSkillSelection(
           draft.skillSelection,
           environment.skillSelection ?? null
         )
           ? { skillSelection: draft.skillSelection }
+          : {}),
+        ...(computersEnabled &&
+        draft.computerEnvironmentId !==
+          (environment.computerEnvironmentId ?? null)
+          ? { computerEnvironmentId: draft.computerEnvironmentId }
           : {}),
       });
       setDraft(draftFromEnvironment(updated));
@@ -283,8 +353,10 @@ export function ProjectEnvironmentEditor({
           disabled={readOnly}
         />
         <p className="text-[11px] text-muted-foreground">
-          Every environment runs on exactly one client. The client&apos;s own
-          skills always apply on top of this environment&apos;s selection.
+          Every environment runs on exactly one client.
+          {skillsEnabled
+            ? " The client's own skills always apply on top of this environment's selection."
+            : ""}
         </p>
       </div>
 
@@ -320,17 +392,65 @@ export function ProjectEnvironmentEditor({
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <Label className="text-xs">Skills</Label>
-        <ProjectEnvironmentSkillsPicker
-          projectId={projectId}
-          value={draft.skillSelection}
-          onChange={(skillSelection) =>
-            setDraft((d) => ({ ...d, skillSelection }))
-          }
-          disabled={readOnly}
-        />
-      </div>
+      {skillsEnabled ? (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Skills</Label>
+          <ProjectEnvironmentSkillsPicker
+            projectId={projectId}
+            value={draft.skillSelection}
+            onChange={(skillSelection) =>
+              setDraft((d) => ({ ...d, skillSelection }))
+            }
+            disabled={readOnly}
+          />
+        </div>
+      ) : null}
+
+      {computersEnabled ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="project-environment-sandbox-image" className="text-xs">
+            Sandbox image
+          </Label>
+          <div className="flex items-center gap-2">
+            {/* Same picker primitive as the Client and Server group rows above.
+                Personal drafts are listed but not selectable — the backend
+                rejects them (a draft would resolve for every member while being
+                visible/mutable only to its owner) — and the annotated
+                loading/deleted rows live in the shared component. */}
+            <SandboxImagePicker
+              variant="field"
+              id="project-environment-sandbox-image"
+              testId="project-environment-sandbox-image"
+              images={sandboxImages}
+              value={draft.computerEnvironmentId ?? null}
+              disabled={readOnly}
+              onChange={(computerEnvironmentId) =>
+                setDraft((d) => ({ ...d, computerEnvironmentId }))
+              }
+              noPinLabel="None (default image)"
+              draftNote=" (draft — promote to project first)"
+            />
+            {/* Badge only for a real selection — "None" has no build status
+                (the badge component renders "Not built" for null/undefined). */}
+            {draft.computerEnvironmentId ? (
+              <EnvironmentBuildBadge
+                build={
+                  (sandboxImages ?? []).find(
+                    (img) => img.environmentId === draft.computerEnvironmentId
+                  )?.currentBuild ?? null
+                }
+              />
+            ) : null}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Applies to cloud runs in this environment: evals, swarms, and
+            user-testing sessions each boot a fresh, isolated sandbox from this
+            image. Cloud runs only — sandbox images never apply to the machine
+            running this inspector. A not-built image fails at launch — build
+            it first under Computer → Images.
+          </p>
+        </div>
+      ) : null}
 
       {readOnly ? (
         <p className="text-[11px] text-muted-foreground">

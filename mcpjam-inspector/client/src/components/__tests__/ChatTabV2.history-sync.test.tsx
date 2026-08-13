@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
+import { track } from "@/lib/analytics";
 import { ChatTabV2 } from "../ChatTabV2";
 
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -188,8 +189,20 @@ vi.mock("@/components/chat-v2/mcpjam-free-models-prompt", () => ({
 }));
 
 vi.mock("@/components/chat-v2/error", () => ({
-  ErrorBox: ({ message }: { message: string }) => (
-    <div data-testid="error-box">{message}</div>
+  // `onRetry` is forwarded so the concurrency-throttle retry path (which
+  // reads `lastSentUserMessageRef`) is reachable from a test without
+  // reaching into ChatTabV2 internals.
+  ErrorBox: ({
+    message,
+    onRetry,
+  }: {
+    message: string;
+    onRetry?: () => void;
+  }) => (
+    <div data-testid="error-box">
+      {message}
+      {onRetry && <button onClick={onRetry}>Retry</button>}
+    </div>
   ),
 }));
 
@@ -200,8 +213,13 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   return {
     ...actual,
     STARTER_PROMPTS: [],
-    formatErrorMessage: (error: Error | null) =>
-      error ? { message: error.message } : null,
+    // Tests that need `errorMessage.code`/`limitKind` (e.g. to reach the
+    // concurrency-throttle retry path) attach a `formatted` bag to the
+    // Error they hand to `mockUseChatSession.error`; everything else keeps
+    // getting the old bare `{ message }` shape.
+    formatErrorMessage: (
+      error: (Error & { formatted?: Record<string, unknown> }) | null
+    ) => (error ? { message: error.message, ...error.formatted } : null),
     buildMcpPromptMessages: () => [],
     buildSkillToolMessages: () => [],
   };
@@ -258,8 +276,24 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
-  Thread: ({ messages }: { messages: any[] }) => (
-    <div data-testid="thread" data-message-count={messages.length} />
+  Thread: ({
+    messages,
+    onEditUserMessage,
+  }: {
+    messages: any[];
+    onEditUserMessage?: (message: any, text: string) => void;
+  }) => (
+    <div data-testid="thread" data-message-count={messages.length}>
+      {onEditUserMessage && (
+        <button
+          onClick={() =>
+            onEditUserMessage(messages[0], "Edited text should not leak")
+          }
+        >
+          Edit first message
+        </button>
+      )}
+    </div>
   ),
 }));
 
@@ -357,6 +391,10 @@ const mockUseChatSession = {
     provider: "openai",
   },
   setSelectedModel: vi.fn(),
+  // The steady state: the persisted lead id has matched `availableModels`.
+  // Leaving this undefined would silently disable the selected-model sanitize
+  // effect for every case below. See BACK2-628.
+  isSelectedModelResolved: true,
   selectedModelIds: [],
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
@@ -381,6 +419,7 @@ const mockUseChatSession = {
   resetChat: vi.fn(),
   startChatWithMessages: vi.fn(),
   loadChatSession: vi.fn(async () => undefined),
+  rewindToMessage: vi.fn(),
   syncResumedVersion: vi.fn((version: number | null) => {
     mockUseChatSession.resumedVersion = version;
   }),
@@ -487,6 +526,7 @@ describe("ChatTabV2 history sync", () => {
       },
     });
     mockChatHistoryAction.mockResolvedValue({ ok: true });
+    mockUseChatSession.rewindToMessage = vi.fn();
   });
 
   afterEach(() => {
@@ -720,9 +760,9 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
     expect(mockToastError).toHaveBeenCalledWith(
       errorToastMessage(
-        "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+        "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
       ),
-      { duration: Infinity }
+      { duration: 8000 }
     );
   });
 
@@ -814,7 +854,7 @@ describe("ChatTabV2 history sync", () => {
 
     expect(screen.getByTestId("chat-input")).toHaveAttribute(
       "data-enable-multi-model",
-      "true",
+      "true"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
@@ -823,17 +863,17 @@ describe("ChatTabV2 history sync", () => {
 
     expect(screen.getByTestId("chat-input")).toHaveAttribute(
       "data-enable-multi-model",
-      "true",
+      "true"
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Share active thread" }),
+      screen.getByRole("button", { name: "Share active thread" })
     );
     await flushMicrotasks();
 
     expect(screen.getByTestId("chat-input")).toHaveAttribute(
       "data-enable-multi-model",
-      "false",
+      "false"
     );
   });
 
@@ -946,6 +986,206 @@ describe("ChatTabV2 history sync", () => {
     expect(mockChatHistoryAction).not.toHaveBeenCalledWith(
       "archive",
       "history-1"
+    );
+  });
+
+  it("tracks the edit and arms the resend ref when a rewind succeeds", async () => {
+    // The positive half of the ordering fix — the refusal test below pins only
+    // the negative half. On a successful branch both effects must fire: the
+    // analytics event and the shared resend ref. Nothing is shown to the user;
+    // the branch is deliberately silent.
+    mockUseChatSession.rewindToMessage.mockResolvedValue({
+      previousChatSessionId: "prev-session-1",
+    });
+    // Attach `formatted` so the mocked `formatErrorMessage` surfaces
+    // `code`/`limitKind`, which is what makes the concurrency-throttle "Retry"
+    // button appear — the only reachable reader of `lastSentUserMessageRef`.
+    mockUseChatSession.error = Object.assign(
+      new Error("Too many concurrent requests"),
+      { formatted: { code: "user_rate_limit", limitKind: "concurrency" } }
+    );
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.rewindToMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "1",
+        text: "Edited text should not leak",
+      })
+    );
+    expect(track).toHaveBeenCalledWith("edit_message", {
+      location: "chat_tab",
+      model_id: "openai/gpt-5-mini",
+      model_name: "GPT-5 Mini",
+      model_provider: "openai",
+    });
+
+    // The edited text IS what a later resend should carry now that it actually
+    // went out — the mirror image of the refusal case, where it must not.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Edited text should not leak" })
+    );
+  });
+
+  it("asks before discarding an unsent draft on edit, and does not rewind until confirmed", async () => {
+    // A rewind ends in `onReset("fork")`, which wipes the composer. New Chat
+    // and thread selection both confirm first; editing has to as well, or a
+    // typed-but-unsent draft vanishes when the user clicks the pencil.
+    mockUseChatSession.rewindToMessage.mockResolvedValue({
+      previousChatSessionId: "prev-session-1",
+    });
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
+      target: { value: "Draft the user has not sent yet" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    // The dialog is the load-bearing assertion: it appears ONLY because the
+    // edit path awaits `ensureDiscardDraftConfirmed`. Asserting merely that
+    // `rewindToMessage` has not fired yet would pass on timing alone, with or
+    // without the gate — verified by removing the gate and watching that
+    // weaker assertion still pass.
+    expect(screen.getByText("Discard unsaved draft?")).toBeInTheDocument();
+    expect(mockUseChatSession.rewindToMessage).not.toHaveBeenCalled();
+  });
+
+  it("withholds the edit affordance on the chatbox surface, which has no history", async () => {
+    // `ChatTabV2` is also the published chatbox runtime (`ChatboxChatPage`
+    // renders it with `minimalMode` + `hostedContext.chatboxId`), so
+    // `showHistoryRail` is false there. Editing BRANCHES and leaves the
+    // original behind; with no history surface to reach it through, that
+    // discards the original thread with no way back, and the notice's promise
+    // ("still in your history") would be false. The pencil must not render.
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        minimalMode
+        hostedContext={{
+          chatboxId: "cbx_test",
+          accessVersion: 1,
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+        }}
+      />
+    );
+
+    // The Thread mock only renders this button when `onEditUserMessage` is
+    // provided, so its absence is the absence of the affordance.
+    expect(
+      screen.queryByRole("button", { name: "Edit first message" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not fire edit_message analytics or corrupt the resend ref when a rewind is refused", async () => {
+    // `rewindToMessage` resolving `null` means the rewind was refused (a
+    // turn started in the gap after `ensureThreadReadyForSend`'s network
+    // round trip, or the target message is gone). Nothing branched, so
+    // neither the analytics event nor the shared resend ref should be
+    // touched.
+    mockUseChatSession.rewindToMessage.mockResolvedValue(null);
+    // Attach `formatted` so the mocked `formatErrorMessage` (see the
+    // chat-helpers mock above) surfaces `code`/`limitKind`, which is what
+    // makes the concurrency-throttle "Retry" button appear — the only
+    // reachable reader of `lastSentUserMessageRef` in this test file.
+    mockUseChatSession.error = Object.assign(
+      new Error("Too many concurrent requests"),
+      { formatted: { code: "user_rate_limit", limitKind: "concurrency" } }
+    );
+    mockGetChatHistoryDetail.mockResolvedValue({
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    });
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.rewindToMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "1",
+        text: "Edited text should not leak",
+      })
+    );
+    expect(
+      vi.mocked(track).mock.calls.some(([event]) => event === "edit_message")
+    ).toBe(false);
+
+    // The refused edit must not have stomped `lastSentUserMessageRef`: the
+    // concurrency-throttle retry reads that same ref, and if the edited
+    // text had leaked into it, clicking "Retry" here would resend it.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("detaches from the resumed thread before the branch's turn is dispatched", async () => {
+    // The post-stream conflict check captures its baseline the instant the
+    // stream starts — and that happens INSIDE `rewindToMessage`, just after the
+    // branch is minted. If the surface is still attached to the ORIGINAL thread
+    // at that moment, the baseline names the original, the completed stream is
+    // compared against it, and a deliberate branch is reported as a phantom
+    // "this chat changed elsewhere". That path also re-forks, so the user's NEXT
+    // message lands in a third session. Detaching has to happen BEFORE the
+    // rewind is dispatched; doing it after `rewindToMessage` returns is already
+    // too late, which is why this asserts on state as observed from inside it.
+    mockGetChatHistoryDetail.mockResolvedValue({
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    });
+
+    let resumedVersionWhenRewound: number | null | undefined = undefined;
+    // The real hook fires `onBeforeBranch` as the branch is minted, just
+    // before the turn dispatches; observing after it is what makes this an
+    // ordering assertion rather than a no-op.
+    mockUseChatSession.rewindToMessage.mockImplementation(async (options) => {
+      options?.onBeforeBranch?.();
+      resumedVersionWhenRewound = mockUseChatSession.resumedVersion;
+      return { previousChatSessionId: "prev-session-1" };
+    });
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    // Guard against a vacuous pass: the thread has to really be resumed here,
+    // or "it was null at rewind time" would prove nothing.
+    expect(mockUseChatSession.resumedVersion).toBe(4);
+    expect(screen.getByTestId("history-rail")).toHaveAttribute(
+      "data-active-session-id",
+      "history-1"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    expect(resumedVersionWhenRewound).toBeNull();
+    expect(screen.getByTestId("history-rail")).toHaveAttribute(
+      "data-active-session-id",
+      "none"
     );
   });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Copy, Loader2, MessageSquare } from "lucide-react";
+import { Copy, FlaskConical, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -18,6 +18,7 @@ import {
 } from "@/components/evals/trace-viewer-adapter";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
+import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
   ChatTraceViewModeHeaderBar,
   type TraceViewMode,
@@ -30,6 +31,8 @@ import {
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
+import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
+import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
@@ -178,7 +181,32 @@ interface ShareUsageThreadDetailProps {
    * host share-usage dialog has no deep-link target yet).
    */
   sessionLink?: string;
+  /**
+   * Enables the "Promote to test case" affordance.
+   *
+   * Supplied by surfaces that know the two things a `SharedChatThread` cannot
+   * tell us: which project the session belongs to, and whether the viewer is
+   * a member. The dialog state and default navigation live here rather than
+   * in each parent — that per-parent duplication is what this prop replaces.
+   * Omit it (as the host share-usage dialog does) and no promote UI renders.
+   */
+  promote?: {
+    projectId: string;
+    /** Member tier. Fail closed; the backend enforces it independently. */
+    canPromote: boolean;
+    /** Overrides the default navigate-to-test-editor behavior. */
+    onImported?: (result: { suiteId: string; testCaseId: string }) => void;
+  };
 }
+
+/**
+ * Surfaces whose sessions the shared promote dialog can carry.
+ *
+ * Mirrors the backend allowlist (`PROMOTABLE_CHAT_SESSION_SOURCE_TYPES`)
+ * minus `direct`, which keeps its own adapter because it must also serve
+ * guest/HOSTED_MODE actors over the HTTP detail route.
+ */
+const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "chatbox"]);
 
 /**
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
@@ -205,6 +233,7 @@ async function hydrateSpans(
 export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
+  promote,
 }: ShareUsageThreadDetailProps) {
   const { thread } = useSharedChatThread({ threadId });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
@@ -215,6 +244,7 @@ export function ShareUsageThreadDetail({
   const [messages, setMessages] = useState<unknown[] | null>(null);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promoteOpen, setPromoteOpen] = useState(false);
   // The eval-only "browser" mode lives outside the shared TraceViewMode union
   // (see trace-view-mode-tabs.tsx) — widen locally, mirroring TraceViewer's
   // own internal state.
@@ -292,10 +322,16 @@ export function ShareUsageThreadDetail({
   // artifact presence, the same heuristic the eval trace viewer uses.
   const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
   const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
-  // The Browser tab renders only the per-widget render observations now; the
-  // interaction steps surface on the Trace tab (`Interact · …` spans), so they
-  // ride the trace blob below rather than gating this tab.
-  const hasBrowserArtifacts = renderObservations.length > 0;
+  const replayUrl = browserArtifacts?.videoUrl ?? null;
+  // The SHARED predicate — observations OR steps OR video. Steps count now that
+  // the Replay tab carries the synchronized filmstrip: a session that drove one
+  // already-mounted widget by Computer Use has a full recording and no render
+  // observations, and used to get no tab at all.
+  const hasBrowserArtifacts = hasReplayArtifacts({
+    widgetRenderObservations: renderObservations,
+    browserInteractionSteps: interactionSteps,
+    videoUrl: replayUrl,
+  });
 
   // The "browser" mode is only valid while the LOADED session actually has
   // artifacts. `viewMode` is component state that survives a `threadId`
@@ -320,11 +356,13 @@ export function ShareUsageThreadDetail({
       ...(interactionSteps.length > 0
         ? { browserInteractionSteps: interactionSteps }
         : {}),
+      ...(replayUrl ? { videoUrl: replayUrl } : {}),
     };
   }, [
     messages,
     widgetSnapshots,
     hydratedSpans,
+    replayUrl,
     renderObservations,
     interactionSteps,
   ]);
@@ -358,6 +396,37 @@ export function ShareUsageThreadDetail({
     if (!turnTraces || turnTraces.length === 0) return null;
     return Math.max(...turnTraces.map((t: SharedChatTurnTrace) => t.endedAt));
   }, [turnTraces]);
+
+  const canPromoteThread = Boolean(
+    promote?.canPromote &&
+      thread?.sourceType &&
+      PROMOTABLE_SOURCE_TYPES.has(thread.sourceType)
+  );
+
+  // Reset when the viewer switches sessions, so a dialog opened on one thread
+  // never lands on the next one — and when the capability goes away, since a
+  // parent can withdraw it while this component stays mounted on the same
+  // thread (filtering a selected row out of the swarm list, for instance).
+  // Without the second dependency, restoring the filter would resurrect the
+  // dialog the user had implicitly dismissed.
+  useEffect(() => {
+    setPromoteOpen(false);
+  }, [threadId, canPromoteThread]);
+
+  const handlePromoteImported = useCallback(
+    (result: { suiteId: string; testCaseId: string }) => {
+      setPromoteOpen(false);
+      if (promote?.onImported) {
+        promote.onImported(result);
+        return;
+      }
+      // Land the user on the artifact they just created; a toast alone gives
+      // them no way back to it. Shared with the per-turn promote action so
+      // every surface lands in the same place.
+      navigateToPromotedTestCase(result);
+    },
+    [promote]
+  );
 
   const handleCopySessionRef = useCallback(async () => {
     if (!thread) return;
@@ -405,7 +474,7 @@ export function ShareUsageThreadDetail({
     if (thread.sourceType === "swarm") {
       return (
         <div className="flex h-full flex-col">
-          {thread.synthetic === true && thread.readiness ? (
+          {thread.readiness ? (
             <SessionInsightBar readiness={thread.readiness} />
           ) : null}
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
@@ -490,6 +559,19 @@ export function ShareUsageThreadDetail({
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {canPromoteThread ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-xl"
+                data-testid="share-usage-promote-to-test-case"
+                onClick={() => setPromoteOpen(true)}
+              >
+                <FlaskConical className="mr-1.5 size-3.5" />
+                Promote to test case
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -504,7 +586,10 @@ export function ShareUsageThreadDetail({
         </div>
       </div>
 
-      {thread.synthetic === true && thread.readiness ? (
+      {/* Gated on the verdict existing, not on the session being synthetic:
+          readiness is computed for real User Testing sessions too, and a
+          surface that has the data should show it. */}
+      {thread.readiness ? (
         <SessionInsightBar readiness={thread.readiness} />
       ) : null}
 
@@ -530,7 +615,11 @@ export function ShareUsageThreadDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {effectiveViewMode === "browser" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <BrowserArtifactsView observations={renderObservations} />
+            <BrowserArtifactsView
+              observations={renderObservations}
+              steps={interactionSteps}
+              videoUrl={replayUrl}
+            />
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -558,6 +647,19 @@ export function ShareUsageThreadDetail({
           />
         )}
       </div>
+
+      {/* Mounted only when the button that opens it can render, so guest and
+          non-promotable sessions don't pay for the dialog's project queries. */}
+      {promote && canPromoteThread ? (
+        <ConvertPromotableSessionDialog
+          open={promoteOpen}
+          sessionId={threadId}
+          seedProjectId={promote.projectId}
+          seedTitle={thread?.visitorDisplayName ?? thread?.firstMessagePreview}
+          onOpenChange={setPromoteOpen}
+          onImported={handlePromoteImported}
+        />
+      ) : null}
     </div>
   );
 }

@@ -14,10 +14,20 @@ import {
   type ToolExecutionResponse,
 } from "@/lib/apis/mcp-tools-api";
 import { readResource } from "@/lib/apis/mcp-resources-api";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   driveScopeStepUpFromChallenge,
   resetScopeStepUp,
 } from "@/lib/scope-step-up";
+import {
+  isActionableStepUpChallenge,
+  parseInsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
+import {
+  claimPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  savePendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import {
   mcpCallToolResultToModelOutput,
@@ -116,6 +126,8 @@ export interface ExecuteToolInvocationOptions {
    * user selects a tool from a non-primary server.
    */
   serverName?: string;
+  /** Internal: the one post-OAuth replay must never start another redirect. */
+  scopeStepUpReplay?: boolean;
 }
 
 export interface InjectToolResultOptions {
@@ -228,17 +240,51 @@ export function useToolExecution({
   // its stored issuer + originally-granted scopes on a `403 insufficient_scope`.
   const sharedAppState = useOptionalSharedAppState();
   const resetStepUpOnSuccess = useCallback(
-    (name: string | undefined) => {
-      resetScopeStepUp(name ? sharedAppState?.servers[name] : undefined);
+    (name: string | undefined, toolName: string) => {
+      resetScopeStepUp(name ? sharedAppState?.servers[name] : undefined, {
+        method: "tools/call",
+        operation: toolName,
+      });
     },
     [sharedAppState],
   );
 
   const driveStepUpFromResponse = useCallback(
-    (name: string | undefined, response: ToolExecutionResponse) => {
-      driveScopeStepUpFromChallenge(
-        name ? sharedAppState?.servers[name] : undefined,
+    (
+      name: string | undefined,
+      toolName: string,
+      parameters: Record<string, unknown>,
+      response: ToolExecutionResponse,
+    ) => {
+      const challenge = parseInsufficientScopeChallenge(
         (response as { insufficientScope?: unknown }).insufficientScope,
+      );
+      const replayServer = name ? sharedAppState?.servers[name] : undefined;
+      if (
+        name &&
+        isActionableStepUpChallenge(challenge)
+      ) {
+        savePendingDirectScopeStepUpReplay({
+          operation: {
+            resourceUrl: String(
+              (replayServer?.config as any)?.url ?? name,
+            ),
+            method: "tools/call",
+            operation: toolName,
+          },
+          descriptor: {
+            kind: "tool",
+            surface: "playground",
+            serverName: name,
+            toolName,
+            parameters,
+          },
+        });
+      }
+      driveScopeStepUpFromChallenge(
+        replayServer,
+        challenge,
+        { method: "tools/call", operation: toolName },
       );
     },
     [sharedAppState],
@@ -348,7 +394,14 @@ export function useToolExecution({
           setExecutionError(response.error);
           // SEP-2350: on a `403 insufficient_scope`, drive the union-scope
           // step-up re-authorization for this server.
-          driveStepUpFromResponse(effectiveServerName, response);
+          if (!options?.scopeStepUpReplay) {
+            driveStepUpFromResponse(
+              effectiveServerName,
+              effectiveToolName,
+              params,
+              response,
+            );
+          }
           return {
             ok: false,
             toolName: effectiveToolName,
@@ -408,7 +461,7 @@ export function useToolExecution({
         });
 
         // SEP-2350: a successful call clears the bounded step-up counter.
-        resetStepUpOnSuccess(effectiveServerName);
+        resetStepUpOnSuccess(effectiveServerName, effectiveToolName);
 
         return {
           ok: true,
@@ -419,6 +472,10 @@ export function useToolExecution({
         };
       } catch (err) {
         console.error("Tool execution error:", err);
+        reportCaught(err, {
+          source: "app_builder_tool_execution",
+          extra: { toolName: effectiveToolName, toolSource: "server" },
+        });
         const errorMessage =
           err instanceof Error ? err.message : "Tool execution failed";
 
@@ -453,6 +510,26 @@ export function useToolExecution({
       resetStepUpOnSuccess,
     ]
   );
+
+  useEffect(() => {
+    if (!serverName) return;
+    const liveServer = sharedAppState?.servers[serverName];
+    if (liveServer?.connectionStatus !== "connected") return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "playground",
+    });
+    if (!pending || pending.descriptor.kind !== "tool") return;
+    const descriptor = pending.descriptor;
+    void executeTool({
+      serverName: descriptor.serverName,
+      toolName: descriptor.toolName,
+      parameters: descriptor.parameters,
+      scopeStepUpReplay: true,
+    }).finally(() => {
+      clearPendingDirectScopeStepUpReplay();
+    });
+  }, [executeTool, serverName, sharedAppState]);
 
   const injectToolResult = useCallback(
     async ({
@@ -644,6 +721,10 @@ async function executeAppTool({
     };
   } catch (err) {
     console.error("App tool execution error:", err);
+    reportCaught(err, {
+      source: "app_builder_tool_execution",
+      extra: { toolName: reportedName, toolSource: "app" },
+    });
     const message =
       err instanceof Error ? err.message : "App tool execution failed";
     setExecutionError(message);

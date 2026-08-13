@@ -71,6 +71,19 @@ const MODERN_PASSING: MCPCheckId[] = [
   "protocol-invalid-method-error",
 ];
 
+/**
+ * Modern-only checks whose id is NOT `modern-`-prefixed. The SEP-2243
+ * declaration check reads as one of the `tools-*` family in a report, but
+ * `x-mcp-header` has no meaning before 2026-07-28, so it era-skips on legacy
+ * exactly like the prefixed ones.
+ */
+const MODERN_ONLY_UNPREFIXED: MCPCheckId[] = [
+  "tools-x-mcp-header-declarations-valid",
+];
+
+const isModernOnly = (id: MCPCheckId) =>
+  id.startsWith("modern-") || MODERN_ONLY_UNPREFIXED.includes(id);
+
 // Phase 7 §15.3 modern MUST checks the conforming beta.4 fixture satisfies.
 const MODERN_MUST_PASSING: MCPCheckId[] = [
   "modern-client-handshake",
@@ -137,7 +150,21 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Exit gate: no false failures, no crash.
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    expect(result.passed).toBe(true);
+    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // -32021 path needs an `inputRequiredProbe` this fixture does not
+    // configure, and a graceful subscription close is server-initiated and
+    // cannot be induced by a client-side probe. Both report `could-not-run`,
+    // so the run is honestly `incomplete` rather than green.
+    expect(result.outcome).toBe("incomplete");
+    expect(
+      result.checks
+        .filter((c) => c.skipReason === "could-not-run")
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual([
+      "modern-subscription-graceful-close",
+      "modern-undeclared-capability-error",
+    ]);
 
     // Legacy-only checks appear (not filtered out) and are era-skipped.
     for (const id of LEGACY_ONLY) {
@@ -149,6 +176,12 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     // Neutral checks with real surface pass on the modern era.
     for (const id of MODERN_PASSING) {
       expect(byId(result.checks, id).status).toBe("passed");
+    }
+
+    // The fixture's tools declare no `x-mcp-header` at all, so the SEP-2243
+    // declaration check passes vacuously — which is the correct verdict.
+    for (const id of MODERN_ONLY_UNPREFIXED) {
+      expect([id, byId(result.checks, id).status]).toEqual([id, "passed"]);
     }
 
     // §15.3: the conforming modern fixture passes the modern MUST set.
@@ -207,7 +240,10 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
       expect(["SHOULD", "RECOMMENDED", "MAY"]).toContain(item.specStrength);
       expect(item.message.length).toBeGreaterThan(0);
     }
-    expect(result.passed).toBe(true);
+    // The point of §15.4 is that advice never becomes a violation. `passed` is
+    // false here only because two obligations could not be run, so assert the
+    // thing readiness could have broken: it never turns the verdict red.
+    expect(result.outcome).not.toBe("failed");
 
     // The fixture advertises no logging/completions capability, so these
     // both-era checks self-skip on capability (NOT the era gate).
@@ -225,7 +261,21 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }).run();
 
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    expect(result.passed).toBe(true);
+    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // -32021 path needs an `inputRequiredProbe` this fixture does not
+    // configure, and a graceful subscription close is server-initiated and
+    // cannot be induced by a client-side probe. Both report `could-not-run`,
+    // so the run is honestly `incomplete` rather than green.
+    expect(result.outcome).toBe("incomplete");
+    expect(
+      result.checks
+        .filter((c) => c.skipReason === "could-not-run")
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual([
+      "modern-subscription-graceful-close",
+      "modern-undeclared-capability-error",
+    ]);
     for (const id of LEGACY_ONLY) {
       const check = byId(result.checks, id);
       expect(check.status).toBe("skipped");
@@ -262,7 +312,7 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     // Only the modern-only checks may be era-skipped on a legacy pin; every
     // pre-Phase-7 check keeps its original status.
     for (const check of pinned.checks) {
-      if (check.id.startsWith("modern-")) {
+      if (isModernOnly(check.id)) {
         expect(check.status).toBe("skipped");
         expect(check.error?.message).toMatch(
           /Not applicable to the legacy era/

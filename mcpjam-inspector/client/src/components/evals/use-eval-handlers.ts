@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
-  buildCiEvalsPath,
+  buildEvalsRunsPath,
   buildEvalsPath,
   navigateApp,
 } from "@/lib/app-navigation";
@@ -24,6 +24,11 @@ import {
 } from "./helpers";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
+import {
+  disambiguateLabels,
+  environmentLabel,
+} from "@/lib/environment-label";
 import { draftTestCaseId } from "./draft-test-case";
 import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
 import type { useEvalMutations } from "./use-eval-mutations";
@@ -43,13 +48,14 @@ import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-te
 import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   getDefaultTestCaseModelValue,
+  getRunnableCaseModels,
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 function navigateEvalRoute(route: EvalRoute, context: "evals" | "ci-evals") {
   navigateApp(
-    context === "ci-evals" ? buildCiEvalsPath(route) : buildEvalsPath(route)
+    context === "ci-evals" ? buildEvalsRunsPath(route) : buildEvalsPath(route)
   );
 }
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -62,17 +68,11 @@ import {
 function getConfiguredTestCaseModelValues(
   testCase: Pick<EvalCase, "models">
 ): string[] {
-  const modelValues = new Set<string>();
-
-  for (const modelConfig of testCase.models ?? []) {
-    if (!modelConfig?.provider || !modelConfig.model) {
-      continue;
-    }
-
-    modelValues.add(`${modelConfig.provider}/${modelConfig.model}`);
-  }
-
-  return Array.from(modelValues);
+  // Derived from the shared helper so the run path and the credit estimates
+  // can never disagree about which models are runnable.
+  return getRunnableCaseModels(testCase).map(
+    (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`
+  );
 }
 
 export function hasUnavailableServers(result: EnsureServersReadyResult) {
@@ -200,8 +200,8 @@ interface UseEvalHandlersProps {
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * When `ci-evals`, navigation after test-case mutations stays on CI evals
-   * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
+   * When `ci-evals`, navigation after test-case mutations stays on Runs
+   * mode (`/evals/runs/...`). Defaults to Suites mode (`/evals/...`).
    */
   evalsNavigationContext?: "evals" | "ci-evals";
   /** For user-facing server labels (names instead of raw Convex ids). */
@@ -239,8 +239,28 @@ export function useEvalHandlers({
   // fans out correctly with ids as display fallbacks.
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const projectEnvironments = useProjectEnvironments(
-    projectEnvironmentsEnabled ? projectId : null
+    projectEnvironmentsEnabled ? projectId : null,
+    // Ad-hoc rows included: a suite composed from the header bar attaches
+    // nameless ones, and a run labeled by a bare id is not a label.
+    { includeAdhoc: true }
   );
+  // Labels for the run-plan fan-out. Ad-hoc rows have no name, so they are
+  // labeled by their client and then disambiguated — two setups on one client
+  // would otherwise render as the same string, which is exactly the case the
+  // composer makes common.
+  const environmentLabelContext = useEnvironmentLabelContext(
+    projectEnvironmentsEnabled ? projectId : null,
+    projectEnvironments
+  );
+  const labeledProjectEnvironments = useMemo(() => {
+    if (!projectEnvironments) return undefined;
+    return disambiguateLabels(
+      projectEnvironments.map((environment) => ({
+        environmentId: environment.environmentId,
+        label: environmentLabel(environment, environmentLabelContext),
+      }))
+    ).map(({ environmentId, label }) => ({ environmentId, name: label }));
+  }, [environmentLabelContext, projectEnvironments]);
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
@@ -660,7 +680,11 @@ export function useEvalHandlers({
       // server resolves the environment's closed set at launch.
       const runPlans = buildSuiteRunPlans(
         suite,
-        projectEnvironments,
+        // Already-resolved display labels, named and ad-hoc alike. The helper's
+        // parameter stays a plain `{environmentId, name}`, which keeps that pure
+        // module out of the label vocabulary; an id it cannot find still
+        // degrades to the raw id exactly as before.
+        labeledProjectEnvironments,
         executionContext.suiteServers
       );
 
@@ -894,7 +918,7 @@ export function useEvalHandlers({
       getAccessToken,
       projectId,
       projectServers,
-      projectEnvironments,
+      labeledProjectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
       evalsNavigationContext,

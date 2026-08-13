@@ -78,9 +78,16 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
-vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
-  fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
-}));
+// Spread the REAL module: this suite exercises the environment-TARGET path,
+// which never fetches a chatbox config, but chat-v2 imports several pure
+// readers from here. A bare factory would leave those undefined and 500 the
+// route for a reason that has nothing to do with what is under test.
+vi.mock("../../../utils/chatbox-runtime-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chatbox-runtime-config.js")
+  >("../../../utils/chatbox-runtime-config.js");
+  return { ...actual, fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock };
+});
 
 // The harness preflight checks server-level runtime prerequisites (broker
 // delivery kill switch, computers data plane) that a unit test process has
@@ -407,6 +414,8 @@ describe("web chat-v2 — environment execution target", () => {
         projectId: "project-1",
         environmentId: "env_1",
         serverOverrideIds: [],
+        // This suite runs un-hosted; the service declares the local venue.
+        runtimeVenue: "local",
       }
     );
   });
@@ -420,6 +429,15 @@ describe("web chat-v2 — environment execution target", () => {
         ? {
             pluginVersions: [ENV_SPEC.pluginVersions[0]],
             effectiveServerIds: ["env-server-2"],
+            serverComponents: [
+              {
+                pluginVersionId: ENV_SPEC.pluginVersions[0].pluginVersionId,
+                componentKey: "server:asana",
+                placement: "remote",
+                authenticationPolicy: "on_use",
+                materializedServerId: "env-server-2",
+              },
+            ],
             pluginSkills: [],
             unavailableComponents: [],
           }
@@ -443,7 +461,7 @@ describe("web chat-v2 — environment execution target", () => {
     // no plugin argument, and sending one would fail its validator.
     expect(convexQueryMock).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForRuntime",
-      { projectId: "project-1", environmentId: "env_1" }
+      { projectId: "project-1", environmentId: "env_1", runtimeVenue: "local" }
     );
 
     // The plugin's server is gone from the turn; the host's own remains.
@@ -479,6 +497,7 @@ describe("web chat-v2 — environment execution target", () => {
         ? {
             pluginVersions: [],
             effectiveServerIds: [],
+            serverComponents: [],
             pluginSkills: [],
             unavailableComponents: [
               { pluginVersionId: "pv_1", reason: "disabled" },
@@ -502,6 +521,28 @@ describe("web chat-v2 — environment execution target", () => {
   });
 
   it("delivers ONLY the resolved skills to the emulated engine (no cloudSkills)", async () => {
+    // The attribution probe answers the single-call shape: pv_1 contributed
+    // env-server-2 and no skills, so the capability set carries no plugin
+    // skills and no problems.
+    convexQueryMock.mockImplementation(async (ref: string) =>
+      ref === "plugins:resolvePluginRuntimePreview"
+        ? {
+            pluginVersions: [ENV_SPEC.pluginVersions[0]],
+            effectiveServerIds: ["env-server-2"],
+            serverComponents: [
+              {
+                pluginVersionId: ENV_SPEC.pluginVersions[0].pluginVersionId,
+                componentKey: "server:asana",
+                placement: "remote",
+                authenticationPolicy: "on_use",
+                materializedServerId: "env-server-2",
+              },
+            ],
+            pluginSkills: [],
+            unavailableComponents: [],
+          }
+        : ENV_SPEC
+    );
     const { app, token } = createWebTestApp();
     await postJson(
       app,
@@ -632,8 +673,21 @@ describe("web chat-v2 — plugin capability attribution", () => {
       },
     ],
     effectiveServerIds: ["env-server-2"],
+    serverComponents: [
+      {
+        pluginVersionId: "pv_1",
+        componentKey: "server:asana",
+        placement: "remote",
+        authenticationPolicy: "on_use",
+        materializedServerId: "env-server-2",
+      },
+    ],
     pluginSkills: [
-      { modelRef: "linear/summarize", materializedSkillId: "sk_plugin" },
+      {
+        pluginVersionId: "pv_1",
+        modelRef: "linear/summarize",
+        materializedSkillId: "sk_plugin",
+      },
     ],
     unavailableComponents: [],
   };

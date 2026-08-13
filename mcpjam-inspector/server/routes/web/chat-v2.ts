@@ -29,6 +29,10 @@ import {
   isMrtrResumeSubmission,
   type MrtrElicitationResponse,
 } from "@/shared/mrtr-continuation";
+import {
+  parseScopeStepUpCancelRequest,
+  parseScopeStepUpResumeRequest,
+} from "@/shared/scope-step-up";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
@@ -50,6 +54,7 @@ import {
   ErrorCode,
   WebRouteError,
   webError,
+  webErrorFromRoute,
   mapRuntimeError,
   extractMcpInitializeOptions,
 } from "./auth.js";
@@ -57,12 +62,18 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import {
   fetchChatboxRuntimeConfig,
+  planChatboxSandbox,
   readChatboxEnvironment,
+  readComputerSandboxMode,
   type ChatboxEnvironmentRuntime,
 } from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
+  applyHostConformanceKnobs,
+  applyHostParamMirroring,
   parseXaaPolicyValue,
+  conformanceKnobsFromMcpProfile,
+  mirrorToolParamHeadersFromMcpProfile,
   xaaPolicyFromMcpProfile,
 } from "../../utils/effective-auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
@@ -79,7 +90,10 @@ import {
   runtimeSkills as environmentRuntimeSkills,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
-import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  fetchPluginRuntimeAttribution,
+  type PluginRuntimeAttribution,
+} from "../../services/environments/plugin-attribution.js";
 import {
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
@@ -87,11 +101,28 @@ import {
 } from "../../services/environments/effective-capabilities.js";
 import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
-import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import {
+  resolveHostTools,
+  type TrustedSandboxBinding,
+} from "../../utils/built-in-tools/registry.js";
+import {
+  ackChatboxSandboxNotices,
+  isChatboxSandboxNotice,
+  isComputersDataPlaneConfigured,
+  provisionChatboxSandbox,
+} from "../../utils/computers/control-plane-client.js";
+import {
+  isSandboxNoticeReason,
+  type SandboxNoticeReason,
+} from "@/shared/sandbox-notice";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
-import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
+import {
+  appendSandboxNoticeContext,
+  maybeAppendEnvironmentContext,
+} from "../../utils/computers/environment-context.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
+import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
 const chatV2 = new Hono();
 
@@ -204,7 +235,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        normalizedTarget.error,
+        normalizedTarget.error
       );
     }
     const executionTarget = normalizedTarget.target;
@@ -229,7 +260,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "messages are required",
+        "messages are required"
       );
     }
 
@@ -238,7 +269,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "model is not supported",
+        "model is not supported"
       );
     }
 
@@ -276,7 +307,7 @@ chatV2.post("/", async (c) => {
       // delegated JWT (and passes JWTs through untouched), same as the eval
       // launch path.
       const convexClient = createConvexClient(
-        await getConvexBearerForRequest(c),
+        await getConvexBearerForRequest(c)
       );
       // One atomic member-read: host runtime config + closed server set +
       // composed skill union + pinned plugin versions, at one revision. The
@@ -296,7 +327,7 @@ chatV2.post("/", async (c) => {
       const attribution = await fetchPluginRuntimeAttribution(convexClient, {
         projectId: hostedBody.projectId,
         pluginVersionIds: (environmentSpec.pluginVersions ?? []).map(
-          (plugin) => plugin.pluginVersionId,
+          (plugin) => plugin.pluginVersionId
         ),
       });
       // INS-4: the Playground's ephemeral plugin narrowing, applied to the
@@ -322,7 +353,7 @@ chatV2.post("/", async (c) => {
       }
       effectiveCapabilities = resolveEffectiveCapabilities(
         environmentSpec,
-        attribution,
+        attribution
       );
       if (effectiveCapabilities.problems.length > 0) {
         // Codes and ids only, never `problem.message` — those messages
@@ -332,23 +363,26 @@ chatV2.post("/", async (c) => {
         // an entry per problem per turn.
         logger.warn("[chat-v2] effective capability problems", {
           environmentId: environmentSpec.environmentRef.environmentId,
-          codes: effectiveCapabilities.problems.map(
-            (problem) => problem.code,
-          ),
+          codes: effectiveCapabilities.problems.map((problem) => problem.code),
           skillIds: effectiveCapabilities.problems.flatMap((problem) =>
-            "skillId" in problem ? [problem.skillId] : [],
+            "skillId" in problem ? [problem.skillId] : []
           ),
         });
       }
       // Plugin origin on every RPC frame this turn produces, so a trace answers
       // "which plugin revision served this tool call" without a second lookup.
       rpcCollector?.setPluginOriginByServerId(
-        pluginOriginByServerId(effectiveCapabilities),
+        pluginOriginByServerId(effectiveCapabilities)
       );
     } else if (isChatboxSession && chatboxId) {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
         bearer: bearerToken,
+        // Opt this turn into backend version enforcement. A caller whose
+        // cached version is behind the row's is running against a config
+        // that has since moved (rebind, mode change, republish); it must
+        // re-redeem rather than have its stale view honored.
+        accessVersion,
       });
       if (runtime.ok) {
         // Environment-backed chatbox (live-follow): the backend resolved the
@@ -361,25 +395,75 @@ chatV2.post("/", async (c) => {
         if (environmentRead.kind === "invalid") {
           logger.warn(
             "[chat-v2] chatbox environment payload malformed; failing closed",
-            { chatboxId, detail: environmentRead.detail },
+            { chatboxId, detail: environmentRead.detail }
           );
           throw new WebRouteError(
             502,
             ErrorCode.INTERNAL_ERROR,
-            "Couldn't load this chatbox's environment, so the turn was stopped to avoid running with the wrong configuration.",
+            "Couldn't load this chatbox's environment, so the turn was stopped to avoid running with the wrong configuration."
           );
         }
         if (environmentRead.kind === "present") {
           chatboxEnvironment = environmentRead.environment;
+          // Phase 6.1: attribution for chatbox turns, from the payload's own
+          // pinned plugin versions. Guarded on their presence — a backend
+          // that predates `pluginVersions` (or an environment pinning none)
+          // costs zero extra reads — and FAIL-OPEN like the environment
+          // target's probe: this turn is guest-reachable, and the probe is
+          // member-gated backend-side, so a guest (or any probe failure)
+          // degrades to "origin unknown" rather than stopping the send.
+          let attribution: PluginRuntimeAttribution | null = null;
+          const pinnedVersionIds = (
+            chatboxEnvironment.pluginVersions ?? []
+          ).map((plugin) => plugin.pluginVersionId);
+          if (pinnedVersionIds.length > 0) {
+            try {
+              attribution = await fetchPluginRuntimeAttribution(
+                createConvexClient(await getConvexBearerForRequest(c)),
+                {
+                  projectId: hostedBody.projectId,
+                  pluginVersionIds: pinnedVersionIds,
+                }
+              );
+            } catch (error) {
+              // `fetchPluginRuntimeAttribution` already swallows probe
+              // failures; this catches client construction (missing
+              // CONVEX_URL on a deployment that never configured it).
+              logger.warn(
+                "[chat-v2] chatbox attribution unavailable; running without plugin origin",
+                {
+                  chatboxId,
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                }
+              );
+            }
+          }
           // Same projection the environment target uses, so the EMULATED
           // engine advertises the environment's skills (skillsSource:
-          // "resolved") instead of silently delivering zero. Attribution is
-          // null on purpose: the payload pins no plugin versions (the backend
-          // already re-gated plugins before serving it), so there is nothing
-          // to attribute and no probe to degrade on a guest-reachable turn.
+          // "resolved") instead of silently delivering zero.
           effectiveCapabilities = resolveEffectiveCapabilities(
             chatboxEnvironment,
-            null,
+            attribution
+          );
+          if (effectiveCapabilities.problems.length > 0) {
+            // Codes and ids only — same redaction rationale as the
+            // environment-target log above.
+            logger.warn("[chat-v2] effective capability problems", {
+              environmentId: chatboxEnvironment.environmentRef.environmentId,
+              codes: effectiveCapabilities.problems.map(
+                (problem) => problem.code
+              ),
+              skillIds: effectiveCapabilities.problems.flatMap((problem) =>
+                "skillId" in problem ? [problem.skillId] : []
+              ),
+            });
+          }
+          // Plugin origin on this turn's RPC frames, exactly as the
+          // environment target stamps it. Empty (no-op) until the backend
+          // serves `pluginVersions` and the probe attributes them.
+          rpcCollector?.setPluginOriginByServerId(
+            pluginOriginByServerId(effectiveCapabilities)
           );
         }
         hostRuntimeConfig = runtime.config as unknown as Record<
@@ -395,18 +479,30 @@ chatV2.post("/", async (c) => {
         // misrepresenting the runtime — and (b) let client-supplied
         // model/approval/server values govern a share-link-reachable turn,
         // the exact tampered-body window this fetch exists to close.
-        logger.warn(
-          "[chat-v2] runtime-config fetch failed; failing closed",
-          {
-            chatboxId,
-            status: runtime.status,
-            error: runtime.error,
-          },
-        );
+        logger.warn("[chat-v2] runtime-config fetch failed; failing closed", {
+          chatboxId,
+          status: runtime.status,
+          error: runtime.error,
+        });
+        // Two ACCESS verdicts, neither an internal fault, each with its own
+        // recovery: STALE means "re-redeem and replay" (the client does it
+        // transparently), DENIED means "you cannot run this turn".
+        // Everything else keeps the generic classification (>=500 collapses
+        // to a 502 upstream failure).
+        const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+        if (runtime.code === "CHATBOX_ACCESS_STALE") {
+          throw new WebRouteError(
+            409,
+            ErrorCode.CHATBOX_ACCESS_STALE,
+            failClosedMessage
+          );
+        }
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
-          ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
+          runtime.status === 403
+            ? ErrorCode.CHATBOX_ACCESS_DENIED
+            : ErrorCode.INTERNAL_ERROR,
+          failClosedMessage
         );
       }
     } else if (executionTarget.kind === "host") {
@@ -434,12 +530,12 @@ chatV2.post("/", async (c) => {
             hostId: targetHostId,
             status: runtime.status,
             error: runtime.error,
-          },
+          }
         );
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
+          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`
         );
       }
     }
@@ -477,8 +573,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : chatboxEnvironment
-        ? environmentRuntimeSkills({ skills: chatboxEnvironment.skills ?? [] })
-        : undefined;
+      ? environmentRuntimeSkills({ skills: chatboxEnvironment.skills ?? [] })
+      : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (chatbox / host-bound turns above — the
@@ -493,6 +589,34 @@ chatV2.post("/", async (c) => {
           (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
         )
       : parseXaaPolicyValue((body as Record<string, unknown>).xaaPolicy);
+
+    // SEP-2243 mirroring, resolved the same way and for the same reason: a
+    // chatbox turn carries no pins in the body (the client never sends the
+    // host profile), so reading it from the projected host config is the only
+    // way `toolParamHeaderMirroring: "omit"` reaches the connection — and it
+    // keeps the published host authoritative over a share-link client.
+    //
+    // Authoritative in BOTH directions when a host config exists: the host
+    // decides `omit`, and it equally decides `mirror` (which is also what an
+    // absent field means). Honoring only the `omit` direction would let a
+    // share-link caller post `mirrorToolParamHeaders: false` and make a
+    // conforming host non-conforming — the same tampering the `xaaPolicy`
+    // read above refuses, and a worse one here because the connection
+    // silently stops sending headers the server cross-checks. On ad-hoc
+    // turns the body value stands: the caller owns that session.
+    const effectiveInitializePins = hostRuntimeConfig
+      ? applyHostConformanceKnobs(
+          applyHostParamMirroring(
+            initializePins,
+            mirrorToolParamHeadersFromMcpProfile(
+              (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+            )
+          ),
+          conformanceKnobsFromMcpProfile(
+            (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+          )
+        )
+      : initializePins;
 
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
@@ -521,7 +645,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -530,7 +654,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -539,7 +663,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -581,7 +705,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
-        },
+        }
       );
       modelDefinition = hostModel;
     }
@@ -619,16 +743,13 @@ chatV2.post("/", async (c) => {
           ? effectiveServerIds.length > 0
           : (resolvedExecution.selectedServerIds ?? selectedServerIds).length >
             0,
-        modelEligible: isHostedCatalogModel(
-          String(modelDefinition.id),
-          modelDefinition.provider,
-        ),
-        // Canonical id so the adapter's supportsModel check sees the prefixed
-        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
-        modelId: getCanonicalModelId(
-          String(modelDefinition.id),
-          modelDefinition.provider,
-        ),
+        // The RESOLVED definition — eligibility and the canonical id are both
+        // derived from it inside the gate, so no call site can compute the two
+        // inconsistently.
+        model: {
+          id: String(modelDefinition.id),
+          provider: modelDefinition.provider,
+        },
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
@@ -638,7 +759,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           503,
           ErrorCode.INTERNAL_ERROR,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
         );
       }
     }
@@ -653,39 +774,6 @@ chatV2.post("/", async (c) => {
         | null
         | undefined
     )?.executionScope;
-
-    const builtInTools = resolveHostTools(
-      {
-        builtInToolIds: resolvedExecution.builtInToolIds,
-        // Computer comes exclusively from the server-resolved runtime config —
-        // chatbox OR host-by-id — never the request body.
-        computer: hostRuntimeConfig
-          ? (hostRuntimeConfig as { computer?: unknown }).computer
-          : undefined,
-      },
-      {
-        authHeader: bearerToken,
-        projectId: hostedBody.projectId,
-        ...(executionScope ? { executionScope } : {}),
-        ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
-        isGuest: Boolean(c.get("guestId")),
-        isChatboxSession,
-        requireToolApproval,
-        mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-      },
-    );
-
-    // Blueprint knowledge/maintenance: when this turn advertises bash, append
-    // the pinned image's model-facing context to the system prompt. Tri-state
-    // fetch inside — a Convex blip degrades to "no extra context", never a
-    // broken turn. No-op (and no fetch) when bash isn't advertised.
-    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
-      systemPrompt,
-      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
-      bearer: bearerToken,
-      projectId: hostedBody.projectId,
-      ...(executionScope ? { executionScope } : {}),
-    });
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
@@ -729,15 +817,13 @@ chatV2.post("/", async (c) => {
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
     // `resolveElicitationGate` for why chatbox turns must not read the body.
-    const {
-      effectiveClientCapabilities,
-      enabled: elicitationEnabled,
-    } = resolveElicitationGate({
-      hostAuthoritative: isHostAuthoritative,
-      hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
-      bodyClientCapabilities: hostedBody.clientCapabilities,
-      clientVersion: hostedBody.hostedElicitationVersion,
-    });
+    const { effectiveClientCapabilities, enabled: elicitationEnabled } =
+      resolveElicitationGate({
+        hostAuthoritative: isHostAuthoritative,
+        hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
+        bodyClientCapabilities: hostedBody.clientCapabilities,
+        clientVersion: hostedBody.hostedElicitationVersion,
+      });
 
     // ── Tasks (`com.mcpjam/tasks`) ──────────────────────────────────────────
     // Read from the RESOLVED host, never the body. Same authority rule as the
@@ -764,9 +850,13 @@ chatV2.post("/", async (c) => {
     // because the SAME manager (same advertised/gated tool set) drives it.
     const isEmulatedMcpjam =
       Boolean(modelDefinition.id) &&
-      isHostedCatalogModel(String(modelDefinition.id), modelDefinition.provider) &&
+      isHostedCatalogModel(
+        String(modelDefinition.id),
+        modelDefinition.provider
+      ) &&
       !resolvedExecution.harness;
-    const rawMrtrVersion = (rawBody as Record<string, unknown>).hostedMrtrVersion;
+    const rawMrtrVersion = (rawBody as Record<string, unknown>)
+      .hostedMrtrVersion;
     const mrtrEnabled =
       isEmulatedMcpjam &&
       elicitationEnabled &&
@@ -779,7 +869,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Malformed mrtrResume descriptor",
+        "Malformed mrtrResume descriptor"
       );
     }
     if (mrtrResumeRequest && !mrtrEnabled) {
@@ -788,9 +878,41 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         409,
         ErrorCode.VALIDATION_ERROR,
-        "This turn cannot resume an MRTR continuation (version or engine mismatch)",
+        "This turn cannot resume an MRTR continuation (version or engine mismatch)"
       );
     }
+    const rawScopeStepUpResume = (rawBody as Record<string, unknown>)
+      .scopeStepUpResume;
+    const scopeStepUpResumeRequest =
+      parseScopeStepUpResumeRequest(rawScopeStepUpResume);
+    if (rawScopeStepUpResume !== undefined && !scopeStepUpResumeRequest) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Malformed scopeStepUpResume descriptor"
+      );
+    }
+    const rawScopeStepUpCancel = (rawBody as Record<string, unknown>)
+      .scopeStepUpCancel;
+    const scopeStepUpCancelRequest =
+      parseScopeStepUpCancelRequest(rawScopeStepUpCancel);
+    if (rawScopeStepUpCancel !== undefined && !scopeStepUpCancelRequest) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Malformed scopeStepUpCancel descriptor"
+      );
+    }
+    if (scopeStepUpResumeRequest && scopeStepUpCancelRequest) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Only one scope step-up continuation action is allowed"
+      );
+    }
+    const scopeStepUpEnabled =
+      typeof hostedBody.chatSessionId === "string" &&
+      hostedBody.chatSessionId.length > 0;
 
     // Resolve the Convex-valid bearer once for both bridges (NOT the raw
     // Authorization header: WorkOS API-key callers send an `sk_…` key Convex
@@ -802,13 +924,16 @@ chatV2.post("/", async (c) => {
     // recovery index for exactly the ordinary task-only turns it is meant to
     // cover.
     const convexBearer =
-      elicitationEnabled || mrtrEnabled || mrtrResumeRequest || tasksSeam
+      elicitationEnabled ||
+      mrtrEnabled ||
+      mrtrResumeRequest ||
+      scopeStepUpEnabled ||
+      scopeStepUpResumeRequest ||
+      scopeStepUpCancelRequest ||
+      tasksSeam
         ? await getConvexBearerForRequest(c)
         : undefined;
-    const mrtrAuthPrincipal =
-      ((c as any).get("userId") as string | undefined) ??
-      ((c as any).get("guestId") as string | undefined) ??
-      "anonymous";
+    const mrtrAuthPrincipal = resolveMrtrAuthPrincipal(c);
 
     const elicitationBridge = elicitationEnabled
       ? new HostedElicitationBridge({
@@ -831,7 +956,8 @@ chatV2.post("/", async (c) => {
               ? { chatSessionId: hostedBody.chatSessionId }
               : {}),
             serverNamesById:
-              buildServerNamesById(selectedServerIds, selectedServerNames) ?? {},
+              buildServerNamesById(selectedServerIds, selectedServerNames) ??
+              {},
             authPrincipal: mrtrAuthPrincipal,
           })
         : undefined;
@@ -844,7 +970,7 @@ chatV2.post("/", async (c) => {
     const taskCreatedBridge =
       tasksSeam &&
       isCompatibleHostedTasksVersion(
-        (rawBody as Record<string, unknown>).hostedTasksVersion,
+        (rawBody as Record<string, unknown>).hostedTasksVersion
       )
         ? new HostedTaskCreatedBridge({
             serverNamesById:
@@ -903,8 +1029,9 @@ chatV2.post("/", async (c) => {
         chatboxId,
         accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
+        httpLogger: rpcCollector.httpLogger,
         serverNames: effectiveServerNames,
-        initializePins,
+        initializePins: effectiveInitializePins,
         mcpProtocolVersionsByServerId,
         xaaPolicy,
         // Required for any XAA server in the batch (policy-forced or
@@ -921,9 +1048,16 @@ chatV2.post("/", async (c) => {
         // connect microtask) so `buildCapabilities` advertises `elicitation`
         // for MRTR-capable servers — same race discipline as elicitation.
         ...(mrtrBridge
-          ? { mrtrInputCollectorForServer: mrtrBridge.mrtrInputCollectorForServer }
+          ? {
+              mrtrInputCollectorForServer:
+                mrtrBridge.mrtrInputCollectorForServer,
+            }
           : {}),
-      },
+        // Same scope the bash tool reserves under, so a plugin's stdio
+        // component colocates into THIS turn's machine rather than waking the
+        // member's personal one alongside it.
+        ...(executionScope ? { executionScope } : {}),
+      }
     );
     oauthServerUrls = urls;
     // Inject the live manager so the collector's fingerprint/era thunks can
@@ -945,12 +1079,12 @@ chatV2.post("/", async (c) => {
                 serverId: mrtrResumeRequest.serverId,
                 ...(buildServerNamesById(
                   selectedServerIds,
-                  selectedServerNames,
+                  selectedServerNames
                 )?.[mrtrResumeRequest.serverId]
                   ? {
                       serverName: buildServerNamesById(
                         selectedServerIds,
-                        selectedServerNames,
+                        selectedServerNames
                       )![mrtrResumeRequest.serverId],
                     }
                   : {}),
@@ -991,7 +1125,7 @@ chatV2.post("/", async (c) => {
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext,
+        body.widgetModelContext
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -999,6 +1133,231 @@ chatV2.post("/", async (c) => {
       }
       throw error;
     }
+
+    // ── Phase 4: the chatbox's own EPHEMERAL sandbox ────────────────────────
+    // An env-backed chatbox whose backend says `computerSandbox: 'ephemeral'`
+    // runs bash on a per-CONVERSATION disposable box booted from the
+    // ENVIRONMENT's pinned image — not on the acting member's persistent
+    // personal computer, which every conversation that member opened used to
+    // share (with their project files already in it).
+    //
+    // Get-or-create, so the first bash-advertising turn boots it and every
+    // later turn of the same conversation gets the SAME box back. There is
+    // deliberately NO release here: the box belongs to the conversation, not
+    // the turn, and the backend's idle reaper (20 min since last use, 4h
+    // ceiling) owns its teardown. Releasing per turn would break every
+    // multi-step `cd`/write/run workflow a shell exists for.
+    //
+    // ABSENT marker ⇒ old backend (or an environment with no image pinned) ⇒
+    // today's personal-computer behaviour, untouched.
+    // Only a CHATBOX runtime config ever carries the marker (`computerSandbox`
+    // is projected by `buildEnvironmentChatboxRuntimeConfig` alone), so a
+    // host-bound Playground turn never reads it.
+    //
+    // HARNESS TURNS ARE EXCLUDED, and not merely because harness-on-chatbox is
+    // Phase 6. `run-harness-turn.ts` resolves its OWN machine through
+    // `resolveHarnessSandbox` — the acting member's personal computer — and
+    // `prepare.builtInTools` is forwarded to it verbatim alongside the MCP
+    // plane. Provisioning here would therefore produce a MIXED-MACHINE turn:
+    // the model's `bash` on the ephemeral box, the harness's own Shell and file
+    // edits on the personal one, with no relationship between the two
+    // filesystems. It would also suppress the image context that IS correct for
+    // the harness's machine. Leaving harness turns entirely alone is the only
+    // coherent state until Phase 6 moves the harness onto the same box.
+    //
+    // ORDERING: this block sits AFTER the manager authorization and the body
+    // validations on purpose. Provisioning is the step that spends money, so a
+    // turn that is going to be rejected (malformed `appTools`, an MCP auth
+    // failure) must be rejected BEFORE it can acquire a paid box. Nothing
+    // between here and the `streamWebChatTurn` call reads `builtInTools` or
+    // `effectiveSystemPrompt`, which is what makes the late placement free.
+    const computerSandboxMode =
+      isChatboxSession && chatboxId && !resolvedExecution.harness
+        ? readComputerSandboxMode(hostRuntimeConfig)
+        : null;
+    let sandboxBinding: TrustedSandboxBinding | undefined;
+    let sandboxNotices: SandboxNoticeReason[] | undefined;
+    // Set only when the backend PEEKED (returned notices still pending). The
+    // stream layer calls this right after writing the SSE parts; until it does,
+    // the notices stay pending server-side and are re-delivered next turn.
+    let ackSandboxNotices:
+      | ((delivered: SandboxNoticeReason[]) => void)
+      | undefined;
+    // Drop the personal-computer resource for every suppressing plan, so
+    // `bash` is not advertised at all rather than falling back to the member's
+    // own box — which is precisely the behaviour this feature replaces:
+    //   - `ephemeral` + no box   → we asked and failed; no fallback.
+    //   - `not_a_data_plane`     → we never ask: `provisionChatboxSandbox` is
+    //     bearer-authed and would SUCCEED from a server that cannot exec in
+    //     the box (`sandbox-bash` has no remote delegation), stranding a
+    //     billable sandbox whose every command fails. The tester gets a
+    //     notice instead of an opaque broken shell.
+    //   - `unavailable`          → the backend has already dropped `computer`,
+    //     but that is its promise, not ours to depend on. Enforcing the marker
+    //     locally means a payload that ever carried both (a backend regression,
+    //     a proxy that merges configs) still cannot expose the member's
+    //     personal shell to a share-link-reachable chatbox turn.
+    const sandboxPlan = planChatboxSandbox({
+      mode: computerSandboxMode,
+      bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
+        BASH_TOOL_NAME
+      ),
+      ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
+      hasChatSessionId: Boolean(body.chatSessionId),
+    });
+    let suppressComputerResource = sandboxPlan.action === "suppress";
+    if (sandboxPlan.suppressReason === "no_chat_session_id") {
+      // The conversation id IS the isolation boundary (`scopeKey =
+      // chatbox:<chatSessionId>`). Without one there is nothing to key a box
+      // to, and binding anyway would put every session that omits it on one
+      // shared box. No shell beats the wrong shell.
+      logger.warn(
+        "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
+        { chatboxId }
+      );
+    } else if (sandboxPlan.suppressReason === "not_a_data_plane") {
+      logger.warn(
+        "[chat-v2] ephemeral chatbox sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",
+        { chatboxId }
+      );
+      if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
+    }
+    if (sandboxPlan.action === "provision" && chatboxId && body.chatSessionId) {
+      const provisioned = await provisionChatboxSandbox({
+        bearer: bearerToken,
+        chatboxId,
+        chatSessionId: body.chatSessionId,
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (provisioned.ok) {
+        sandboxBinding = {
+          sandboxId: provisioned.value.sandboxId,
+          ...(provisioned.value.workdir
+            ? { workdir: provisioned.value.workdir }
+            : {}),
+          // Tell the model the truth about the box's lifetime. The default
+          // (`run`) copy says it is destroyed after this session — a chatbox
+          // box is not, and a model that believes otherwise won't build work
+          // up across turns, which is the whole point of a persistent shell.
+          lifetime: "conversation",
+        };
+        const notices = (provisioned.value.notices ?? []).filter(
+          isSandboxNoticeReason
+        );
+        if (notices.length > 0) sandboxNotices = notices;
+        // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
+        // over WITHOUT consuming it and waits for us to confirm it reached
+        // the wire, because the SSE writer does not exist yet — provisioning
+        // happens here, streaming starts several steps later. Anything that
+        // throws in between used to destroy the notice, and did so exactly
+        // when a reset was most likely to have happened (flaky setup and "the
+        // box was idle long enough to be reaped" share a cause).
+        //
+        // Unacked ⇒ re-delivered next turn. That makes duplicate display the
+        // worst case instead of silent loss, which is the right way round for
+        // "earlier files are gone": a repeated toast is noise, a missing one
+        // makes the model confabulate about a filesystem it can't see.
+        //
+        // `noticeAckPending: false` means the backend already consumed them
+        // (a deploy that predates #829) — leave `ackSandboxNotices` unset and
+        // behave exactly as before.
+        const sandboxRowId = provisioned.value.sandboxRowId;
+        if (provisioned.value.noticeAckPending && notices.length > 0) {
+          ackSandboxNotices = (delivered) => {
+            // Only BACKEND-mintable notices enter the ack protocol —
+            // inspector-minted reasons (`sandbox_unavailable`) have no
+            // backend row to ack against.
+            const ackable = delivered.filter(isChatboxSandboxNotice);
+            if (ackable.length === 0) return;
+            void ackChatboxSandboxNotices({
+              bearer: bearerToken,
+              sandboxRowId,
+              notices: ackable,
+            });
+          };
+        }
+      } else {
+        // Degrade to a turn with no shell rather than failing the turn: the
+        // conversation is still useful, and 503 (at capacity / a sibling call
+        // still booting) resolves on its own by the next turn.
+        logger.warn(
+          "[chat-v2] chatbox sandbox provision failed; running without bash",
+          {
+            chatboxId,
+            status: provisioned.status,
+            error: provisioned.error,
+          }
+        );
+        suppressComputerResource = true;
+      }
+    }
+
+    const builtInTools = resolveHostTools(
+      {
+        builtInToolIds: resolvedExecution.builtInToolIds,
+        // Computer comes exclusively from the server-resolved runtime config —
+        // chatbox OR host-by-id — never the request body.
+        computer:
+          hostRuntimeConfig && !suppressComputerResource
+            ? (hostRuntimeConfig as { computer?: unknown }).computer
+            : undefined,
+      },
+      {
+        authHeader: bearerToken,
+        projectId: hostedBody.projectId,
+        ...(executionScope ? { executionScope } : {}),
+        ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        isGuest: Boolean(c.get("guestId")),
+        isChatboxSession,
+        requireToolApproval,
+        // Out-of-band and in-process ONLY. Never on `config.computer`:
+        // `narrowHostComputer` runs at the top of `resolveHostTools` and
+        // rejects anything that isn't `personal`, so a union on the config
+        // would be either rejected or — worse — wire-forgeable.
+        ...(sandboxBinding ? { sandboxBinding } : {}),
+        mcpjamPlatformClient: buildMcpjamPlatformClient(c),
+      }
+    );
+
+    // Blueprint knowledge/maintenance: when this turn advertises bash, append
+    // the pinned image's model-facing context to the system prompt. Tri-state
+    // fetch inside — a Convex blip degrades to "no extra context", never a
+    // broken turn. No-op (and no fetch) when bash isn't advertised.
+    //
+    // SUPPRESSED entirely on an ephemeral binding. That context is derived from
+    // the ACTING MEMBER'S computer row — a different machine, booted from a
+    // different image, than the box this turn's bash actually runs in. A prompt
+    // that confidently describes the wrong filesystem ("your bash runs on
+    // <image>; run `make setup` if deps look stale") is worse than no prompt:
+    // it invents packages, paths and maintenance commands the box does not have.
+    const withEnvironmentContext = await maybeAppendEnvironmentContext({
+      systemPrompt,
+      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]) && !sandboxBinding,
+      bearer: bearerToken,
+      projectId: hostedBody.projectId,
+      ...(executionScope ? { executionScope } : {}),
+    });
+
+    // The sandbox notices must reach the MODEL, not only the user's toast.
+    //
+    // The SSE part warns the human; the model meanwhile still receives the old
+    // transcript, in which it says it wrote `report.py` and installed three
+    // packages. Without this block it keeps reasoning from that transcript
+    // against a filesystem that no longer contains any of it — which is exactly
+    // the confabulation the notice exists to prevent, just moved from the user
+    // to the model. Warning only the human is half a fix.
+    //
+    // TURN-INJECTED, never persisted: `persist.systemPrompt` keeps the raw host
+    // prompt, so a resumed turn does not replay a stale "your sandbox was
+    // reset" long after the fact. Same rule as the blueprint image block above.
+    // Notices exist in exactly two states: derived from a provisioned box
+    // (binding present) or minted by the preflight that refused to provision
+    // (binding absent, `sandbox_unavailable`). Both carry model-facing copy in
+    // the exhaustive SANDBOX_NOTICE_MODEL_CONTEXT record, so no binding gate.
+    const effectiveSystemPrompt = appendSandboxNoticeContext(
+      withEnvironmentContext,
+      sandboxNotices
+    );
 
     try {
       const sourceType = isChatboxSession ? "chatbox" : "direct";
@@ -1136,9 +1495,7 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
-          ...(effectiveCapabilities
-            ? { effectiveCapabilities }
-            : {}),
+          ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         },
         persist: {
           chatSessionId: body.chatSessionId,
@@ -1167,6 +1524,7 @@ chatV2.post("/", async (c) => {
           // versions that fork an incompatible resumed sandbox.
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
+          ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
           // prepare resolved temperature into `buildDirectHostConfig`.
@@ -1218,9 +1576,29 @@ chatV2.post("/", async (c) => {
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           elicitationBridge,
+          // One-time sandbox notices PEEKED from the control plane above (the
+          // stream writer doesn't exist yet at provision time). Flushed once
+          // the writer is ready, and acked only for the chunks that actually
+          // made it out — an unacked notice is re-delivered, never lost.
+          ...(sandboxNotices ? { sandboxNotices } : {}),
+          ...(ackSandboxNotices ? { ackSandboxNotices } : {}),
           ...(mrtrBridge ? { mrtrBridge } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
+          ...(scopeStepUpEnabled && convexBearer
+            ? {
+                scopeStepUp: {
+                  bearer: convexBearer,
+                  authPrincipal: mrtrAuthPrincipal,
+                  ...(scopeStepUpResumeRequest
+                    ? { resumeRequest: scopeStepUpResumeRequest }
+                    : {}),
+                  ...(scopeStepUpCancelRequest
+                    ? { cancelRequest: scopeStepUpCancelRequest }
+                    : {}),
+                },
+              }
+            : {}),
           c,
         },
       });
@@ -1246,17 +1624,20 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
-    const routeError = mapRuntimeError(error);
-    return webError(
+    // `webErrorFromRoute`, not `webError` — this call dropped
+    // `routeError.normalized`, so the envelope carried no `origin` and no
+    // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,
+    // the one the client actually selects, and the client's reporter has
+    // nothing but the status by the time it runs: without the verdict it
+    // guesses `mcpjam` from the 500 and pages us for the user's own MCP
+    // server.
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+      mapRuntimeError(error),
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 });

@@ -21,8 +21,14 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("prompts")).toBe(true);
   });
 
-  it("keeps ci-evals visible in hosted sidebar allow-list", () => {
-    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("ci-evals");
+  it("keeps evals visible in hosted sidebar allow-list, including Runs", () => {
+    // Runs is a mode under `/evals` now, not its own tab. The legacy
+    // `ci-evals` id stays an alias so old hash bookmarks resolve rather than
+    // falling through to Servers.
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("evals");
+    expect(isHostedSidebarTabAllowed("evals")).toBe(true);
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).not.toContain("ci-evals");
+    expect(normalizeHostedHashTab("ci-evals")).toBe("evals");
     expect(isHostedSidebarTabAllowed("ci-evals")).toBe(true);
   });
 
@@ -48,11 +54,16 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabBlocked("tasks")).toBe(false);
   });
 
-  it("blocks tracing and auth hashes in hosted mode", () => {
+  it("blocks the tracing hash in hosted mode", () => {
     expect(HOSTED_HASH_BLOCKED_TABS).toContain("tracing");
-    expect(HOSTED_HASH_BLOCKED_TABS).toContain("auth");
     expect(isHostedHashTabBlocked("tracing")).toBe(true);
-    expect(isHostedHashTabBlocked("auth")).toBe(true);
+  });
+
+  // The Auth surface is retired. Without this, reintroducing it would make the
+  // policy silently permissive rather than failing here.
+  it("no longer knows about the retired auth surface", () => {
+    expect(HOSTED_HASH_BLOCKED_TABS).not.toContain("auth");
+    expect(isHostedHashTabBlocked("auth")).toBe(false);
   });
 
   it("treats #chat as allowed after normalization to #playground", () => {
@@ -89,6 +100,14 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabBlocked("xaa-flow")).toBe(false);
   });
 
+  it("allows environments in hosted navigation (visibility stays flag-gated)", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("environments");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("environments");
+    expect(isHostedSidebarTabAllowed("environments")).toBe(true);
+    expect(isHostedHashTabAllowed("environments")).toBe(true);
+    expect(isHostedHashTabBlocked("environments")).toBe(false);
+  });
+
   it("allows learning in hosted navigation", () => {
     expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("learning");
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("learning");
@@ -103,7 +122,7 @@ describe("hosted-tab-policy", () => {
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("computer");
     expect(isHostedHashTabAllowed("computer")).toBe(true);
     expect(isHostedHashTabBlocked("computer")).toBe(false);
-    // Computer is reached via the Connect tab switcher, not its own sidebar
+    // Computer is reached via the Servers tab switcher, not its own sidebar
     // entry, so it deliberately stays out of the sidebar allow-list.
     expect(HOSTED_SIDEBAR_ALLOWED_TABS).not.toContain("computer");
     expect(isHostedSidebarTabAllowed("computer")).toBe(false);

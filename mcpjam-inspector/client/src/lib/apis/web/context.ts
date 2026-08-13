@@ -26,6 +26,29 @@ export interface ApiContext {
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   /**
+   * SEP-2243 `Mcp-Param-*` mirroring, resolved from the active host's
+   * `mcpProfile.toolParamHeaderMirroring`. Only ever `false` (= the host asked
+   * to simulate a client that does not mirror); `"mirror"` is the SDK's
+   * no-field default.
+   *
+   * Host-level and therefore batch-uniform — unlike the protocol pin, there is
+   * no per-server map. It rides EVERY hosted request body, not just
+   * connect/validate: chat, eval, prompt and journey runs each build their own
+   * ephemeral manager, so a knob that reached only the connect path would let
+   * those runs quietly send the headers the host asked to suppress.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
+   * Sibling client-conformance knobs from the active host's
+   * `mcpProfile.paginationTraversal` / `mcpProfile.mrtrSupport`. Same
+   * carry-everywhere hazard as the mirroring knob above: every ephemeral
+   * manager (chat, eval, prompt, journey) must see them, or those runs
+   * quietly execute as a fully conforming client. Only the non-default value
+   * is ever set.
+   */
+  firstPageOnly?: true;
+  supportsMrtr?: false;
+  /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
    * whenever a backend host config exists (chatbox/host-bound turns read
@@ -62,6 +85,28 @@ let apiContextRevision = 0;
 const apiContextListeners = new Set<() => void>();
 
 const TOKEN_CACHE_TTL_MS = 30_000;
+
+/**
+ * How long a request may wait for a WorkOS access token that has not resolved
+ * yet, and how often to re-ask for it.
+ *
+ * AuthKit answers `null` (or throws `LoginRequiredError`) while it is
+ * bootstrapping or refreshing a session, and every `/api/web/*` route is gated
+ * by `bearerAuthMiddleware`, so dispatching inside that window is a request
+ * that cannot succeed. The budget is short enough that a genuinely expired
+ * session still fails fast — the 401 it produces is classified as
+ * `auth/missing_bearer` and reads as a sign-in problem — and long enough to
+ * cover an ordinary token refresh.
+ */
+const SESSION_BEARER_WAIT_MS = 3_000;
+const SESSION_BEARER_POLL_MS = 100;
+
+/**
+ * The single in-flight wait, shared by every caller that lands in the same
+ * window. Three requests racing one bootstrap should poll once, not three
+ * times.
+ */
+let pendingSessionBearer: Promise<string | null> | null = null;
 
 export function resetTokenCache() {
   cachedBearerToken = null;
@@ -383,6 +428,36 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
   return getHostedChatboxId() ? "chat_v2" : undefined;
 }
 
+/**
+ * The client-conformance knobs, reduced to the wire fields the hosted routes
+ * accept. ONE emitter for all four body builders: these fields are only ever
+ * carried, never derived, and the failure mode of forgetting one is silent —
+ * a host configured as a non-conforming client would execute as a conforming
+ * one on whichever flow got missed. Declaring them on `ApiContext` is not
+ * enough; they only reach the wire if they are spread into the body.
+ *
+ * Only the NON-default value is emitted, matching how the SDK reads them: an
+ * absent field means the full behavior, so sending the default would put a
+ * field on every request that never carried one.
+ */
+function conformanceWireFields(apiContext: ApiContext): {
+  mirrorToolParamHeaders?: false;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
+} {
+  return {
+    ...(apiContext.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false as const }
+      : {}),
+    ...(apiContext.firstPageOnly === true
+      ? { firstPageOnly: true as const }
+      : {}),
+    ...(apiContext.supportsMrtr === false
+      ? { supportsMrtr: false as const }
+      : {}),
+  };
+}
+
 export function buildServerRequest(
   serverNameOrId: string
 ): Record<string, unknown> {
@@ -427,6 +502,8 @@ export function buildServerRequest(
     // same host policy as batch connects — omitting it here would let these
     // ephemeral connections bypass enterprise-managed auth. Ignored
     // server-side for chatbox-scoped calls (server-authoritative fetch wins).
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
@@ -442,6 +519,9 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -472,6 +552,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
@@ -514,6 +596,9 @@ export function buildResolvedServerBatchRequest(input: {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -536,6 +621,8 @@ export function buildResolvedServerBatchRequest(input: {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
     ...(input.accessScope ? { accessScope: input.accessScope } : {}),
@@ -554,6 +641,9 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -585,6 +675,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
@@ -602,6 +694,36 @@ export function buildHostedOAuthTokensMap(
     if (token) map[id] = token;
   }
   return Object.keys(map).length > 0 ? map : undefined;
+}
+
+function awaitSessionBearerToken(): Promise<string | null> {
+  pendingSessionBearer ??= pollForSessionBearerToken().finally(() => {
+    pendingSessionBearer = null;
+  });
+  return pendingSessionBearer;
+}
+
+async function pollForSessionBearerToken(): Promise<string | null> {
+  const deadline = Date.now() + SESSION_BEARER_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, SESSION_BEARER_POLL_MS));
+
+    // The actor can resolve to a guest while we wait — AuthKit deciding there
+    // was no session after all, or a sign-out. Hand back to the guest path
+    // instead of waiting out a token that is never coming.
+    if (hasHostedGuestAccess()) return null;
+
+    const getAccessToken = apiContext.getAccessToken;
+    if (!getAccessToken) continue;
+    try {
+      const token = await getAccessToken();
+      if (token) return token;
+    } catch {
+      // Still resolving (LoginRequiredError) — keep asking until the deadline.
+    }
+  }
+
+  return null;
 }
 
 export async function getApiAuthorizationHeader(): Promise<string | null> {
@@ -642,6 +764,21 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   }
 
   if (!hasHostedGuestAccess()) {
+    // A WorkOS session exists, but its access token was not available above.
+    // That is usually timing, not absence: AuthKit is mid-bootstrap or
+    // mid-refresh. Returning null here let the request go out with NO
+    // `Authorization` header, and the hosted routes answer that with their own
+    // 401 ("Bearer token required") — which nothing retries, because
+    // `shouldRetryApiAuth401` deliberately refuses to swap a resolving session
+    // for a guest bearer. Wait for the token rather than firing and failing.
+    const sessionToken = await awaitSessionBearerToken();
+    if (sessionToken) {
+      cachedBearerToken = {
+        token: sessionToken,
+        expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+      };
+      return `Bearer ${sessionToken}`;
+    }
     return null;
   }
 

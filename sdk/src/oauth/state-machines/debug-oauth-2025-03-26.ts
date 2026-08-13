@@ -20,6 +20,7 @@ import type {
   HttpHistoryEntry,
 } from "./types.js";
 import type { DiagramAction } from "./shared/types.js";
+import { buildOAuthSequenceDiagramActions } from "./shared/sequence-diagram.js";
 import {
   addInfoLog,
   markLatestHttpEntryAsError,
@@ -34,11 +35,11 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
+import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./shared/required-metadata.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
 } from "./shared/initialize.js";
-import { resolveRequestedScopeValue } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
   normalizeRegisteredClientAuthMethod,
@@ -48,6 +49,13 @@ import {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
 } from "./shared/dynamic-client-registration.js";
+import {
+  applyEmulationToDcrMetadata,
+  resolveEmulatedMcpVersion,
+  resolveEmulatedScopeValue,
+  resolveEmulatedTokenAuthMethod,
+  shouldSendResourceIndicator,
+} from "./shared/emulation.js";
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
@@ -68,246 +76,25 @@ export function buildActions_2025_03_26(
   flowState: OAuthFlowState,
   registrationStrategy: "dcr" | "preregistered",
 ): DiagramAction[] {
-  return [
-    // 2025-03-26: NO Protected Resource Metadata (RFC9728) support
-    // Flow starts directly with Authorization Server Metadata discovery
-    {
-      id: "request_authorization_server_metadata",
+  return buildOAuthSequenceDiagramActions(flowState, registrationStrategy, {
+    protocolVersion: "2025-03-26",
+    // No RFC 9728 protected-resource metadata in this era: discovery starts at
+    // the MCP server's own origin.
+    includesProtectedResourceMetadata: false,
+    initialMcpMethod: "initialize",
+    authorizationServerMetadata: {
       label: "GET /.well-known/oauth-authorization-server from MCP base URL",
       description:
         "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
-      from: "client",
-      to: "authServer",
-      details: flowState.authorizationServerUrl
-        ? [
-            { label: "URL", value: flowState.authorizationServerUrl },
-            { label: "Protocol", value: "2025-03-26" },
-          ]
-        : undefined,
     },
-    {
-      id: "received_authorization_server_metadata",
-      label: "Authorization server metadata response",
-      description: "Authorization Server returns metadata",
-      from: "authServer",
-      to: "client",
-      details: flowState.authorizationServerMetadata
-        ? [
-            {
-              label: "Token",
-              value: new URL(
-                flowState.authorizationServerMetadata.token_endpoint,
-              ).pathname,
-            },
-            {
-              label: "Auth",
-              value: new URL(
-                flowState.authorizationServerMetadata.authorization_endpoint,
-              ).pathname,
-            },
-          ]
-        : undefined,
-    },
-    // Client registration steps (no CIMD support in 2025-03-26)
-    ...(registrationStrategy === "dcr"
-      ? [
-          {
-            id: "request_client_registration",
-            label: "POST /register (2025-03-26)",
-            description:
-              "Client registers dynamically with Authorization Server",
-            from: "client",
-            to: "authServer",
-            details: [
-              {
-                label: "Note",
-                value: "Dynamic client registration (DCR)",
-              },
-            ],
-          },
-          {
-            id: "received_client_credentials",
-            label: "Client Credentials",
-            description:
-              "Authorization Server returns client ID and credentials",
-            from: "authServer",
-            to: "client",
-            details: flowState.clientId
-              ? [
-                  {
-                    label: "client_id",
-                    value: flowState.clientId.substring(0, 20) + "...",
-                  },
-                ]
-              : undefined,
-          },
-        ]
-      : [
-          {
-            id: "received_client_credentials",
-            label: "Use Pre-registered Client (2025-03-26)",
-            description: "Client uses pre-configured credentials (skipped DCR)",
-            from: "client",
-            to: "client",
-            details: flowState.clientId
-              ? [
-                  {
-                    label: "client_id",
-                    value: flowState.clientId.substring(0, 20) + "...",
-                  },
-                  {
-                    label: "Note",
-                    value: "Pre-registered (no DCR needed)",
-                  },
-                ]
-              : [
-                  {
-                    label: "Note",
-                    value: "Pre-registered client credentials",
-                  },
-                ],
-          },
-        ]),
-    {
-      id: "generate_pkce_parameters",
+    pkce: {
       label: "Generate PKCE parameters",
       description:
         "Client generates code verifier and challenge (recommended), includes resource parameter",
-      from: "client",
-      to: "client",
-      details: flowState.codeChallenge
-        ? [
-            {
-              label: "code_challenge",
-              value: flowState.codeChallenge.substring(0, 15) + "...",
-            },
-            {
-              label: "method",
-              value: flowState.codeChallengeMethod || "S256",
-            },
-            { label: "resource", value: flowState.serverUrl || "—" },
-            { label: "Protocol", value: "2025-03-26" },
-          ]
-        : undefined,
     },
-    {
-      id: "authorization_request",
-      label: "Open browser with authorization URL",
-      description:
-        "Client opens browser with authorization URL + code_challenge + resource",
-      from: "client",
-      to: "browser",
-      details: flowState.authorizationUrl
-        ? [
-            {
-              label: "code_challenge",
-              value:
-                flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
-            },
-            { label: "resource", value: flowState.serverUrl || "" },
-          ]
-        : undefined,
-    },
-    {
-      id: "browser_to_auth_server",
-      label: "Authorization request with resource parameter",
-      description: "Browser navigates to authorization endpoint",
-      from: "browser",
-      to: "authServer",
-      details: flowState.authorizationUrl
-        ? [{ label: "Note", value: "User authorizes in browser" }]
-        : undefined,
-    },
-    {
-      id: "auth_redirect_to_browser",
-      label: "Redirect to callback with authorization code",
-      description:
-        "Authorization Server redirects browser back to callback URL",
-      from: "authServer",
-      to: "browser",
-      details: flowState.authorizationCode
-        ? [
-            {
-              label: "code",
-              value: flowState.authorizationCode.substring(0, 20) + "...",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "received_authorization_code",
-      label: "Authorization code callback",
-      description: "Browser redirects back to client with authorization code",
-      from: "browser",
-      to: "client",
-      details: flowState.authorizationCode
-        ? [
-            {
-              label: "code",
-              value: flowState.authorizationCode.substring(0, 20) + "...",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "token_request",
-      label: "Token request + code_verifier + resource",
-      description: "Client exchanges authorization code for access token",
-      from: "client",
-      to: "authServer",
-      details: flowState.codeVerifier
-        ? [
-            { label: "grant_type", value: "authorization_code" },
-            { label: "resource", value: flowState.serverUrl || "" },
-          ]
-        : undefined,
-    },
-    {
-      id: "received_access_token",
-      label: "Access token (+ refresh token)",
-      description: "Authorization Server returns access token",
-      from: "authServer",
-      to: "client",
-      details: flowState.accessToken
-        ? [
-            { label: "token_type", value: flowState.tokenType || "Bearer" },
-            {
-              label: "expires_in",
-              value: flowState.expiresIn?.toString() || "3600",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "authenticated_mcp_request",
-      label: "MCP request with access token",
-      description: "Client makes authenticated request to MCP server",
-      from: "client",
-      to: "mcpServer",
-      details: flowState.accessToken
-        ? [
-            { label: "POST", value: "tools/list" },
-            {
-              label: "Authorization",
-              value: "Bearer " + flowState.accessToken.substring(0, 15) + "...",
-            },
-          ]
-        : undefined,
-    },
-    {
-      id: "complete",
-      label: "MCP response",
-      description: "MCP Server returns successful response",
-      from: "mcpServer",
-      to: "client",
-      details: flowState.accessToken
-        ? [
-            { label: "Status", value: "200 OK" },
-            { label: "Content", value: "tools, resources, prompts" },
-          ]
-        : undefined,
-    },
-  ];
+    // No PRM to advertise a resource, so the configured server URL is it.
+    resourceValue: (state) => state.serverUrl,
+  });
 }
 
 // Helper: Build authorization base URL from MCP server URL (2025-03-26 specific)
@@ -369,11 +156,30 @@ export const createDebugOAuthStateMachine = (
     hasClientSecret = false,
     strictConformance = false,
     registrationStrategy = "dcr", // Default to DCR for 2025-03-26
+    emulation,
   } = config;
 
   const redirectUri = redirectUrl;
-  const initializeProtocolVersion = resolveInitializeProtocolVersion("2025-03-26");
-  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
+  // The MCP-leg protocol version is split today: the `MCP-Protocol-Version`
+  // HEADER on the unauthenticated probe carries this machine's literal
+  // ("2025-03-26") while the `initialize` BODY version comes from
+  // resolveInitializeProtocolVersion ("2024-11-05"). An emulated pinned
+  // client pins BOTH to the same value; without emulation each keeps today's
+  // value exactly. (The AS-metadata DISCOVERY header below is not an MCP-leg
+  // site and keeps its literal.)
+  const mcpProtocolVersionHeader = resolveEmulatedMcpVersion(
+    emulation,
+    "2025-03-26",
+  );
+  const initializeProtocolVersion = resolveEmulatedMcpVersion(
+    emulation,
+    resolveInitializeProtocolVersion("2025-03-26"),
+  );
+  const sendResource = shouldSendResourceIndicator(emulation);
+  const dynamicRegistrationDefaults = applyEmulationToDcrMetadata(
+    dynamicRegistration ?? {},
+    emulation,
+  );
 
   if (
     registrationStrategy === "dcr" &&
@@ -489,7 +295,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
-                  "MCP-Protocol-Version": "2025-03-26",
+                  "MCP-Protocol-Version": mcpProtocolVersionHeader,
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -687,7 +493,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field",
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
@@ -801,7 +607,7 @@ export const createDebugOAuthStateMachine = (
             ) {
               const scopesSupported =
                 state.authorizationServerMetadata.scopes_supported;
-              const requestedScopeValue = resolveRequestedScopeValue({
+              const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
                 customScopes,
                 supportedScopes: scopesSupported,
               });
@@ -983,7 +789,12 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                ...(sendResource
+                  ? { resource: state.serverUrl || "Unknown" }
+                  : {
+                      resource:
+                        "(omitted — emulated client does not send RFC 8707 resource)",
+                    }),
                 note: "PKCE is REQUIRED for all clients in 2025-03-26 spec",
               },
             );
@@ -993,6 +804,7 @@ export const createDebugOAuthStateMachine = (
               codeVerifier,
               codeChallenge,
               codeChallengeMethod: "S256",
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               state: generateRandomString(16),
               infoLogs: pkceInfoLogs,
               isInitiatingAuth: false,
@@ -1020,11 +832,11 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
+            if (state.serverUrl && sendResource) {
               authUrl.searchParams.set("resource", state.serverUrl);
             }
 
-            const requestedScopeValue = resolveRequestedScopeValue({
+            const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
               customScopes,
               supportedScopes:
                 state.authorizationServerMetadata.scopes_supported,
@@ -1085,7 +897,10 @@ export const createDebugOAuthStateMachine = (
             const previewClientAuth = buildTokenRequestClientAuth({
               clientId: state.clientId,
               clientSecret: state.clientSecret,
-              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                emulation,
+                state.tokenEndpointAuthMethod,
+              ),
             });
 
             const tokenRequestBodyObj: Record<string, string> = {
@@ -1099,7 +914,7 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
+            if (state.serverUrl && sendResource) {
               tokenRequestBodyObj.resource = state.serverUrl;
             }
 
@@ -1117,6 +932,7 @@ export const createDebugOAuthStateMachine = (
               currentStep: "token_request",
               lastRequest: tokenRequest,
               lastResponse: undefined,
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               accessToken: undefined,
               refreshToken: undefined,
               httpHistory: [
@@ -1154,7 +970,10 @@ export const createDebugOAuthStateMachine = (
               const clientAuth = buildTokenRequestClientAuth({
                 clientId: state.clientId,
                 clientSecret: state.clientSecret,
-                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+                tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                  emulation,
+                  state.tokenEndpointAuthMethod,
+                ),
               });
 
               const tokenRequestBody = new URLSearchParams({
@@ -1165,7 +984,7 @@ export const createDebugOAuthStateMachine = (
                 ...clientAuth.bodyParams,
               });
 
-              if (state.serverUrl) {
+              if (state.serverUrl && sendResource) {
                 tokenRequestBody.set("resource", state.serverUrl);
               }
 

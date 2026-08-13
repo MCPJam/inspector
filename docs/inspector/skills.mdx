@@ -5,11 +5,15 @@ icon: "square-slash"
 tag: "NEW"
 ---
 
+<Note>
+Cloud (hosted) skills are available on accounts where the feature has been enabled — they are part of a project's environments, alongside MCP servers and Computers. Local skills, read from your filesystem, need no account feature and always work.
+</Note>
+
 [Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam lets you discover skills from your filesystem (local) or your project (hosted), upload new ones, and use them in the Playground — either automatically based on the user's prompt or deterministically with the `/` command.
 
 ## Getting Started
 
-1. **Navigate to the Skills tab** in MCPJam Inspector to discover and manage skills
+1. **Open the Connect view** in MCPJam Inspector and select the **Skills** tab (Servers | Client | Computer | **Skills**)
 2. **Load skills** — MCPJam automatically discovers skills from [supported directories](#skill-directories). You can also upload skills directly through the Skills tab, or run `npx skills` to install them
 3. **Use skills in the Playground** — the LLM discovers them automatically, or you can inject them with the `/` command
 
@@ -45,7 +49,7 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
 
 ## Uploading Skills
 
-You can upload skill folders directly from the Skills tab. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
+You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
 
 - **Local:** Uploaded skills are stored in `~/.mcpjam/skills/`.
 - **Hosted (cloud):** Cloud skills are **SKILL.md-only**. Folders that contain files other than `SKILL.md` are rejected — inline any content that `SKILL.md` references directly into the file before uploading.

@@ -18,7 +18,7 @@ import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useProjectMembers } from "@/hooks/useProjects";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import {
   buildProjectOwnerProfileByUserId,
   resolveProjectThreadOwnerAvatar,
@@ -442,13 +442,7 @@ export function ChatHistoryRail({
         }}
         onImported={({ suiteId, testCaseId }) => {
           setSessionToConvert(null);
-          navigateApp(
-            buildEvalsPath({
-              type: "test-edit",
-              suiteId,
-              testId: testCaseId,
-            }),
-          );
+          navigateToPromotedTestCase({ suiteId, testCaseId });
         }}
       />
     </>

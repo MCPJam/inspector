@@ -29,6 +29,7 @@
  */
 
 import type {
+  MCPCheckSkipReason,
   MCPCheckId,
   MCPCheckResult,
   RawHttpCheckContext,
@@ -39,18 +40,23 @@ import {
   eraSkipMessage,
   failedResult,
   passedResult,
-  skippedResult,
+  couldNotRunResult,
+  notApplicableResult,
 } from "./helpers.js";
 import {
   jsonRpcError,
   jsonRpcNotifications,
   jsonRpcResult,
+  MAX_TOOLS_LIST_PAGES,
   modernHeaders,
   modernRequestBody,
   rawRequest,
+  walkToolsList,
+  type ToolsListWalkTermination,
   type JsonRpcErrorShape,
   type RawHttpResult,
 } from "../raw-http.js";
+import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
 import {
   filterRequests,
   isSubscriptionNotificationMethod,
@@ -202,6 +208,19 @@ const MODERN_CHECK_METADATA = {
     title: "Subscription Graceful Close",
     description:
       "Closing a subscription gracefully returns the subscriptions/listen completion result.",
+  },
+  // The one modern check that reads as a `tools-*` check in a report. It lives
+  // on the RAW path for the same reason as its neighbours: the official client
+  // hides exactly the fact it asserts — `Client.listTools()` EXCLUDES tools
+  // whose `x-mcp-header` declarations are invalid (that exclusion is itself a
+  // SEP-2243 MUST), so a client-backed check would only ever see the survivors
+  // and pass vacuously against the servers it exists to catch.
+  "tools-x-mcp-header-declarations-valid": {
+    id: "tools-x-mcp-header-declarations-valid",
+    category: "tools",
+    title: "x-mcp-header Declarations Valid",
+    description:
+      "Every published tool's SEP-2243 x-mcp-header declarations satisfy the spec's constraints: statically reachable through a chain of `properties`, an RFC 9110 token name, a primitive type, and case-insensitively unique.",
   },
 } as const satisfies Record<string, CheckMeta>;
 
@@ -502,7 +521,7 @@ function runResultTypeCheck(
   }
 
   if (Object.keys(observed).length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "No modern result could be obtained to inspect for resultType"
     );
@@ -554,7 +573,7 @@ function runCacheHintsCheck(
   }
 
   if (Object.keys(observed).length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "No cacheable modern result could be obtained to inspect"
     );
@@ -691,7 +710,7 @@ async function runNameHeaderMismatchCheck(
   const target = selectNameHeaderTarget(ctx, await discoverOnce(ctx, state));
 
   if (!target) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "Server exposes no read-only named target (resource or prompt) to probe the Mcp-Name header with"
     );
@@ -789,7 +808,7 @@ async function runUndeclaredCapabilityCheck(
   const probe = ctx.config.inputRequiredProbe;
 
   if (!probe) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "No inputRequiredProbe configured: set inputRequiredProbe.toolName to a tool that requests input so the check can prove the -32021 rejection"
     );
@@ -820,7 +839,7 @@ async function runUndeclaredCapabilityCheck(
   }
 
   if (payload) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       `Tool "${probe.toolName}" completed without requesting input, so the undeclared-capability path was never exercised`,
       { httpStatus: result.status, resultType: payload.resultType }
@@ -905,7 +924,7 @@ async function runResourceNotFoundCheck(
   const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
 
   if (capabilities.resources === undefined) {
-    return skippedResult(
+    return notApplicableResult(
       meta,
       "Server does not advertise the resources capability"
     );
@@ -1065,9 +1084,37 @@ async function runNoSessionIdCheck(
  * a check that failed on them would be reporting a conformance failure it did
  * not observe.
  */
+/**
+ * Forward the probe's own classification: one call site funnels three distinct
+ * unavailable reasons, and only the "nothing subscribable advertised" one is
+ * genuinely inapplicable. Hardcoding either value here would mislabel two of
+ * the three.
+ */
+function skippedFromProbe(
+  check: Parameters<typeof notApplicableResult>[0],
+  reason: string,
+  skipReason: MCPCheckSkipReason,
+  details?: Record<string, unknown>,
+): MCPCheckResult {
+  return skipReason === "could-not-run"
+    ? couldNotRunResult(check, reason, details)
+    : notApplicableResult(check, reason, details);
+}
+
 type SubscriptionProbe =
   | { kind: "observed"; observation: ListenObservation }
-  | { kind: "unavailable"; reason: string; details?: Record<string, unknown> };
+  | {
+      kind: "unavailable";
+      reason: string;
+      /**
+       * Why the probe yielded nothing. A server that advertises nothing
+       * subscribable has no obligation to test; one that refused to open a
+       * stream, or whose stream could not be read, leaves the subscription
+       * MUSTs untested.
+       */
+      skipReason: MCPCheckSkipReason;
+      details?: Record<string, unknown>;
+    };
 
 /**
  * The filter to request, derived from what the server ADVERTISES. Asking for
@@ -1121,6 +1168,7 @@ async function probeSubscription(
   if (isEmptyFilter(filter)) {
     return {
       kind: "unavailable",
+      skipReason: "not-applicable",
       reason: `Server advertises no subscribable notification type (tools/prompts/resources listChanged, or resources.subscribe with a listed resource), so no ${LISTEN_METHOD} stream can be opened`,
     };
   }
@@ -1138,6 +1186,7 @@ async function probeSubscription(
     )?.error?.code;
     return {
       kind: "unavailable",
+      skipReason: "could-not-run",
       reason: `Server did not open a ${LISTEN_METHOD} stream (HTTP ${observation.status}, content-type "${observation.contentType}"), so the subscription MUSTs could not be observed`,
       details: { httpStatus: observation.status, jsonRpcCode: code },
     };
@@ -1145,6 +1194,7 @@ async function probeSubscription(
   if (observation.outcome === "stream-error") {
     return {
       kind: "unavailable",
+      skipReason: "could-not-run",
       reason: `The ${LISTEN_METHOD} stream could not be read to a stopping point (${observation.streamError}); reported as a skip rather than a conformance failure`,
       details: { httpStatus: observation.status },
     };
@@ -1196,7 +1246,7 @@ async function runSubscriptionAckOrderingCheck(
   const startedAt = Date.now();
   const probe = await subscriptionOnce(ctx, state);
   if (probe.kind === "unavailable") {
-    return skippedResult(meta, probe.reason, probe.details);
+    return skippedFromProbe(meta, probe.reason, probe.skipReason, probe.details);
   }
 
   const { observation } = probe;
@@ -1212,7 +1262,7 @@ async function runSubscriptionAckOrderingCheck(
   };
 
   if (ackIndex === -1 && notifications.length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       `The ${LISTEN_METHOD} stream carried neither an acknowledgement nor a notification within ${observation.observedMs}ms, so the ordering MUST was never exercised`,
       details
@@ -1252,12 +1302,12 @@ async function runSubscriptionFilterAndTaggingCheck(
   const startedAt = Date.now();
   const probe = await subscriptionOnce(ctx, state);
   if (probe.kind === "unavailable") {
-    return skippedResult(meta, probe.reason, probe.details);
+    return skippedFromProbe(meta, probe.reason, probe.skipReason, probe.details);
   }
 
   const { observation } = probe;
   if (observation.messages.length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       `The ${LISTEN_METHOD} stream carried no message within ${observation.observedMs}ms, so neither filtering nor tagging could be observed`,
       observationDetails(observation)
@@ -1334,7 +1384,7 @@ async function runSubscriptionGracefulCloseCheck(
   const startedAt = Date.now();
   const probe = await subscriptionOnce(ctx, state);
   if (probe.kind === "unavailable") {
-    return skippedResult(meta, probe.reason, probe.details);
+    return skippedFromProbe(meta, probe.reason, probe.skipReason, probe.details);
   }
 
   const { observation } = probe;
@@ -1359,7 +1409,7 @@ async function runSubscriptionGracefulCloseCheck(
     );
   }
 
-  return skippedResult(
+  return couldNotRunResult(
     meta,
     `The subscription was still open after ${observation.observedMs}ms. A graceful close is server-initiated, so a client-side probe cannot induce one; reported as a skip rather than a failure`,
     details
@@ -1406,7 +1456,126 @@ async function runModernCheck(
       return await runSubscriptionFilterAndTaggingCheck(ctx, state);
     case "modern-subscription-graceful-close":
       return await runSubscriptionGracefulCloseCheck(ctx, state);
+    case "tools-x-mcp-header-declarations-valid":
+      return await runXMcpHeaderDeclarationsCheck(ctx, state);
   }
+}
+
+/**
+ * SEP-2243: `x-mcp-header` declarations are part of a tool DEFINITION's
+ * validity, not of any one call — a client "MUST treat the tool definition as
+ * invalid" (and exclude it from `tools/list`) when a declaration breaks any
+ * constraint. So a server that publishes one has effectively hidden that tool
+ * from every conforming client, and no `tools/call` will ever surface it.
+ *
+ * Raw, and unavoidably so: the official client applies that same exclusion
+ * before app code sees the listing, so a check reading `manager.listTools()`
+ * would be handed only the survivors and would pass against precisely the
+ * servers it exists to catch. The wire is the only place the offenders exist.
+ *
+ * Read-only by construction: one `tools/list`, no tool is ever called, so this
+ * is safe against a server with side-effecting tools. Pagination is walked to
+ * the end — an offender on page 3 is just as invisible as one on page 1.
+ */
+async function runXMcpHeaderDeclarationsCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["tools-x-mcp-header-declarations-valid"];
+  const startedAt = Date.now();
+
+  const discover = await discoverOnce(ctx, state);
+  if (advertisedCapabilities(discover).tools === undefined) {
+    return notApplicableResult(meta, "Server does not advertise the tools capability");
+  }
+
+  // Shared with the readiness sibling: one bounded, cycle-safe walk, so a
+  // cursor bug cannot exist in one and not the other.
+  const walk = await walkToolsList({
+    startId: 7300,
+    request: ({ id, cursor }) =>
+      track(
+        state,
+        modernProbe(ctx, {
+          id,
+          method: "tools/list",
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+        })
+      ),
+  });
+
+  if (walk.malformedPage && walk.tools.length === 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      "tools/list did not return a tools array",
+      { pagesRead: walk.pagesRead }
+    );
+  }
+
+  const violations: Array<{ tool: string; reason: string }> = [];
+  let declaringTools = 0;
+  for (const entry of walk.tools) {
+    if (entry.inputSchema === undefined) continue;
+    const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
+    if (!scan.valid) {
+      violations.push({
+        tool: typeof entry.name === "string" ? entry.name : "<unnamed>",
+        reason: scan.reason,
+      });
+    } else if (scan.declarations.length > 0) {
+      declaringTools += 1;
+    }
+  }
+  const toolCount = walk.tools.length;
+  const pagesRead = walk.pagesRead;
+  // `complete` is the ONLY termination that licenses a pass — the others mean
+  // tools were left unread, and certifying a MUST over a partial listing would
+  // be a claim the evidence does not support. A malformed page or cursor also
+  // terminates as non-`complete` inside the walk, so this needs no adjustment.
+  const termination: ToolsListWalkTermination = walk.termination;
+
+  // Violations found on the pages we DID read are real regardless of how the
+  // walk ended — report them first, and say the coverage was partial.
+  if (violations.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      // The consequence is severe enough to name in the message: a conforming
+      // client does not merely skip the header, it drops the whole tool.
+      `${violations.length} tool(s) carry invalid x-mcp-header declarations; a conforming client MUST treat those tool definitions as invalid and exclude them from tools/list: ${violations
+        .map((entry) => `${entry.tool} (${entry.reason})`)
+        .join(", ")}${
+        termination === "complete"
+          ? ""
+          : ` (note: the tools/list walk ended early — ${terminationReason(termination)} — so further tools were not scanned)`
+      }`,
+      { violations, toolCount, termination, pagesRead }
+    );
+  }
+
+  if (termination !== "complete") {
+    // No violations among the tools we could read, but we did not read them
+    // all. "Passed" would certify coverage the run never achieved, and an
+    // offender on an unreachable page would be silently blessed. A skip is the
+    // honest verdict: the MUST was not established either way.
+    return couldNotRunResult(
+      meta,
+      `Could not enumerate every tool: ${terminationReason(termination)}. The declarations on ${toolCount} scanned tool(s) are valid, but the rest were unreachable.`,
+      { toolCount, declaringTools, termination, pagesRead }
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, {
+    toolCount,
+    declaringTools,
+  });
+}
+
+function terminationReason(termination: ToolsListWalkTermination): string {
+  return termination === "repeated-cursor"
+    ? "tools/list reissued a cursor it had already handed out instead of advancing"
+    : `the ${MAX_TOOLS_LIST_PAGES}-page walk limit was reached (or a page came back malformed)`;
 }
 
 /**
@@ -1433,7 +1602,7 @@ export async function runModernChecks(
       // legacy run every modern check is a deterministic skip and no HTTP is
       // attempted, which is what keeps a legacy report byte-identical.
       results.push(
-        skippedResult(
+        notApplicableResult(
           MODERN_CHECK_METADATA[id],
           eraSkipMessage(ctx.config.era, ctx.config.protocolVersion)
         )

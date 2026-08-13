@@ -10,13 +10,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   __resetScopeStepUpInFlightForTests,
+  beginChatTurnScopeStepUpHold,
+  driveChatScopeStepUp,
   driveScopeStepUpFromChallenge,
   driveScopeStepUpFromError,
+  endChatTurnScopeStepUpHold,
   resetScopeStepUp,
+  resolveScopeStepUpServer,
   runWithScopeStepUp,
 } from "../scope-step-up";
 import { McpRequestError } from "@/lib/apis/insufficient-scope";
-import type { ServerWithName } from "@/state/app-types";
+import type { AppState, ServerWithName } from "@/state/app-types";
 
 const applyToolCallStepUp = vi.fn();
 const resetToolCallStepUp = vi.fn();
@@ -138,5 +142,344 @@ describe("scope step-up lifecycle", () => {
     // The in-flight guard must clear so a later attempt is still possible.
     driveScopeStepUpFromError(server, insufficientScopeError());
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
+  });
+
+  const runtimeServer = {
+    name: "runtime",
+  } as unknown as ServerWithName;
+  const projectServer = {
+    name: "auth-bench",
+  } as unknown as ServerWithName;
+  const resolutionAppState = {
+    activeProjectId: "project-1",
+    servers: { runtime: runtimeServer },
+    projects: {
+      "project-1": {
+        sharedProjectId: "convex-project-1",
+        servers: { "auth-bench": projectServer },
+      },
+    },
+  } as unknown as AppState;
+
+  it("resolves a server from the runtime map", () => {
+    expect(
+      resolveScopeStepUpServer(resolutionAppState, { serverId: "runtime" }),
+    ).toBe(runtimeServer);
+  });
+
+  it("resolves a server from the active-project map", () => {
+    expect(
+      resolveScopeStepUpServer(resolutionAppState, {
+        serverId: "auth-bench",
+      }),
+    ).toBe(projectServer);
+  });
+
+  it("resolves a project named by its Convex/shared id", () => {
+    // Hosted events can carry the shared id, which is NOT the `projects` key.
+    expect(
+      resolveScopeStepUpServer(resolutionAppState, {
+        serverId: "auth-bench",
+        projectId: "convex-project-1",
+      }),
+    ).toBe(projectServer);
+  });
+});
+
+/**
+ * Chat-triggered step-up is deferred to the end of the turn.
+ *
+ * The redirect is a full-page navigation and the server persists the transcript
+ * only once the stream drains, so redirecting on arrival loses the very tool
+ * call that raised the 403.
+ */
+describe("chat turn step-up deferral", () => {
+  const challenge = { requiredScope: "files:write" };
+
+  beforeEach(() => {
+    applyToolCallStepUp.mockReset().mockResolvedValue(undefined);
+    resetToolCallStepUp.mockReset();
+    __resetScopeStepUpInFlightForTests();
+  });
+
+  it("redirects immediately when no turn is in flight", () => {
+    driveChatScopeStepUp(server, challenge);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the redirect until the turn ends", () => {
+    const hold = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    endChatTurnScopeStepUpHold(hold);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+    expect(applyToolCallStepUp).toHaveBeenCalledWith(server, {
+      requiredScope: "files:write",
+      resourceMetadataUrl: undefined,
+    });
+  });
+
+  it("waits for persistence before redirecting", async () => {
+    let persisted: (() => void) | undefined;
+    const waitForPersist = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          persisted = resolve;
+        }),
+    );
+
+    const hold = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(hold, waitForPersist);
+
+    await Promise.resolve();
+    expect(waitForPersist).toHaveBeenCalledTimes(1);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    persisted?.();
+    await vi.waitFor(() => expect(applyToolCallStepUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("redirects anyway when the persistence wait rejects", async () => {
+    const hold = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(hold, () => Promise.reject(new Error("offline")));
+
+    await vi.waitFor(() => expect(applyToolCallStepUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not poll for persistence when nothing was queued", () => {
+    const waitForPersist = vi.fn(() => Promise.resolve());
+    const hold = beginChatTurnScopeStepUpHold();
+    endChatTurnScopeStepUpHold(hold, waitForPersist);
+    expect(waitForPersist).not.toHaveBeenCalled();
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("dedupes a server across delivery channels within one turn", () => {
+    const hold = beginChatTurnScopeStepUpHold();
+    // The harness delivers the same 403 twice — as a stream part and as an
+    // Inspector event. One redirect, not two.
+    driveChatScopeStepUp(server, challenge);
+    driveChatScopeStepUp(server, { requiredScope: "files:write" });
+    endChatTurnScopeStepUpHold(hold);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases every distinct server queued during the turn", () => {
+    const other = { name: "srv-2" } as unknown as ServerWithName;
+    const hold = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    driveChatScopeStepUp(other, challenge);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    endChatTurnScopeStepUpHold(hold);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
+  });
+
+  it("never queues an unactionable challenge or an unresolved server", () => {
+    const hold = beginChatTurnScopeStepUpHold();
+    // A share-link chatbox turn resolves to no server; it must stay inert
+    // rather than authorize on the host's behalf after the turn.
+    driveChatScopeStepUp(undefined, challenge);
+    driveChatScopeStepUp(server, { errorDescription: "nope" });
+    endChatTurnScopeStepUpHold(hold);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("authorizes anyway when the turn never ends", () => {
+    vi.useFakeTimers();
+    try {
+      const stopTurn = vi.fn();
+      beginChatTurnScopeStepUpHold(stopTurn);
+      driveChatScopeStepUp(server, challenge);
+
+      vi.advanceTimersByTime(14_000);
+      expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(2_000);
+      // The stuck stream is aborted first — it would otherwise keep streaming
+      // into a page the redirect is about to discard.
+      expect(stopTurn).toHaveBeenCalledTimes(1);
+      expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not double-fire when the turn ends after the timeout", () => {
+    vi.useFakeTimers();
+    try {
+      const hold = beginChatTurnScopeStepUpHold(vi.fn());
+      driveChatScopeStepUp(server, challenge);
+      vi.advanceTimersByTime(16_000);
+      expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+
+      endChatTurnScopeStepUpHold(hold);
+      expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores an end without a matching begin", () => {
+    endChatTurnScopeStepUpHold({});
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+    // The gate must still be open afterwards.
+    driveChatScopeStepUp(server, challenge);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a duplicate end", () => {
+    const hold = beginChatTurnScopeStepUpHold();
+    const other = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+
+    endChatTurnScopeStepUpHold(hold);
+    endChatTurnScopeStepUpHold(hold);
+    // `other` is still live, so the second end must not have released anything.
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    endChatTurnScopeStepUpHold(other);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Compare mode runs a `useChatSession` per lane, streaming concurrently. The
+ * hold has to reason about every live lane, not just the newest one — the
+ * redirect discards the page for all of them at once.
+ */
+describe("chat turn step-up deferral across concurrent lanes", () => {
+  const challenge = { requiredScope: "files:write" };
+
+  beforeEach(() => {
+    applyToolCallStepUp.mockReset().mockResolvedValue(undefined);
+    resetToolCallStepUp.mockReset();
+    __resetScopeStepUpInFlightForTests();
+  });
+
+  it("holds until the last lane ends", () => {
+    const laneA = beginChatTurnScopeStepUpHold();
+    const laneB = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+
+    endChatTurnScopeStepUpHold(laneA);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    endChatTurnScopeStepUpHold(laneB);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits on every lane's persistence, not just the last to finish", async () => {
+    const persistA = vi.fn(() => Promise.resolve());
+    let releaseB: (() => void) | undefined;
+    const persistB = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseB = resolve;
+        }),
+    );
+
+    const laneA = beginChatTurnScopeStepUpHold();
+    const laneB = beginChatTurnScopeStepUpHold();
+    // The challenge came from lane A; lane B simply finishes last.
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(laneA, persistA);
+    endChatTurnScopeStepUpHold(laneB, persistB);
+
+    await Promise.resolve();
+    expect(persistA).toHaveBeenCalledTimes(1);
+    expect(persistB).toHaveBeenCalledTimes(1);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    releaseB?.();
+    await vi.waitFor(() => expect(applyToolCallStepUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("stops every live lane when the hold times out", () => {
+    vi.useFakeTimers();
+    try {
+      const stopA = vi.fn();
+      const stopB = vi.fn();
+      beginChatTurnScopeStepUpHold(stopA);
+      beginChatTurnScopeStepUpHold(stopB);
+      driveChatScopeStepUp(server, challenge);
+
+      vi.advanceTimersByTime(16_000);
+
+      // Leaving lane B streaming would lose its transcript to the redirect.
+      expect(stopA).toHaveBeenCalledTimes(1);
+      expect(stopB).toHaveBeenCalledTimes(1);
+      expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits for a follow-up turn that ends during the first turn's persistence check", async () => {
+    // The dangerous ordering: turn B starts AND finishes inside turn A's
+    // persistence poll. If A's completion is allowed to redirect on its own,
+    // B's transcript is discarded before it was ever written.
+    let releaseA: (() => void) | undefined;
+    let releaseB: (() => void) | undefined;
+    const persistA = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseA = resolve;
+        }),
+    );
+    const persistB = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseB = resolve;
+        }),
+    );
+
+    const turnA = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(turnA, persistA);
+    expect(persistA).toHaveBeenCalledTimes(1);
+
+    const turnB = beginChatTurnScopeStepUpHold();
+    endChatTurnScopeStepUpHold(turnB, persistB);
+
+    releaseA?.();
+    // Drain the microtask queue rather than `waitFor`, which would succeed on
+    // its first synchronous check and let a racing redirect slip through
+    // unobserved.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(persistB).toHaveBeenCalledTimes(1);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    releaseB?.();
+    await vi.waitFor(() => expect(applyToolCallStepUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps holding when a new turn starts during the persistence wait", async () => {
+    let persisted: (() => void) | undefined;
+    const waitForPersist = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          persisted = resolve;
+        }),
+    );
+
+    const first = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(first, waitForPersist);
+
+    // The user sends again while the persistence poll is still running.
+    const second = beginChatTurnScopeStepUpHold();
+    persisted?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    // Redirecting here would abandon the new turn mid-stream.
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    endChatTurnScopeStepUpHold(second);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
   });
 });

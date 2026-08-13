@@ -41,7 +41,13 @@ import {
   initiateOAuth,
   isElectronMcpCallbackState,
   readStoredOAuthConfig,
+  OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
+import {
+  buildOAuthRequest,
+  selectStoredResourceUrl,
+  type BuiltOAuthRequest,
+} from "@/lib/oauth/oauth-request";
 import {
   importHostedOAuthTokens,
   normalizeImportHostedOAuthTokens,
@@ -58,6 +64,14 @@ import {
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
+import {
+  markPendingChatScopeStepUpCancelled,
+  markPendingChatScopeStepUpReady,
+} from "@/lib/scope-step-up-pending";
+import {
+  cancelPendingDirectScopeStepUpReplay,
+  markPendingDirectScopeStepUpReplayReady,
+} from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
 import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
 import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
@@ -576,10 +590,7 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
  * stays as the fallback for pre-tagging server responses and thrown errors.
  */
 function connectFailureRequiresOAuth(
-  result:
-    | { error?: string; oauthRequired?: unknown }
-    | null
-    | undefined
+  result: { error?: string; oauthRequired?: unknown } | null | undefined
 ): boolean {
   if (result?.oauthRequired === true) return true;
   return requiresFreshOAuthAuthorization(result?.error);
@@ -816,8 +827,7 @@ export function resolveEffectiveWireProtocolVersion(input: {
   const oauthProfilePin: McpProtocolVersion | undefined =
     server?.useOAuth === true &&
     server.oauthFlowProfile?.protocolVersion === "2026-07-28" &&
-    (canonicalOauthMode === undefined ||
-      canonicalOauthMode === "2026-07-28")
+    (canonicalOauthMode === undefined || canonicalOauthMode === "2026-07-28")
       ? "2026-07-28"
       : undefined;
   return (
@@ -931,7 +941,11 @@ export function useServerState({
   // in saveServerConfigWithoutConnecting reaches it through a ref rather than a
   // dependency (a dep array entry would evaluate before the const initializes).
   const handleRemoveServerRef = useRef<
-    ((serverName: string, options?: { removeFromCloud?: boolean }) => Promise<void>) | null
+    | ((
+        serverName: string,
+        options?: { removeFromCloud?: boolean }
+      ) => Promise<void>)
+    | null
   >(null);
 
   async function sleep(ms: number): Promise<void> {
@@ -949,7 +963,7 @@ export function useServerState({
 
   const failPendingOAuthConnection = useCallback(
     (errorMessage: string, oauthTrace?: OAuthTrace) => {
-      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       if (pendingServerName) {
         dispatch({
           type: "CONNECT_FAILURE",
@@ -961,7 +975,7 @@ export function useServerState({
 
       clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-return-hash");
-      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
 
       return pendingServerName;
     },
@@ -1158,6 +1172,15 @@ export function useServerState({
             serverConfig,
           });
 
+      // Hoisted above the transport split: the per-server override applies to
+      // stdio too. Its only field that means anything off HTTP is the timeout,
+      // but that one does apply — a slow stdio server needs the same escape
+      // hatch as a slow HTTP one.
+      const perServerOverride =
+        serverId && activeHostConfig
+          ? activeHostConfig.serverConnectionOverrides?.[serverId]
+          : undefined;
+
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {
         let mergedHeaders: Record<string, string>;
@@ -1169,9 +1192,6 @@ export function useServerState({
             headers: extractRequestHeaders(serverConfig.requestInit),
             timeout: serverConfig.timeout,
           };
-          const perServerOverride = serverId
-            ? activeHostConfig.serverConnectionOverrides?.[serverId]
-            : undefined;
           const resolved = resolveServerConnectionSettings(
             serverBase,
             activeHostConfig.connectionDefaults,
@@ -1204,12 +1224,17 @@ export function useServerState({
         } as MCPServerConfig;
       }
 
+      // stdio. Same precedence rule as the HTTP branch above, via the same
+      // helper — an inline copy of the ladder is what let the two transports
+      // drift apart in the first place (issue #3671).
       return {
         ...serverConfig,
         timeout: activeHostConfig
-          ? activeHostConfig.connectionDefaults.requestTimeout ??
-            serverConfig.timeout ??
-            projectConnectionDefaults.requestTimeout
+          ? resolveServerConnectionSettings(
+              { timeout: serverConfig.timeout },
+              activeHostConfig.connectionDefaults,
+              perServerOverride
+            ).timeout
           : serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
@@ -1375,6 +1400,21 @@ export function useServerState({
       if (resolvedProtocolVersion !== undefined) {
         defaults.mcpProtocolVersion = resolvedProtocolVersion;
       }
+      // SEP-2243 `Mcp-Param-*` mirroring. Host-level only — conformance is a
+      // property of the simulated CLIENT, so there is no per-server override
+      // to resolve against. Only `"omit"` reaches the wire; `"mirror"` and an
+      // absent field are the same instruction and leave the field off.
+      if (mcpProfile?.toolParamHeaderMirroring === "omit") {
+        defaults.mirrorToolParamHeaders = false;
+      }
+      // Sibling client-conformance knobs, same host-level/only-the-
+      // non-default-value discipline as the mirroring knob above.
+      if (mcpProfile?.paginationTraversal === "firstPageOnly") {
+        defaults.firstPageOnly = true;
+      }
+      if (mcpProfile?.mrtrSupport === "none") {
+        defaults.supportsMrtr = false;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of
@@ -1475,7 +1515,18 @@ export function useServerState({
       // resolver context is available so existing test mocks keep matching.
       const resolved = tryResolveProjectServer(serverName);
       if (resolved) {
-        return testConnection(serverConfig, resolved.serverId, {
+        // Re-resolve WITH the Convex serverId. Callers already applied
+        // `withProjectConnectionDefaults`, but they only know the display
+        // name, so the `serverConnectionOverrides[serverId]` layer was skipped
+        // and a per-server timeout override landed only on the NEXT connect.
+        // `guardedReconnectServer` re-resolves the same way for the same
+        // reason — which is why reconnects honored it and first connects did
+        // not. Applying it here makes the two paths agree.
+        const configWithDefaults = withProjectConnectionDefaults(
+          serverConfig,
+          resolved.serverId
+        );
+        return testConnection(configWithDefaults, resolved.serverId, {
           projectId: resolved.projectId,
           serverName,
           // Forward the active mcpProfile so the resolver path pins
@@ -1483,7 +1534,7 @@ export function useServerState({
           // Undefined preserves SDK defaults — no behavior change for
           // users without an mcpProfile.
           connectionDefaults: buildResolverConnectionDefaults(
-            serverConfig,
+            configWithDefaults,
             activeMcpProfile,
             resolved.serverId,
             serverName,
@@ -1496,6 +1547,7 @@ export function useServerState({
     [
       assertClientConfigSynced,
       buildResolverConnectionDefaults,
+      withProjectConnectionDefaults,
       activeMcpProfile,
     ]
   );
@@ -1775,6 +1827,12 @@ export function useServerState({
         ...(serverEntry.xaaAllowPathScopedIssuer !== undefined
           ? { xaaAllowPathScopedIssuer: serverEntry.xaaAllowPathScopedIssuer }
           : {}),
+        ...(serverEntry.oauthAllowPathScopedIssuer !== undefined
+          ? {
+              oauthAllowPathScopedIssuer:
+                serverEntry.oauthAllowPathScopedIssuer,
+            }
+          : {}),
         ...(serverEntry.useXaa !== undefined
           ? { useXaa: serverEntry.useXaa }
           : {}),
@@ -1788,7 +1846,10 @@ export function useServerState({
           ? { xaaEmail: serverEntry.xaaEmail }
           : {}),
         ...(serverEntry.xaaIdentityAssertionFormat !== undefined
-          ? { xaaIdentityAssertionFormat: serverEntry.xaaIdentityAssertionFormat }
+          ? {
+              xaaIdentityAssertionFormat:
+                serverEntry.xaaIdentityAssertionFormat,
+            }
           : {}),
         ...(serverEntry.xaaClientAuth !== undefined
           ? { xaaClientAuth: serverEntry.xaaClientAuth }
@@ -2050,7 +2111,8 @@ export function useServerState({
         if (
           flatAfterWait.some(
             (s) =>
-              s.name === serverName && remoteServerBelongsToProject(s, projectId)
+              s.name === serverName &&
+              remoteServerBelongsToProject(s, projectId)
           )
         ) {
           logger.warn(
@@ -2545,7 +2607,7 @@ export function useServerState({
       iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>
     ) => {
-      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
         HOSTED_MODE &&
         isAuthenticated &&
@@ -2582,7 +2644,7 @@ export function useServerState({
           clearHostedOAuthPendingState();
         }
         if (result.success) {
-          localStorage.removeItem("mcp-oauth-pending");
+          localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
         if (result.success && result.serverConfig && result.serverName) {
@@ -2625,6 +2687,8 @@ export function useServerState({
             hasClientSecret: existingServer?.hasClientSecret,
             xaaAuthzIssuer: existingServer?.xaaAuthzIssuer,
             xaaAllowPathScopedIssuer: existingServer?.xaaAllowPathScopedIssuer,
+            oauthAllowPathScopedIssuer:
+              existingServer?.oauthAllowPathScopedIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             oauthProtocolMode:
@@ -2707,6 +2771,8 @@ export function useServerState({
                 oauthTrace: result.oauthTrace,
               });
               logger.info("OAuth connection successful", { serverName });
+              markPendingChatScopeStepUpReady(serverName);
+              markPendingDirectScopeStepUpReplayReady(serverName);
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`
               );
@@ -2718,6 +2784,12 @@ export function useServerState({
                   })
               );
             } else {
+              markPendingChatScopeStepUpCancelled(
+                serverName,
+                connectionResult.error ||
+                  "The server could not reconnect after authorization."
+              );
+              cancelPendingDirectScopeStepUpReplay(serverName);
               dispatch({
                 type: "CONNECT_FAILURE",
                 name: serverName,
@@ -2737,6 +2809,11 @@ export function useServerState({
               );
             }
           } catch (connectionError) {
+            markPendingChatScopeStepUpCancelled(
+              serverName,
+              "The server could not reconnect after authorization."
+            );
+            cancelPendingDirectScopeStepUpReplay(serverName);
             const errorMessage =
               connectionError instanceof Error
                 ? connectionError.message
@@ -2781,6 +2858,8 @@ export function useServerState({
           failPendingOAuthConnection(errorMessage, oauthTrace) ??
           pendingServerName;
         if (failedServerName) {
+          markPendingChatScopeStepUpCancelled(failedServerName, errorMessage);
+          cancelPendingDirectScopeStepUpReplay(failedServerName);
           logger.warn("Marked pending OAuth connection as failed", {
             serverName: failedServerName,
             error: errorMessage,
@@ -2854,7 +2933,7 @@ export function useServerState({
       // fall back to the legacy localStorage key.
       const earlyPendingName =
         hostedOAuthCallbackContext?.serverName ??
-        localStorage.getItem("mcp-oauth-pending");
+        localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       if (earlyPendingName) {
         const earlyServer = effectiveServers[earlyPendingName];
         if (earlyServer) {
@@ -2912,6 +2991,11 @@ export function useServerState({
 
       toast.error(`OAuth authorization failed: ${errorMessage}`);
       const failedServerName = failPendingOAuthConnection(errorMessage);
+      markPendingChatScopeStepUpCancelled(
+        failedServerName ?? undefined,
+        errorMessage
+      );
+      cancelPendingDirectScopeStepUpReplay(failedServerName ?? undefined);
       logger.warn("OAuth authorization failed before callback completion", {
         serverName: failedServerName,
         error,
@@ -3011,6 +3095,9 @@ export function useServerState({
         xaaAllowPathScopedIssuer:
           formData.xaaAllowPathScopedIssuer ??
           existingServerForSave?.xaaAllowPathScopedIssuer,
+        oauthAllowPathScopedIssuer:
+          formData.oauthAllowPathScopedIssuer ??
+          existingServerForSave?.oauthAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         // Shared atomic identity-pair semantics (omitted pair preserves the
         // stored values, explicit "" pair clears) + authServerMode default.
@@ -3029,8 +3116,7 @@ export function useServerState({
         xaaClientAuth:
           formData.xaaClientAuth ?? existingServerForSave?.xaaClientAuth,
         registrationMode:
-          formData.registrationMode ??
-          existingServerForSave?.registrationMode,
+          formData.registrationMode ?? existingServerForSave?.registrationMode,
         authMethod: formData.authMethod ?? existingServerForSave?.authMethod,
       };
       // Both modes: await Convex sync so the returned serverId is available
@@ -3094,6 +3180,13 @@ export function useServerState({
         }
       }
 
+      // Capture provenance before saving: saveOAuthConfigToLocalStorage updates
+      // the server URL first, so reading it afterward would make a stale
+      // resource indicator look like it belonged to the edited endpoint.
+      const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
+      const storedServerUrlBeforeSave = HOSTED_MODE
+        ? undefined
+        : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
       saveOAuthConfigToLocalStorage(formData);
 
       try {
@@ -3213,8 +3306,7 @@ export function useServerState({
           const existingOAuthProfile = existingServer?.oauthFlowProfile;
           const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
           const hostPin =
-            typeof rawHostPin === "string" &&
-            isKnownProtocolVersion(rawHostPin)
+            typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
               ? rawHostPin
               : undefined;
           const effectiveWireProtocolVersion =
@@ -3226,8 +3318,7 @@ export function useServerState({
             });
           const protocolSelection = resolveOAuthProtocolSelection({
             mode:
-              formData.oauthProtocolMode ??
-              existingServer?.oauthProtocolMode,
+              formData.oauthProtocolMode ?? existingServer?.oauthProtocolMode,
             legacyProtocolVersion: existingOAuthProfile?.protocolVersion,
             wireProtocolVersion: effectiveWireProtocolVersion,
             // This connect attempt was stopped by 401, so an older server
@@ -3238,29 +3329,73 @@ export function useServerState({
             formData.registrationMode ??
             existingOAuthProfile?.registrationStrategy ??
             "auto";
-          const oauthOptions: any = {
-            serverName: formData.name,
-            serverUrl: formData.url,
-            clientId: oauthInputs.clientId,
-            clientSecret: oauthInputs.clientSecret,
-            hasClientSecret: oauthInputs.hasClientSecret,
-            registryServerId: oauthInputs.registryServerId,
-            useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-            customHeaders: mergeWithProjectHeaders(formData.headers),
-            protocolMode: protocolSelection.mode,
-            registrationMode,
-            protocolVersion: protocolSelection.protocolVersion,
-            protocolResolutionSource: protocolSelection.source,
-            registrationStrategy:
-              registrationMode !== "auto"
-                ? registrationMode
-                : existingOAuthProfile?.registrationStrategy,
-            onTraceUpdate: (oauthTrace: OAuthTrace) => {
-              updateServerOAuthTrace(formData.name, oauthTrace);
+          // The builder refuses a configured resource indicator that is not
+          // this server's, BEFORE the redirect. Handle it here as the sibling
+          // entry points do: without a local catch it falls to the outer
+          // handler and is reported as "Network error: …", which is the one
+          // label it definitely is not. The escalation marker has to be
+          // cleared too — `markPending` already ran above, and leaving it set
+          // makes the next 401 read as a completed-but-failed OAuth attempt
+          // and refuse to offer authorization at all.
+          let oauthOptions: BuiltOAuthRequest;
+          try {
+            oauthOptions = buildOAuthRequest(
+            {
+              serverName: formData.name,
+              serverUrl: formData.url,
+              scopes: oauthInputs.scopes,
+              // Previously omitted here while every other entry point sent it,
+              // so a server with a configured resource indicator authorized
+              // against a different audience on first connect than on
+              // reconnect. Both candidates are gated on still belonging to
+              // THIS url — editing a server's endpoint must not carry the old
+              // endpoint's audience forward.
+              resourceUrl: selectStoredResourceUrl(formData.url, [
+                {
+                  resourceUrl: existingOAuthProfile?.resourceUrl,
+                  capturedForServerUrl: existingOAuthProfile?.serverUrl,
+                },
+                {
+                  resourceUrl: storedOAuthConfigBeforeSave.resourceUrl,
+                  capturedForServerUrl: storedServerUrlBeforeSave,
+                },
+              ]),
+              clientId: oauthInputs.clientId,
+              clientSecret: oauthInputs.clientSecret,
+              hasClientSecret: oauthInputs.hasClientSecret,
+              registryServerId: oauthInputs.registryServerId,
+              useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+              customHeaders: mergeWithProjectHeaders(formData.headers),
+              // Same per-server opt-in the OAuth Debugger honors: Connect runs
+              // the same state machine, so without this a path-scoped
+              // authorization server is rejected here even with the toggle on.
+              allowPathScopedIssuer:
+                (formData.oauthAllowPathScopedIssuer ??
+                  existingServer?.oauthAllowPathScopedIssuer) === true,
+              protocolMode: protocolSelection.mode,
+              registrationMode,
+              protocolVersion: protocolSelection.protocolVersion,
+              protocolResolutionSource: protocolSelection.source,
+              registrationStrategy: existingOAuthProfile?.registrationStrategy,
+              onTraceUpdate: (oauthTrace: OAuthTrace) => {
+                updateServerOAuthTrace(formData.name, oauthTrace);
+              },
             },
-          };
-          if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
-            oauthOptions.scopes = oauthInputs.scopes;
+            { intent: "connect" },
+            );
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error
+                ? error.message
+                : "Failed to build the OAuth request";
+            autoOAuthEscalation.markFailed(escalationIdentity);
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: formData.name,
+              error: errorMessage,
+            });
+            toast.error(errorMessage);
+            return;
           }
           prepareHostedProjectOAuthRedirect({
             serverId: hostedServerId,
@@ -3544,6 +3679,9 @@ export function useServerState({
         xaaAllowPathScopedIssuer:
           formData.xaaAllowPathScopedIssuer ??
           existingServer?.xaaAllowPathScopedIssuer,
+        oauthAllowPathScopedIssuer:
+          formData.oauthAllowPathScopedIssuer ??
+          existingServer?.oauthAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         // Shared atomic identity-pair semantics (omitted pair preserves the
         // stored values, explicit "" pair clears) + authServerMode default.
@@ -3559,11 +3697,9 @@ export function useServerState({
         xaaIdentityAssertionFormat:
           formData.xaaIdentityAssertionFormat ??
           existingServer?.xaaIdentityAssertionFormat,
-        xaaClientAuth:
-          formData.xaaClientAuth ?? existingServer?.xaaClientAuth,
+        xaaClientAuth: formData.xaaClientAuth ?? existingServer?.xaaClientAuth,
         registrationMode:
-          formData.registrationMode ??
-          existingServer?.registrationMode,
+          formData.registrationMode ?? existingServer?.registrationMode,
         authMethod: formData.authMethod ?? existingServer?.authMethod,
       } as ServerWithName;
 
@@ -3602,7 +3738,9 @@ export function useServerState({
               ...(formData.clientSecret
                 ? { clientSecret: formData.clientSecret }
                 : {}),
-              ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+              ...(formData.clearClientSecret
+                ? { clearClientSecret: true }
+                : {}),
               // One-shot XAA-config reset (modal moved the server off XAA).
               ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
               ...(formData.secretPatch?.env !== undefined
@@ -4446,8 +4584,7 @@ export function useServerState({
         );
         const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
         const hostPin =
-          typeof rawHostPin === "string" &&
-          isKnownProtocolVersion(rawHostPin)
+          typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
             ? rawHostPin
             : undefined;
         const protocolSelection = resolveOAuthProtocolSelection({
@@ -4474,44 +4611,76 @@ export function useServerState({
           server.oauthFlowProfile?.registrationStrategy ??
           storedOAuthConfig.registrationMode ??
           "auto";
-        const oauthOptions = {
-          serverName,
-          serverUrl,
-          scopes: profileScopes ?? storedOAuthConfig.scopes,
-          resourceUrl:
-            server.oauthFlowProfile?.resourceUrl ??
-            storedOAuthConfig.resourceUrl,
-          clientId:
-            server.oauthTokens?.client_id ??
-            server.oauthFlowProfile?.clientId ??
-            storedClientCredentials.clientId,
-          clientSecret:
-            undefined,
-          hasClientSecret: Boolean(
-            server.hasClientSecret
-          ),
-          customHeaders: mergeWithProjectHeaders(
-            profileHeaders ??
-              ("requestInit" in server.config
-                ? extractRequestHeaders(server.config.requestInit)
-                : undefined) ??
-              storedOAuthConfig.customHeaders
-          ),
-          registryServerId: storedOAuthConfig.registryServerId,
-          useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
-          protocolMode: protocolSelection.mode,
-          registrationMode,
-          protocolVersion: protocolSelection.protocolVersion,
-          protocolResolutionSource: protocolSelection.source,
-          registrationStrategy:
-            registrationMode !== "auto"
-              ? registrationMode
-              : server.oauthFlowProfile?.registrationStrategy ??
-                storedOAuthConfig.registrationStrategy,
-          onTraceUpdate: (oauthTrace: OAuthTrace) => {
-            updateServerOAuthTrace(serverName, oauthTrace);
+        // A rejected configured resource indicator has to read as a
+        // configuration failure, not an unhandled throw — the builder refuses
+        // it BEFORE the redirect, which is the point, but the user still needs
+        // to be told why.
+        let oauthOptions: BuiltOAuthRequest;
+        try {
+          oauthOptions = buildOAuthRequest(
+          {
+            serverName,
+            serverUrl,
+            scopes: profileScopes ?? storedOAuthConfig.scopes,
+            // Same staleness gate as the connect path: a stored resource
+            // belongs to the endpoint it was captured for.
+            resourceUrl: selectStoredResourceUrl(serverUrl, [
+              {
+                resourceUrl: server.oauthFlowProfile?.resourceUrl,
+                capturedForServerUrl: server.oauthFlowProfile?.serverUrl,
+              },
+              {
+                resourceUrl: storedOAuthConfig.resourceUrl,
+                capturedForServerUrl:
+                  localStorage.getItem(`mcp-serverUrl-${serverName}`) ??
+                  undefined,
+              },
+            ]),
+            clientId:
+              server.oauthTokens?.client_id ??
+              server.oauthFlowProfile?.clientId ??
+              storedClientCredentials.clientId,
+            clientSecret: undefined,
+            hasClientSecret: Boolean(server.hasClientSecret),
+            customHeaders: mergeWithProjectHeaders(
+              profileHeaders ??
+                ("requestInit" in server.config
+                  ? extractRequestHeaders(server.config.requestInit)
+                  : undefined) ??
+                storedOAuthConfig.customHeaders
+            ),
+            registryServerId: storedOAuthConfig.registryServerId,
+            useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+            // See the initial-connect path: the reconnect flow must honor the
+            // same per-server opt-in, or a reconnect fails where connect
+            // worked.
+            allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
+            protocolMode: protocolSelection.mode,
+            registrationMode,
+            protocolVersion: protocolSelection.protocolVersion,
+            protocolResolutionSource: protocolSelection.source,
+            registrationStrategy:
+              server.oauthFlowProfile?.registrationStrategy ??
+              storedOAuthConfig.registrationStrategy,
+            onTraceUpdate: (oauthTrace: OAuthTrace) => {
+              updateServerOAuthTrace(serverName, oauthTrace);
+            },
           },
-        };
+          { intent: "reconnect" },
+          );
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "Failed to build the OAuth request";
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
+          reportError(errorMessage);
+          return { status: "failed", error: errorMessage };
+        }
 
         clearOAuthData(serverName);
         dispatch({
@@ -4641,10 +4810,10 @@ export function useServerState({
         serverName,
       };
       let autoInteractiveConfirmed = false;
-      const gateAutoEscalation = async (): Promise<
-        | null
-        | { status: "failed" | "reauth" | "superseded"; error: string }
-      > => {
+      const gateAutoEscalation = async (): Promise<null | {
+        status: "failed" | "reauth" | "superseded";
+        error: string;
+      }> => {
         if (server.authMethod !== "auto") return null;
         const fail = (errorMessage: string, status: "failed" | "reauth") => {
           dispatch({
@@ -5311,6 +5480,9 @@ export function useServerState({
           xaaAllowPathScopedIssuer:
             formData.xaaAllowPathScopedIssuer ??
             originalServer?.xaaAllowPathScopedIssuer,
+          oauthAllowPathScopedIssuer:
+            formData.oauthAllowPathScopedIssuer ??
+            originalServer?.oauthAllowPathScopedIssuer,
           useXaa: formData.useXaa ?? false,
           // Shared atomic identity-pair semantics (omitted pair preserves
           // the stored values, explicit "" pair clears) + authServerMode
@@ -5330,8 +5502,7 @@ export function useServerState({
           xaaClientAuth:
             formData.xaaClientAuth ?? originalServer?.xaaClientAuth,
           registrationMode:
-            formData.registrationMode ??
-            originalServer?.registrationMode,
+            formData.registrationMode ?? originalServer?.registrationMode,
           authMethod: formData.authMethod ?? originalServer?.authMethod,
         } as ServerWithName;
 
@@ -5368,8 +5539,18 @@ export function useServerState({
         return { ok: false, serverName: originalServerName };
       }
 
+      // The fast path below re-tests the existing connection and returns
+      // without writing any server fields, so a settings-only edit would be
+      // silently discarded. The issuer opt-in changes how discovery is
+      // validated, so a change to it must take the full save path.
+      const pathScopedIssuerChanged =
+        formData.oauthAllowPathScopedIssuer !== undefined &&
+        formData.oauthAllowPathScopedIssuer !==
+          (originalServer?.oauthAllowPathScopedIssuer === true);
+
       const shouldPreserveOAuth =
         hadOAuthTokens &&
+        !pathScopedIssuerChanged &&
         formData.useOAuth &&
         nextServerName === originalServerName &&
         formData.type === "http" &&

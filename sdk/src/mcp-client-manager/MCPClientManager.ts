@@ -89,6 +89,7 @@ import {
   stripAuthorizationFromRequestInit,
   wrapTransportForLogging,
   wrapTransportForTaskResults,
+  wrapTransportForFirstPageOnly,
   wrapFetchForTaskRouting,
   TASK_CREATED_META_KEY,
   createDefaultRpcLogger,
@@ -137,6 +138,21 @@ import {
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
+import {
+  resolveSkillsSupport,
+  type SkillsSupport,
+} from "./skills-dispatch.js";
+import {
+  getSkillExt,
+  listSkillsExt,
+  readResourceDirectoryExt,
+} from "./skills-ext.js";
+import { MCPSkillsWireError } from "./skills-ext-guards.js";
+import type {
+  SkillEntry,
+  SkillsDirectoryReadResult,
+  SkillsExtListResult,
+} from "./skills-ext-types.js";
 import type {
   McpSubscriptionHandle,
   SubscriptionFilterShape,
@@ -159,6 +175,13 @@ import {
   type ToolTaskSeamOptions,
 } from "./tool-task-seam.js";
 import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
+import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
+import {
+  buildMcpParamHeaders,
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
+  type XMcpHeaderDeclaration,
+} from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
@@ -210,6 +233,72 @@ import {
  * const result = await manager.executeTool("everything", "add", { a: 1, b: 2 });
  * ```
  */
+/**
+ * The upstream `Tool` shape `CallToolRequestOptions.toolDefinition` accepts.
+ * Derived from {@link ManagedMcpClient} rather than imported, so it tracks the
+ * adapter's own surface instead of pinning a second name to the same type.
+ */
+/**
+ * Whether an error means the caller's cancellation or DEADLINE fired, rather
+ * than the lookup merely failing.
+ *
+ * Used by the best-effort schema lookups, which degrade on a miss but must not
+ * swallow either: a cancelled call has to stay cancelled, and a call that blew
+ * its timeout during the lookup must not then go on to issue the `tools/call`
+ * the timeout was supposed to prevent.
+ *
+ * Covers all three shapes the deadline can arrive in — a DOM `AbortError` /
+ * `TimeoutError`, a plain `Error` carrying those names, and the SDK's own
+ * in-band `RequestTimeout` (-32001), which is what `ClientRequestOptions.timeout`
+ * actually raises and is therefore the one most likely to be hit.
+ */
+function isAbortError(error: unknown): boolean {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "AbortError" || error.name === "TimeoutError";
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  if (
+    code === MCP_ERROR_CODES.RequestTimeout ||
+    code === MCP_ERROR_CODES.ConnectionClosed
+  ) {
+    return true;
+  }
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
+/**
+ * Keep the Streamable HTTP failure reachable on an error whose `cause` is
+ * already the SSE failure. The two transports usually fail the same way, but
+ * when they don't, `cause` alone silently discards half the story — including
+ * the case where Streamable HTTP carried the auth challenge and SSE merely
+ * timed out afterwards.
+ *
+ * Non-enumerable so it never widens a log line or a `JSON.stringify` of the
+ * error. Both combined-failure throw sites go through here so neither can
+ * drift away from the other.
+ */
+function attachStreamableCause<E extends Error>(
+  error: E,
+  streamableError: unknown
+): E {
+  if (streamableError !== undefined) {
+    Object.defineProperty(error, "streamableCause", {
+      value: streamableError,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return error;
+}
+
+type UpstreamToolDefinition = NonNullable<
+  NonNullable<Parameters<ManagedMcpClient["callTool"]>[1]>["toolDefinition"]
+>;
+
 export class MCPClientManager {
   // State management
   private readonly registeredServers = new Map<string, RegisteredServerState>();
@@ -511,11 +600,25 @@ export class MCPClientManager {
     if (this.isStdioConfig(config)) {
       transportType = "stdio";
     } else {
-      const url = new URL(config.url);
-      transportType =
-        config.preferSSE || url.pathname.endsWith("/sse")
+      // Report the transport that ACTUALLY connected, not the one the config
+      // asked for. Deriving this from `config` is wrong in both directions:
+      // a declared streamable-http server at a `/sse` path reads as "sse"
+      // though it ran over Streamable HTTP, and a connection that fell back
+      // to SSE reads as "streamable-http" — the transport that failed. This
+      // value feeds snapshots, conformance output and hosted trace metadata,
+      // so it has to describe the live connection. The config heuristic
+      // stays only as the pre-connect fallback.
+      const activeTransport = liveState?.transport;
+      if (activeTransport instanceof SSEClientTransport) {
+        transportType = "sse";
+      } else if (activeTransport instanceof StreamableHTTPClientTransport) {
+        transportType = "streamable-http";
+      } else {
+        const url = new URL(config.url);
+        transportType = (config.preferSSE ?? url.pathname.endsWith("/sse"))
           ? "sse"
           : "streamable-http";
+      }
     }
 
     // Public negotiated-version accessor (upstream
@@ -979,7 +1082,7 @@ export class MCPClientManager {
     // task-augmented call, drive the manual `input_required` loop. A complete
     // result on the first leg exits immediately, so legacy servers are
     // unaffected.
-    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
     if (mrtrCollect && request.task === undefined) {
       // One result state machine: an extension-eligible call goes through the
       // SAME MRTR loop, because `resultType` is a tri-state — a call may run
@@ -1038,24 +1141,46 @@ export class MCPClientManager {
         };
       }
 
-      await this.ensureXMcpHeaderMirroringSource(
-        serverId,
-        client,
-        // Signal + timeout only: the warm-up must honor the caller's abort and
-        // deadline, but must NOT inherit the call's progress handler (a
-        // `tools/list` is not the operation the caller is tracking).
-        {
-          ...(signal ? { signal } : {}),
-          ...(request.request?.timeout !== undefined
-            ? { timeout: request.request.timeout }
-            : {}),
-        }
-      );
+      // Signal + timeout only: the schema lookup must honor the caller's abort
+      // and deadline, but must NOT inherit the call's progress handler (a
+      // `tools/list` is not the operation the caller is tracking).
+      const schemaLookupOptions = {
+        ...(signal ? { signal } : {}),
+        ...(request.request?.timeout !== undefined
+          ? { timeout: request.request.timeout }
+          : {}),
+      };
+      // `mirrorToolParamHeaders: false` (host config `toolParamHeaderMirroring:
+      // "omit"`) simulates a client that never sends `Mcp-Param-*`. Upstream
+      // `callTool` mirrors internally with no disable knob, so the suppression
+      // rides the one seam it honors — a `toolDefinition` whose `x-mcp-header`
+      // annotations are stripped.
+      const unmirroredToolDefinition = this.xMcpMirroringDisabled(serverId)
+        ? await this.resolveUnmirroredToolDefinition(
+            serverId,
+            client,
+            toolName,
+            schemaLookupOptions
+          )
+        : undefined;
+      if (!this.xMcpMirroringDisabled(serverId)) {
+        await this.ensureXMcpHeaderMirroringSource(
+          serverId,
+          client,
+          schemaLookupOptions
+        );
+      }
 
       const plainResult = await this.withElicitationTimeoutSuspension(
         serverId,
         mergedOptions,
-        (callOptions) => client.callTool(callParams, callOptions)
+        (callOptions) =>
+          client.callTool(
+            callParams,
+            unmirroredToolDefinition
+              ? { ...callOptions, toolDefinition: unmirroredToolDefinition }
+              : callOptions
+          )
       );
       return (
         this.unwrapCreatedTaskExt(serverId, request, plainResult) ?? plainResult
@@ -1169,7 +1294,7 @@ export class MCPClientManager {
     params: ReadResourceParams,
     options?: ClientRequestOptions
   ) {
-    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
     if (mrtrCollect) {
       return this.readResourceWithInputRequired(
         serverId,
@@ -1268,7 +1393,7 @@ export class MCPClientManager {
     params: GetPromptParams,
     options?: ClientRequestOptions
   ) {
-    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
     if (mrtrCollect) {
       return this.getPromptWithInputRequired(
         serverId,
@@ -1885,6 +2010,119 @@ export class MCPClientManager {
     return canOpenTaskDeclaredListen(client);
   }
 
+  // ---------------------------------------------------------------------
+  // io.modelcontextprotocol/skills (SEP-2640)
+  // ---------------------------------------------------------------------
+
+  /**
+   * The skills support matrix for a connection — the single value every
+   * route, UI, CLI, and chat surface branches on.
+   *
+   * `active` is a CONJUNCTION: this client advertised the extension AND the
+   * server declared it. Both halves are read from what actually happened on
+   * this connection (the initialized client capabilities, the server's
+   * initialize result), so the answer can never disagree with the wire.
+   */
+  getSkillsSupport(serverId: string): SkillsSupport {
+    return resolveSkillsSupport(
+      this.declaredCapabilitiesFor(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * Advertise = enforce. A `skills/*` request is refused BEFORE it reaches the
+   * wire whenever the extension is not mutually declared.
+   *
+   * Typed, not a bare `Error`: routes map `isMCPSkillsWireError` onto a
+   * permanent 400 rather than a 500 that hosted clients would retry against a
+   * server that can never answer.
+   */
+  private assertSkillsActive(serverId: string, method: string): void {
+    const support = this.getSkillsSupport(serverId);
+    if (!support.active) {
+      throw new MCPSkillsWireError({
+        method,
+        serverId,
+        advertised: support.advertised,
+        declared: support.declared,
+      });
+    }
+  }
+
+  /**
+   * `skills/list` — one page. Drain with `listAllServerSkills` in
+   * `operations.ts` rather than looping here.
+   *
+   * A listing MAY be empty or partial by spec: absence from it is never proof
+   * a skill does not exist. Confirm disappearance with {@link getServerSkill}.
+   */
+  async listServerSkills(
+    serverId: string,
+    params?: { cursor?: string },
+    options?: ClientRequestOptions
+  ): Promise<SkillsExtListResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/list");
+      return listSkillsExt(
+        { client, options: this.withTimeout(serverId, options) },
+        params
+      );
+    });
+  }
+
+  /**
+   * `skills/get` — one skill by URI, including skills the listing never
+   * mentioned. A conforming server answers `-32602` for a URI it does not
+   * serve (`isSkillNotFoundError`).
+   */
+  async getServerSkill(
+    serverId: string,
+    uri: string,
+    options?: ClientRequestOptions
+  ): Promise<SkillEntry> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/get");
+      return getSkillExt(
+        { client, options: this.withTimeout(serverId, options) },
+        uri
+      );
+    });
+  }
+
+  /**
+   * `resources/directory/read` — the OPTIONAL readdir, gated on the server's
+   * `{ directoryRead: true }` setting on TOP of the mutual declaration. The
+   * extra gate is not redundant: a server may speak skills without opting into
+   * directory reads, and sending the method anyway is an undeclared probe.
+   */
+  async readServerResourceDirectory(
+    serverId: string,
+    params: { uri: string; cursor?: string },
+    options?: ClientRequestOptions
+  ): Promise<SkillsDirectoryReadResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "resources/directory/read");
+      if (!this.getSkillsSupport(serverId).directoryRead) {
+        throw new MCPSkillsWireError({
+          method: "resources/directory/read",
+          serverId,
+          advertised: true,
+          // The extension IS declared; what is missing is the optional
+          // `directoryRead` opt-in. Both booleans stay TRUTHFUL — they are
+          // public facts about the connection — and `missingSetting` is what
+          // makes the message name the actual refusal.
+          declared: true,
+          missingSetting: "directoryRead",
+        });
+      }
+      return readResourceDirectoryExt(
+        { client, options: this.withTimeout(serverId, options) },
+        params
+      );
+    });
+  }
+
   private declaredCapabilitiesFor(
     serverId: string
   ): ClientCapabilityOptions | undefined {
@@ -2117,13 +2355,45 @@ export class MCPClientManager {
       // other would be ambiguous and the override is the more specific signal.
       // Auto deliberately ignores both lists so its legacy fallback negotiates
       // against every version supported by the upstream SDK.
-      const supportedProtocolVersions = wantsAutoNegotiation
+      const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
         : config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
             : undefined);
+      // Send the version that was actually PINNED, not whatever happens to
+      // sit at index 0 of the accept-list.
+      //
+      // The two fields answer different questions: the list is what this
+      // client can speak, the pin is which of those it proposes. Upstream
+      // `Client` reads only `supportedProtocolVersions[0]` as
+      // `initialize.params.protocolVersion`, so honoring the pin means
+      // hoisting it — previously an explicit list silently discarded the pin
+      // and connected as its first entry, i.e. a user could pin 2025-06-18
+      // and watch 2025-11-25 go out on the wire.
+      //
+      // Hoisting rather than collapsing to `[pin]` keeps the remaining
+      // entries as fallbacks, so a client advertising several versions still
+      // accepts the server's counter-offer. Relative order of the rest is
+      // preserved — it is semantic.
+      //
+      // A pin absent from the list is left alone: it would put a version on
+      // the wire the client never claimed to speak. `canonicalizeMcpProfile`
+      // rejects that combination for stateful pins anyway, so this only
+      // guards hand-built configs.
+      const supportedProtocolVersions =
+        !wantsStateless &&
+        resolvedProtocolVersion !== undefined &&
+        resolvedSupportedProtocolVersions !== undefined &&
+        resolvedSupportedProtocolVersions.includes(resolvedProtocolVersion)
+          ? [
+              resolvedProtocolVersion,
+              ...resolvedSupportedProtocolVersions.filter(
+                (version) => version !== resolvedProtocolVersion
+              ),
+            ]
+          : resolvedSupportedProtocolVersions;
       // Automatic era negotiation is always on and transport-agnostic: an
       // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
       // and stdio (on stdio the `server/discover` probe runs on a sibling
@@ -2312,8 +2582,13 @@ export class MCPClientManager {
     });
 
     const logger = this.resolveRpcLogger(config);
-    const transport = wrapTransportForTaskResults(
-      logger ? wrapTransportForLogging(serverId, logger, underlying) : underlying
+    const transport = this.applyFirstPageOnly(
+      config,
+      wrapTransportForTaskResults(
+        logger
+          ? wrapTransportForLogging(serverId, logger, underlying)
+          : underlying
+      )
     );
 
     const stderrDrain = this.createStdioStderrDrain(underlying);
@@ -2430,20 +2705,35 @@ export class MCPClientManager {
         onInsufficientScope: "throw",
       });
 
+      // The upstream Client closes a failed transport during `connect`, and
+      // that close fires `onclose` → `clearClosedPendingConnectionState`,
+      // discarding the pending live state the SSE fallback below still
+      // needs — the fallback then completed only to be thrown away as
+      // "cancelled". A FIRST-attempt failure is a fallback trigger, not a
+      // client close, so the handler is detached for this attempt and
+      // restored on every exit (mid-handshake closes on the attempt that
+      // ends up owning the connection keep their cancel semantics).
+      const pendingOnClose = client.onclose;
+      client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
-        const wrapped = wrapTransportForTaskResults(
-          logger
-            ? wrapTransportForLogging(serverId, logger, streamableTransport)
-            : streamableTransport
+        const wrapped = this.applyFirstPageOnly(
+          config,
+          wrapTransportForTaskResults(
+            logger
+              ? wrapTransportForLogging(serverId, logger, streamableTransport)
+              : streamableTransport
+          )
         );
         await client.connect(wrapped, {
           timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
         });
+        client.onclose = pendingOnClose;
         return streamableTransport;
       } catch (error) {
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
+        client.onclose = pendingOnClose;
         // SEP-2350: a connect-time `403 insufficient_scope` surfaces here as a
         // clean `InsufficientScopeError` (transport built
         // `onInsufficientScope: "throw"` above). Rethrow it immediately —
@@ -2455,6 +2745,35 @@ export class MCPClientManager {
         // serialize the challenge and drive the union-scope re-authorization.
         if (isInsufficientScopeError(error)) {
           throw error;
+        }
+        // Declared-transport servers (`disableSseFallback`) never downgrade
+        // to SSE: surface the Streamable HTTP failure, keeping the auth
+        // classification the combined path below would have produced so
+        // hosts still see an MCPAuthError where OAuth escalation hooks in.
+        if (config.disableSseFallback) {
+          const authCheck = isAuthError(error);
+          if (authCheck.isAuth) {
+            throw new MCPAuthError(
+              `Authentication failed for MCP server "${serverId}": Streamable HTTP error: ${formatError(
+                error
+              )}`,
+              authCheck.statusCode,
+              { cause: error }
+            );
+          }
+          // Preserve `cause`: `formatError` reduces the failure to its
+          // message, and the Node errno (`ECONNREFUSED`, `ENOTFOUND`, ...)
+          // lives on the error object — usually one `.cause` hop down, since
+          // undici wraps connect failures as `TypeError("fetch failed")`.
+          // Without the chain, `extractNodeErrno` finds nothing and
+          // `describeError` degrades from a specific transport slug to
+          // message-regex guessing.
+          throw new Error(
+            `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
+              error
+            )}`,
+            { cause: error }
+          );
         }
       }
     }
@@ -2468,8 +2787,13 @@ export class MCPClientManager {
 
     try {
       const logger = this.resolveRpcLogger(config);
-      const wrapped = wrapTransportForTaskResults(
-        logger ? wrapTransportForLogging(serverId, logger, sseTransport) : sseTransport
+      const wrapped = this.applyFirstPageOnly(
+        config,
+        wrapTransportForTaskResults(
+          logger
+            ? wrapTransportForLogging(serverId, logger, sseTransport)
+            : sseTransport
+        )
       );
       await client.connect(wrapped, { timeout });
       return sseTransport;
@@ -2491,15 +2815,31 @@ export class MCPClientManager {
       if (sseAuthCheck.isAuth || streamableAuthCheck.isAuth) {
         const statusCode =
           sseAuthCheck.statusCode ?? streamableAuthCheck.statusCode;
-        throw new MCPAuthError(
-          `Authentication failed for MCP server "${serverId}": ${combinedErrorMessage}`,
-          statusCode,
-          { cause: error }
+        // `cause` stays the SSE failure for continuity, but the Streamable
+        // attempt matters twice as much here: when IT is the auth failure and
+        // SSE failed for some other reason, the challenge that triggered this
+        // branch lives only on `streamableError`.
+        throw attachStreamableCause(
+          new MCPAuthError(
+            `Authentication failed for MCP server "${serverId}": ${combinedErrorMessage}`,
+            statusCode,
+            { cause: error }
+          ),
+          streamableError
         );
       }
 
-      throw new Error(
-        `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`
+      // `cause` is the SSE failure (the last attempt, and the one whose errno
+      // the message above quotes). Both transports fail with the same errno
+      // whenever the server is simply unreachable — ECONNREFUSED, ENOTFOUND —
+      // so this is the chain `extractNodeErrno` needs to reach a specific
+      // `transport/*` slug instead of message-regex guessing.
+      throw attachStreamableCause(
+        new Error(
+          `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+          { cause: error }
+        ),
+        streamableError
       );
     }
   }
@@ -2981,9 +3321,25 @@ export class MCPClientManager {
     // is registered before connect must be reflected here. roots/sampling are
     // never advertised (this client never fulfils them; MRTR rejects embedded
     // roots/sampling at the result — advertise = enforce).
-    const hasElicitationHandler =
-      this.elicitationManager.hasHandler(serverId) ||
-      this.mrtrInputCollectors.has(serverId);
+    //
+    // `supportsMrtr: false` (the host config's `mcpProfile.mrtrSupport:
+    // "none"`) simulates a client that does not drive MRTR rounds at all, so
+    // the MRTR collector stops counting as a fulfiller. On MODERN that
+    // removes the only one there is — the inbound `elicitation/create` bridge
+    // does not exist on 2026-07-28 — so a legacy handler must not prop the
+    // advertisement up either; hosted chat registers a GLOBAL elicitation
+    // callback, which would otherwise keep `hasHandler` true and make the
+    // knob a silent no-op. On LEGACY the knob is irrelevant: elicitation
+    // there is server-initiated, not MRTR, and the SSE bridge still fulfils
+    // it. `era` is undefined at connect time, so the legacy fulfiller is
+    // still counted then and `applyModernEraCapabilities` narrows once the
+    // connection actually classifies as modern.
+    const mrtrDisabled = config.supportsMrtr === false;
+    const mrtrFulfils = !mrtrDisabled && this.mrtrInputCollectors.has(serverId);
+    const legacyFulfils =
+      this.elicitationManager.hasHandler(serverId) &&
+      !(mrtrDisabled && era === "modern");
+    const hasElicitationHandler = legacyFulfils || mrtrFulfils;
     if (config.clientCapabilities) {
       // An EXACT set is advertised verbatim (minus the elicitation gate) on
       // every era — the `eraCapabilities` overlay is deliberately ignored,
@@ -3021,9 +3377,19 @@ export class MCPClientManager {
       );
     }
 
-    return applyRuntimeClientCapabilities(configuredCapabilities, {
+    const resolved = applyRuntimeClientCapabilities(configuredCapabilities, {
       elicitation: hasElicitationHandler,
     });
+    // `applyRuntimeClientCapabilities` only ADDS the runtime gate — it cannot
+    // remove an `elicitation` that came from `config.capabilities`. That is
+    // fine everywhere else (the gate is additive by design), but a modern
+    // connection simulating a non-MRTR client must not advertise a capability
+    // nothing can fulfil, so delete it explicitly. Scoped to the knob: no
+    // other connection's advertised set changes.
+    if (mrtrDisabled && era === "modern") {
+      delete (resolved as Record<string, unknown>).elicitation;
+    }
+    return resolved;
   }
 
   /**
@@ -3062,7 +3428,19 @@ export class MCPClientManager {
     upstreamClient: Client,
     connectCapabilities: ClientCapabilityOptions
   ): ClientCapabilityOptions {
-    if (!config.eraCapabilities?.modern || config.clientCapabilities) {
+    // `supportsMrtr: false` needs this pass even without an overlay, and even
+    // for a pinned exact set: the connect-time build ran with `era`
+    // undefined, so it still counted a legacy fulfiller (see
+    // `buildCapabilities`). Without re-resolving, a modern connection built
+    // without an `eraCapabilities.modern` overlay — every hosted, CLI and raw
+    // SDK caller — would keep advertising elicitation and the knob would
+    // silently no-op. Re-running is safe for an exact set: `buildCapabilities`
+    // applies the same gate to it and otherwise advertises it verbatim.
+    const narrowsForMrtr = config.supportsMrtr === false;
+    if (
+      !narrowsForMrtr &&
+      (!config.eraCapabilities?.modern || config.clientCapabilities)
+    ) {
       return connectCapabilities;
     }
     const negotiatedVersion = upstreamClient.getNegotiatedProtocolVersion?.();
@@ -3223,12 +3601,18 @@ export class MCPClientManager {
   // cache, tool + prompt legs carry the modern per-request log-level `_meta`
   // via the `requestWithSchema` decorator, and the final tool result is
   // re-validated against its output schema (reconstructing what the bypassed
-  // upstream `callTool` would have asserted). SEP-2243 `Mcp-Param-*` mirroring
-  // is the one `callTool` behavior these legs CANNOT reconstruct — it lives in
-  // upstream's private internals and there is no seam to add per-request
-  // headers to a `requestWithSchema` leg, so warming the mirroring source (see
-  // `ensureXMcpHeaderMirroringSource`) would not help here. Local and hosted
-  // MRTR have parity on that gap; see `mrtr-hosted-chat.ts`.
+  // upstream `callTool` would have asserted), and SEP-2243 `Mcp-Param-*`
+  // headers are mirrored per leg.
+  //
+  // That last one used to be the gap: upstream's mirroring lives inside
+  // `callTool`'s private internals, and every MRTR leg goes through
+  // `requestWithSchema` (only it can carry `requestState` / `inputResponses`).
+  // Because the MRTR collector is registered for EVERY connected server — it
+  // is what makes us advertise `elicitation` at all — that gap applied to
+  // every modern `tools/call`, not just the ones that actually elicit, and a
+  // conforming server answered `-32020 HeaderMismatch`. The legs now scan the
+  // tool's `x-mcp-header` declarations themselves (`mcp-header-mirror.ts`) and
+  // pass the built headers through `TransportSendOptions.headers`.
   //
   // The MRTR loop lives OUTSIDE the per-leg retry/timeout wrappers, so a
   // transient failure on round N retries only that leg — it never restarts
@@ -3251,6 +3635,20 @@ export class MCPClientManager {
       request,
       callParams as unknown as Record<string, unknown>
     ) as typeof callParams;
+    // Resolved once for the whole operation: the tool identity is fixed across
+    // legs, so re-scanning per round would repeat the lookup to reach the same
+    // answer. The header VALUES are still built per leg, below.
+    const declarations = await this.resolveXMcpHeaderDeclarations(
+      serverId,
+      this.getClientOrThrow(serverId),
+      callParams.name,
+      {
+        ...(baseOptions?.signal ? { signal: baseOptions.signal } : {}),
+        ...(baseOptions?.timeout !== undefined
+          ? { timeout: baseOptions.timeout }
+          : {}),
+      }
+    );
     const sender: MrtrLegSender<CallToolResult> = (req) =>
       this.runRetriedOperation(
         serverId,
@@ -3260,6 +3658,15 @@ export class MCPClientManager {
           await this.ensureConnected(serverId, signal);
           const client = this.getClientOrThrow(serverId);
           const mergedOptions = this.withProgressHandler(serverId, baseOptions);
+          // Built from THIS leg's arguments, not the operation's: the server
+          // cross-checks each request's headers against that request's body.
+          const paramHeaders =
+            declarations.length === 0
+              ? undefined
+              : buildMcpParamHeaders(
+                  declarations,
+                  (req.params as { arguments?: unknown } | undefined)?.arguments
+                );
           return this.withElicitationTimeoutSuspension(
             serverId,
             mergedOptions,
@@ -3273,7 +3680,23 @@ export class MCPClientManager {
                 // `.signal` with the outer retry `signal` would drop that
                 // watchdog; the outer abort is already enforced by
                 // `runRetriedOperation`'s `awaitWithAbort` wrapper.
-                { ...callOptions, allowInputRequired: true }
+                {
+                  ...callOptions,
+                  allowInputRequired: true,
+                  // Caller-supplied headers win: an explicit override is a
+                  // deliberate act, and the debugger must be able to send a
+                  // deliberately wrong header to exercise a server's -32020.
+                  ...(paramHeaders && Object.keys(paramHeaders).length > 0
+                    ? {
+                        headers: {
+                          ...paramHeaders,
+                          ...(
+                            callOptions as { headers?: Record<string, string> }
+                          ).headers,
+                        },
+                      }
+                    : {}),
+                }
               ) as Promise<CallToolResult | InputRequiredResult>
           );
         }
@@ -3379,6 +3802,242 @@ export class MCPClientManager {
     result: CallToolResult
   ): Promise<void> {
     return this.validateToolOutputSchema(serverId, toolName, result);
+  }
+
+  /**
+   * The `Mcp-Param-*` headers one MRTR `tools/call` leg must carry — the public
+   * sibling of what {@link executeToolWithInputRequired} does internally, for
+   * the surfaces that drive a leg themselves.
+   *
+   * The HOSTED resume path is why this exists. A resume leg must go through
+   * `requestWithSchema` (only it can carry `requestState` / `inputResponses`),
+   * which bypasses upstream `callTool` and therefore its private mirroring — so
+   * a hosted retry went out unmirrored and a conforming 2026-07-28 server
+   * answered `-32020`, while the local path (fixed in #3620) did not. Exposing
+   * the seam rather than re-deriving it in `server/utils` is the same choice
+   * {@link assertMrtrToolOutputSchema} made for output-schema validation: one
+   * implementation, so the two surfaces cannot disagree about what a conforming
+   * request looks like.
+   *
+   * Honors `mirrorToolParamHeaders: false` (host config
+   * `toolParamHeaderMirroring: "omit"`) — the simulation has to apply to hosted
+   * sessions too, or a user testing a non-conforming client would silently get
+   * a conforming one.
+   *
+   * Built from the LEG's arguments, not the operation's: a server cross-checks
+   * each request's headers against that request's body. Best-effort — an
+   * unresolvable schema yields `{}` and the leg proceeds exactly as it does
+   * today.
+   */
+  async mrtrToolParamHeaders(
+    serverId: string,
+    toolName: string,
+    args: unknown,
+    options?: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<Record<string, string>> {
+    await this.ensureConnected(serverId, options?.signal);
+    const declarations = await this.resolveXMcpHeaderDeclarations(
+      serverId,
+      this.getClientOrThrow(serverId),
+      toolName,
+      options ?? {}
+    );
+    return declarations.length === 0
+      ? {}
+      : buildMcpParamHeaders(declarations, args);
+  }
+
+  /**
+   * Resolves the SEP-2243 `x-mcp-header` declarations for one tool, so an MRTR
+   * leg can mirror them into `Mcp-Param-*` the way upstream `callTool` does.
+   *
+   * Gated exactly like {@link ensureXMcpHeaderMirroringSource} — modern era,
+   * non-stdio transport — and warms the same source, so the `listTools` below
+   * is served from the response cache without a round trip. Declarations are
+   * resolved ONCE per operation; the header VALUES are built per leg, because
+   * only the leg's own `arguments` may be mirrored.
+   *
+   * Best-effort, like the output-schema sibling: an unresolvable schema yields
+   * no declarations and the call proceeds unmirrored, which is exactly today's
+   * behavior. An INVALID scan also yields none — the same "proceed without
+   * custom headers" path upstream takes, leaving the server's `-32020` as the
+   * authority rather than inventing a client-side failure.
+   */
+  private async resolveXMcpHeaderDeclarations(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<XMcpHeaderDeclaration[]> {
+    if (this.xMcpMirroringDisabled(serverId)) return [];
+    if (client.getProtocolEra?.() !== "modern") return [];
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return [];
+    try {
+      await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
+      // `options` on the lookup too, not just the warm-up: when the warm-up
+      // failed (it swallows and is re-attempted per call) this IS the round
+      // trip, and one that ignored the caller's abort/deadline could outlive
+      // the very call it is serving.
+      const list = await client.listTools(undefined, options);
+      const tool = list.tools.find(
+        (candidate) => candidate.name === toolName
+      ) as { inputSchema?: unknown } | undefined;
+      if (tool?.inputSchema === undefined) return [];
+      const scan = scanXMcpHeaderDeclarations(tool.inputSchema);
+      return scan.valid ? scan.declarations : [];
+    } catch (error) {
+      // Best-effort applies to LOOKUP failures, not to cancellation: swallowing
+      // an abort would report "this tool declares nothing" for a call the
+      // caller already gave up on, and let the operation continue past it.
+      if (isAbortError(error)) throw error;
+      return [];
+    }
+  }
+
+  /**
+   * The MRTR input collector to drive rounds with, or `undefined` when this
+   * connection simulates a client that does not drive MRTR at all
+   * (`MCPServerConfig.supportsMrtr: false`, from the host config's
+   * `mcpProfile.mrtrSupport: "none"`).
+   *
+   * Returning `undefined` is the whole enforcement: every verb gate then
+   * takes its plain path, which does NOT pass `allowInputRequired`, so the
+   * upstream client rejects an `input_required` result natively with
+   * `UNSUPPORTED_RESULT_TYPE` — the same error a client that never
+   * implemented MRTR would produce. Nothing about the round-driving code
+   * needs a special case, and no `allowInputRequired: true` goes out on the
+   * wire claiming a capability the simulated client disclaims.
+   *
+   * The collector is left REGISTERED so callers that own it (hosted bridge,
+   * CLI) need no teardown, and so flipping the knob back does not require
+   * re-registration.
+   */
+  private resolveMrtrCollector(
+    serverId: string
+  ): ReturnType<Map<string, MrtrInputCollector>["get"]> {
+    if (this.registeredServers.get(serverId)?.config.supportsMrtr === false) {
+      return undefined;
+    }
+    return this.mrtrInputCollectors.get(serverId);
+  }
+
+  /**
+   * Applies the first-page-only transport wrapper when this connection is
+   * configured to simulate a client that stops after page one
+   * (`MCPServerConfig.firstPageOnly`, set from the host config's
+   * `mcpProfile.paginationTraversal: "firstPageOnly"`).
+   *
+   * OUTERMOST by design: the logging transport underneath still records the
+   * frame the server really sent, so the evidence stays truthful and only the
+   * client sees the truncated list. Applied identically on stdio, Streamable
+   * HTTP and SSE — pagination is not transport-specific.
+   *
+   * Read at connect time rather than per call, because the transport is built
+   * once per connection; changing the knob takes effect on reconnect, which is
+   * how every other connect option behaves.
+   */
+  private applyFirstPageOnly(
+    config: { firstPageOnly?: boolean },
+    transport: Transport
+  ): Transport {
+    return config.firstPageOnly === true
+      ? wrapTransportForFirstPageOnly(transport)
+      : transport;
+  }
+
+  /**
+   * Whether this connection was configured to simulate a client that does NOT
+   * mirror `x-mcp-header` arguments into `Mcp-Param-*`
+   * (`MCPServerConfig.mirrorToolParamHeaders: false`, set from the host
+   * config's `mcpProfile.toolParamHeaderMirroring: "omit"`).
+   *
+   * `undefined` — the shape every pre-existing caller has — means mirror, so
+   * nothing changes for anyone who never sets the knob.
+   */
+  private xMcpMirroringDisabled(serverId: string): boolean {
+    return (
+      this.registeredServers.get(serverId)?.config.mirrorToolParamHeaders ===
+      false
+    );
+  }
+
+  /**
+   * Build the `CallToolRequestOptions.toolDefinition` that SUPPRESSES SEP-2243
+   * mirroring on the plain (non-MRTR) `tools/call` path: the tool's own
+   * definition with every `x-mcp-header` annotation stripped from its
+   * `inputSchema`.
+   *
+   * Two upstream behaviors make this the seam rather than a flag. `callTool`
+   * reads a supplied `toolDefinition`'s `inputSchema` "instead of (and without
+   * consulting) the cached `tools/list` result", so a stripped copy is the only
+   * way to silence mirroring on a connection whose cache is already warm. And
+   * upstream's `-32020 HEADER_MISMATCH` evict-refetch-retry recovery is
+   * DISABLED whenever `toolDefinition` is set — which is the point here: a
+   * simulated non-conforming client must surface the server's rejection, not
+   * quietly recover from it on a second attempt.
+   *
+   * `outputSchema` is copied through untouched, because upstream validates the
+   * result against the SAME definition; stripping it would silently weaken
+   * output validation as a side effect of a header knob.
+   *
+   * Gated like {@link resolveXMcpHeaderDeclarations} — modern era, non-stdio —
+   * since mirroring cannot happen elsewhere and a `toolDefinition` there would
+   * only change unrelated behavior. It DOES warm the aggregated `tools/list`
+   * (the mirroring path's own source) when the cache is cold: without the real
+   * definition there is nothing to strip, upstream would fall into its silent
+   * miss path, and its recovery retry — armed, because no `toolDefinition` was
+   * passed — would refetch and then send the very headers we are simulating the
+   * absence of. Best-effort, like its sibling: an unresolvable definition
+   * yields `undefined` and the call proceeds unchanged.
+   */
+  private async resolveUnmirroredToolDefinition(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<UpstreamToolDefinition | undefined> {
+    // The era/transport gates return `undefined` because mirroring cannot
+    // happen there AT ALL — no suppression is needed, and a `toolDefinition`
+    // would only perturb unrelated behavior.
+    if (client.getProtocolEra?.() !== "modern") return undefined;
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return undefined;
+    try {
+      await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
+      // `options` on the lookup too, not just the warm-up: when the warm-up
+      // failed (it swallows and is re-attempted per call) this IS the round
+      // trip, and one that ignored the caller's abort/deadline could outlive
+      // the very call it is serving.
+      const list = await client.listTools(undefined, options);
+      const tool = list.tools.find((candidate) => candidate.name === toolName);
+      if (tool) {
+        return {
+          ...tool,
+          inputSchema: stripXMcpHeaderAnnotations(tool.inputSchema),
+        } as UpstreamToolDefinition;
+      }
+    } catch (error) {
+      // Same rule as the sibling: cancellation is not a lookup miss.
+      if (isAbortError(error)) throw error;
+      // Otherwise fall through to the synthetic definition below.
+    }
+    // The schema could not be resolved — but on THIS path that must not become
+    // "give up and mirror". Returning `undefined` here would hand upstream a
+    // call with no `toolDefinition`, which mirrors from its own cache AND
+    // re-arms the `-32020` evict-refetch-retry recovery, so a transient
+    // `tools/list` failure would silently turn the user's non-conforming-client
+    // simulation back into a conforming one and hide the server's rejection
+    // behind a retry. A minimal definition keeps both guarantees.
+    //
+    // It costs the call's output-schema validation, which is the honest trade:
+    // in exactly these cases upstream could not have resolved an `outputSchema`
+    // either (it reads the same aggregated listing), so the alternative is not
+    // "validated" but "unvalidated AND silently re-conforming".
+    return {
+      name: toolName,
+      inputSchema: { type: "object" },
+    } as UpstreamToolDefinition;
   }
 
   /**

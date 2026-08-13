@@ -1,6 +1,10 @@
-import { useId } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
+import { useMaskedValues } from "../hooks/use-masked-values";
+import { HiddenValuesField } from "./HiddenValuesField";
+import { MaskedValueInput } from "./MaskedValueInput";
+import { StoredKeyRows } from "./StoredKeyRows";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
   Select,
@@ -10,6 +14,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { protocolVersionLabel } from "@mcpjam/sdk/browser";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 
 /**
@@ -26,8 +31,8 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "inherit", label: "Client default" },
-  { value: "latest", label: "Latest (2026-07-28)" },
-  { value: "november", label: "November (2025-11-25)" },
+  { value: "latest", label: protocolVersionLabel("2026-07-28") },
+  { value: "november", label: protocolVersionLabel("2025-11-25") },
 ];
 
 interface HeaderEntry {
@@ -54,6 +59,16 @@ interface AdvancedConnectionSettingsSectionProps {
   isRevealingHeaders?: boolean;
   headersRevealError?: string | null;
   onRevealHeaders?: () => void;
+  /** Names of the headers the server has stored, once fetched. Callers exclude
+   * Authorization only when the reveal would route it into the bearer field —
+   * an OAuth/none server keeps its own Authorization header as a row. */
+  storedHeaderKeys?: string[];
+  /** Asks for those names — names only, no values. See EnvVarsSection. */
+  onRequestStoredKeys?: () => void;
+  /** Identity of the server these headers belong to. Re-masks everything when
+   * it changes, so a form that swaps servers without remounting can't carry an
+   * uncovered row onto the next server's values. */
+  maskingKey?: string | null;
   clientCapabilitiesOverrideEnabled?: boolean;
   onClientCapabilitiesOverrideEnabledChange?: (enabled: boolean) => void;
   clientCapabilitiesOverrideText?: string;
@@ -104,6 +119,9 @@ export function AdvancedConnectionSettingsSection({
   isRevealingHeaders = false,
   headersRevealError,
   onRevealHeaders,
+  storedHeaderKeys,
+  onRequestStoredKeys,
+  maskingKey,
   clientCapabilitiesOverrideEnabled = false,
   onClientCapabilitiesOverrideEnabledChange,
   clientCapabilitiesOverrideText = "{}",
@@ -121,6 +139,45 @@ export function AdvancedConnectionSettingsSection({
     onRemoveHeader !== undefined &&
     onUpdateHeader !== undefined;
   const headersHidden = hasStoredHeaders && (customHeaders?.length ?? 0) === 0;
+  // Header values carry bearer tokens and API keys, so they mask the same way
+  // env-var values do. See use-masked-values for why the toggle needs no fetch.
+  const maskedHeaders = useMaskedValues(maskingKey);
+  const handleAddHeader = () => {
+    maskedHeaders.markAdded(customHeaders?.length ?? 0);
+    onAddHeader?.();
+  };
+  const handleRemoveHeader = (index: number) => {
+    maskedHeaders.dropAt(index);
+    onRemoveHeader?.(index);
+  };
+  // Same as the env-var editor: expanding "Connection overrides" fetches the
+  // header *names* so the masked rows can say which are set, and nothing more.
+  // `onRevealHeaders` decrypts the values — including a bearer token — so it
+  // stays behind an explicit gesture on a row. See EnvVarsSection.
+  const storedKeys = storedHeaderKeys ?? [];
+  const keysRequested = useRef(false);
+  useEffect(() => {
+    if (!showConfiguration || !headersHidden || !onRequestStoredKeys) return;
+    if (keysRequested.current) return;
+    keysRequested.current = true;
+    onRequestStoredKeys();
+  }, [showConfiguration, headersHidden, onRequestStoredKeys]);
+
+  const [pendingRevealKey, setPendingRevealKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingRevealKey) return;
+    const index = (customHeaders ?? []).findIndex(
+      (header) => header.key === pendingRevealKey
+    );
+    if (index === -1) return;
+    maskedHeaders.show(index);
+    setPendingRevealKey(null);
+  }, [customHeaders, maskedHeaders, pendingRevealKey]);
+
+  const handleRevealStoredKey = (key: string) => {
+    setPendingRevealKey(key);
+    onRevealHeaders?.();
+  };
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
@@ -207,7 +264,7 @@ export function AdvancedConnectionSettingsSection({
                   </label>
                   <button
                     type="button"
-                    onClick={onAddHeader}
+                    onClick={handleAddHeader}
                     disabled={headersHidden}
                     className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -215,35 +272,30 @@ export function AdvancedConnectionSettingsSection({
                     Add
                   </button>
                 </div>
-                {headersHidden && (
-                  <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2.5">
-                    <div>
-                      <p className="text-xs font-medium text-foreground">
-                        Hidden — Reveal to view
-                      </p>
-                      {headersRevealError && (
-                        <p
-                          role="alert"
-                          className="mt-1 text-xs text-destructive"
-                        >
-                          {headersRevealError}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      disabled={isRevealingHeaders || !onRevealHeaders}
-                      onClick={onRevealHeaders}
-                      className="rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isRevealingHeaders ? "Revealing..." : "Reveal"}
-                    </button>
-                  </div>
+                {headersHidden && storedKeys.length > 0 && (
+                  <StoredKeyRows
+                    keys={storedKeys}
+                    separator=":"
+                    rowNoun="Header"
+                    isRevealing={isRevealingHeaders}
+                    error={headersRevealError}
+                    onReveal={handleRevealStoredKey}
+                  />
+                )}
+                {/* No names yet — in flight, or the fetch failed and this is
+                    the retry. */}
+                {headersHidden && storedKeys.length === 0 && (
+                  <HiddenValuesField
+                    subject="headers"
+                    isRevealing={isRevealingHeaders}
+                    error={headersRevealError}
+                    onReveal={onRevealHeaders}
+                  />
                 )}
                 {!headersHidden && customHeaders.length === 0 && (
                   <button
                     type="button"
-                    onClick={onAddHeader}
+                    onClick={handleAddHeader}
                     className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -252,55 +304,53 @@ export function AdvancedConnectionSettingsSection({
                 )}
                 {customHeaders.length > 0 && (
                   <div className="space-y-1.5">
-                    {customHeaders.map((header, index) => (
-                      <div
-                        key={header.id ?? `${header.key}-${index}`}
-                        className="flex items-center gap-1.5"
-                      >
-                        <Input
-                          value={header.key}
-                          onChange={(e) =>
-                            onUpdateHeader(index, "key", e.target.value)
-                          }
-                          placeholder="Header"
-                          spellCheck={false}
-                          autoCapitalize="off"
-                          autoCorrect="off"
-                          aria-label={`Header ${index + 1} name`}
-                          className="h-8 flex-1 font-mono text-xs"
-                        />
-                        <span
-                          aria-hidden="true"
-                          className="shrink-0 select-none text-xs text-muted-foreground/70"
+                    {customHeaders.map((header, index) => {
+                      const label = header.key || `header ${index + 1}`;
+                      return (
+                        <div
+                          key={header.id ?? `${header.key}-${index}`}
+                          className="flex items-center gap-1.5"
                         >
-                          :
-                        </span>
-                        <Input
-                          value={header.value}
-                          onChange={(e) =>
-                            onUpdateHeader(index, "value", e.target.value)
-                          }
-                          placeholder="value"
-                          spellCheck={false}
-                          autoCapitalize="off"
-                          autoCorrect="off"
-                          aria-label={`Header ${index + 1} value`}
-                          className="h-8 flex-[1.4] font-mono text-xs"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onRemoveHeader(index)}
-                          aria-label={
-                            header.key
-                              ? `Remove ${header.key}`
-                              : `Remove header ${index + 1}`
-                          }
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
+                          <Input
+                            value={header.key}
+                            onChange={(e) =>
+                              onUpdateHeader(index, "key", e.target.value)
+                            }
+                            placeholder="Header"
+                            spellCheck={false}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            aria-label={`Header ${index + 1} name`}
+                            className="h-8 flex-1 font-mono text-xs"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className="shrink-0 select-none text-xs text-muted-foreground/70"
+                          >
+                            :
+                          </span>
+                          <MaskedValueInput
+                            value={header.value}
+                            onChange={(value) =>
+                              onUpdateHeader(index, "value", value)
+                            }
+                            visible={maskedHeaders.isVisible(index)}
+                            onToggleVisibility={() => maskedHeaders.toggle(index)}
+                            inputLabel={`Header ${index + 1} value`}
+                            subject={label}
+                            className="flex-[1.4]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveHeader(index)}
+                            aria-label={`Remove ${label}`}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {headersWarning && (

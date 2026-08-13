@@ -24,7 +24,12 @@
  *     its own OAuth-error enrichment if applicable.
  */
 import type { Context } from "hono";
-import { type ToolSet } from "ai";
+import { type ToolSet, type UIMessageChunk } from "ai";
+import { logger } from "./logger.js";
+import {
+  SANDBOX_NOTICE_DATA_PART_TYPE,
+  type SandboxNoticeReason,
+} from "@/shared/sandbox-notice";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type {
@@ -74,7 +79,7 @@ import type { EffectiveCapabilitySet } from "../services/environments/effective-
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
-import { extractInsufficientScopeChallenge } from "./mcp-error-serialize.js";
+import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import {
   classifyUiToolApprovals,
   type UiToolApprovalClassification,
@@ -89,6 +94,16 @@ import {
 import type { HostedMrtrBridge } from "./mrtr-hosted-bridge.js";
 import type { HostedTaskCreatedBridge } from "./hosted-task-created-bridge.js";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
+import {
+  buildHostedScopeStepUpCancellation,
+  buildHostedScopeStepUpResume,
+  createHostedScopeStepUpContinuation,
+} from "./hosted-scope-step-up-continuation.js";
+import type {
+  ScopeStepUpCancelRequest,
+  ScopeStepUpResumeRequest,
+} from "@/shared/scope-step-up";
+import type { ChatRewind } from "@/shared/chat-v2";
 import {
   bridgeHarnessRpcLogsToCollector,
   startCrossInstanceRpcLogPoll,
@@ -160,6 +175,8 @@ export interface WebChatTurnPersistContext {
   originalMessages: UIMessage[] | unknown[];
   /** Direct-chat only. */
   directVisibility?: "private" | "project";
+  /** Direct-chat lineage when this session was created by message edit. */
+  rewind?: ChatRewind;
   /**
    * Direct-chat only. May be a pre-built payload, `null` to opt out (e.g.
    * agent surfaces), or a builder closure that receives the post-prepare
@@ -242,6 +259,11 @@ export interface WebChatTurnPrepareInputs {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  /**
+   * MCP tool names this surface declines to advertise, whichever selected
+   * server offers them. See `PrepareChatV2Options.excludeMcpToolNames`.
+   */
+  excludeMcpToolNames?: readonly string[];
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
@@ -336,8 +358,103 @@ export interface WebChatTurnRuntime {
    * call and splices the driven result. Emulated MCPJam engine only.
    */
   mrtrResume?: MrtrEngineResume;
+  /**
+   * Durable SEP-2350 chat suspension context. The bearer never reaches the
+   * browser; it is used only for the opaque Convex continuation store.
+   */
+  scopeStepUp?: {
+    bearer: string;
+    authPrincipal: string;
+    resumeRequest?: ScopeStepUpResumeRequest;
+    cancelRequest?: ScopeStepUpCancelRequest;
+  };
+  /**
+   * One-time notices about this conversation's ephemeral sandbox, PEEKED from
+   * the control plane by the caller (chat-v2 provisions before the stream
+   * exists, so it cannot emit them itself).
+   *
+   * Flushed once, at `onStreamWriterReady`, on whichever engine this turn takes
+   * — they describe the machine, not the model — and ACKED immediately after
+   * the write, which is what marks them delivered. Until that ack lands they
+   * remain pending server-side, so a turn that dies before streaming re-delivers
+   * them next time instead of losing them.
+   */
+  sandboxNotices?: SandboxNoticeReason[];
+  /**
+   * Acks the notices above once they are on the wire. Supplied by the caller
+   * (it holds the bearer and the sandbox row id); absent when the backend
+   * already consumed them at provision time (legacy fused path).
+   *
+   * Best-effort: a failed ack re-delivers, which is the correct direction to
+   * fail for "your sandbox was reset, earlier files are gone".
+   */
+  ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
+}
+
+/**
+ * A stream writer that can optionally report whether the stream is still open.
+ * `isClosed` is implemented by the emulated engine's no-throw `safeWriter`; the
+ * other engines pass a writer that throws on a dead controller, which the
+ * try/catch handles instead.
+ */
+type SandboxNoticeWriter = ElicitationChunkWriter & {
+  isClosed?: () => boolean;
+};
+
+/**
+ * Flush the turn's sandbox notices onto the freshly-ready stream writer, then
+ * ACK the ones that actually made it out.
+ *
+ * The ack is what closes the delivery gap: the control plane keeps a notice
+ * pending until this point, so a turn that dies before the writer exists
+ * re-delivers it rather than losing it. Only notices actually DELIVERED are
+ * acked.
+ *
+ * "Delivered" cannot be inferred from `write()` returning normally. The
+ * emulated engine hands us `safeWriter` (mcpjam-stream-handler.ts), which is
+ * deliberately no-throw — it swallows controller failures and silently no-ops
+ * once the stream is closed, so that a client disconnect cannot bring down the
+ * agentic loop. Trusting a clean return there would let us ack (and therefore
+ * permanently consume) a notice the browser never received. So the writer is
+ * asked directly via {@link SandboxNoticeWriter.isClosed}, and the abort signal
+ * is consulted too.
+ *
+ * Best-effort per notice in both directions: neither a failed write nor a
+ * failed ack may take down a turn whose only problem is that we couldn't
+ * narrate the machine. Bailing out early costs a duplicate notice next turn,
+ * never a lost one.
+ */
+function emitSandboxNotices(
+  writer: SandboxNoticeWriter | null | undefined,
+  notices: SandboxNoticeReason[] | undefined,
+  ack?: (delivered: SandboxNoticeReason[]) => void,
+  abortSignal?: AbortSignal
+): void {
+  if (!writer || !notices?.length) return;
+  const closed = () => writer.isClosed?.() === true || abortSignal?.aborted;
+  const delivered: SandboxNoticeReason[] = [];
+  for (const reason of notices) {
+    if (closed()) break;
+    try {
+      writer.write({
+        type: SANDBOX_NOTICE_DATA_PART_TYPE,
+        data: { reason },
+        transient: true,
+      } as unknown as UIMessageChunk);
+      // Re-checked AFTER the write: this is the call that may have discovered
+      // the stream was gone, and the chunk that discovered it did not land.
+      if (closed()) break;
+      delivered.push(reason);
+    } catch (error) {
+      logger.warn("[chat] sandbox notice stream write failed", {
+        reason,
+        error,
+      });
+    }
+  }
+  if (delivered.length > 0) ack?.(delivered);
 }
 
 export interface StreamWebChatTurnArgs {
@@ -446,6 +563,9 @@ export async function streamWebChatTurn(
       temperature: prepare.temperature,
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      ...(prepare.excludeMcpToolNames
+        ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
+        : {}),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
@@ -508,11 +628,66 @@ export async function streamWebChatTurn(
   // fallback would emit an id-only event that never matches the name-keyed
   // client store and step-up would silently no-op.
   const scopeStepUpServerNamesById =
-    buildServerNamesById(persist.selectedServerIds, persist.selectedServerNames) ??
-    {};
+    buildServerNamesById(
+      persist.selectedServerIds,
+      persist.selectedServerNames
+    ) ?? {};
+  let suspendedScopeStepUpToolCallId: string | undefined;
+  const scopeStepUpResume =
+    runtime.scopeStepUp?.resumeRequest && persist.chatSessionId
+      ? buildHostedScopeStepUpResume({
+          request: runtime.scopeStepUp.resumeRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          authPrincipal: runtime.scopeStepUp.authPrincipal,
+          projectId: persist.projectId,
+          chatSessionId: persist.chatSessionId,
+          manager,
+          messages: modelMessages,
+          tools: preparedTools,
+          modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+          abortSignal: runtime.abortSignal,
+        })
+      : runtime.scopeStepUp?.cancelRequest
+      ? buildHostedScopeStepUpCancellation({
+          request: runtime.scopeStepUp.cancelRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          messages: modelMessages,
+          tools: preparedTools,
+        })
+      : undefined;
+  const createScopeStepUpContinuation =
+    runtime.scopeStepUp && persist.chatSessionId
+      ? async ({
+          info,
+          toolName,
+          toolInput,
+        }: {
+          info: Parameters<
+            typeof createHostedScopeStepUpContinuation
+          >[0]["info"];
+          toolName: string;
+          toolInput: unknown;
+        }) => {
+          const event = await createHostedScopeStepUpContinuation({
+            bearer: runtime.scopeStepUp!.bearer,
+            authPrincipal: runtime.scopeStepUp!.authPrincipal,
+            projectId: persist.projectId,
+            chatSessionId: persist.chatSessionId!,
+            manager,
+            serverName: scopeStepUpServerNamesById[info.serverId],
+            info,
+            toolName,
+            toolInput,
+            abortSignal: runtime.abortSignal,
+          });
+          suspendedScopeStepUpToolCallId = event.toolCallId;
+          return event;
+        }
+      : undefined;
 
   /**
-   * Observe tool-call failures from ANY engine to surface out-of-band notices.
+   * Observe in-process tool-call failures from every ToolSet-driven engine to
+   * surface out-of-band notices.
    *
    * Wrapped here, on the tool set, rather than in the engines: `prepareChatV2`
    * builds this set once and all three consumers share it (MCPJam-free,
@@ -529,80 +704,55 @@ export async function streamWebChatTurn(
    * advertised, so it falls back to the raw stream writer when there is no
    * bridge (SEP-2350).
    *
-   * Rethrows always: this only observes. The engines' own error handling still
-   * produces the tool result the model sees.
+   * Harness MCP-server tools execute out of process through `.mcp.json` and
+   * therefore use the correlated harness-proxy side channel instead. Host-
+   * executed harness tools still pass through this set.
+   *
+   * The shared wrapper rethrows always: this only observes. The engines' own
+   * error handling still produces the tool result the model sees.
    */
-  const allTools = Object.fromEntries(
-    Object.entries(preparedTools as Record<string, any>).map(([name, tool]) => {
-      if (typeof tool?.execute !== "function") return [name, tool];
-      const execute = tool.execute.bind(tool);
-      return [
-        name,
-        {
-          ...tool,
-          execute: async (input: unknown, options: any) => {
-            try {
-              return await execute(input, options);
-            } catch (error) {
-              const serverId = (tool as any)._serverId ?? "unknown";
-              const elicitations = readUrlElicitations(error);
-              if (elicitations) {
-                runtime.elicitationBridge?.emitUrlRequired({
-                  serverId,
-                  toolCallId: options?.toolCallId,
-                  elicitations,
-                });
-              }
-              // SEP-2350: a runtime `403 insufficient_scope` thrown here is
-              // about to be collapsed by the AI-SDK into a model-facing
-              // error-text part, so route the challenge out-of-band on the
-              // display channel. The client drives the union-scope step-up.
-              const insufficientScope =
-                extractInsufficientScopeChallenge(error);
-              // Only emit a step-up notice the client can ACT on: a
-              // `requiredScope` (the scope to fold into the re-auth union) OR a
-              // `resourceMetadataUrl` (a PRM pointer the client's OAuth flow now
-              // discovers from — SEP-2350 follow-up to #3427). An
-              // `errorDescription`-only challenge carries nothing to
-              // re-authorize with — redirecting for it would burn the bounded
-              // one-attempt budget — so it stays plain error text the model
-              // already sees, consistent with the shared
-              // `isActionableStepUpChallenge` gate.
-              if (
-                insufficientScope &&
-                (insufficientScope.requiredScope?.trim() ||
-                  insufficientScope.resourceMetadataUrl?.trim())
-              ) {
-                const challenge = {
-                  serverId,
-                  toolCallId: options?.toolCallId,
-                  requiredScope: insufficientScope.requiredScope,
-                  resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
-                  errorDescription: insufficientScope.errorDescription,
-                };
-                if (runtime.elicitationBridge) {
-                  // Bridge enriches with the server name from its id→name map.
-                  runtime.elicitationBridge.emitInsufficientScope(challenge);
-                } else {
-                  // No bridge (elicitation unadvertised): still surface the
-                  // step-up display-only on the raw writer. Resolve the display
-                  // name from the same id→name map the bridge uses so a hosted
-                  // Convex `serverId` matches the name-keyed client store; the
-                  // client falls back to `serverId` only when no name resolves.
-                  emitInsufficientScopeChunk(
-                    scopeChallengeWriter,
-                    scopeStepUpServerNamesById[serverId],
-                    challenge,
-                  );
-                }
-              }
-              throw error;
-            }
-          },
-        },
-      ];
-    })
-  ) as typeof preparedTools;
+  const allTools = wrapToolsWithScopeStepUp(
+    preparedTools,
+    () => scopeChallengeWriter,
+    {
+      onToolError: ({ error, serverId, toolCallId }) => {
+        const elicitations = readUrlElicitations(error);
+        if (elicitations) {
+          runtime.elicitationBridge?.emitUrlRequired({
+            serverId,
+            toolCallId,
+            elicitations,
+          });
+        }
+      },
+      emitInsufficientScope: (challenge) => {
+        if (runtime.elicitationBridge) {
+          // Bridge enriches with the server name from its id→name map.
+          runtime.elicitationBridge.emitInsufficientScope(challenge);
+        } else {
+          // No bridge (elicitation unadvertised): still surface the step-up
+          // display-only on the raw writer. Resolve the display name from the
+          // same id→name map the bridge uses so a hosted Convex `serverId`
+          // matches the name-keyed client store.
+          emitInsufficientScopeChunk(
+            scopeChallengeWriter,
+            scopeStepUpServerNamesById[challenge.serverId],
+            challenge
+          );
+        }
+      },
+      ...(createScopeStepUpContinuation
+        ? {
+            createContinuation: ({ info, toolName, toolInput }) =>
+              createScopeStepUpContinuation({
+                info: { ...info, toolCallId: info.toolCallId! },
+                toolName,
+                toolInput,
+              }),
+          }
+        : {}),
+    }
+  );
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
     prepare.widgetModelContext ?? []
@@ -693,7 +843,6 @@ export async function streamWebChatTurn(
           ? { surface: persist.surface }
           : {}),
         chatboxId: persist.chatboxId,
-        accessVersion: persist.accessVersion,
         authHeader: runtime.authHeader,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
@@ -706,6 +855,7 @@ export async function streamWebChatTurn(
         ...(isDirectChat
           ? {
               directVisibility: persist.directVisibility,
+              ...(persist.rewind ? { rewind: persist.rewind } : {}),
               resumeConfig: {
                 systemPrompt: persist.systemPrompt,
                 temperature: persist.temperature,
@@ -790,10 +940,20 @@ export async function streamWebChatTurn(
         onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) => {
           scopeChallengeWriter = writer;
+          emitSandboxNotices(
+            writer,
+            runtime.sandboxNotices,
+            runtime.ackSandboxNotices,
+            runtime.abortSignal
+          );
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
+        ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+        shouldPauseAfterStep: () =>
+          suspendedScopeStepUpToolCallId !== undefined,
+        suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
         abortSignal: runtime.abortSignal,
       });
     }
@@ -827,10 +987,17 @@ export async function streamWebChatTurn(
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
+        emitSandboxNotices(
+          writer,
+          runtime.sandboxNotices,
+          runtime.ackSandboxNotices,
+          runtime.abortSignal
+        );
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
+      ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
       abortSignal: runtime.abortSignal,
     });
   }
@@ -908,6 +1075,12 @@ export async function streamWebChatTurn(
     // output-schema validation) before the first model call, splices the
     // driven result, and resumes the loop to a final assistant message.
     ...(runtime.mrtrResume ? { mrtrResume: runtime.mrtrResume } : {}),
+    ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+    ...(persist.harness && createScopeStepUpContinuation
+      ? {
+          createHarnessScopeStepUpContinuation: createScopeStepUpContinuation,
+        }
+      : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins
     // (web_search) to HarnessAgent without the MCP-server tools, which the
@@ -929,6 +1102,12 @@ export async function streamWebChatTurn(
     },
     onStreamWriterReady: (writer) => {
       scopeChallengeWriter = writer;
+      emitSandboxNotices(
+        writer,
+        runtime.sandboxNotices,
+        runtime.ackSandboxNotices,
+        runtime.abortSignal
+      );
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp

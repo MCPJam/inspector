@@ -414,3 +414,53 @@ describe("pre-401 probe carries the MCP-Protocol-Version header", () => {
     },
   );
 });
+
+// -----------------------------------------------------------------------------
+// Defect 5: the executed authenticated replay must carry the same
+// MCP-Protocol-Version header its preview advertises. The header exists from
+// the 2025-06-18 revision onward ("MUST include on all subsequent requests");
+// 2025-03-26 predates it, so that machine must NOT send it on the replay.
+// -----------------------------------------------------------------------------
+describe("authenticated replay carries MCP-Protocol-Version where the spec defines it", () => {
+  const REPLAY_VERSIONS: Array<[OAuthProtocolVersion, string | undefined]> = [
+    ["2025-03-26", undefined],
+    ["2025-06-18", "2025-06-18"],
+    ["2025-11-25", "2025-11-25"],
+    ["2026-07-28", "2026-07-28"],
+  ];
+
+  it.each(REPLAY_VERSIONS)(
+    "executed authenticated replay header for %s",
+    async (version, expectedHeaderValue) => {
+      const requestExecutor = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: { jsonrpc: "2.0", id: 2, result: {} },
+      });
+
+      const seed: Partial<OAuthFlowState> = {
+        currentStep: "authenticated_mcp_request",
+        serverUrl: SERVER_URL,
+        accessToken: "test-access-token",
+      };
+
+      const { machine } = makeMachine(version, seed, { requestExecutor });
+      await machine.proceedToNextStep();
+
+      expect(requestExecutor).toHaveBeenCalledTimes(1);
+      const replay = requestExecutor.mock.calls[0][0];
+      const headerEntry = Object.entries(replay.headers ?? {}).find(
+        ([k]) => k.toLowerCase() === "mcp-protocol-version",
+      );
+      if (expectedHeaderValue === undefined) {
+        expect(headerEntry).toBeUndefined();
+      } else {
+        expect(headerEntry?.[1]).toBe(expectedHeaderValue);
+      }
+      // The replay must actually be authenticated.
+      expect(replay.headers?.Authorization).toBe("Bearer test-access-token");
+    },
+  );
+});

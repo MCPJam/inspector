@@ -28,12 +28,13 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 
 `-32700 — jsonrpc/parse_error`
 
-The server returned a payload the client could not parse as JSON-RPC.
+The MCP wire contained JSON the inspector could not parse as JSON-RPC.
 
 **Likely causes**
-- Server emitted invalid JSON on the response channel.
+- The server emitted invalid JSON on the response channel.
 - A proxy or middleware mangled the response body.
-- The STDIO server emitted log output on stdout instead of stderr.
+- Server emitted log output on stdout instead of stderr (STDIO transport).
+- The inspector sent malformed JSON and the server returned a parse error.
 
 **Next steps**
 - Check the server's stdout/stderr for unintended log output.
@@ -133,13 +134,16 @@ The server did not respond within the configured request timeout.
 
 `-32001 — jsonrpc/header_mismatch`
 
-The server returned an `MCP-Protocol-Version` header that does not match what the client negotiated.
+The server rejected the request because an HTTP header disagreed with the JSON-RPC body — for example, `Mcp-Protocol-Version` does not match the version negotiated at `initialize`, or `Mcp-Name` does not match the tool name in the request body.
 
 **Likely causes**
 - Server is enforcing a different protocol version than the one negotiated at `initialize`.
-- A proxy stripped or rewrote the `MCP-Protocol-Version` header.
+- A proxy stripped or rewrote an `Mcp-*` header.
+- A routing header (`Mcp-Name`, `Mcp-Method`) was set to a value that disagrees with the request body.
 
 **Next steps**
+- Expand the failing JSON-RPC frame in the traffic log. The collapsed **HTTP headers** row beneath the JSON body names the disagreeing header (for example, `mcp-name disagrees with the body`) without requiring you to open a separate view.
+- If the inline headers section is absent, open the **HTTP** source filter in the traffic log to find the matching exchange and inspect its headers directly.
 - Verify the server's protocol-version pinning in the connection settings.
 - If you set an explicit protocol version per server, ensure it matches what the server advertises.
 
@@ -509,6 +513,65 @@ Your LLM provider rejected the request because you hit a rate limit or quota.
 - Wait for the limit window to reset.
 - Upgrade your provider plan.
 - Switch to a different provider in Settings.
+
+---
+
+## Environment errors
+
+These codes come from the environment resolution service. They appear in the Playground, the Environment Tools pane, and on chatbox shared links when a project environment cannot be resolved to a usable set of servers. The error card offers an action where one exists — for example, **Open Servers** for `ENV_NO_SERVERS` — rather than a generic retry that would fail identically.
+
+When a visitor opens a chatbox shared link and the scenario's environment is archived, they see **"This link has been archived"** instead of a generic failure message. For other unresolvable environment states they see **"This link isn't available right now"**. Signing in cannot change either state — the environment itself must be restored or reconfigured by the scenario owner.
+
+### No servers
+
+`ENV_NO_SERVERS`
+
+This environment has no servers.
+
+**Likely causes**
+- The client this environment points at has no servers connected.
+- The attached server group is empty.
+- Every server contributed by a pinned plugin has been removed.
+
+**Next steps**
+- Connect a server to the client, or attach a server group.
+- Check the environment's pinned plugins if it relied on one for servers.
+
+### Archived
+
+`ENV_ARCHIVED`
+
+This environment is archived.
+
+**Likely causes**
+- Someone archived it after this was configured.
+
+**Next steps**
+- Restore it from the Environments list, or pick a different environment.
+
+### Client missing
+
+`ENV_HOST_MISSING`
+
+This environment's client no longer exists.
+
+**Likely causes**
+- The client was deleted after the environment was created.
+
+**Next steps**
+- Point the environment at a different client, or recreate it.
+
+### Server group missing
+
+`ENV_ATTACHMENT_MISSING`
+
+This environment's server group is gone.
+
+**Likely causes**
+- The attached server group was deleted.
+
+**Next steps**
+- Attach a different server group, or clear the attachment.
 
 ---
 

@@ -134,6 +134,7 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  withSkillsExtensionCapability,
 } from "./capabilities.js";
 
 // Error classes
@@ -143,11 +144,13 @@ export {
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  extractInsufficientScopeChallenge,
   isMCPAuthError,
   unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./errors.js";
+export type { InsufficientScopeChallenge } from "./errors.js";
 
 export type { RetryPolicy } from "../retry.js";
 export {
@@ -215,6 +218,71 @@ export {
   parseTaskExtNotificationParams,
   assertTaskExtNotificationParams,
 } from "./tasks-ext-guards.js";
+
+// io.modelcontextprotocol/skills (SEP-2640) extension wire.
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+} from "./skills-dispatch.js";
+export type { SkillsSupport } from "./skills-dispatch.js";
+export {
+  SkillsExtListMethod,
+  SkillsExtGetMethod,
+  SkillsExtDirectoryReadMethod,
+  SkillsExtRequestMethods,
+  SKILL_NOT_FOUND_ERROR_CODE,
+  getSkillExt,
+  isSkillNotFoundError,
+  listSkillsExt,
+  readResourceDirectoryExt,
+} from "./skills-ext.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillsDirectoryEntry,
+  SkillsDirectoryReadResult,
+  SkillIdentityFrontmatter,
+} from "./skills-ext-types.js";
+export { INODE_DIRECTORY_MIME_TYPE } from "./skills-ext-types.js";
+export {
+  InvalidSkillsPayloadError,
+  isInvalidSkillsPayloadError,
+  MCPSkillsWireError,
+  isMCPSkillsWireError,
+  assertSkillsListResult,
+  assertSkillEntry,
+  assertSkillsGetResult,
+  assertDirectoryReadResult,
+} from "./skills-ext-guards.js";
+export {
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  canonicalJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./skills-integrity.js";
+export type {
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
+} from "./skills-integrity.js";
 
 // Shared task lifecycle engine — per-task due-time scheduling, dynamic
 // TTL/poll interval, backoff, durable input-key state. Every Tasks surface
@@ -316,6 +384,8 @@ export {
   TASK_CREATED_META_KEY,
   wrapFetchForTaskRouting,
   wrapTransportForTaskResults,
+  wrapTransportForFirstPageOnly,
+  stripNextCursorFromListResult,
 } from "./transport-utils.js";
 export {
   wrapFetchForHttpLogging,
@@ -393,6 +463,7 @@ export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  protocolVersionLabel,
 } from "./mcp-protocol-version.js";
 
 // Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen`
@@ -457,3 +528,23 @@ export type {
   InputRequests,
   InputResponses,
 } from "./mrtr-driver.js";
+
+// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring. Exported because three
+// surfaces outside the manager need the SAME scan the send path uses: the
+// conformance runner (`tools-x-mcp-header-declarations-valid` judges each
+// tool's declarations), the CLI (which prints what it mirrored), and the
+// Tracing panel's `Mcp-Param-*` verdicts. A second copy of the walk would be
+// a second answer to "is this tool definition valid".
+export {
+  buildMcpParamHeaders,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
+  encodeMcpHeaderValue,
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
+} from "./mcp-header-mirror.js";
+export type {
+  McpParamCrossCheck,
+  XMcpHeaderDeclaration,
+  XMcpHeaderScan,
+} from "./mcp-header-mirror.js";

@@ -2,11 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
-  getEvalsSubnavItems,
   getHostedNavigationSections,
-  resolveHostedSkillsNav,
+  navigationSections,
 } from "../mcp-sidebar";
-import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
 const FakeIcon = () => null;
 
@@ -17,7 +15,7 @@ const makeSections = () => [
       { title: "Always Visible", url: "#always", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
       },
     ],
@@ -115,43 +113,20 @@ describe("filterByFeatureFlags", () => {
     expect(result[0].items[0].title).toBe("Plain");
   });
 
-  it("keeps Evaluate item visible when evaluate-ci is off", () => {
-    const result = filterByFeatureFlags(
-      [
-        {
-          id: "mcp-apps",
-          items: [
-            { title: "Views", url: "#views", icon: FakeIcon },
-            {
-              title: "Evaluate",
-              url: "#evals",
-              icon: FakeIcon,
-              billingFeature: "evals" as const,
-              evalsSubnav: true,
-            },
-          ],
-        },
-      ],
-      { "evaluate-ci": false },
-    );
-    const titles = result[0].items.map((i) => i.title);
-    expect(titles).toEqual(["Views", "Evaluate"]);
-  });
-
-  it("renders no subnav when evaluate-ci is off (Evaluate is a flat link)", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: false }).map(
-        (item) => item.title,
-      ),
-    ).toEqual([]);
-  });
-
-  it("shows Runs as the only subnav item when evaluate-ci is on", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: true }).map(
-        (item) => item.title,
-      ),
-    ).toEqual(["Runs"]);
+  it("ships Evaluate as one flat, unflagged item (Runs is an in-page mode)", () => {
+    // Runs used to be a nested subnav item gated by `evaluate-ci`. Both lenses
+    // now live under one Evaluate entry and switch in the page header, so the
+    // sidebar carries no eval sub-items and no eval flag.
+    const evalsItems = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => item.url.startsWith("/evals"));
+    expect(evalsItems).toHaveLength(1);
+    expect(evalsItems[0]).toMatchObject({
+      title: "Evaluate",
+      url: "/evals",
+      billingFeature: "evals",
+    });
+    expect(evalsItems[0].featureFlag).toBeUndefined();
   });
 
   it("hides Conformance when the feature flag is off", () => {
@@ -249,7 +224,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -274,7 +249,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -301,16 +276,18 @@ describe("applyBillingGateNavState", () => {
 });
 
 describe("getHostedNavigationSections", () => {
-  it("keeps hosted-blocked local tabs visible as disabled hosted-only items", () => {
+  it("drops hosted-blocked tabs and keeps hosted-capable ones", () => {
     const result = getHostedNavigationSections([
       {
         id: "others",
         items: [
+          // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
+          // reached through the Servers tab switcher — so it is dropped here.
           { title: "Skills", url: "#skills", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
             billingFeature: "evals",
           },
@@ -328,19 +305,11 @@ describe("getHostedNavigationSections", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].items).toEqual([
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: FakeIcon,
-        disabled: true,
-        disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
-      },
-      // Tasks are hosted-capable (reconnect-per-poll routes), so the item is
-      // enabled rather than a disabled local-only stub.
+      // Tasks are hosted-capable (reconnect-per-poll routes), so the item stays.
       { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
         billingFeature: "evals",
       },
@@ -370,7 +339,7 @@ describe("getHostedNavigationSections", () => {
         items: [
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
           },
         ],
@@ -384,7 +353,7 @@ describe("getHostedNavigationSections", () => {
     ]);
   });
 
-  it("keeps Evaluate subnav entry with #evals in hosted mode", () => {
+  it("keeps the Evaluate entry in hosted mode", () => {
     const hostedSections = getHostedNavigationSections([
       {
         id: "mcp-apps",
@@ -394,7 +363,6 @@ describe("getHostedNavigationSections", () => {
             url: "#evals",
             icon: FakeIcon,
             billingFeature: "evals",
-            evalsSubnav: true,
           },
         ],
       },
@@ -406,37 +374,26 @@ describe("getHostedNavigationSections", () => {
         url: "#evals",
         icon: FakeIcon,
         billingFeature: "evals",
-        evalsSubnav: true,
       },
     ]);
   });
 });
 
-describe("resolveHostedSkillsNav (skills-enabled gate)", () => {
-  const hostedSections = () =>
-    getHostedNavigationSections([
-      {
-        id: "others",
-        items: [
-          { title: "Skills", url: "#skills", icon: FakeIcon },
-          { title: "Tools", url: "#tools", icon: FakeIcon },
-        ],
-      },
-    ]);
+describe("Skills is no longer a sidebar item", () => {
+  // Skills moved into Connect as a fourth tab (Servers | Client | Computer |
+  // Skills); the sidebar has no Skills entry in either mode, and the hosted
+  // filter must not resurrect one.
+  it("has no /skills item in any section, local or hosted", () => {
+    const skillsItems = (sections: typeof navigationSections) =>
+      sections.flatMap((section) =>
+        section.items.filter(
+          (item) => item.url.replace(/^[#/]+/, "") === "skills"
+        )
+      );
 
-  it("enables the Skills item when the flag is on", () => {
-    const result = resolveHostedSkillsNav(hostedSections(), true);
-    const skills = result[0].items.find((i) => i.title === "Skills");
-    expect(skills).toBeDefined();
-    expect(skills?.disabled).toBe(false);
-    expect(skills?.disabledTooltip).toBeUndefined();
-  });
-
-  it("drops the Skills item entirely when the flag is off", () => {
-    const result = resolveHostedSkillsNav(hostedSections(), false);
-    expect(result[0].items.find((i) => i.title === "Skills")).toBeUndefined();
-    // Sibling items are untouched.
-    expect(result[0].items.find((i) => i.title === "Tools")).toBeDefined();
+    const hosted = getHostedNavigationSections(navigationSections);
+    expect(skillsItems(navigationSections)).toEqual([]);
+    expect(skillsItems(hosted)).toEqual([]);
   });
 });
 
@@ -477,5 +434,23 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
       "hosts-enabled": false,
     });
     expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
+  });
+
+  it("real navigationSections: exactly one /servers item is visible per flag state, never both", () => {
+    const authed = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": true,
+    });
+    const signedOut = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": false,
+    });
+
+    const serversTitles = (sections: typeof navigationSections) =>
+      sections
+        .flatMap((s) => s.items)
+        .filter((i) => i.url.replace(/^[#/]+/, "") === "servers")
+        .map((i) => i.title);
+
+    expect(serversTitles(authed)).toEqual(["Connect"]);
+    expect(serversTitles(signedOut)).toEqual(["Servers"]);
   });
 });

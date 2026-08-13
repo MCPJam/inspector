@@ -20,8 +20,8 @@ The combined org and project switcher sits at the top of the sidebar. It shows y
 
 1. **Click the switcher** at the top of the sidebar to open the context menu
 2. **Create a project** - Click the **+** icon next to the **Projects** heading and give it a name
-3. **Add your servers** - Configure your MCP servers in the Servers tab
-4. **Enable auto-connect** - Use the **Auto-connect** toggle in the Servers tab header to automatically connect all project servers whenever a host opens
+3. **Add your servers** - Configure your MCP servers in the Connect tab
+4. **Enable auto-connect** - Use the **Auto-connect** toggle in the Connect tab header to automatically connect all project servers whenever a host opens
 5. **Share with your team** - Click the share button and invite collaborators
 
 <Info>
@@ -74,14 +74,16 @@ For security, authorization headers and OAuth tokens are never shared. Each team
 
 ## Secret storage for env vars and headers
 
-When you save a server that has **environment variables** (stdio) or **custom HTTP headers**, those values are stored as encrypted secrets. The next time you open the server's edit form, those fields show **"Hidden — Reveal to view"** instead of the raw values.
+When you save a server that has **environment variables** (stdio) or **custom HTTP headers**, those values are stored as encrypted secrets. The next time you open the server's edit form, each row shows its name with the value masked behind a fixed placeholder.
 
-### Revealing saved secrets
+### Viewing a saved value
 
-Click **Reveal** next to the hidden section to fetch and display the stored values. You can then view or edit them as normal.
+Click the **eye icon** on a row to reveal that row's value. The eye toggles the value back to masked when you click it again. Only the row you click is uncovered — other rows stay masked.
+
+When you first expand the Environment Variables or Connection overrides section on a saved server, the inspector fetches the variable and header names so each row can show which keys are configured. No values are fetched at that point; a value only travels to the browser when you click its eye.
 
 <Warning>
-If you want to change the **authentication type** (for example, switching from Bearer Token to a different method) on an HTTP server that has hidden headers, you must click **Reveal** first. Saving an auth change without revealing will show a validation error to prevent accidentally overwriting hidden headers.
+If you want to change the **authentication type** (for example, switching from Bearer Token to a different method) on an HTTP server that has hidden headers, you must reveal the relevant header rows first. Saving an auth change without revealing will show a validation error to prevent accidentally overwriting hidden headers.
 </Warning>
 
 ### How updates work
