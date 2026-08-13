@@ -209,4 +209,75 @@ describe("useEvalTraceToolContext", () => {
     expect(mockState.listTools).toHaveBeenCalledTimes(2);
     expect(result.current.error).toBeNull();
   });
+
+  it("surfaces an upstream auth refusal instead of parking on the spinner", async () => {
+    // The hosted route classifies "the user's MCP server refused our
+    // credentials" as 403 UPSTREAM_AUTH_FAILED. Both halves of the transient
+    // heuristic would otherwise claim it — the status is 403 and the message
+    // reads as an auth failure — and a transient verdict leaves this panel
+    // loading forever with no auto-retry. Nothing retryable can fix it, so the
+    // user has to see the error and go reconnect the server.
+    mockState.hostedMode = true;
+    mockState.convexAuth.isAuthenticated = true;
+    mockState.convexAuth.isLoading = false;
+    mockState.projectServers = {
+      serversByName: new Map([["alpha", "server-alpha"]]),
+      isLoading: false,
+    };
+    mockState.listTools.mockRejectedValue(
+      Object.assign(
+        new Error('Authentication failed for MCP server "alpha": HTTP 403'),
+        {
+          status: 403,
+          code: "UPSTREAM_AUTH_FAILED",
+          details: { upstreamAuthRequired: true },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useEvalTraceToolContext({
+        serverNames: ["alpha"],
+        projectId: "shared-project-1",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.error).toBe(
+        'Authentication failed for MCP server "alpha": HTTP 403',
+      );
+    });
+
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("still treats a bare hosted 403 as transient", () => {
+    // Regression guard for the branch above: only the route's explicit
+    // upstream-auth verdict is exempt. A plain 403 during hosted readiness
+    // (project access still settling) must keep its transient handling.
+    mockState.hostedMode = true;
+    mockState.convexAuth.isAuthenticated = true;
+    mockState.convexAuth.isLoading = false;
+    mockState.projectServers = {
+      serversByName: new Map([["alpha", "server-alpha"]]),
+      isLoading: false,
+    };
+    mockState.listTools.mockRejectedValue(
+      Object.assign(new Error("Forbidden"), { status: 403 }),
+    );
+
+    const { result } = renderHook(() =>
+      useEvalTraceToolContext({
+        serverNames: ["alpha"],
+        projectId: "shared-project-1",
+      }),
+    );
+
+    return waitFor(() => {
+      expect(mockState.listTools).toHaveBeenCalledTimes(1);
+    }).then(() => {
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(true);
+    });
+  });
 });
