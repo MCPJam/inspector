@@ -1,3 +1,4 @@
+import { extractResponseErrorReason } from "./shared/response-error.js";
 import {
   getStepIndex,
   getStepInfo,
@@ -220,50 +221,10 @@ function extractResponseErrorMessage(
     return undefined;
   }
 
-  const body = response.body;
-  if (body && typeof body === "object" && !Array.isArray(body)) {
-    const data = body as Record<string, unknown>;
-    const errorType =
-      typeof data.error_type === "string" ? data.error_type : undefined;
-    const errorMessage =
-      typeof data.error_message === "string"
-        ? data.error_message
-        : typeof data.error_description === "string"
-          ? data.error_description
-          : typeof data.message === "string"
-            ? data.message
-            : undefined;
-    if (errorType && errorMessage) {
-      return `${errorType}: ${errorMessage}`;
-    }
-
-    if (
-      typeof data.error === "string" &&
-      typeof data.error_description === "string"
-    ) {
-      return `${data.error}: ${data.error_description}`;
-    }
-
-    if (typeof data.error === "string") {
-      return data.error;
-    }
-
-    const nestedError = data.error;
-    if (
-      nestedError &&
-      typeof nestedError === "object" &&
-      !Array.isArray(nestedError) &&
-      typeof (nestedError as Record<string, unknown>).message === "string"
-    ) {
-      return (nestedError as Record<string, unknown>).message as string;
-    }
-
-    if (errorMessage) {
-      return errorMessage;
-    }
-  }
-
-  return `HTTP ${response.status} ${response.statusText}`;
+  return (
+    extractResponseErrorReason(response.body) ??
+    `HTTP ${response.status} ${response.statusText}`
+  );
 }
 
 function inferHttpHistoryEntryError(entry: HttpHistoryEntry): string | undefined {
