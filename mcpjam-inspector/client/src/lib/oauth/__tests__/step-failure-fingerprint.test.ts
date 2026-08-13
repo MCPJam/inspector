@@ -73,6 +73,18 @@ describe("normalizeStepFailureMessage", () => {
     );
   });
 
+  it("collapses a bracketed IPv6 endpoint together with its port", () => {
+    // The IPv4 rule already takes `127.0.0.1:9876` as one span. Without the
+    // same for the bracketed form, the port splits the class — and the
+    // host:port rule cannot help, since `]` is not a host character.
+    const forEndpoint = (endpoint: string) =>
+      normalizeStepFailureMessage(`proxy target resolves to ${endpoint}`);
+
+    expect(forEndpoint("[::1]:443")).toBe(forEndpoint("[::1]:8443"));
+    expect(forEndpoint("[::1]:443")).toBe(forEndpoint("[fd53::c8e3]:8443"));
+    expect(forEndpoint("[::1]:443")).toBe("proxy target resolves to <ip>");
+  });
+
   it("collapses a whole UUID, not just its long segments", () => {
     const forId = (id: string) =>
       normalizeStepFailureMessage(`Unknown client ${id}`);

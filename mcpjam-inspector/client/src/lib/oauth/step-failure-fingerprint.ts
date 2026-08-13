@@ -15,6 +15,10 @@ const VOLATILE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // Before the generic hex rule below, which would collapse only a UUID's
   // 8- and 12-char segments and leave the middle varying per id.
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<id>"],
+  // A bracketed IPv6 endpoint, taken with its port so the class does not
+  // split by port length. `]` is not a host character, so the host:port rule
+  // below cannot cover this.
+  [/\[(?:[0-9a-f]{0,4}:)+[0-9a-f]{0,4}\](?::\d{1,5})?/g, "<ip>"],
   // IPv6. The second form covers a leading `::`, where no word boundary
   // exists before the first colon; it runs after so `fd53::1` collapses whole.
   [/\b(?:[0-9a-f]{0,4}:){2,}[0-9a-f]{0,4}\b/g, "<ip>"],
