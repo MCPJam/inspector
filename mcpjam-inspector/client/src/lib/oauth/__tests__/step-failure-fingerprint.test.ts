@@ -1,0 +1,97 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  normalizeStepFailureMessage,
+  oauthStepFailureFingerprint,
+} from "../step-failure-fingerprint";
+
+describe("normalizeStepFailureMessage", () => {
+  it("collapses addresses so one guard rejection is one class", () => {
+    const forAddress = (address: string) =>
+      normalizeStepFailureMessage(
+        `OAuth proxy target resolves to a private/reserved IP address (${address})`,
+      );
+
+    expect(forAddress("10.22.7.151")).toBe(forAddress("198.18.2.250"));
+    expect(forAddress("10.22.7.151")).toBe(
+      forAddress("fd53:1c5a:1000::c8e3:cf02"),
+    );
+    expect(forAddress("10.22.7.151")).toContain("(<ip>)");
+  });
+
+  it("collapses an address with a port", () => {
+    expect(
+      normalizeStepFailureMessage("connect ECONNREFUSED 127.0.0.1:9876"),
+    ).toBe("connect econnrefused <ip>");
+  });
+
+  it("collapses URLs, including a trailing-slash difference", () => {
+    // The `iss` mismatch that a trailing slash triggers is one bug, not one
+    // per port a user's local authorization server happens to run on.
+    expect(
+      normalizeStepFailureMessage(
+        "Authorization response `iss` does not match: `https://localhost:7218` vs `https://localhost:7218/`",
+      ),
+    ).toBe("authorization response `iss` does not match: `<url>` vs `<url>`");
+  });
+
+  it("keeps HTTP status codes, which distinguish real failure classes", () => {
+    const proxyError = (status: string, reason: string) =>
+      normalizeStepFailureMessage(
+        `Backend debug proxy error: ${status} ${reason}`,
+      );
+
+    expect(proxyError("400", "Bad Request")).toContain("400");
+    expect(proxyError("500", "Internal Server Error")).toContain("500");
+    expect(proxyError("400", "Bad Request")).not.toBe(
+      proxyError("401", "Unauthorized"),
+    );
+  });
+
+  it("collapses ids and ports but not the words around them", () => {
+    expect(
+      normalizeStepFailureMessage("Unknown client a1b2c3d4e5f6 on port 7218"),
+    ).toBe("unknown client <id> on port <n>");
+  });
+
+  it("does not mistake prose colons for an address", () => {
+    expect(
+      normalizeStepFailureMessage(
+        "Could not discover authorization server metadata. Last error: null",
+      ),
+    ).toBe("could not discover authorization server metadata. last error: null");
+  });
+
+  it("normalizes whitespace and bounds the length", () => {
+    expect(normalizeStepFailureMessage("  a \n  b  ")).toBe("a b");
+    expect(normalizeStepFailureMessage("x".repeat(500))).toHaveLength(200);
+  });
+});
+
+describe("oauthStepFailureFingerprint", () => {
+  it("separates the same message raised at different steps", () => {
+    const message = "Authenticated request failed: 400 Bad Request";
+
+    expect(oauthStepFailureFingerprint("token_request", message)).not.toEqual(
+      oauthStepFailureFingerprint("authenticated_request", message),
+    );
+  });
+
+  it("stays stable for the same class at the same step", () => {
+    expect(
+      oauthStepFailureFingerprint("metadata", "Discovery failed at 10.0.0.1"),
+    ).toEqual(
+      oauthStepFailureFingerprint("metadata", "Discovery failed at 10.0.0.9"),
+    );
+  });
+
+  it("never emits an empty grouping key", () => {
+    // Sentry treats an empty fingerprint value as its own group; a blank one
+    // would quietly rebuild the single-bucket behavior for whitespace errors.
+    expect(oauthStepFailureFingerprint("metadata", "   ")).toEqual([
+      "oauth_debugger_step",
+      "metadata",
+      "<empty>",
+    ]);
+  });
+});

@@ -16,6 +16,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { sanitizeStepError } from "./trace-redaction";
+import { oauthStepFailureFingerprint } from "./step-failure-fingerprint";
 
 /**
  * Re-exported so the debugger's existing callers (and its tests) keep importing
@@ -277,16 +278,23 @@ function withStepFailureReporting(
     const error = updates.error;
     if (typeof error === "string" && error !== "" && error !== lastReportedError) {
       lastReportedError = error;
-      reportCaught(new Error(sanitizeStepError(error)), {
+      // Prefer the step this update moves TO, or an update that both advances
+      // and carries an error gets attributed to the PREVIOUS step.
+      const step =
+        (updates as { currentStep?: string }).currentStep ?? context.getStep();
+      const message = sanitizeStepError(error);
+      reportCaught(new Error(message), {
         source: "oauth_debugger_step",
         level: "warning",
+        // Also as tags, so triage can filter by them; `extra` is not indexed.
+        tags: {
+          oauth_step: step,
+          oauth_protocol_version: context.protocolVersion,
+        },
+        // Without this, every failure shares one stack and one issue.
+        fingerprint: oauthStepFailureFingerprint(step, message),
         extra: {
-          // Prefer the step this update is moving TO. An update that both
-          // advances the step and carries an error would otherwise be
-          // attributed to the PREVIOUS step, making the dimension misleading.
-          step:
-            (updates as { currentStep?: string }).currentStep ??
-            context.getStep(),
+          step,
           protocolVersion: context.protocolVersion,
         },
       });
