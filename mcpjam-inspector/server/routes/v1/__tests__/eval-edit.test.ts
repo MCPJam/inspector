@@ -991,7 +991,10 @@ describe("v1 eval-edit routes", () => {
       {
         title: "unknown vendor",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
-        models: [{ model: "newvendor/some-model", provider: "newvendor" }],
+        // No explicit `provider`: `deriveProvider` returns an explicit one
+        // verbatim, so passing it would satisfy the assertion without ever
+        // reaching the fallback under test.
+        models: [{ model: "newvendor/some-model" }],
       }
     );
     expect(res.status).toBe(201);

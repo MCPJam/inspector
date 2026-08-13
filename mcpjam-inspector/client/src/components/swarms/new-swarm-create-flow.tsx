@@ -1081,6 +1081,14 @@ export function NewSwarmCreateFlow({
        * retry, and retrying a credit limit cannot work.
        */
       let billingBlocked = false;
+      /**
+       * The 402's own message, kept SEPARATE from `firstError`. The billing
+       * summary has to state the hard stop, and `firstError` may already hold
+       * an unrelated transient failure that settled first — rendering that one
+       * under "Launched N of M" is precisely the retry-this advice the billing
+       * branch exists to avoid.
+       */
+      let billingError: string | null = null;
       let targets: LaunchTarget[] = [];
       let launched = 0;
       const runLabels = new Map<string, string>();
@@ -1348,11 +1356,12 @@ export function NewSwarmCreateFlow({
               // when the first 402 came back.
               if (err instanceof LaunchJourneyRunError && err.status === 402) {
                 billingBlocked = true;
-                // `??=`, like every other arm: a target that failed for a real
-                // reason BEFORE the credit limit was hit still has the more
-                // actionable message, and `billingBlocked` already routes the
-                // toast to the billing copy. Overwriting here would drop the
-                // only report of that first failure.
+                // Recorded on its OWN slot so the billing summary always says
+                // "credit limit" even when an unrelated failure settled first,
+                // and `??=` on both so each keeps the earliest of its kind.
+                // `firstError` still gets it as a fallback: when the 402 is the
+                // only failure and nothing launched, it is the whole story.
+                billingError ??= err.message;
                 firstError ??= err.message;
                 return "stop";
               }
@@ -1409,7 +1418,7 @@ export function NewSwarmCreateFlow({
         // to retry rather than as a hard stop.
         toast.warning(
           `Launched ${launched} of ${targets.length} runs — ${
-            firstError ?? "the organization's credit limit was reached."
+            billingError ?? "the organization's credit limit was reached."
           }`
         );
       } else {

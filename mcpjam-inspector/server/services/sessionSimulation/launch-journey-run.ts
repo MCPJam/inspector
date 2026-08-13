@@ -205,7 +205,12 @@ function launchFailureDetails(
     // environment surfaces already expose.
     const code = typeof source.code === "string" ? source.code : undefined;
     if (!bag && !code) return undefined;
-    return { ...(bag ?? {}), ...(code ? { code } : {}) };
+    // The DETAILS bag wins when it carries its own `code`. A response can hold
+    // both — an envelope code describing the transport failure and a domain
+    // code inside `details` naming the specific refusal — and the domain one is
+    // the branchable half. The envelope code only fills a gap.
+    const hasDetailCode = typeof bag?.code === "string" && bag.code.length > 0;
+    return { ...(bag ?? {}), ...(code && !hasDetailCode ? { code } : {}) };
   } catch {
     return undefined;
   }

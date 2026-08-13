@@ -254,6 +254,28 @@ describe("launchJourneyRun", () => {
     });
   });
 
+  it("keeps a DOMAIN `code` from details over the envelope's transport code", async () => {
+    // A response can carry both: an envelope code naming how the call failed
+    // and a details code naming what the platform refused. The domain one is
+    // the branchable half, so the envelope's must not overwrite it — it only
+    // fills the gap when details has no code of its own.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        409,
+        JSON.stringify({
+          code: "UPSTREAM_ERROR",
+          message: "Environment has no model to run.",
+          details: { environmentId: "env-1", code: "ENV_MODEL_REQUIRED" },
+        }),
+        "nope"
+      )
+    );
+
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      details: { environmentId: "env-1", code: "ENV_MODEL_REQUIRED" },
+    });
+  });
+
   it("falls back when a structured message is unsafe or oversized", async () => {
     createRunMock.mockRejectedValue(
       new SwarmAgentError(

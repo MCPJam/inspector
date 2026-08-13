@@ -3005,35 +3005,42 @@ const createHostInput = z
       .describe("Theme stamped into the seeded host config (template only)."),
     config: z
       .record(z.string(), z.unknown())
-      .refine((value) => Object.keys(value).length > 0, {
-        message: "`config` must be a non-empty host config object.",
-      })
       .optional()
       .describe(
         "Full host config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`."
       ),
   })
-  .refine((value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1, {
-    message: "Provide exactly one of `template` or a non-empty `config`.",
-  })
-  // The XOR is checked FIRST, and returns, so a degenerate `config: {}` is
-  // reported as "you picked neither branch" rather than "you forgot a model" —
-  // matching the route, whose 400 is the one the caller actually receives.
-  .refine(
-    (value) =>
-      value.config === undefined ||
-      Object.keys(value.config).length === 0 ||
-      (typeof value.config.modelId === "string" &&
-        value.config.modelId.trim().length > 0),
-    {
-      // Mirrors the v1 route's forward-client invariant. Enforced here too so
-      // an SDK/agent caller is told by the schema rather than by a 400 the
-      // published contract never predicted.
-      message:
-        "`config.modelId` is required and must be a non-empty model id (e.g. \"anthropic/claude-sonnet-4-5\").",
-      path: ["config", "modelId"],
+  // ONE `superRefine`, shaped exactly like the route's, because the route's 400
+  // is the error the caller actually receives and the schema must not predict a
+  // different one. A field-level `.refine` on `config` cannot do that: it fails
+  // before object-level checks run, so a degenerate `config: {}` would be
+  // reported here as "config must be non-empty" while the route reports the XOR.
+  // Counting the branch from a NON-EMPTY config makes `{}` read as "you picked
+  // neither branch", and the early return keeps the model check off a request
+  // that has no config branch to pin a model on.
+  .superRefine((value, ctx) => {
+    const hasConfig =
+      value.config !== undefined && Object.keys(value.config).length > 0;
+    if ((value.template ? 1 : 0) + (hasConfig ? 1 : 0) !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide exactly one of `template` or a non-empty `config`.",
+      });
+      return;
     }
-  );
+    // Mirrors the v1 route's forward-client invariant. Enforced here too so an
+    // SDK/agent caller is told by the schema rather than by a 400 the published
+    // contract never predicted.
+    const modelId = hasConfig ? value.config!.modelId : undefined;
+    if (hasConfig && !(typeof modelId === "string" && modelId.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config", "modelId"],
+        message:
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+      });
+    }
+  });
 export type CreateHostInput = z.infer<typeof createHostInput>;
 
 export const createHostOperation: PlatformOperation<
