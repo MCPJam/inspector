@@ -145,6 +145,7 @@ import {
   mountHostedOpenRoutes,
 } from "./middleware/hosted-partition";
 import webRoutes from "./routes/web/index";
+import internalServerConnections from "./routes/internal/server-connections";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";
@@ -458,6 +459,12 @@ if (!HOSTED_MODE) {
 // Construct after loadInspectorEnv() so hosted confidential CIMD observes
 // Inspector dotenv configuration and malformed configured keys fail startup.
 app.route("/api/web/xaa", createXaaWebRouter());
+// Backend → inspector doorbell for connection-request work. Gated by its own
+// service-token middleware, carries no user identity, and needs none — the
+// request id in the body is a selector, not authorization. Mounted ahead of
+// /api/web so it never inherits that family's bearer middleware.
+// Mirror of the mount in server/app.ts.
+app.route("/api/internal/server-connections", internalServerConnections);
 app.route("/api/web", webRoutes);
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;
