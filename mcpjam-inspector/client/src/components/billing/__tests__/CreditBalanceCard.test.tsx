@@ -203,9 +203,35 @@ describe("CreditBalanceCard", () => {
 
     const evalRow = screen.getByTestId("usage-eval-iterations");
     expect(evalRow).toHaveTextContent(/Monthly eval iterations/);
-    // Remaining / allowed — 10,000 allowed minus 7,580 used.
-    expect(evalRow).toHaveTextContent(/2,420 \/ 10,000/);
+    expect(evalRow).toHaveTextContent(/7,580 \/ 10,000/);
+    expect(
+      within(evalRow).getByRole("progressbar", {
+        name: "Monthly eval iterations used",
+      })
+    ).toHaveAttribute("aria-valuetext", "7,580 of 10,000 eval iterations used");
     expect(evalRow).not.toHaveTextContent(/Resets/);
+  });
+
+  it.each([
+    { used: 0, text: "0 / 75" },
+    { used: 75, text: "75 / 75" },
+  ])("renders $text as used eval iterations", ({ used, text }) => {
+    evalQuotaState = {
+      used,
+      allowed: 75,
+      resetsAt: Date.UTC(2026, 7, 14),
+      windowKind: "day",
+    };
+
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    const evalRow = screen.getByTestId("usage-eval-iterations");
+    expect(evalRow).toHaveTextContent(text);
+    expect(
+      within(evalRow).getByRole("progressbar", {
+        name: "Daily eval iterations used",
+      })
+    ).toHaveAttribute("aria-valuetext", `${used} of 75 eval iterations used`);
   });
 
   it("shows eval iteration reset time only from the info tooltip", async () => {

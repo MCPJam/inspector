@@ -76,6 +76,7 @@ import type { PinnableSkill } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
+  asBillingRouteError,
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
@@ -954,7 +955,7 @@ async function createIterationDirectly(
     iterationNumber: number;
     startedAt: number;
   }
-): Promise<string | undefined> {
+): Promise<string> {
   try {
     const result = await convexClient.mutation(
       "testSuites:recordIterationStartWithoutRun" as any,
@@ -968,10 +969,72 @@ async function createIterationDirectly(
       }
     );
 
-    return result?.iterationId as string | undefined;
+    const iterationId = result?.iterationId as string | undefined;
+    if (!iterationId) {
+      throw new Error("Convex did not return a quick-run iteration id");
+    }
+    return iterationId;
   } catch (error) {
-    logger.error("[evals] Failed to create iteration:", error);
-    return undefined;
+    const billing = asBillingRouteError(error);
+    throw billing ?? error;
+  }
+}
+
+export async function reserveQuickRunIterations(
+  convexClient: ConvexHttpClient,
+  tests: EvalTestCase[],
+  fallbackTestCaseId?: string
+): Promise<string[][]> {
+  const batches = tests.map((sourceTest) => {
+    const test = normalizeTestForPinnedTurns(sourceTest);
+    const resolved = resolveEvalTestCase(test);
+    const count = Math.max(1, Math.floor(test.runs || 1));
+    return {
+      testCaseSnapshot: sanitizeForConvexTransport(
+        snapshotWithStepsForConvex({
+          title: test.title,
+          query: resolved.query,
+          provider: test.provider,
+          model: test.model,
+          runs: count,
+          expectedToolCalls: resolved.expectedToolCalls,
+          isNegativeTest: test.isNegativeTest,
+          expectedOutput: resolved.expectedOutput,
+          steps: resolveSteps(test),
+          advancedConfig: resolved.advancedConfig,
+          matchOptions: test.matchOptions,
+          hostConfigOverride: test.hostConfigOverride,
+        })
+      ),
+      count,
+    };
+  });
+  const testCaseId = tests[0]?.testCaseId ?? fallbackTestCaseId;
+  try {
+    const result = await convexClient.mutation(
+      "testSuites:recordQuickRunBatchStart" as any,
+      {
+        testCaseId,
+        batches,
+        startedAt: Date.now(),
+      }
+    );
+    const iterationIdGroups = result?.iterationIdGroups as
+      | string[][]
+      | undefined;
+    if (
+      !iterationIdGroups ||
+      iterationIdGroups.length !== batches.length ||
+      iterationIdGroups.some(
+        (group, index) => group.length !== batches[index]?.count
+      )
+    ) {
+      throw new Error("Convex did not return every quick-run iteration id");
+    }
+    return iterationIdGroups;
+  } catch (error) {
+    const billing = asBillingRouteError(error);
+    throw billing ?? error;
   }
 }
 
@@ -1468,6 +1531,8 @@ const executeTestCase = async (params: {
   environment?: RunEvalSuiteOptions["config"]["environment"];
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /** IDs reserved atomically for this case before any tool/model work. */
+  precreatedIterationIds?: string[];
 }) => {
   const {
     test,
@@ -1494,6 +1559,7 @@ const executeTestCase = async (params: {
     suiteHostConfig,
     environment,
     pinnedSkillSource,
+    precreatedIterationIds: reservedIterationIds,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1502,6 +1568,22 @@ const executeTestCase = async (params: {
   // so the unified engine sees one shape. No-op for already-pinned / prompt
   // cases.
   const normalizedTest = normalizeTestForPinnedTurns(test);
+  const iterationCount = Math.max(1, Math.floor(normalizedTest.runs || 1));
+  const shouldPrecreateIterations = recorder == null && runId == null;
+  let precreatedIterationIds = reservedIterationIds ?? [];
+  if (shouldPrecreateIterations && reservedIterationIds === undefined) {
+    [precreatedIterationIds] = await reserveQuickRunIterations(
+      convexClient,
+      [normalizedTest],
+      testCaseId
+    );
+  }
+  if (
+    shouldPrecreateIterations &&
+    precreatedIterationIds.length !== iterationCount
+  ) {
+    throw new Error("Quick run iteration reservation count did not match");
+  }
 
   // Run a single iteration under the per-iteration timeout + run-abort guards.
   // Bails immediately if the run was already stopped; on timeout it aborts the
@@ -1544,8 +1626,7 @@ const executeTestCase = async (params: {
     })
   ) {
     const outcomes: EvalIterationOutcome[] = [];
-    const pinnedRuns = Math.max(1, Math.floor(normalizedTest.runs || 1));
-    for (let runIndex = 0; runIndex < pinnedRuns; runIndex++) {
+    for (let runIndex = 0; runIndex < iterationCount; runIndex++) {
       if (abortSignal?.aborted) break;
       const modelFreeParams = {
         test: normalizedTest,
@@ -1584,7 +1665,7 @@ const executeTestCase = async (params: {
               ...modelFreeParams,
               ...(streaming ? { emit: emit! } : {}),
             }),
-          undefined,
+          precreatedIterationIds[runIndex],
           runIndex,
           normalizedTest
         )
@@ -1620,53 +1701,7 @@ const executeTestCase = async (params: {
 
   const outcomes: EvalIterationOutcome[] = [];
 
-  // Mirrors `streamTestCase`: pre-create all N pending iteration rows for
-  // quick-run paths with runs > 1 so the iteration history shows every row
-  // immediately, not one-at-a-time as the loop progresses.
-  const shouldPrecreateIterations =
-    recorder == null && runId == null && test.runs > 1;
-  const precreatedIterationIds: (string | undefined)[] = [];
-  if (shouldPrecreateIterations) {
-    const resolvedTestForPrecreate = resolveEvalTestCase(test);
-    const resolvedStepsForPrecreate = resolveSteps(test);
-    const precreatedAt = Date.now();
-    for (let runIndex = 0; runIndex < test.runs; runIndex++) {
-      try {
-        const iterationParams = {
-          testCaseId: test.testCaseId ?? testCaseId,
-          testCaseSnapshot: {
-            title: test.title,
-            query: resolvedTestForPrecreate.query,
-            provider: test.provider,
-            model: test.model,
-            runs: test.runs,
-            expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
-            isNegativeTest: test.isNegativeTest,
-            expectedOutput: resolvedTestForPrecreate.expectedOutput,
-            steps: resolvedStepsForPrecreate,
-            advancedConfig: resolvedTestForPrecreate.advancedConfig,
-            matchOptions: test.matchOptions,
-            hostConfigOverride: test.hostConfigOverride,
-          },
-          iterationNumber: runIndex + 1,
-          startedAt: precreatedAt,
-        };
-        const id = await createIterationDirectly(convexClient, iterationParams);
-        precreatedIterationIds.push(id);
-      } catch (error) {
-        logger.warn(
-          "[evals] Failed to precreate iteration row; falling back to per-loop create",
-          {
-            runIndex,
-            error: error instanceof Error ? error.message : String(error),
-          }
-        );
-        precreatedIterationIds.push(undefined);
-      }
-    }
-  }
-
-  for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+  for (let runIndex = 0; runIndex < iterationCount; runIndex++) {
     const precreatedIterationId = shouldPrecreateIterations
       ? precreatedIterationIds[runIndex]
       : undefined;
@@ -1856,6 +1891,13 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         });
 
+  // One Convex transaction reserves and creates the entire compare request
+  // before tools/list, model construction, or any model/tool request starts.
+  const quickRunIterationIdGroups =
+    runId === null
+      ? await reserveQuickRunIterations(convexClient, tests, testCaseId)
+      : [];
+
   const summary = {
     total: 0,
     passed: 0,
@@ -1951,7 +1993,7 @@ export const runEvalSuiteWithAiSdk = async ({
     const renderCheckLimit = createConcurrencyLimiter(
       MAX_CONCURRENT_RENDER_CHECKS
     );
-    const runOne = (test: (typeof tests)[number]) =>
+    const runOne = (test: (typeof tests)[number], testIndex: number) =>
       runTestCase({
         test,
         tools,
@@ -1976,8 +2018,14 @@ export const runEvalSuiteWithAiSdk = async ({
         suiteHostConfig,
         environment: config.environment,
         ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+        ...(runId === null
+          ? {
+              precreatedIterationIds:
+                quickRunIterationIdGroups[testIndex] ?? [],
+            }
+          : {}),
       });
-    const testPromises = tests.map((test) =>
+    const testPromises = tests.map((test, testIndex) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
       // not just the legacy discriminator — otherwise a monitoring suite of
@@ -1986,8 +2034,8 @@ export const runEvalSuiteWithAiSdk = async ({
         caseType: test.caseType,
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
-        ? renderCheckLimit(() => runOne(test))
-        : runOne(test)
+        ? renderCheckLimit(() => runOne(test, testIndex))
+        : runOne(test, testIndex)
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -2122,6 +2170,16 @@ export const runEvalSuiteWithAiSdk = async ({
         clearTimeout(runTimeoutId);
       }
       void heartbeatLoop;
+    }
+
+    if (runId === null) {
+      const rejectedQuickRun = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected"
+      );
+      if (rejectedQuickRun) {
+        throw rejectedQuickRun.reason;
+      }
     }
 
     const quickRunOutcomes: EvalIterationOutcome[] = [];

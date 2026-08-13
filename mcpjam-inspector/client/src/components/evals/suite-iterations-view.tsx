@@ -266,6 +266,7 @@ export function SuiteIterationsView({
   projectServers,
   generateTestCasesDisabledReason,
   evalRunsDisabledReason: evalRunsDisabledReasonProp,
+  guardEvalIterationQuota,
   isDirectGuest = false,
   ensureServersReady,
 }: {
@@ -301,6 +302,7 @@ export function SuiteIterationsView({
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
   evalRunsDisabledReason?: string | null;
+  guardEvalIterationQuota?: (requestedIterations: number) => boolean;
   isGeneratingTestCases?: boolean;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
@@ -1062,6 +1064,7 @@ export function SuiteIterationsView({
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
+                  guardEvalIterationQuota={guardEvalIterationQuota}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
