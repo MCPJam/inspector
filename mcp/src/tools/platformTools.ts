@@ -56,6 +56,39 @@ import {
   updateProjectServerOperation,
   deleteProjectServerOperation,
   deleteProjectOperation,
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  deletePersonaOperation,
+  generatePersonasOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  archiveJourneyOperation,
+  generateJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  archiveSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -121,34 +154,62 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+
+  // ── Swarms and user testing ─────────────────────────────────────────────
+  //
+  // Advertised to EVERY caller, including organizations without the
+  // `sandboxes-enabled` beta, and that is a deliberate trade rather than an
+  // oversight. This catalog is static — one tool list, built with no
+  // organization in hand — so the alternative to advertising a beta is not
+  // advertising it selectively, it is not advertising it at all. That is what
+  // used to happen, and it meant an agent working for a flagged org had no
+  // tools for a product the org had paid attention to.
+  //
+  // What an unflagged caller gets instead is a clean FEATURE_UNAVAILABLE from
+  // the write, with a real message. The CLI reached this conclusion first
+  // (`cli/src/lib/op-bindings.ts`): a command that answers "not available for
+  // your organization" is a better answer than a command that does not exist.
+  //
+  // `get_capabilities` is what makes it survivable in practice. An agent can
+  // ask what it may do here BEFORE it plans, instead of discovering the gate
+  // halfway through a task it has already described to someone.
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  deletePersonaOperation,
+  generatePersonasOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  archiveJourneyOperation,
+  generateJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  archiveSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
-  launch_journey_run: "Pre-GA product — expose at GA.",
-  cancel_journey_run: "Pre-GA product — expose with the launch it pairs with.",
-  // Scenarios (user testing) and journeys (Swarms) are held out of this
-  // catalog WHOLESALE until GA — a CATALOG policy, not the flag.
-  //
-  // The distinction matters, because a maintainer who reads "flag-gated" here
-  // will reach for the flag when deciding what to expose, and the flag does
-  // not cover most of this list. `sandboxes-enabled` gates only the
-  // exposure-CREATING writes (publish, launch, authoring); the reads,
-  // `cancel_journey_run` and `unpublish_scenario` are deliberately ungated, so
-  // an organization that has just lost the flag can still see what is running,
-  // stop it, and take a live scenario down. None of them ever answers
-  // FEATURE_UNAVAILABLE. What keeps them out is that this catalog is STATIC —
-  // one tool list for every caller, built with no organization in hand — so a
-  // beta cannot be advertised selectively here at all.
-  publish_scenario:
-    "Pre-GA product, and publishing exposes an environment publicly — not an unattended-catalog action.",
-  unpublish_scenario:
-    "Pre-GA product — expose at GA, with its publish counterpart.",
-  list_journeys: "Pre-GA product — expose at GA.",
-  list_journey_runs: "Pre-GA product — expose at GA.",
-  get_journey_run: "Pre-GA product — expose at GA.",
-  list_journey_run_sessions: "Pre-GA product — expose at GA.",
-
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
   create_project:
     "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
@@ -253,6 +314,16 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   // Cancelling a run terminates in-flight work — state-changing, so clients
   // should be able to confirm before it fires.
   cancelEvalRunOperation.name,
+  // Swarms. The soft deletes leave history intact, but they take a persona,
+  // journey or container off the roster and a second call answers not-found —
+  // from the caller's side that is a removal, and a client should be able to
+  // confirm before it fires.
+  deletePersonaOperation.name,
+  archiveJourneyOperation.name,
+  archiveSwarmOperation.name,
+  cancelJourneyRunOperation.name,
+  // Unpublishing kills every live guest session on a scenario.
+  unpublishScenarioOperation.name,
 ]);
 
 /**

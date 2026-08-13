@@ -1389,6 +1389,39 @@ describe("operation catalog consistency", () => {
     cancel_journey_run: { run: "r" },
     publish_scenario: { environment: "e" },
     unpublish_scenario: { environment: "e" },
+    get_capabilities: {},
+    list_personas: {},
+    get_persona: { persona: "pe" },
+    create_persona: { name: "Ada", role: "buyer" },
+    update_persona: { persona: "pe", name: "Ada" },
+    delete_persona: { persona: "pe" },
+    generate_personas: { environmentId: "e" },
+    get_journey: { journey: "j" },
+    create_journey: {
+      goal: "buy a thing",
+      persona: "pe",
+      sessionsPerTarget: 1,
+      maxTurns: 8,
+    },
+    update_journey: { journey: "j", goal: "buy two things" },
+    archive_journey: { journey: "j" },
+    generate_journeys: {
+      environmentId: "e",
+      persona: { name: "Ada", role: "buyer" },
+    },
+    list_swarms: {},
+    get_swarm: { swarm: "sw" },
+    create_swarm: { name: "checkout", sessionsPerTarget: 1, maxTurns: 8 },
+    update_swarm: { swarm: "sw", name: "checkout v2" },
+    archive_swarm: { swarm: "sw" },
+    get_swarms_overview: {},
+    get_journey_run_scorecard: { run: "r" },
+    list_swarm_findings: {},
+    dismiss_swarm_finding: { finding: "f" },
+    undismiss_swarm_finding: { finding: "f" },
+    get_wave_insights: { wave: "w" },
+    request_wave_insights: { wave: "w" },
+    cancel_wave_insights: { wave: "w" },
     list_hosts: {},
     get_host: { host: "h" },
     set_host_servers: { host: "h", serverIds: [] },
@@ -1497,6 +1530,29 @@ describe("operation catalog consistency", () => {
       "use_sandbox_image",
       "reset_computer",
       "delete_sandbox_image",
+      // Swarms authoring. Creating a persona or a journey persists but starts
+      // nothing and spends nothing — `launch_journey_run` above is the call
+      // that costs.
+      "create_persona",
+      "update_persona",
+      "delete_persona",
+      "create_journey",
+      "update_journey",
+      "archive_journey",
+      "create_swarm",
+      "update_swarm",
+      "archive_swarm",
+      // Generation persists NOTHING — it returns drafts — but it runs a model
+      // on the organization's account, and a read that spends is a lie about
+      // what calling it costs.
+      "generate_personas",
+      "generate_journeys",
+      // Insights: dismissal is a judgement someone recorded, and requesting a
+      // pass spends against the org's shared daily budget.
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "request_wave_insights",
+      "cancel_wave_insights",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));

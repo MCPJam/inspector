@@ -153,6 +153,31 @@ describe("workspace tool catalog", () => {
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
+      // Swarms: reads and the REVERSIBLE half of authoring. Launching,
+      // generation and the removals stay out — see EXCLUDED_FROM_WORKSPACE for
+      // why each one wants the tab's context rather than a chat tool.
+      "get_capabilities",
+      "list_personas",
+      "get_persona",
+      "create_persona",
+      "update_persona",
+      "list_journeys",
+      "get_journey",
+      "create_journey",
+      "update_journey",
+      "list_journey_runs",
+      "get_journey_run",
+      "list_journey_run_sessions",
+      "list_swarms",
+      "get_swarm",
+      "create_swarm",
+      "update_swarm",
+      "get_swarms_overview",
+      "get_journey_run_scorecard",
+      "list_swarm_findings",
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "get_wave_insights",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);

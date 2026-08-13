@@ -53,9 +53,9 @@ describe("classifyConvexReadError", () => {
     // A renamed or undeployed Convex function says this. Calling it membership
     // would answer 404 — telling a caller their resource is gone during an
     // outage of ours.
-    expect(classifyConvexReadError(new Error("journeys:nope not found")).kind).toBe(
-      "upstream"
-    );
+    expect(
+      classifyConvexReadError(new Error("journeys:nope not found")).kind
+    ).toBe("upstream");
   });
 });
 
@@ -131,6 +131,8 @@ describe("translateConvexReadError", () => {
 
   it("passes a WebRouteError straight through", () => {
     const already = translate("boom");
-    expect(translateConvexReadError(already, { scope: "v1.test" })).toBe(already);
+    expect(translateConvexReadError(already, { scope: "v1.test" })).toBe(
+      already
+    );
   });
 });

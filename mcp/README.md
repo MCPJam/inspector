@@ -69,6 +69,39 @@ so results respect the caller's project access.
 | `list_chatboxes` | List the chatboxes published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
 | `get_chatbox` | Get one chatbox's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
+| `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
+| `list_personas` | List the project's reusable synthetic characters — the cast Swarms journeys run as. | — |
+| `get_persona` | Get one persona in full, including its behavioural notes. | — |
+| `create_persona` | Create a reusable synthetic character for Swarms to run as. | — |
+| `update_persona` | Edit a persona's name, role or notes. Finished runs keep the persona they ran as. | — |
+| `delete_persona` | Remove a persona from the roster. Soft: history keeps resolving it. | — |
+| `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; spends. | — |
+| `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
+| `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |
+| `create_journey` | Author a journey. Creating does not run it. | — |
+| `update_journey` | Edit a journey. A run already in flight keeps the config it launched with. | — |
+| `archive_journey` | Take a journey off the roster. Its runs, sessions and scorecards stay readable. | — |
+| `generate_journeys` | Draft candidate journeys for a persona with a model. Saves nothing; spends. | — |
+| `list_journey_runs` | List a journey's runs, newest first. | — |
+| `get_journey_run` | Get one journey run: status, per-target rollups, and per-session attempt records. This is what to poll after launching. | — |
+| `list_journey_run_sessions` | List the chat sessions a journey run produced, with readiness, goal scores and a first-message preview. | — |
+| `launch_journey_run` | Launch a journey run and return immediately with its id. Spends model credits across the whole fan-out; pass an idempotency key. | — |
+| `cancel_journey_run` | Stop a running journey run, settling its in-flight and pending sessions. | — |
+| `list_swarms` | List swarm containers — the groups journeys are authored under, holding their shared execution config. | — |
+| `get_swarm` | Get one swarm container: its name, defaults and fan-out. | — |
+| `create_swarm` | Create a container to author journeys under. Runs nothing. | — |
+| `update_swarm` | Edit a swarm container's name, description, fan-out or config. | — |
+| `archive_swarm` | Take a swarm container off the roster. Journeys authored under it keep working. | — |
+| `get_swarms_overview` | The project's recent runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. | — |
+| `get_journey_run_scorecard` | Per-criterion pass/fail counts for one run. Deterministic, so read this first when explaining a failure. | — |
+| `list_swarm_findings` | Criteria that keep failing across waves, with how long each has been failing. | — |
+| `dismiss_swarm_finding` | Mark a finding as not worth acting on. Its lifecycle keeps updating underneath. | — |
+| `undismiss_swarm_finding` | Bring a dismissed finding back into the active list. | — |
+| `get_wave_insights` | The model's analysis of a whole wave, if one has been requested. Poll after requesting. | — |
+| `request_wave_insights` | Ask a model to analyze a whole wave. Spends against the organization's shared daily insights budget. | — |
+| `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
+| `publish_scenario` | Publish a project environment for user testing, returning its share link and access mode. | — |
+| `unpublish_scenario` | Take a live user-testing scenario down. Every guest session on it dies with it. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by

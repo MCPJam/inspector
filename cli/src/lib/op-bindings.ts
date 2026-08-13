@@ -46,6 +46,41 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_journey_run_sessions: { command: "journeys sessions" },
   launch_journey_run: { command: "journeys run" },
   cancel_journey_run: { command: "journeys cancel" },
+  // Authoring + insights, in `commands/swarms.ts` but hung off the same
+  // `journeys` group so `journeys run` and `journeys create` are one surface
+  // to the person typing them.
+  get_journey: { command: "journeys get" },
+  create_journey: { command: "journeys create" },
+  update_journey: { command: "journeys update" },
+  archive_journey: { command: "journeys archive" },
+  generate_journeys: { command: "journeys generate" },
+  get_swarms_overview: { command: "journeys overview" },
+  get_journey_run_scorecard: { command: "journeys scorecard" },
+  list_swarm_findings: { command: "journeys findings" },
+  dismiss_swarm_finding: { command: "journeys dismiss-finding" },
+  undismiss_swarm_finding: { command: "journeys undismiss-finding" },
+  get_wave_insights: { command: "journeys insights" },
+  request_wave_insights: { command: "journeys request-insights" },
+  cancel_wave_insights: { command: "journeys cancel-insights" },
+
+  // ── Personas and swarm containers (Swarms authoring) ────────────────────
+  list_personas: { command: "personas list" },
+  get_persona: { command: "personas get" },
+  create_persona: { command: "personas create" },
+  update_persona: { command: "personas update" },
+  delete_persona: { command: "personas delete" },
+  generate_personas: { command: "personas generate" },
+  list_swarms: { command: "swarms list" },
+  get_swarm: { command: "swarms get" },
+  create_swarm: { command: "swarms create" },
+  update_swarm: { command: "swarms update" },
+  archive_swarm: { command: "swarms archive" },
+
+  // ── Capabilities ────────────────────────────────────────────────────────
+  // Top-level rather than nested: the answer spans Swarms, user testing and
+  // the plan, so filing it under one of them would suggest it only describes
+  // that one.
+  get_capabilities: { command: "capabilities" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
   // Supersedes the `chatboxes` group below, which is the same product under

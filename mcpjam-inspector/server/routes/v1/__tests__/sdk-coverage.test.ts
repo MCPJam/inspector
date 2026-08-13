@@ -164,6 +164,37 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listJourneyRunSessions",
   "post /projects/{projectId}/journeys/{journeyId}/runs": "launchJourneyRun",
   "post /projects/{projectId}/journey-runs/{runId}/cancel": "cancelJourneyRun",
+  // Swarms authoring — the create half of create -> run -> read.
+  "get /projects/{projectId}/journeys/{journeyId}": "getJourney",
+  "post /projects/{projectId}/journeys": "createJourney",
+  "patch /projects/{projectId}/journeys/{journeyId}": "updateJourney",
+  "delete /projects/{projectId}/journeys/{journeyId}": "archiveJourney",
+  "post /projects/{projectId}/journeys/generate": "generateJourneys",
+  "get /projects/{projectId}/personas": "listPersonas",
+  "get /projects/{projectId}/personas/{personaId}": "getPersona",
+  "post /projects/{projectId}/personas": "createPersona",
+  "patch /projects/{projectId}/personas/{personaId}": "updatePersona",
+  "delete /projects/{projectId}/personas/{personaId}": "deletePersona",
+  "post /projects/{projectId}/personas/generate": "generatePersonas",
+  "get /projects/{projectId}/swarms": "listSwarms",
+  "get /projects/{projectId}/swarms/{swarmId}": "getSwarm",
+  "post /projects/{projectId}/swarms": "createSwarm",
+  "patch /projects/{projectId}/swarms/{swarmId}": "updateSwarm",
+  "delete /projects/{projectId}/swarms/{swarmId}": "archiveSwarm",
+  // The insights layer over runs.
+  "get /projects/{projectId}/journeys-overview": "getSwarmOverview",
+  "get /projects/{projectId}/journey-runs/{runId}/scorecard":
+    "getJourneyRunScorecard",
+  "get /projects/{projectId}/journey-findings": "listSwarmFindings",
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss":
+    "dismissSwarmFinding",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss":
+    "undismissSwarmFinding",
+  "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
+  "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
+  "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",
+  // The planning read that makes the static agent surfaces survivable.
+  "get /projects/{projectId}/capabilities": "getCapabilities",
 
   // Scenarios (user testing)
   "put /projects/{projectId}/environments/{environmentId}/scenario":

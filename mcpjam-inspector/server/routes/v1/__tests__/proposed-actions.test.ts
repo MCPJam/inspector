@@ -146,9 +146,7 @@ function executeRequest(
           "x-mcpjam-slack-user-id": opts.slackUserId ?? "U_CLICKER",
           ...opts.headers,
         },
-        ...(opts.body !== undefined
-          ? { body: JSON.stringify(opts.body) }
-          : {}),
+        ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
       }
     )
   );

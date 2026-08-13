@@ -1003,3 +1003,269 @@ export interface PlatformJourneyRunCanceled {
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }
+
+// ── Swarms authoring + insights ─────────────────────────────────────────────
+
+/** A reusable synthetic character. The GOAL lives on the journey, not here. */
+export interface PlatformPersona {
+  /** Durable id — what journeys reference and every route here addresses. */
+  id: string;
+  projectId: string;
+  /**
+   * Stable slug key, shared with exported session data. Useful for correlating
+   * transcripts; NOT an address for this API.
+   */
+  slug: string;
+  name: string;
+  role: string;
+  notes: string | null;
+  /** manual | generated | cluster — how the persona came to exist. */
+  source: string;
+  seedKeywords?: string[];
+  avatar: { shape: number | null; palette: number | null };
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Result of deleting a persona. The delete is SOFT: history still resolves it. */
+export interface PlatformPersonaDeleted {
+  id: string;
+  projectId: string;
+  deleted: true;
+}
+
+/** Result of archiving a journey. Its runs and transcripts stay readable. */
+export interface PlatformJourneyArchived {
+  id: string;
+  projectId: string;
+  archived: true;
+}
+
+/** A swarm CONTAINER: shared execution config for the journeys authored in it. */
+export interface PlatformSwarm {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  /** Default fan-out for journeys authored under this container. */
+  environmentIds: string[];
+  sessionsPerTarget: number | null;
+  maxTurns: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformSwarmArchived {
+  id: string;
+  projectId: string;
+  archived: true;
+}
+
+/** One rubric criterion's tally over a run. The four counts are NOT mergeable. */
+export interface PlatformScorecardCriterion {
+  id: string;
+  label: string | null;
+  kind: string;
+  passCount: number;
+  failCount: number;
+  /** Claimed for grading and unfinished — includes crashed runners. */
+  pendingCount: number;
+  /**
+   * Sessions whose GRADING broke. Distinct from `failCount` on purpose:
+   * folding them together makes a crashed judge look like a regression.
+   */
+  failedGradingCount: number;
+}
+
+/** Deterministic rubric result for one run. No model involved. */
+export interface PlatformRunScorecard {
+  runId: string;
+  /**
+   * Every criterion the run's rubric declared, in snapshot order — including
+   * ones nothing was graded against. An absent row would be indistinguishable
+   * from a criterion that was never configured.
+   */
+  criteria: PlatformScorecardCriterion[];
+  sessionsTotal: number;
+  sessionsGraded: number;
+}
+
+export interface PlatformSwarmOverviewFinding {
+  criterionId: string;
+  label: string | null;
+  kind: string | null;
+  failCount: number;
+  pendingCount: number;
+  failedGradingCount: number;
+  /**
+   * The DENOMINATOR for any rate you compute. Never divide by the session
+   * total — 3 failures of 4 graded sessions out of 40 attempted is not 7.5%.
+   */
+  sessionsGraded: number;
+  /** Consecutive runs of this journey where the criterion failed. */
+  runStreak: number;
+}
+
+export interface PlatformSwarmOverviewRun {
+  runId: string;
+  journeyId: string;
+  journeyName: string;
+  journeyArchived: boolean;
+  personaName: string;
+  status: string;
+  waveId?: string;
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  goalCompletion: {
+    gradedCount: number;
+    passedCount: number;
+    avgScore: number | null;
+    pendingCount: number | null;
+    failedCount: number | null;
+  } | null;
+  findings: PlatformSwarmOverviewFinding[];
+  targets: Array<{
+    hostName: string;
+    modelId: string;
+    environmentName?: string;
+  }>;
+  createdAt: number;
+}
+
+/** Project-wide roll-up across recent runs. */
+export interface PlatformSwarmOverview {
+  runs: PlatformSwarmOverviewRun[];
+  runsConsidered: number;
+  goalCompletion: {
+    gradedCount: number;
+    passedCount: number;
+    /** `null` when nothing is graded yet — never 0, which would read as "all failed". */
+    passRate: number | null;
+    runsWithGrades: number;
+    trend: Array<{
+      dayStartMs: number;
+      gradedCount: number;
+      passedCount: number;
+      passRate: number;
+    }>;
+  };
+}
+
+/** A criterion that keeps failing, tracked across waves. */
+export interface PlatformSwarmFinding {
+  id: string;
+  /** Stable identity across waves — what makes a streak a streak. */
+  fingerprint: string;
+  dimension: string;
+  subject: { kind: string; id: string; label: string };
+  /** new | recurring | regressed | resolved. */
+  status: string;
+  occurrenceCount: number;
+  lastSeenWaveId: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  resolvedAt: number | null;
+  dismissedAt: number | null;
+  updatedAt: number;
+}
+
+export interface PlatformFindingDismissed {
+  id: string;
+  projectId: string;
+  dismissed: boolean;
+}
+
+/** LLM analysis over a whole wave. Requested explicitly; produced async. */
+export interface PlatformWaveInsights {
+  waveId: string;
+  /** pending | completed | failed. Poll rather than re-requesting. */
+  status: "pending" | "completed" | "failed";
+  /** Directed lane. Null until generation completes. */
+  insights: unknown | null;
+  /**
+   * Discovery lane — what the model noticed unprompted. Null while only the
+   * directed lane has finished, which is a normal intermediate state.
+   */
+  discovery: unknown | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: number;
+}
+
+/** Receipt for a wave-insights request. 202: scheduled, not done. */
+export interface PlatformWaveInsightsRequested {
+  waveId: string;
+  projectId: string;
+  status: "pending";
+}
+
+export interface PlatformWaveInsightsCanceled {
+  waveId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/**
+ * What the caller may do in a project, so an agent on a static surface can
+ * check before it plans rather than discovering a 403 mid-task.
+ *
+ * DESCRIPTIVE. Every enforcement point still runs on the write path; a stale
+ * answer here produces the same clean denial it always would.
+ */
+export interface PlatformCapabilities {
+  projectId: string;
+  organizationId: string | null;
+  /** Organization role: guest | member | admin | owner. */
+  role: string;
+  projectRole: string;
+  /** Which channel the server resolved this request to. */
+  surface: string;
+  features: {
+    sandboxes: {
+      enabled: boolean;
+      /** off | dark | enforce. Only `enforce` turns a disabled flag into a refusal. */
+      mode: string;
+      enforced: boolean;
+      reason?: string;
+    };
+  };
+  plan: {
+    name: string;
+    limits: Record<string, unknown>;
+    features: Record<string, unknown>;
+  } | null;
+  /**
+   * The booleans to branch on. Note that the exposure-REDUCING ones
+   * (`cancelJourneyRun`, `unpublishUserTestingScenario`) stay true for an org
+   * that has lost the beta — losing the feature is exactly when stopping it
+   * matters most.
+   */
+  can: {
+    readSwarms: boolean;
+    readUserTesting: boolean;
+    writeSwarms: boolean;
+    launchJourneyRun: boolean;
+    cancelJourneyRun: boolean;
+    publishUserTestingScenario: boolean;
+    unpublishUserTestingScenario: boolean;
+    changeUserTestingExposure: boolean;
+    requestInsights: boolean;
+  };
+}
+
+/** A generated persona draft. Nothing is persisted until you create it. */
+export interface PlatformPersonaDraft {
+  name: string;
+  role: string;
+  notes?: string;
+  [field: string]: unknown;
+}
+
+/** Draft output from the generation endpoints. Shape varies by request. */
+export interface PlatformGenerationDrafts {
+  [field: string]: unknown;
+}

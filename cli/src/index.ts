@@ -10,6 +10,7 @@ import { registerChatCommands } from "./commands/chat.js";
 import { registerEnvironmentsCommands } from "./commands/environments.js";
 import { registerJourneysCommands } from "./commands/journeys.js";
 import { registerScenariosCommands } from "./commands/scenarios.js";
+import { registerSwarmAuthoringCommands } from "./commands/swarms.js";
 import { registerEvalCommands } from "./commands/eval.js";
 import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
@@ -94,8 +95,11 @@ export async function main(
   registerChatCommands(program);
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
-  registerJourneysCommands(program);
+  const journeys = registerJourneysCommands(program);
   registerScenariosCommands(program);
+  // Authoring + insights hang off the same `journeys` group the run loop
+  // registered, plus their own `personas` / `swarms` / `capabilities` groups.
+  registerSwarmAuthoringCommands(program, journeys);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   registerInspectorCommands(program);

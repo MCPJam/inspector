@@ -124,6 +124,34 @@ export function translateConvexWriteError(
     );
   }
 
+  // ── Billing gates (mcpjam-backend lib/entitlements.ts) ──────────────────
+  //
+  // These arrive as ConvexErrors whose `code` is one of the `billing_*`
+  // literals, and without these branches every one of them falls through to
+  // the generic 400 at the bottom — a plan limit reported as a malformed
+  // request, which tells a caller to fix their input when the input was fine.
+  //
+  // The split matters as much as the mapping. A DAILY LIMIT is a 429: wait, or
+  // stop asking so often. A FEATURE NOT IN THE PLAN is a 403: waiting will
+  // never help, and someone has to change the plan. Collapsing them would send
+  // a customer who hit today's insight cap to a sales page for a plan they
+  // already have — the shared `insightsPerDay` ledger makes that reachable on
+  // an ordinary Tuesday, from either the swarms or the user-testing surface.
+  if (code === "billing_limit_reached") {
+    return new WebRouteError(
+      429,
+      ErrorCode.RATE_LIMITED,
+      structuredMessage ?? "Plan limit reached."
+    );
+  }
+  if (code === "billing_feature_not_included") {
+    return new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      structuredMessage ?? "This feature is not included in your plan."
+    );
+  }
+
   if (code === "CONFLICT") {
     return new WebRouteError(
       409,

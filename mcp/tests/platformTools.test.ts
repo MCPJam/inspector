@@ -134,6 +134,41 @@ const PLAIN_TOOLS = [
   "get_eval_run_steps",
   "cancel_eval_run",
   "list_chat_sessions",
+  // Swarms + user testing. No widget views yet: these are agent-oriented
+  // payloads, and a half-designed panel is worse than the structured JSON.
+  "get_capabilities",
+  "list_personas",
+  "get_persona",
+  "create_persona",
+  "update_persona",
+  "delete_persona",
+  "generate_personas",
+  "list_journeys",
+  "get_journey",
+  "create_journey",
+  "update_journey",
+  "archive_journey",
+  "generate_journeys",
+  "list_journey_runs",
+  "get_journey_run",
+  "list_journey_run_sessions",
+  "launch_journey_run",
+  "cancel_journey_run",
+  "list_swarms",
+  "get_swarm",
+  "create_swarm",
+  "update_swarm",
+  "archive_swarm",
+  "get_swarms_overview",
+  "get_journey_run_scorecard",
+  "list_swarm_findings",
+  "dismiss_swarm_finding",
+  "undismiss_swarm_finding",
+  "get_wave_insights",
+  "request_wave_insights",
+  "cancel_wave_insights",
+  "publish_scenario",
+  "unpublish_scenario",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -202,7 +237,10 @@ describe("platform tool registration", () => {
   it("registers the whole operation catalog in order", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     expect(registrations.map((registration) => registration.name)).toEqual([
       "get_me",
@@ -250,6 +288,39 @@ describe("platform tool registration", () => {
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
+      "get_capabilities",
+      "list_personas",
+      "get_persona",
+      "create_persona",
+      "update_persona",
+      "delete_persona",
+      "generate_personas",
+      "list_journeys",
+      "get_journey",
+      "create_journey",
+      "update_journey",
+      "archive_journey",
+      "generate_journeys",
+      "list_journey_runs",
+      "get_journey_run",
+      "list_journey_run_sessions",
+      "launch_journey_run",
+      "cancel_journey_run",
+      "list_swarms",
+      "get_swarm",
+      "create_swarm",
+      "update_swarm",
+      "archive_swarm",
+      "get_swarms_overview",
+      "get_journey_run_scorecard",
+      "list_swarm_findings",
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "get_wave_insights",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      "publish_scenario",
+      "unpublish_scenario",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -260,7 +331,10 @@ describe("platform tool registration", () => {
   it("attaches the shared widget bundle to the widget-backed tools only", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     for (const registration of registrations) {
       const view = WIDGET_TOOLS[registration.name];
@@ -283,7 +357,10 @@ describe("platform tool registration", () => {
   it("marks reads read-only, the eval-run starter as non-destructive write, and call_server_tool as assume-destructive", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     const NON_DESTRUCTIVE_WRITES = new Set([
       "run_eval_case",
@@ -297,6 +374,28 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "create_project_server",
       "update_project_server",
+      // Swarms authoring. Persists and is editable; nothing here removes
+      // anything, and creating a journey starts nothing.
+      "create_persona",
+      "update_persona",
+      "create_journey",
+      "update_journey",
+      "create_swarm",
+      "update_swarm",
+      // Generation writes NOTHING — it returns drafts — but it spends, so it
+      // cannot claim to be a read.
+      "generate_personas",
+      "generate_journeys",
+      // Insight lifecycle. Requesting spends; dismissing records a judgement;
+      // cancelling stops a generation nobody is waiting for.
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      // Launching spends across a fan-out, but it does not destroy anything.
+      "launch_journey_run",
+      // Publishing exposes an environment. Additive: it creates a scenario.
+      "publish_scenario",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
@@ -304,6 +403,15 @@ describe("platform tool registration", () => {
       // Cancelling a run terminates in-flight work, so it announces destructive.
       "cancel_eval_run",
       "delete_project_server",
+      // The swarm soft deletes: history survives, but the resource leaves the
+      // roster and a second call answers not-found. From the caller's side
+      // that is a removal.
+      "delete_persona",
+      "archive_journey",
+      "archive_swarm",
+      "cancel_journey_run",
+      // Unpublishing kills every live guest session on the scenario.
+      "unpublish_scenario",
     ]);
 
     for (const registration of registrations) {
@@ -352,7 +460,10 @@ describe("widget payload tagging", () => {
       },
     });
     const { registrar, registrations } = fakeRegistrar();
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
     const registration = registrations.find(
       (candidate) => candidate.name === "list_chatboxes"
     )!;
