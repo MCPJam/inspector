@@ -188,6 +188,10 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// Exported so a consumer can recognize this specific step failure by identity
+// instead of re-typing the message — it is the server under test violating
+// RFC 8414, which a host may want to treat differently from its own errors.
+export { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./oauth/state-machines/shared/required-metadata.js";
 // OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
 // client-name-free — per-client profiles live in the private backend.
 export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
