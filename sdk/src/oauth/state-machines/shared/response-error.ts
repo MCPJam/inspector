@@ -11,28 +11,30 @@ import { sanitizeTraceErrorMessage } from "../trace-redaction.js";
 const MAX_REASON_CHARS = 300;
 
 /**
- * Normalize one candidate field into a reason, or `undefined` if it carries no
- * text.
+ * Take one candidate field as a reason, or `undefined` if it carries no text.
  *
- * Whitespace is collapsed, not just trimmed: a plain-text body is routinely a
- * stack trace or an HTML page, and the reason is appended to a single-line
- * error that renders in a toast and titles an error-report group. A field that
- * is whitespace-only is treated as absent so precedence falls through to a
- * field that says something, and so composing a pair can never emit a dangling
+ * A whitespace-only field counts as absent, so precedence falls through to a
+ * field that says something and composing a pair can never emit a dangling
  * `": "`.
  *
- * Deliberately uncapped. Length belongs to whoever redacts the result:
- * `sanitizeTraceErrorMessage` closes an unterminated JSON value or URL userinfo
- * only when it is the one that cut the text, so a cap applied first hides the
- * cut from it and leaves the raw prefix of a credential whose closing delimiter
- * fell just past the cap.
+ * Trim only — no scan of the value, and no cap. Both belong downstream:
+ *
+ * - Whitespace is collapsed after redaction, on a string already cut to
+ *   {@link MAX_REASON_CHARS}. A body is server-controlled and can be
+ *   megabytes; collapsing here would scan and copy all of it, on a path
+ *   `trace.ts` re-runs for every projection.
+ * - `sanitizeTraceErrorMessage` closes an unterminated JSON value or URL
+ *   userinfo only when it is the one that cut the text, so a cap applied first
+ *   hides the cut from it and strands the raw prefix of a credential whose
+ *   closing delimiter fell just past the cap. It reads the whole string,
+ *   bounding its own scan at `MAX_SCANNED`.
  */
 function toReason(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
-  const collapsed = value.replace(/\s+/g, " ").trim();
-  return collapsed ? collapsed : undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 /**
@@ -116,7 +118,12 @@ export function extractResponseErrorReason(body: unknown): string | undefined {
  * a pre-cut one: it closes an unterminated JSON value or URL userinfo only when
  * it made the cut itself, so cutting first would strand the raw head of a
  * credential whose closing delimiter sat just past the cap. Its own scan window
- * (`MAX_SCANNED`) still bounds the work.
+ * (`MAX_SCANNED`) bounds the work, so a megabyte body costs one slice.
+ *
+ * Whitespace is collapsed last, on that capped output: the flow error renders
+ * in a toast and titles an error-report group, so a stack trace or an HTML page
+ * must not carry its newlines in — and collapsing before the cap would scan the
+ * whole body to do it.
  */
 export function describeAuthenticatedRequestFailure(response: {
   status: number;
@@ -126,6 +133,8 @@ export function describeAuthenticatedRequestFailure(response: {
   const reason = extractResponseErrorReason(response.body);
   const safeReason = reason
     ? sanitizeTraceErrorMessage(reason, { maxLength: MAX_REASON_CHARS })
+        .replace(/\s+/g, " ")
+        .trim()
     : undefined;
   return `Authenticated request failed: ${response.status} ${
     response.statusText

@@ -74,16 +74,13 @@ describe("extractResponseErrorReason", () => {
     ).toBe("session expired");
   });
 
-  it("collapses newlines so the flow error stays one line", () => {
-    expect(
-      extractResponseErrorReason(
-        "Bad Request\n  at Server.handle (server.js:12)"
-      )
-    ).toBe("Bad Request at Server.handle (server.js:12)");
-  });
-
-  it("does not cap, leaving length to the redactor that closes cut credentials", () => {
+  // Neither capped nor scanned here: both cost a pass over a body that can be
+  // megabytes, and the redactor downstream has to see the text whole.
+  it("returns the field as-is apart from trimming", () => {
     expect(extractResponseErrorReason("x".repeat(5_000))).toHaveLength(5_000);
+    expect(
+      extractResponseErrorReason("  Bad Request\n  at Server.handle  ")
+    ).toBe("Bad Request\n  at Server.handle");
   });
 });
 
@@ -97,6 +94,18 @@ describe("describeAuthenticatedRequestFailure", () => {
       })
     ).toBe(
       "Authenticated request failed: 400 Bad Request: Missing protocol version"
+    );
+  });
+
+  it("collapses newlines so the flow error stays one line", () => {
+    expect(
+      describeAuthenticatedRequestFailure({
+        status: 400,
+        statusText: "Bad Request",
+        body: "Bad Request\n  at Server.handle (server.js:12)",
+      })
+    ).toBe(
+      "Authenticated request failed: 400 Bad Request: Bad Request at Server.handle (server.js:12)"
     );
   });
 
