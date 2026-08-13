@@ -98,17 +98,47 @@ describe("call outcomes", () => {
     expect((error as InstanceType<typeof ServerConnectionBackendError>).isConflict).toBe(true);
   });
 
-  it("distinguishes a missing request from a missing route", async () => {
-    // Collapsing these sends someone hunting a deleted row when the real answer
-    // is a stale backend or a wrong CONVEX_HTTP_URL.
+  it("reads a backend-shaped 404 as a missing request", async () => {
+    // `{ ok: false, error: "not found" }` is the shape the backend's own route
+    // answers with — `isEntityNotFound` matches on exactly that pair.
     fetchMock.mockResolvedValue(
-      jsonResponse(404, { code: "not found", error: "not found" })
+      jsonResponse(404, { ok: false, code: "REQUEST_NOT_FOUND", error: "not found" })
     );
 
     const error = await acquireLease("scr_1", "lease_1").catch(
       (e: unknown) => e
     );
+
+    expect(error).toBeInstanceOf(ServerConnectionBackendError);
+    const backendError = error as InstanceType<
+      typeof ServerConnectionBackendError
+    >;
+    expect(backendError.status).toBe(404);
+    expect(backendError.isGone).toBe(true);
+    expect(backendError.code).toBe("REQUEST_NOT_FOUND");
+  });
+
+  it("reads any other 404 as a missing route", async () => {
+    // The pair matters. Collapsing them sends someone hunting a deleted row
+    // when the real answer is an undeployed backend or a wrong CONVEX_HTTP_URL
+    // — and a proxy's HTML 404 is exactly what that looks like on the wire.
+    fetchMock.mockResolvedValue({
+      status: 404,
+      ok: false,
+      json: async () => {
+        throw new SyntaxError("Unexpected token < in JSON");
+      },
+    } as unknown as Response);
+
+    const error = await acquireLease("scr_1", "lease_1").catch(
+      (e: unknown) => e
+    );
+
     expect(error).toBeInstanceOf(Error);
+    // NOT a ServerConnectionBackendError: this is not the backend answering
+    // about a row, so `isGone` must not make the worker treat it as one.
+    expect(error).not.toBeInstanceOf(ServerConnectionBackendError);
+    expect((error as Error).message).toContain("is the backend deployed?");
   });
 
   it("keeps null for a body that is merely unparseable", async () => {

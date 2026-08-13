@@ -136,6 +136,40 @@ describe("outages stay retryable", () => {
   });
 });
 
+describe("every hop's scheme is checked, not just the last one", () => {
+  // The adapter follows redirects itself, one `executeOAuthProxy` call per hop,
+  // so a chain that dips into plaintext and comes back cannot pass by ending on
+  // https. A real server is not needed to prove the property: the initial hop
+  // is the same code path every later hop takes.
+
+  it("refuses a plaintext public target outright", async () => {
+    await expect(
+      pinnedFetch("http://public.example/mcp")
+    ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it("names the host but never the path, which can carry a token", async () => {
+    const error = await pinnedFetch(
+      "http://public.example/mcp?access_token=super-secret"
+    ).catch((e: unknown) => e);
+
+    const message = (error as Error).message;
+    expect(message).toContain("public.example");
+    expect(message).not.toContain("super-secret");
+  });
+
+  it("keeps the loopback opt-in from becoming a plaintext opt-in", async () => {
+    // The carve-out is for reaching `http://127.0.0.1:3000/mcp` in local
+    // development. A dev-mode probe that leaves loopback for a public http host
+    // is refused exactly like a hosted one would be.
+    await expect(
+      createPinnedFetch({ allowLoopback: true, timeoutMs: 2_000 })(
+        "http://public.example/mcp"
+      )
+    ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+  });
+});
+
 describe("a refusal does not describe the internal network", () => {
   it("names the host that was asked for, never what it resolved to", async () => {
     // The message is reported back to whoever submitted the URL. Echoing the

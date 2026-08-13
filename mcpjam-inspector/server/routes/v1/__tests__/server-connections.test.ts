@@ -16,7 +16,7 @@
  * following the flow correctly could 429 a guest out of the flow.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const convex = vi.hoisted(() => ({
@@ -85,6 +85,12 @@ beforeEach(() => {
     status: "awaiting_project",
     handoffUrl: "https://app.mcpjam.test/connect/server/tok",
   });
+});
+
+afterEach(() => {
+  // Vitest does not restore stubbed env automatically, and `CONVEX_URL`
+  // leaking into a neighbouring file would make it pass for the wrong reason.
+  vi.unstubAllEnvs();
 });
 
 describe("create", () => {
@@ -213,8 +219,7 @@ describe("status, cancel and retry", () => {
     );
   });
 
-  it("does not spend the shared guest bucket to poll", async () => {
-    convex.query.mockResolvedValue({ connectionRequestId: "scr_1", status: "validating" });
+  it("claims exactly the status path as carrying its own budget", async () => {
     const { hasDedicatedPollBudget } = await import(
       "../../../middleware/server-connection-poll-rate-limit.js"
     );
@@ -230,6 +235,42 @@ describe("status, cancel and retry", () => {
     expect(hasDedicatedPollBudget("POST", "/api/v1/server-connections")).toBe(
       false
     );
+  });
+
+  it("polls without spending the shared guest bucket", async () => {
+    const { guestRateLimitMiddleware, resetGuestRateLimitForTests } =
+      await import("../../../middleware/guest-rate-limit.js");
+    const { serverConnectionPollRateLimitMiddleware } = await import(
+      "../../../middleware/server-connection-poll-rate-limit.js"
+    );
+    resetGuestRateLimitForTests();
+    resetServerConnectionPollRateLimitForTests();
+
+    // Both limiters, in the order the v1 router applies them, with a guest.
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("guestId", "guest_1");
+      await next();
+    });
+    app.use("*", guestRateLimitMiddleware);
+    app.get(
+      "/api/v1/server-connections/:id",
+      serverConnectionPollRateLimitMiddleware,
+      (c) => c.json({ ok: true })
+    );
+    app.get("/api/v1/projects", (c) => c.json({ ok: true }));
+
+    // Well past the shared 60/min bucket. A guest watching their own
+    // connection must not be locked out of the rest of the API for it.
+    for (let i = 0; i < 100; i += 1) {
+      expect(
+        (await app.request("/api/v1/server-connections/scr_1")).status
+      ).toBe(200);
+    }
+    expect((await app.request("/api/v1/projects")).status).toBe(200);
+
+    resetGuestRateLimitForTests();
+    resetServerConnectionPollRateLimitForTests();
   });
 
   it("cancels", async () => {

@@ -539,11 +539,17 @@ async function pollConnection(
     : Date.now() + FALLBACK_POLL_WINDOW_MS;
 
   let interrupted = false;
+  /** Wakes the backoff sleep so Ctrl-C is felt now rather than in up to ten
+   * seconds. Without it the handler sets a flag that nothing reads until the
+   * timer fires, and the terminal looks hung at exactly the moment the user
+   * asked for it back. */
+  let wakeSleep: (() => void) | undefined;
   const onInterrupt = () => {
     interrupted = true;
     process.stderr.write(
       "\nStopped watching. The request continues in the cloud — open the link above to finish it.\n"
     );
+    wakeSleep?.();
   };
   // Registered only for the duration of the wait, and `once`, so a second
   // Ctrl-C still terminates the process the way a user expects.
@@ -571,12 +577,16 @@ async function pollConnection(
         return { result: current, gaveUp: true };
       }
 
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      if (interrupted) {
-        return {
-          result: current,
-          gaveUp: true,
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, delayMs);
+        wakeSleep = () => {
+          clearTimeout(timer);
+          resolve();
         };
+      });
+      wakeSleep = undefined;
+      if (interrupted) {
+        return { result: current, gaveUp: true };
       }
       delayMs = Math.min(delayMs * 1.5, 10_000);
     }

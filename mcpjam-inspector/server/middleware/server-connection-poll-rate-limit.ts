@@ -23,7 +23,20 @@ import { getClientIp } from "../utils/client-ip.js";
  * abuse; it does not meter a product.
  */
 
+/**
+ * TWO BUCKETS, because one key cannot answer both questions.
+ *
+ * Keyed on identity alone, a guest mints a new identity and gets a fresh
+ * window — the ceiling means nothing. Keyed on address alone, an office or a
+ * corporate proxy shares one bucket, and twenty colleagues polling their own
+ * connections lock each other out for following the protocol.
+ *
+ * So both are charged. The identity bucket is the one a normal caller ever
+ * meets; the address bucket sits far above it and exists only to bound the
+ * rotation the identity bucket cannot see.
+ */
 const POLL_RATE_LIMIT = 240;
+const ADDRESS_POLL_RATE_LIMIT = 1_200;
 const POLL_WINDOW_MS = 60_000;
 
 /** Bounded, and fails closed when full — see `server-connection-claim-rate-limit.ts`
@@ -45,43 +58,81 @@ export function resetServerConnectionPollRateLimitForTests(): void {
 }
 
 export const SERVER_CONNECTION_POLL_RATE_LIMIT = POLL_RATE_LIMIT;
+export const SERVER_CONNECTION_ADDRESS_POLL_RATE_LIMIT =
+  ADDRESS_POLL_RATE_LIMIT;
 
-const tooMany = (c: Context) =>
+/**
+ * Charge one bucket. Returns the seconds until its window rolls over when the
+ * budget is spent, or `null` when there was room.
+ *
+ * The caller advertises THAT number rather than a fixed guess: a fixed window
+ * that says "retry in 5s" while it stays closed for another fifty trains a
+ * client to hammer a door that will not open, and the honest number is the one
+ * the window actually holds.
+ */
+function charge(
+  key: string,
+  limit: number,
+  now: number
+): { retryAfterSeconds: number } | null {
+  const entry = windows.get(key);
+  if (entry) {
+    if (now - entry.windowStart < POLL_WINDOW_MS) {
+      if (entry.count >= limit) {
+        const remainingMs = POLL_WINDOW_MS - (now - entry.windowStart);
+        return { retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000)) };
+      }
+      entry.count++;
+    } else {
+      entry.count = 1;
+      entry.windowStart = now;
+    }
+    return null;
+  }
+  if (windows.size >= KEY_WINDOW_MAX_ENTRIES) {
+    return { retryAfterSeconds: Math.ceil(POLL_WINDOW_MS / 1000) };
+  }
+  windows.set(key, { count: 1, windowStart: now });
+  return null;
+}
+
+const tooMany = (c: Context, retryAfterSeconds: number) =>
   c.json(
     {
       code: ErrorCode.RATE_LIMITED,
       message: "Polling too fast. Wait a few seconds between status checks.",
     },
     429,
-    { "Retry-After": "5" }
+    { "Retry-After": String(retryAfterSeconds) }
   );
 
 export async function serverConnectionPollRateLimitMiddleware(
   c: Context,
   next: Next
 ): Promise<Response | void> {
-  // Signed-in callers are metered by their own key upstream; a guest identity
-  // is free to mint, so the honest unit for a guest is the address.
-  const guestId = c.get("guestId");
-  const key = guestId ? `guest:${guestId}` : `ip:${getClientIp(c) ?? ""}`;
-  if (key === "ip:") return next();
-
   const now = Date.now();
-  const entry = windows.get(key);
 
-  if (entry) {
-    if (now - entry.windowStart < POLL_WINDOW_MS) {
-      if (entry.count >= POLL_RATE_LIMIT) return tooMany(c);
-      entry.count++;
-    } else {
-      entry.count = 1;
-      entry.windowStart = now;
-    }
-  } else {
-    if (windows.size >= KEY_WINDOW_MAX_ENTRIES) return tooMany(c);
-    windows.set(key, { count: 1, windowStart: now });
+  // The most stable principal available. A validated API key is the caller
+  // itself; a guest id is free to mint, which is exactly why it is not the only
+  // thing charged.
+  const principal =
+    (c.get("workosApiKeyId") as string | undefined) ??
+    (c.get("mcpjamUserId") as string | undefined) ??
+    (c.get("guestId") as string | undefined);
+  if (principal) {
+    const refused = charge(`principal:${principal}`, POLL_RATE_LIMIT, now);
+    if (refused) return tooMany(c, refused.retryAfterSeconds);
   }
 
+  const ip = getClientIp(c);
+  if (ip) {
+    const refused = charge(`ip:${ip}`, ADDRESS_POLL_RATE_LIMIT, now);
+    if (refused) return tooMany(c, refused.retryAfterSeconds);
+  }
+
+  // Neither an identity nor an address: nothing to charge, and collapsing every
+  // such caller into one bucket would let a single header-stripped request
+  // starve the rest.
   return next();
 }
 

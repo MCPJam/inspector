@@ -20,6 +20,10 @@ import {
   getInternalBackendConfig,
   isEntityNotFound,
 } from "./internal-backend.js";
+// The shared predicate, deliberately not a local copy: abort classification
+// drifting between call sites is how a timeout starts being reported as
+// whatever status the headers happened to carry.
+import { isAbortError } from "@/shared/abort-errors";
 
 const BASE_PATH = "/internal/v1/server-connections";
 
@@ -47,25 +51,6 @@ export class ServerConnectionBackendError extends Error {
   get isGone(): boolean {
     return this.status === 404 || this.status === 410;
   }
-}
-
-/**
- * An abort, however it reaches us.
- *
- * `undici` raises a `DOMException` named `AbortError` for the request, but a
- * body read cut short by the same signal can surface as a plain `Error` with
- * that name, or wrapped in a `TypeError` whose `cause` carries it. Testing only
- * for `DOMException` misses the case this check exists for.
- */
-function isAbortError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") return true;
-  if (error instanceof Error) {
-    if (error.name === "AbortError") return true;
-    if (error.cause !== undefined && error.cause !== error) {
-      return isAbortError(error.cause);
-    }
-  }
-  return false;
 }
 
 async function callBackend<T>(

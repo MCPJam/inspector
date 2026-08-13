@@ -305,8 +305,14 @@ export async function assertAllowedHostedTargetUrl(
   }
   for (const ip of resolvedIps) {
     if (isBlockedEgressHost(ip, true)) {
+      // The ADDRESS goes on `cause`, not in the message. The message is
+      // reported back to whoever supplied the hostname, and naming what it
+      // resolved to turns a refusal into a resolution oracle: submit a name,
+      // read back what our resolver saw, repeat until the internal network is
+      // mapped. The host they typed is theirs already; the answer is not.
       throw new BlockedEgressTargetError(
-        `${label} hostname "${host}" resolves to a private or internal address (${ip}) that the hosted inspector will not dial.`
+        `${label} hostname "${host}" resolves to a private or internal address that the hosted inspector will not dial.`,
+        { cause: new Error(`resolved address: ${ip}`) }
       );
     }
   }

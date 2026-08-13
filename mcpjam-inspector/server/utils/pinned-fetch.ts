@@ -79,6 +79,17 @@ const REFUSAL_PATTERNS: readonly RegExp[] = [
 /** DNS could not answer. Ours to retry, not the caller's to fix. */
 const RESOLUTION_FAILURE_PATTERN = /could not resolve/i;
 
+/** The transport caps itself at five; this loop replaces that cap with its own. */
+const MAX_REDIRECT_HOPS = 5;
+
+/** Credentials, in the sense Fetch means: dropped when the origin changes. */
+const CREDENTIAL_HEADERS = [
+  "authorization",
+  "cookie",
+  "cookie2",
+  "proxy-authorization",
+];
+
 function isHttps(url: string): boolean {
   try {
     return new URL(url).protocol === "https:";
@@ -94,6 +105,50 @@ function safeHost(url: string): string {
   } catch {
     return "an unparseable URL";
   }
+}
+
+function isRedirectStatus(status: number): boolean {
+  return (
+    status === 301 ||
+    status === 302 ||
+    status === 303 ||
+    status === 307 ||
+    status === 308
+  );
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+function withoutCredentials(
+  headers: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) => !CREDENTIAL_HEADERS.includes(name.toLowerCase())
+    )
+  );
+}
+
+/**
+ * Every hop must be https, unless loopback was opted into AND this hop is
+ * actually loopback.
+ *
+ * The opt-in is for reaching `http://127.0.0.1:3000/mcp` in local development.
+ * It is not a blanket permission to speak plaintext, so a dev-mode probe that
+ * redirects off to a public http host is refused exactly like a hosted one.
+ */
+function assertSchemeAllowed(url: string, allowLoopback: boolean): void {
+  if (isHttps(url)) return;
+  if (allowLoopback && isLoopbackOAuthUrl(url)) return;
+  throw new BlockedEgressTargetError(
+    `Refusing a plaintext connection to "${safeHost(url)}".`
+  );
 }
 
 /**
@@ -151,12 +206,11 @@ export function createPinnedFetch(
     // `http://127.0.0.1:…` reachable in production: the `allowLoopback` option
     // below was declared, documented, and enforced by nobody.
     //
-    // Only the INITIAL url needs this check. `allowLoopbackFlow` is computed
-    // once, from that url, so a public target that redirects to loopback is
-    // already refused by the transport's per-hop classifier. And `httpsOnly:
-    // true` is not the fix it looks like: it also forces `redirect: "manual"`,
-    // which would turn an ordinary trailing-slash redirect into "this is not an
-    // MCP server".
+    // Only the INITIAL url needs this particular check. `allowLoopbackFlow` is
+    // computed by the transport once per call, from the url it was given, and
+    // the loop below gives it every hop separately — so a public target that
+    // redirects to loopback is refused by the transport's own classifier on the
+    // hop that names it.
     if (options.allowLoopback !== true && isLoopbackOAuthUrl(url)) {
       throw new BlockedEgressTargetError(
         `Refusing a connection to loopback address "${new URL(url).hostname}".`
@@ -164,31 +218,62 @@ export function createPinnedFetch(
     }
 
     try {
-      const result = await executeOAuthProxy({
-        url,
-        method: init?.method ?? "GET",
-        headers,
-        body: init?.body ?? undefined,
-        // HTTPS for PUBLIC hosts is enforced by the caller's own guard rather
-        // than here, so a loopback dev target stays reachable when it opted in
-        // (see the gate above, which is what makes that opt-in real).
-        httpsOnly: false,
-        redirect: "follow",
-        timeoutMs: options.timeoutMs,
-      });
+      // REDIRECTS ARE FOLLOWED HERE, ONE HOP AT A TIME, so every hop's scheme
+      // is checked before its socket opens.
+      //
+      // Handing `redirect: "follow"` to the transport and inspecting only
+      // `result.finalUrl` afterwards is not equivalent: a chain of
+      // https → http → https ends on https and passes that check, while the
+      // middle hop happened in plaintext. Nothing is leaked there — credentials
+      // are stripped across origins and the scheme is part of an origin — but
+      // anyone on the path can rewrite that hop's `Location` and choose where
+      // the probe ends up, which decides the auth method we record and the
+      // authorization server we would later send a person to.
+      //
+      // Each hop is a fresh `executeOAuthProxy` call, so each one gets the full
+      // treatment: resolve once, refuse private answers, pin the address.
+      let currentUrl = url;
+      let currentHeaders = headers;
+      let result: Awaited<ReturnType<typeof executeOAuthProxy>> | undefined;
 
-      // WHERE WE ACTUALLY ENDED UP. `httpsOnly: false` is required so a
-      // loopback dev target stays reachable, and it also lets the transport
-      // follow an https→http redirect to a public host. Credentials are already
-      // stripped across origins (scheme is part of an origin), so this is not a
-      // token leak — it is a probe that quietly became plaintext, where anyone
-      // on the path can rewrite the 401 challenge we classify on. Refuse the
-      // downgrade rather than report on a conversation someone else could have
-      // written.
-      if (options.allowLoopback !== true && !isHttps(result.finalUrl)) {
-        throw new BlockedEgressTargetError(
-          `Refusing a plaintext connection after a redirect to "${safeHost(result.finalUrl)}".`
-        );
+      for (let hop = 0; ; hop += 1) {
+        if (hop > MAX_REDIRECT_HOPS) {
+          throw new Error(`Too many redirects (more than ${MAX_REDIRECT_HOPS}).`);
+        }
+
+        assertSchemeAllowed(currentUrl, options.allowLoopback === true);
+
+        result = await executeOAuthProxy({
+          url: currentUrl,
+          method: init?.method ?? "GET",
+          headers: currentHeaders,
+          body: init?.body ?? undefined,
+          // HTTPS for PUBLIC hosts is enforced by `assertSchemeAllowed` above
+          // rather than by the transport, so a loopback dev target stays
+          // reachable when it opted in. Passing `httpsOnly: true` instead would
+          // ALSO force `redirect: "manual"` inside the transport, which is what
+          // this loop is doing deliberately and per-hop.
+          httpsOnly: false,
+          redirect: "manual",
+          timeoutMs: options.timeoutMs,
+        });
+
+        const location = result.headers["location"] ?? result.headers["Location"];
+        if (!isRedirectStatus(result.status) || !location) break;
+
+        let nextUrl: URL;
+        try {
+          nextUrl = new URL(location, currentUrl);
+        } catch {
+          throw new Error("The server returned an invalid redirect location.");
+        }
+
+        // Match Fetch's credential boundary, which the transport applies within
+        // a single call and cannot apply across these separate ones.
+        currentHeaders = sameOrigin(currentUrl, nextUrl.toString())
+          ? currentHeaders
+          : withoutCredentials(currentHeaders);
+        currentUrl = nextUrl.toString();
       }
 
       return new Response(toBodyInit(result.body), {
