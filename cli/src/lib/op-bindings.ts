@@ -30,6 +30,15 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_project: { command: "projects delete" },
   list_project_servers: { command: "projects servers" },
   create_project_server: { command: "projects server add" },
+  connect_project_server: { command: "projects server connect" },
+  // Its OWN command, not `server connect`. `connect` does poll this operation
+  // while it waits, but `--no-wait` and Ctrl-C both hand back a request id, and
+  // pointing the binding at `connect` claimed a command that could not follow
+  // one — re-running `connect` starts a second request rather than reading the
+  // first.
+  get_project_server_connection_status: {
+    command: "projects server connect-status",
+  },
   get_project_server: { command: "projects server get" },
   update_project_server: { command: "projects server update" },
   delete_project_server: { command: "projects server remove" },

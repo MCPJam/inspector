@@ -22,6 +22,7 @@ import oauthWeb from "./oauth.js";
 import serverSecretsWeb from "./server-secrets.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
+import serverConnectionsWeb from "./server-connections.js";
 import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
@@ -121,6 +122,12 @@ web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
 web.route("/server", serverSecretsWeb);
 web.route("/guest-session", guestSession);
+// The handoff page's back end. Deliberately NOT behind bearerAuthMiddleware:
+// after the claim, every step authenticates with the HttpOnly continuation
+// cookie, and the claim itself is reachable by a signed-out guest who is about
+// to authorize a server. The signed-in user's id is read opportunistically when
+// the session middleware already resolved one.
+web.route("/server-connections", serverConnectionsWeb);
 // Service-token-gated guest minting for the platform MCP worker (anonymous
 // /mcp sessions). Gated inside the router by `x-inspector-service-token`;
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely.

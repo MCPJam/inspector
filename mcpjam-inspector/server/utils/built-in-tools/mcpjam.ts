@@ -31,7 +31,9 @@
 import { tool, type ToolSet } from "ai";
 import {
   callServerToolOperation,
+  connectProjectServerOperation,
   diagnoseServerOperation,
+  getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
@@ -69,6 +71,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Connecting a server from in-app chat produces a private link the user
+  // opens in the same browser they are already signed into.
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -242,6 +248,10 @@ const APPROVAL_REQUIRED_IDS = new Set([
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,
+  // Belongs with its create/update/delete siblings and then some: the URL is
+  // supplied by whoever is talking to the model, this server dials it, and a
+  // completed flow adds a server row to the user's project.
+  connectProjectServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted

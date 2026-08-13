@@ -10,6 +10,7 @@
 import {
   callServerToolOperation,
   checkHostCompatibilityOperation,
+  connectProjectServerOperation,
   createEvalCaseOperation,
   createEvalSuiteOperation,
   createProjectServerOperation,
@@ -28,6 +29,7 @@ import {
   getEvalSuiteOperation,
   getEnvironmentOperation,
   getPluginVersionOperation,
+  getProjectServerConnectionStatusOperation,
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
@@ -81,6 +83,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Connecting a server is on the unattended surface deliberately: the flow
+  // cannot complete without a person at a browser, so the most an MCP host can
+  // do with it is produce a private link for the requester to open.
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,

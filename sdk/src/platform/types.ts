@@ -1003,3 +1003,83 @@ export interface PlatformJourneyRunCanceled {
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }
+
+// ---------------------------------------------------------------------------
+// Server connections
+// ---------------------------------------------------------------------------
+
+/**
+ * One saved server a URL could refer to, offered when it matches more than one.
+ *
+ * Present only on an `AMBIGUOUS_SERVER` error. Without it that refusal is a
+ * dead end on every surface that is not a browser: the caller is told to
+ * re-send with a `serverId` and has no way to discover which ids exist.
+ */
+export interface PlatformServerConnectionCandidate {
+  id: string;
+  name: string;
+  /** Redacted — query values are replaced, because a keyed-endpoint URL's
+   * query can be the credential itself. */
+  url: string;
+}
+
+export interface PlatformServerConnectionError {
+  code: string;
+  message: string;
+  /** Whether retrying THIS request could succeed. False for a denied consent
+   * or an unsupported auth method, where only a different action helps. */
+  retryable: boolean;
+  candidates?: PlatformServerConnectionCandidate[];
+}
+
+/**
+ * The state of one "connect this MCP server" request.
+ *
+ * Returned by every server-connection route, so a caller polls the same shape
+ * it created. `handoffUrl` is the exception that proves the rule: it appears
+ * only in the CREATE response, because the raw handoff token exists exactly
+ * once and nothing stores it.
+ */
+export interface PlatformServerConnection {
+  connectionRequestId: string;
+  status:
+    | "discovering"
+    | "awaiting_project"
+    | "awaiting_authorization"
+    | "authorizing"
+    | "validating"
+    | "ready"
+    | "failed"
+    | "expired"
+    | "cancelled";
+  /**
+   * Where the user finishes in a browser. Present for BOTH
+   * `awaiting_project` and `awaiting_authorization` — choosing a project needs
+   * a page just as much as granting consent does.
+   *
+   * TREAT THIS AS PRIVATE. It is a capability for one person: never post it to
+   * a shared channel, and never let a model echo it into prose.
+   */
+  handoffUrl?: string;
+  expiresAt: string;
+  projectId?: string;
+  serverId?: string;
+  server?: {
+    id: string;
+    name: string;
+    url: string;
+    enabled: boolean;
+  };
+  error?: PlatformServerConnectionError;
+}
+
+/** Body for `POST /server-connections`. */
+export interface PlatformServerConnectionCreateBody {
+  url: string;
+  projectId?: string;
+  /** Disambiguates when a project has several saved servers on one URL. */
+  serverId?: string;
+  /** Used only when a server row is created; ignored on reuse. */
+  name?: string;
+  reauthorize?: boolean;
+}

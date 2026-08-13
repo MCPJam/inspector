@@ -1334,6 +1334,8 @@ describe("operation catalog consistency", () => {
     update_project_server: { serverId: "s", body: { name: "renamed" } },
     delete_project_server: { serverId: "s" },
     show_servers: {},
+    connect_project_server: { url: "https://example.com/mcp" },
+    get_project_server_connection_status: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -1461,6 +1463,8 @@ describe("operation catalog consistency", () => {
       "close_tunnel",
       "create_project_server",
       "update_project_server",
+      // Creates a connection request, and possibly a disabled server row.
+      "connect_project_server",
       "delete_project_server",
       "create_project",
       "update_project",

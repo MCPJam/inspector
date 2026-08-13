@@ -59,6 +59,15 @@ export async function main(
   argv: readonly string[] = process.argv,
   dependencies: CliMainDependencies = {},
 ): Promise<CliMainResult> {
+  // A command signals failure by setting `process.exitCode`, which this
+  // function reads back below — so the channel is a GLOBAL that outlives the
+  // call. Left alone, one command's exit 1 is still sitting there when the next
+  // `main()` runs in the same process, and that run reports failure for work
+  // that succeeded. Only the process entrypoint calls this once; tests,
+  // embedders, and anything scripting the CLI in-process call it repeatedly.
+  // Clearing here makes each invocation independent of whatever preceded it.
+  process.exitCode = 0;
+
   const program = addGlobalOptions(
     new Command()
       .name("mcpjam")
