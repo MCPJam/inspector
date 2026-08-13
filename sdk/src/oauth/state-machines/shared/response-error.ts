@@ -4,6 +4,9 @@ import { sanitizeTraceErrorMessage } from "../trace-redaction.js";
  * Cap on the reason text. A failing server can answer with an HTML error page
  * or a multi-megabyte stack dump; the reason is appended to a one-line flow
  * error that also ships to error reporting, so it has to stay a line.
+ *
+ * Applied by the redactor rather than here — see
+ * {@link describeAuthenticatedRequestFailure}.
  */
 const MAX_REASON_CHARS = 300;
 
@@ -17,13 +20,19 @@ const MAX_REASON_CHARS = 300;
  * is whitespace-only is treated as absent so precedence falls through to a
  * field that says something, and so composing a pair can never emit a dangling
  * `": "`.
+ *
+ * Deliberately uncapped. Length belongs to whoever redacts the result:
+ * `sanitizeTraceErrorMessage` closes an unterminated JSON value or URL userinfo
+ * only when it is the one that cut the text, so a cap applied first hides the
+ * cut from it and leaves the raw prefix of a credential whose closing delimiter
+ * fell just past the cap.
  */
 function toReason(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
   const collapsed = value.replace(/\s+/g, " ").trim();
-  return collapsed ? collapsed.slice(0, MAX_REASON_CHARS) : undefined;
+  return collapsed ? collapsed : undefined;
 }
 
 /**
@@ -36,7 +45,9 @@ function toReason(value: unknown): string | undefined {
  * arrives at error reporting as a bare status.
  *
  * Returns `undefined` when the body carries nothing usable, so callers append
- * a reason only when there is one rather than printing an empty suffix.
+ * a reason only when there is one rather than printing an empty suffix. The
+ * result is normalized but neither capped nor redacted: every caller passes it
+ * through `sanitizeTraceErrorMessage`, which owns both.
  */
 export function extractResponseErrorReason(body: unknown): string | undefined {
   if (typeof body === "string") {
@@ -100,6 +111,12 @@ export function extractResponseErrorReason(body: unknown): string | undefined {
  * servers that echo the bearer token back in an error body. This value becomes
  * `state.error`, which is toasted, folded into conformance step results, and
  * reported — the full body stays readable in HTTP history either way.
+ *
+ * The redactor receives the whole reason and caps it, rather than being handed
+ * a pre-cut one: it closes an unterminated JSON value or URL userinfo only when
+ * it made the cut itself, so cutting first would strand the raw head of a
+ * credential whose closing delimiter sat just past the cap. Its own scan window
+ * (`MAX_SCANNED`) still bounds the work.
  */
 export function describeAuthenticatedRequestFailure(response: {
   status: number;

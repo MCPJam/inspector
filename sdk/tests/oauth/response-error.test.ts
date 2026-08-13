@@ -82,9 +82,8 @@ describe("extractResponseErrorReason", () => {
     ).toBe("Bad Request at Server.handle (server.js:12)");
   });
 
-  it("caps the reason so an HTML error page cannot become the message", () => {
-    const reason = extractResponseErrorReason("x".repeat(5_000));
-    expect(reason).toHaveLength(300);
+  it("does not cap, leaving length to the redactor that closes cut credentials", () => {
+    expect(extractResponseErrorReason("x".repeat(5_000))).toHaveLength(5_000);
   });
 });
 
@@ -98,6 +97,18 @@ describe("describeAuthenticatedRequestFailure", () => {
       })
     ).toBe(
       "Authenticated request failed: 400 Bad Request: Missing protocol version"
+    );
+  });
+
+  it("caps the reason so an HTML error page cannot become the message", () => {
+    const message = describeAuthenticatedRequestFailure({
+      status: 400,
+      statusText: "Bad Request",
+      body: "x".repeat(5_000),
+    });
+
+    expect(message).toBe(
+      `Authenticated request failed: 400 Bad Request: ${"x".repeat(300)}`
     );
   });
 
@@ -125,5 +136,39 @@ describe("describeAuthenticatedRequestFailure", () => {
     expect(message).not.toContain("eyJhbGciOiJIUzI1NiJ9");
     expect(message).toContain("invalid_token");
     expect(message).toContain("was rejected");
+  });
+
+  // The two shapes `sanitizeTraceErrorMessage` closes only when it knows the
+  // text was cut — a JSON value and a URL userinfo both need their closing
+  // delimiter to match. Capping the reason before handing it over hid that cut
+  // from the sanitizer, so the delimiter fell outside the reason and the secret
+  // prefix survived. The sanitizer now owns both caps.
+  // Both values start before the 300-character reason cap and run past it, so
+  // the delimiter that terminates them is outside the cap while a long raw
+  // prefix is inside it.
+  it("redacts a JSON credential whose closing quote falls past the reason cap", () => {
+    const filler = "context ".repeat(28); // 224 chars
+    const secret = `SECRET${"0123456789".repeat(6)}`; // value spans 242..308
+
+    const message = describeAuthenticatedRequestFailure({
+      status: 400,
+      statusText: "Bad Request",
+      body: { message: `${filler}"client_secret": "${secret}" rejected` },
+    });
+
+    expect(message).not.toContain("SECRET0123456789");
+  });
+
+  it("redacts URL userinfo whose closing @ falls past the reason cap", () => {
+    const filler = "context ".repeat(28); // 224 chars
+    const password = `PASSWORD${"0123456789".repeat(7)}`; // `@` lands at 315
+
+    const message = describeAuthenticatedRequestFailure({
+      status: 400,
+      statusText: "Bad Request",
+      body: `${filler}https://user:${password}@example.test/token failed`,
+    });
+
+    expect(message).not.toContain("PASSWORD0123456789");
   });
 });
