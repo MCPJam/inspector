@@ -36,7 +36,10 @@ import {
   generateCodeChallenge,
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
-import { selectAuthorizationServerFromResourceMetadata } from "./shared/required-metadata.js";
+import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  selectAuthorizationServerFromResourceMetadata,
+} from "./shared/required-metadata.js";
 import {
   resolveDiscoveryResourceIndicator,
   resolveFlowResourceValue,
@@ -847,7 +850,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields per RFC 8414
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field",
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
