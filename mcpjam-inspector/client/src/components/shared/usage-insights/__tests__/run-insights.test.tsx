@@ -12,7 +12,10 @@ import type {
 } from "@/lib/swarm-api";
 import {
   RunInsights,
+  RunInsightsBanner,
   RunInsightsChip,
+  RunInsightsProvider,
+  RunInsightsRecommendations,
   signalFingerprint,
   signalSentence,
 } from "../run-insights";
@@ -316,6 +319,51 @@ describe("summary and caveats", () => {
   });
 });
 
+function renderBannerAndRecommendations() {
+  return render(
+    <RunInsightsProvider
+      surface={{
+        kind: "swarm",
+        projectId: "proj-1",
+        swarmRunGroupId: "run-1",
+      }}
+      onOpenSession={vi.fn()}
+    >
+      <RunInsightsBanner />
+      <RunInsightsRecommendations />
+    </RunInsightsProvider>,
+  );
+}
+
+describe("RunInsightsBanner + Recommendations", () => {
+  it("surfaces the summary in the banner; patterns live under Recommendations", () => {
+    state.dto = completed();
+    state.findings = [finding()];
+    renderBannerAndRecommendations();
+
+    expect(screen.getByTestId("run-insights-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("run-insights-summary")).toHaveTextContent(
+      /advice instead of calling the restore tool/i,
+    );
+    expect(screen.getByTestId("run-insights-recommendations")).toBeInTheDocument();
+    expect(screen.getByText("Recommendations")).toBeInTheDocument();
+    expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
+      /never called a tool/i,
+    );
+  });
+
+  it("expands a recommendation row like a scorecard criterion", () => {
+    state.dto = completed();
+    state.findings = [finding()];
+    renderBannerAndRecommendations();
+
+    expect(screen.queryByTestId("run-insight-detail")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Why:/i);
+    expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Fix:/i);
+  });
+});
+
 describe("generation lifecycle", () => {
   it("auto-requests once for a finished run with no insights row", async () => {
     state.dto = null;
@@ -323,40 +371,35 @@ describe("generation lifecycle", () => {
     await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
   });
 
-  it("auto-requests once per chip, not once per popover open", async () => {
-    // Radix unmounts `PopoverContent` on close, so a lifecycle owned in there
-    // loses its once-per-cohort latch on every open.
+  it("auto-requests once for the shared provider (banner + recommendations)", async () => {
+    // One lifecycle for both mounts — recommendations must not fork a second
+    // auto-request.
     state.dto = null;
-    render(
-      <RunInsightsChip
-        surface={{
-          kind: "swarm",
-          projectId: "proj-1",
-          swarmRunGroupId: "run-1",
-        }}
-        onOpenSession={vi.fn()}
-      />,
-    );
+    state.findings = [finding()];
+    renderBannerAndRecommendations();
     await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
-
-    fireEvent.click(screen.getByTestId("run-insights-chip"));
-    await screen.findByTestId("run-insights");
-    fireEvent.keyDown(document.body, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByTestId("run-insights")).toBeNull());
-    fireEvent.click(screen.getByTestId("run-insights-chip"));
-    await screen.findByTestId("run-insights");
-
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
     expect(state.requestMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not re-ask on reopen after the viewer was refused", async () => {
-    // The case the latch exists for: a hosted guest whose auto-request is
-    // refused. Held in a ref, it died with the popover content and the doomed
-    // request went out again on every open.
+  it("surfaces a refused request on Recommendations without re-asking", async () => {
     state.dto = null;
+    state.findings = [finding()];
     state.requestMock = vi
       .fn()
       .mockRejectedValue(new Error("Not a member of this workspace"));
+    renderBannerAndRecommendations();
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByTestId("run-insights-error")).toHaveTextContent(
+      /Ask a workspace member/,
+    );
+    expect(state.requestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-requests once per chip, not once per popover open", async () => {
+    // Legacy chip path — same latch contract as the banner.
+    state.dto = null;
     render(
       <RunInsightsChip
         surface={{
@@ -370,11 +413,7 @@ describe("generation lifecycle", () => {
     await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByTestId("run-insights-chip"));
-    // The refusal belongs to the chip's lifecycle, and the popover renders
-    // from that same one — so the message and its retry are reachable.
-    expect(await screen.findByTestId("run-insights-error")).toHaveTextContent(
-      /Ask a workspace member/,
-    );
+    await screen.findByTestId("run-insights");
     fireEvent.keyDown(document.body, { key: "Escape" });
     await waitFor(() => expect(screen.queryByTestId("run-insights")).toBeNull());
     fireEvent.click(screen.getByTestId("run-insights-chip"));
