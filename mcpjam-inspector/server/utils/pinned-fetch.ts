@@ -27,7 +27,15 @@
  * download.
  */
 
-import { executeOAuthProxy, OAuthProxyError } from "@mcpjam/sdk/oauth/node";
+import {
+  executeOAuthProxy,
+  isLoopbackOAuthUrl,
+  OAuthProxyError,
+} from "@mcpjam/sdk/oauth/node";
+import {
+  BlockedEgressTargetError,
+  EgressResolutionError,
+} from "./hosted-egress-guard.js";
 
 export interface PinnedFetchOptions {
   /**
@@ -39,6 +47,37 @@ export interface PinnedFetchOptions {
   /** Bounds DNS, connection setup, redirects, and the body read together. */
   timeoutMs?: number;
 }
+
+/**
+ * The transport's REFUSALS, told apart from its failures.
+ *
+ * `OAuthProxyError` carries only a `status`, and it is 400 for both "resolves to
+ * a private or reserved IP address" and "request timeout" — a verdict about the
+ * target and an outage on our side, which deserve opposite answers. So the
+ * discrimination has to come from the message, which is not where anyone wants
+ * to be.
+ *
+ * What makes that safe is the regression test beside this file: it drives the
+ * REAL transport at a real reserved address and asserts the class that comes
+ * back, so a reworded SDK message fails a test here rather than silently
+ * downgrading an SSRF refusal to `retryable` and putting a blocked target back
+ * on a retry schedule.
+ *
+ * Everything not listed stays a plain transport failure — a timeout, a byte cap,
+ * a redirect ceiling — because the conservative direction is retryable.
+ */
+const REFUSAL_PATTERNS: readonly RegExp[] = [
+  /private\/reserved/i, // "<label> is a private/reserved host (…)"
+  /private or reserved address/i, // client-metadata host classifier
+  /resolved outside loopback/i, // loopback name that answered publicly
+  /invalid protocol/i,
+  /invalid url format/i,
+  /must not contain credentials/i,
+  /only https targets are allowed/i,
+];
+
+/** DNS could not answer. Ours to retry, not the caller's to fix. */
+const RESOLUTION_FAILURE_PATTERN = /could not resolve/i;
 
 /**
  * Serialize whatever the SDK transport handed back into a `Response` body.
@@ -87,14 +126,35 @@ export function createPinnedFetch(
       });
     }
 
+    // LOOPBACK IS GATED HERE, BECAUSE THE TRANSPORT CANNOT BE TOLD.
+    // `OAuthProxyRequest` has no loopback field — the SDK derives permission
+    // from the URL itself (`allowLoopbackFlow = !httpsOnly &&
+    // isLoopbackOAuthUrl(url)`). We must pass `httpsOnly: false`, since a
+    // loopback dev target is plaintext by nature, and that alone made
+    // `http://127.0.0.1:…` reachable in production: the `allowLoopback` option
+    // below was declared, documented, and enforced by nobody.
+    //
+    // Only the INITIAL url needs this check. `allowLoopbackFlow` is computed
+    // once, from that url, so a public target that redirects to loopback is
+    // already refused by the transport's per-hop classifier. And `httpsOnly:
+    // true` is not the fix it looks like: it also forces `redirect: "manual"`,
+    // which would turn an ordinary trailing-slash redirect into "this is not an
+    // MCP server".
+    if (options.allowLoopback !== true && isLoopbackOAuthUrl(url)) {
+      throw new BlockedEgressTargetError(
+        `Refusing a connection to loopback address "${new URL(url).hostname}".`
+      );
+    }
+
     try {
       const result = await executeOAuthProxy({
         url,
         method: init?.method ?? "GET",
         headers,
         body: init?.body ?? undefined,
-        // HTTPS is enforced by the caller's own guard rather than here, so a
-        // loopback dev target stays reachable when it opted in.
+        // HTTPS for PUBLIC hosts is enforced by the caller's own guard rather
+        // than here, so a loopback dev target stays reachable when it opted in
+        // (see the gate above, which is what makes that opt-in real).
         httpsOnly: false,
         redirect: "follow",
         timeoutMs: options.timeoutMs,
@@ -106,11 +166,22 @@ export function createPinnedFetch(
         headers: result.headers,
       });
     } catch (error) {
-      // The transport raises a typed error for a blocked or malformed target.
-      // Rethrow as a plain Error so callers classify on their own rules rather
-      // than importing this module's exception type — discovery already has a
-      // three-way taxonomy and this is just one input to it.
+      // PRESERVE THE VERDICT. An earlier revision rethrew every
+      // `OAuthProxyError` as a plain `Error`, on the theory that callers should
+      // classify on their own rules. They cannot: `server-connection-discovery`
+      // decides `terminal` vs `retryable` by `instanceof BlockedEgressTargetError`,
+      // so flattening the class made an SSRF refusal indistinguishable from a
+      // timeout — the refused target went back on a retry schedule, which is the
+      // exact outcome that module's bookkeeping exists to prevent.
       if (error instanceof OAuthProxyError) {
+        if (REFUSAL_PATTERNS.some((pattern) => pattern.test(error.message))) {
+          throw new BlockedEgressTargetError(error.message);
+        }
+        if (RESOLUTION_FAILURE_PATTERN.test(error.message)) {
+          throw new EgressResolutionError(error.message);
+        }
+        // A genuine transport failure — timeout, byte cap, redirect ceiling.
+        // Still worth retrying, so it stays a plain error.
         throw new Error(error.message);
       }
       throw error;

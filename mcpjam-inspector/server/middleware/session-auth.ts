@@ -86,6 +86,13 @@ const UNPROTECTED_PREFIXES = [
   // front-channel. The HMAC state, Discord proof, and WorkOS proof authorize
   // the flow; a browser session does not exist until the flow completes.
   "/api/surface-link/",
+  // Backend→Inspector connection-work doorbell. The caller is the Convex
+  // backend, which sends `x-inspector-service-token` and nothing else — it has
+  // no browser session to present, so session auth would 401 it before its own
+  // guard ever ran. Authorization is NOT waived: the router mounts
+  // `internalServiceAuthMiddleware()`, which rejects a missing or wrong service
+  // token. This carve-out only decides WHICH gate answers.
+  "/api/internal/server-connections",
 ];
 
 /**

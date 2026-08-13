@@ -16,6 +16,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProbeHttpAttempt, ProbeMcpServerResult } from "@mcpjam/sdk";
 
 const backend = vi.hoisted(() => ({
   acquireLease: vi.fn(),
@@ -53,6 +54,44 @@ function leased(status: string, extra: Record<string, unknown> = {}) {
     status,
     serverUrl: "https://example.com/mcp",
     ...extra,
+  };
+}
+
+/**
+ * Build a probe result the SDK could ACTUALLY return.
+ *
+ * The suite this replaced asserted on `status: "ok"` and `status: "unauthorized"`
+ * — neither of which `probeMcpServer` can produce — and passed anyway, which is
+ * exactly how a worker that could never reach `ready` shipped green. Typing the
+ * fixtures as `ProbeMcpServerResult` means a test can no longer describe a
+ * contract that does not exist: the union is `"ready" | "oauth_required" |
+ * "reachable" | "error"`, and a fixture outside it fails typecheck.
+ *
+ * The type import survives `vi.mock("@mcpjam/sdk")` because types are erased
+ * before the mock ever exists.
+ */
+function probeResult(
+  overrides: Partial<ProbeMcpServerResult> &
+    Pick<ProbeMcpServerResult, "status">
+): ProbeMcpServerResult {
+  return {
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-06-18",
+    transport: { attempts: [] },
+    oauth: { required: false, optional: false, registrationStrategies: [] },
+    ...overrides,
+  };
+}
+
+function attempt(
+  name: ProbeHttpAttempt["name"],
+  status: number
+): ProbeHttpAttempt {
+  return {
+    name,
+    request: { method: "POST", url: "https://example.com/mcp", headers: {} },
+    response: { status, statusText: "", headers: {} },
+    durationMs: 1,
   };
 }
 
@@ -165,10 +204,16 @@ describe("validation outcomes", () => {
       accessToken: "secret-token",
       authMethod: "oauth",
     });
-    probe.probeMcpServer.mockResolvedValue({
-      status: "ok",
-      initialize: { protocolVersion: "2025-06-18" },
-    });
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "ready",
+        transport: {
+          selected: "streamable-http",
+          attempts: [attempt("streamable_initialize", 200)],
+        },
+        initialize: { protocolVersion: "2025-06-18" },
+      })
+    );
 
     await runConnectionJob("scr_x");
 
@@ -181,16 +226,48 @@ describe("validation outcomes", () => {
     );
   });
 
+  it("reports ready for an SSE server, which carries no protocol version", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: null,
+      authMethod: "none",
+    });
+    // The SDK's SSE arm reports only a content type. Requiring
+    // `initialize.protocolVersion` on top of `status: "ready"` would mark every
+    // working SSE server terminally non-MCP.
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "ready",
+        transport: {
+          selected: "sse",
+          attempts: [
+            attempt("streamable_initialize", 405),
+            attempt("sse_probe", 200),
+          ],
+        },
+        initialize: { contentType: "text/event-stream" },
+      })
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "ready" })
+    );
+  });
+
   it("validates an unauthenticated target with no credential at all", async () => {
     backend.fetchValidationContext.mockResolvedValue({
       serverUrl: "https://example.com/mcp",
       accessToken: null,
       authMethod: "none",
     });
-    probe.probeMcpServer.mockResolvedValue({
-      status: "ok",
-      initialize: { protocolVersion: "2025-06-18" },
-    });
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "ready",
+        initialize: { protocolVersion: "2025-06-18" },
+      })
+    );
 
     await runConnectionJob("scr_x");
 
@@ -221,10 +298,15 @@ describe("validation outcomes", () => {
       accessToken: "stale-token",
       authMethod: "oauth",
     });
-    probe.probeMcpServer.mockResolvedValue({
-      status: "unauthorized",
-      oauth: { required: true },
-    });
+    // A 401 with a challenge is what the probe calls `oauth_required`. We sent
+    // the stored credential, so this is the server rejecting it.
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "oauth_required",
+        transport: { attempts: [attempt("streamable_initialize", 401)] },
+        oauth: { required: true, optional: false, registrationStrategies: [] },
+      })
+    );
 
     await runConnectionJob("scr_x");
 
@@ -238,16 +320,48 @@ describe("validation outcomes", () => {
     );
   });
 
-  it("is terminal for an endpoint that answers but is not MCP", async () => {
+  it("treats a 403 on a reachable target as a rejected credential", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: "stale-token",
+      authMethod: "oauth",
+    });
+    // A 403 never becomes `oauth_required` — the probe only promotes 401 — so
+    // it arrives as `reachable`, whose name is about the socket and not the
+    // protocol. Reporting it terminally would tell the user their working
+    // server is not an MCP server when the real fix is re-consent.
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "reachable",
+        transport: { attempts: [attempt("streamable_initialize", 403)] },
+        error: "Server responded with HTTP 403 Forbidden to the initialize probe.",
+      })
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "authentication-failed",
+        errorCode: "AUTHENTICATION_FAILED",
+      })
+    );
+  });
+
+  it("is terminal for a reachable endpoint whose answer is not MCP", async () => {
     backend.fetchValidationContext.mockResolvedValue({
       serverUrl: "https://example.com/mcp",
       accessToken: null,
       authMethod: "none",
     });
-    probe.probeMcpServer.mockResolvedValue({
-      status: "error",
-      error: "Response is not a valid JSON-RPC message",
-    });
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "reachable",
+        transport: { attempts: [attempt("streamable_initialize", 200)] },
+        error:
+          "Server responded to initialize but did not return a recognizable MCP initialize result.",
+      })
+    );
 
     await runConnectionJob("scr_x");
 
@@ -256,6 +370,109 @@ describe("validation outcomes", () => {
         outcome: "terminal",
         errorCode: "PROTOCOL_VALIDATION_FAILED",
       })
+    );
+  });
+
+  it("does not revoke the grant over a 403 from a metadata endpoint", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: "good-token",
+      authMethod: "oauth",
+    });
+    // `resource_metadata` routinely lives on a DIFFERENT host. A 403 from it is
+    // someone else's misconfiguration, and treating it as our credential being
+    // rejected would throw away a grant that works.
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "reachable",
+        transport: {
+          attempts: [
+            attempt("streamable_initialize", 200),
+            attempt("resource_metadata", 403),
+          ],
+        },
+        error:
+          "Server responded to initialize but did not return a recognizable MCP initialize result.",
+      })
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "terminal" })
+    );
+  });
+
+  it("is terminal for an endpoint that answers but is not MCP", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: null,
+      authMethod: "none",
+    });
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "error",
+        error: "Response is not a valid JSON-RPC message",
+      })
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "terminal",
+        errorCode: "PROTOCOL_VALIDATION_FAILED",
+      })
+    );
+  });
+
+  it("does not read an auth failure out of incidental '401' text", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: "good-token",
+      authMethod: "oauth",
+    });
+    // `probe.error` is prose assembled for a human and can carry a status from
+    // somewhere else entirely. The code the target actually sent is 503, so the
+    // right answer is "come back later", not "your grant is dead".
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "error",
+        transport: { attempts: [attempt("streamable_initialize", 503)] },
+        error:
+          "Upstream gateway is unavailable; it last returned 401 from https://auth.example/token",
+      })
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "retryable",
+        errorCode: "VALIDATION_FAILED",
+      })
+    );
+  });
+
+  it("still reads a transport-level auth failure out of the message when nothing answered", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: "stale-token",
+      authMethod: "oauth",
+    });
+    // No attempt carries a response, so the message is the only evidence there
+    // is and the regex is allowed to speak.
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "error",
+        error: "Request failed: 401 Unauthorized",
+      })
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "authentication-failed" })
     );
   });
 

@@ -27,6 +27,7 @@
 
 import { randomUUID } from "node:crypto";
 import { probeMcpServer } from "@mcpjam/sdk";
+import type { ProbeMcpServerResult } from "@mcpjam/sdk";
 import {
   runDiscoveryPreflight,
   type DiscoveryOutcome,
@@ -198,6 +199,58 @@ interface InitializeAttempt {
   errorMessage?: string;
 }
 
+/** The stored grant was not accepted. Only a fresh consent changes this. */
+const AUTHENTICATION_FAILED: InitializeAttempt = {
+  outcome: "authentication-failed",
+  errorCode: "AUTHENTICATION_FAILED",
+  errorMessage:
+    "The server rejected the stored credential. Authorizing again should fix it.",
+};
+
+/** It answered, and what it said was not MCP. Retrying replays the same answer. */
+const NOT_AN_MCP_SERVER: InitializeAttempt = {
+  outcome: "terminal",
+  errorCode: "PROTOCOL_VALIDATION_FAILED",
+  errorMessage:
+    "The server responded, but not as a Model Context Protocol server.",
+};
+
+/** We learned nothing about the target. Keep the credential, come back. */
+const COULD_NOT_CONNECT: InitializeAttempt = {
+  outcome: "retryable",
+  errorCode: "VALIDATION_FAILED",
+  errorMessage: "Could not complete an authenticated connection.",
+};
+
+/**
+ * The probe attempts that speak for the TARGET.
+ *
+ * `resource_metadata` and `authorization_server_metadata` are OAuth-discovery
+ * calls that routinely hit a different host, so a 403 from one of those says
+ * nothing about whether our credential was accepted by the MCP server — reading
+ * it as an auth verdict would throw away a working grant over someone else's
+ * misconfigured metadata endpoint.
+ */
+const TARGET_ATTEMPT_NAMES = new Set([
+  "streamable_initialize",
+  "sse_probe",
+]) as ReadonlySet<string>;
+
+/** Every HTTP status the target itself returned, oldest first. */
+function targetResponseStatuses(probe: ProbeMcpServerResult): number[] {
+  const statuses: number[] = [];
+  for (const attempt of probe.transport.attempts) {
+    if (!TARGET_ATTEMPT_NAMES.has(attempt.name)) continue;
+    const status = attempt.response?.status;
+    if (typeof status === "number") statuses.push(status);
+  }
+  return statuses;
+}
+
+function isCredentialRejection(statuses: readonly number[]): boolean {
+  return statuses.some((status) => status === 401 || status === 403);
+}
+
 async function attemptInitialize(
   serverUrl: string,
   accessToken: string | null
@@ -221,55 +274,94 @@ async function attemptInitialize(
       retryPolicy: undefined,
     });
 
-    if (probe.status === "ok" && probe.initialize?.protocolVersion) {
-      return { outcome: "ready" };
-    }
+    // EXHAUSTIVE OVER THE PROBE'S UNION, ON PURPOSE. The first cut of this
+    // branched on `probe.status === "ok"` — a value `probeMcpServer` cannot
+    // return — so every successful validation fell through to the generic
+    // retryable arm and no connection could ever reach `ready`. The `default`
+    // below makes the next such drift a typecheck failure instead of a
+    // feature that silently never completes.
+    const statuses = targetResponseStatuses(probe);
 
-    // The probe reports an auth challenge rather than throwing, so the
-    // credential case has to be read off the result, not caught.
-    if (probe.oauth?.required === true) {
-      return {
-        outcome: "authentication-failed",
-        errorCode: "AUTHENTICATION_FAILED",
-        errorMessage:
-          "The server rejected the stored credential. Authorizing again should fix it.",
-      };
-    }
+    switch (probe.status) {
+      // The probe only says `ready` when a handshake actually completed: a 2xx
+      // whose body parsed as an MCP initialize result (streamable-http), or a
+      // 2xx `text/event-stream` (SSE). Do NOT additionally require
+      // `initialize.protocolVersion` — the SSE arm reports only a content type,
+      // so demanding a version here would permanently mislabel every SSE server
+      // as non-MCP.
+      case "ready":
+        return { outcome: "ready" };
 
-    if (probe.status === "error" && probe.error) {
-      return classifyInitializeFailure(new Error(probe.error));
-    }
+      // A 401 with a challenge. We sent the stored credential, so this is the
+      // server telling us that credential is not accepted.
+      case "oauth_required":
+        return AUTHENTICATION_FAILED;
 
-    return {
-      outcome: "retryable",
-      errorCode: "VALIDATION_FAILED",
-      errorMessage: "Could not complete an authenticated connection.",
-    };
+      // NOT a success — the name is about the socket, not the protocol. Either
+      // a 2xx whose body was not an initialize result, or a non-2xx the probe
+      // did not judge transient (403 lands here, since 401 became
+      // `oauth_required` above).
+      case "reachable":
+        return isCredentialRejection(statuses) || probe.oauth?.required === true
+          ? AUTHENTICATION_FAILED
+          : NOT_AN_MCP_SERVER;
+
+      // No usable answer: DNS, TLS, connect, timeout, or a 5xx that kept
+      // repeating.
+      case "error":
+        return classifyInitializeFailure(
+          new Error(
+            probe.error ?? "The connection attempt did not reach the server."
+          ),
+          statuses
+        );
+
+      default: {
+        const exhaustive: never = probe.status;
+        return {
+          ...COULD_NOT_CONNECT,
+          errorMessage: `Unrecognized probe status: ${String(exhaustive)}`,
+        };
+      }
+    }
   } catch (error) {
     return classifyInitializeFailure(error);
   }
 }
 
 /**
- * Turn a thrown connection failure into the machine's taxonomy.
+ * Turn a connection failure into the machine's taxonomy.
  *
  * Deliberately conservative about `terminal`: a request that fails terminally
  * cannot be retried at all, so anything ambiguous is treated as retryable and
  * allowed to burn an attempt instead. The cost of a wrong `retryable` is a few
  * seconds; the cost of a wrong `terminal` is telling a user their working
  * server is broken.
+ *
+ * STRUCTURED EVIDENCE OUTRANKS PROSE. `transportStatuses` are codes the target
+ * actually sent; `error.message` is a sentence assembled for a human, and it can
+ * carry an incidental "401" or "forbidden" from a URL, an echoed header, or the
+ * server's own error body. Matching that text over a status code we hold would
+ * revoke a working grant because of a substring. The regex is therefore the
+ * fallback for the case where there is no status at all — DNS, TLS, connect and
+ * timeout failures never produce one — and not a second opinion.
  */
-function classifyInitializeFailure(error: unknown): InitializeAttempt {
+function classifyInitializeFailure(
+  error: unknown,
+  transportStatuses: readonly number[] = []
+): InitializeAttempt {
+  if (isCredentialRejection(transportStatuses)) {
+    return AUTHENTICATION_FAILED;
+  }
+
   const message = error instanceof Error ? error.message : String(error);
 
-  // An auth rejection at initialize means the stored token is not accepted.
-  if (/\b401\b|\b403\b|unauthorized|forbidden/i.test(message)) {
-    return {
-      outcome: "authentication-failed",
-      errorCode: "AUTHENTICATION_FAILED",
-      errorMessage:
-        "The server rejected the stored credential. Authorizing again should fix it.",
-    };
+  // Nothing answered, so the message is the only evidence there is.
+  if (
+    transportStatuses.length === 0 &&
+    /\b401\b|\b403\b|unauthorized|forbidden/i.test(message)
+  ) {
+    return AUTHENTICATION_FAILED;
   }
 
   // The endpoint answered, but not as MCP. Retrying an endpoint that speaks the
@@ -279,17 +371,8 @@ function classifyInitializeFailure(error: unknown): InitializeAttempt {
       message
     )
   ) {
-    return {
-      outcome: "terminal",
-      errorCode: "PROTOCOL_VALIDATION_FAILED",
-      errorMessage:
-        "The server responded, but not as a Model Context Protocol server.",
-    };
+    return NOT_AN_MCP_SERVER;
   }
 
-  return {
-    outcome: "retryable",
-    errorCode: "VALIDATION_FAILED",
-    errorMessage: "Could not complete an authenticated connection.",
-  };
+  return COULD_NOT_CONNECT;
 }
