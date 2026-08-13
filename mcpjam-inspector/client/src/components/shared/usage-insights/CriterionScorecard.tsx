@@ -32,9 +32,9 @@ export function summarizeCriterionFacets(facets: readonly CriterionFacet[]) {
 }
 
 /**
- * Aggregate rubric scorecard for the swarm Insights view — the same table
- * shape as the per-run scorecard, but tallied across every graded session in
- * the scanned window, with a headline score on top.
+ * Aggregate rubric scorecard for Insights — tallied across every graded
+ * session in the scanned window, with a headline score on top. Mounted as its
+ * own section above the session flow in {@link InsightsWorkbench}.
  *
  * Each criterion is its own boolean dimension, so each row is its own filter:
  * clicking two DIFFERENT criteria's fail counts narrows to the sessions that
@@ -78,16 +78,16 @@ export function CriterionScorecard({
     summarizeCriterionFacets(facets);
 
   return (
-    <div className="px-5 pb-4 pt-4">
-      <div className="mb-2 flex items-baseline gap-2">
-        <h3 className="text-xs font-medium">Scorecard</h3>
-        <span className="text-[11px] text-muted-foreground">
+    <div>
+      <div className="mb-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <h3 className="text-sm font-semibold tracking-tight">Scorecard</h3>
+        <span className="text-xs text-muted-foreground">
           Pass rates across graded sessions
         </span>
       </div>
-      <div className="overflow-hidden rounded-lg border bg-card/40">
-        <div className="flex items-baseline justify-between gap-2 border-b bg-muted/50 px-3 py-2">
-          <span className="font-mono text-sm font-semibold uppercase tracking-wider">
+      <div className="overflow-hidden rounded-lg border border-border/60 bg-card/60">
+        <div className="flex items-baseline justify-between gap-2 border-b bg-muted/40 px-3 py-2.5">
+          <span className="font-mono text-base font-semibold uppercase tracking-wider sm:text-lg">
             {scorePct === null ? "Score —" : `Score ${scorePct}%`}
           </span>
           <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">

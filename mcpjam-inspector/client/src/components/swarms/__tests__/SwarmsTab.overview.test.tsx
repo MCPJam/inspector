@@ -701,7 +701,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       projectId: "proj-1",
       journeyRunIds: expect.arrayContaining(["run-2b", "run-2"]),
     });
-    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    expect(await screen.findByTestId("swarm-insights-scorecard")).toBeTruthy();
     expect(await screen.findByTestId("swarm-overview-wave-findings")).toBeTruthy();
 
     const findings = screen.getAllByTestId("swarm-overview-finding");
@@ -785,7 +785,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
     fireEvent.click(screen.getByRole("button", { name: "Insights" }));
-    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    await screen.findByTestId("swarm-insights-scorecard");
 
     const finding = (
       await screen.findAllByTestId("swarm-overview-finding")

@@ -237,6 +237,7 @@ export const APP_SURFACES = [
     routePatterns: [
       "user-testing",
       "user-testing/new",
+      "user-testing/:scenarioId/edit",
       "user-testing/:scenarioId",
     ],
     navSegments: ["chatboxes"],
