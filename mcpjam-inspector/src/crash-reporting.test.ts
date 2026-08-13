@@ -28,12 +28,19 @@ import {
 describe("childProcessIntegrationOptions", () => {
   it("promotes the crash-shaped reasons the SDK leaves as breadcrumbs", () => {
     // @sentry/electron 5.12 defaults `events` to abnormal-exit,
-    // launch-failed and integrity-failure only. crashed/oom/killed are
+    // launch-failed and integrity-failure only. crashed/oom are
     // exactly the ones a desktop user experiences as "the app broke".
     const { events } = childProcessIntegrationOptions();
     expect(events).toContain("crashed");
     expect(events).toContain("oom");
-    expect(events).toContain("killed");
+  });
+
+  it("never captures an OS kill, leaving it a breadcrumb", () => {
+    // macOS kills Electron's own utility processes under memory pressure and
+    // Electron respawns them; the user sees nothing. Capturing it filed
+    // issues about the reporter's machine, not about the app.
+    const { events } = childProcessIntegrationOptions();
+    expect(events).not.toContain("killed");
   });
 
   it("keeps the SDK's own defaults", () => {
