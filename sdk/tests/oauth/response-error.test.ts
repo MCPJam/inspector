@@ -43,6 +43,45 @@ describe("extractResponseErrorReason", () => {
     expect(extractResponseErrorReason([{ error: "nope" }])).toBeUndefined();
   });
 
+  it("treats a whitespace-only field as absent in every shape", () => {
+    // OAuth pair: a blank description must not compose "invalid_token: ".
+    expect(
+      extractResponseErrorReason({
+        error: "invalid_token",
+        error_description: "  ",
+      })
+    ).toBe("invalid_token");
+    // Generic: nothing left to say once the lone field is blank.
+    expect(extractResponseErrorReason({ message: "\n\t " })).toBeUndefined();
+    expect(
+      extractResponseErrorReason({
+        error_type: "invalid_request",
+        error_message: " ",
+      })
+    ).toBeUndefined();
+    // JSON-RPC: a blank nested message falls through rather than reporting "".
+    expect(
+      extractResponseErrorReason({ error: { code: -32600, message: "   " } })
+    ).toBeUndefined();
+  });
+
+  it("prefers a field that says something over an earlier blank one", () => {
+    expect(
+      extractResponseErrorReason({
+        error_message: "  ",
+        message: "session expired",
+      })
+    ).toBe("session expired");
+  });
+
+  it("collapses newlines so the flow error stays one line", () => {
+    expect(
+      extractResponseErrorReason(
+        "Bad Request\n  at Server.handle (server.js:12)"
+      )
+    ).toBe("Bad Request at Server.handle (server.js:12)");
+  });
+
   it("caps the reason so an HTML error page cannot become the message", () => {
     const reason = extractResponseErrorReason("x".repeat(5_000));
     expect(reason).toHaveLength(300);
@@ -70,5 +109,21 @@ describe("describeAuthenticatedRequestFailure", () => {
         body: undefined,
       })
     ).toBe("Authenticated request failed: 400 Bad Request");
+  });
+
+  it("redacts a token the server echoed back, keeping the diagnostic wording", () => {
+    const message = describeAuthenticatedRequestFailure({
+      status: 401,
+      statusText: "Unauthorized",
+      body: {
+        error: "invalid_token",
+        error_description:
+          "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def was rejected",
+      },
+    });
+
+    expect(message).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(message).toContain("invalid_token");
+    expect(message).toContain("was rejected");
   });
 });
