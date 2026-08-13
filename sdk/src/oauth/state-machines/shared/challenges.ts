@@ -1,4 +1,13 @@
 /**
+ * `token` = `1*tchar` (RFC 7230 §3.2.6). Both `auth-scheme` and `auth-param`
+ * names are this same production (RFC 7235 §2.1), so they share one definition:
+ * a name may open with a digit or punctuation. Spelling the two differently let
+ * the tokenizer accept a parameter like `2fa="…"` as part of a Bearer challenge
+ * while the name pattern silently dropped the pair.
+ */
+const TOKEN = "[A-Za-z0-9!#$%&'*+.^_`|~-]+";
+
+/**
  * Parse one challenge's auth-param list (`key=value, key="value"`).
  *
  * `auth-param` allows BWS around the `=` (RFC 7235 §2.1), and a quoted value may
@@ -7,8 +16,10 @@
  */
 function parseAuthParams(paramsString: string): Record<string, string> {
   const params: Record<string, string> = {};
-  const pattern =
-    /([a-zA-Z_][a-zA-Z0-9_-]*)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^,\s]+))/g;
+  const pattern = new RegExp(
+    `(${TOKEN})\\s*=\\s*(?:"((?:\\\\.|[^"\\\\])*)"|([^,\\s]+))`,
+    "g"
+  );
 
   for (
     let next = pattern.exec(paramsString);
@@ -17,7 +28,9 @@ function parseAuthParams(paramsString: string): Record<string, string> {
   ) {
     const quoted = next[2];
     params[next[1].toLowerCase()] =
-      quoted !== undefined ? quoted.replace(/\\([\s\S])/g, "$1") : next[3] ?? "";
+      quoted !== undefined
+        ? quoted.replace(/\\([\s\S])/g, "$1")
+        : next[3] ?? "";
   }
 
   return params;
@@ -34,7 +47,7 @@ function parseAuthParams(paramsString: string): Record<string, string> {
  * derived from the server URL.
  */
 export function parseBearerAuthenticateParameters(
-  header?: string,
+  header?: string
 ): Record<string, string> {
   return parseBearerChallenges(header)[0] ?? {};
 }
@@ -59,7 +72,7 @@ export function parseScopeString(scopeValue?: string): string[] | undefined {
  */
 export function computeScopeUnion(
   previous?: string[],
-  challenged?: string[],
+  challenged?: string[]
 ): string[] {
   const union: string[] = [];
   const seen = new Set<string>();
@@ -140,23 +153,19 @@ function parseBearerChallenges(header?: string): Array<Record<string, string>> {
   // a WAF commonly send. An auth-param segment (`key=value`, no leading
   // `<token> `) continues the current challenge.
   const challenges: Array<{ scheme: string; params: string[] }> = [];
-  // `auth-scheme` is a bare `token` (RFC 7235 §2.1), i.e. `1*tchar` (RFC 7230
-  // §3.2.6) — every position accepts the same set, so a scheme may open with a
-  // digit or punctuation. Requiring a leading letter made a segment like
-  // `1Other error="…"` fall through to the auth-param branch, which credited a
-  // following scheme's parameters to the challenge before it.
-  const SCHEME_TOKEN = "[A-Za-z0-9!#$%&'*+.^_`|~-]+";
+  // `auth-scheme` is a bare `token`, so every position accepts the same set and a
+  // scheme may open with a digit or punctuation. Requiring a leading letter made
+  // a segment like `1Other error="…"` fall through to the auth-param branch,
+  // which credited a following scheme's parameters to the challenge before it.
+  //
   // `<token> <rest>` opens a challenge, but `auth-param` permits BWS around its
   // `=` (RFC 7235 §2.1), so `resource_metadata = "…"` is a parameter that looks
   // exactly like a scheme followed by a value. Refusing the match when `=` is
   // what follows the token keeps such a parameter attached to its challenge
   // instead of opening one named after it — which dropped the very
   // `resource_metadata` and `scope` this step reads.
-  const CHALLENGE_START = new RegExp(
-    `^(${SCHEME_TOKEN})\\s+(?!\\s*=)(.+)$`,
-    "s",
-  );
-  const BARE_SCHEME = new RegExp(`^(${SCHEME_TOKEN})$`);
+  const CHALLENGE_START = new RegExp(`^(${TOKEN})\\s+(?!\\s*=)(.+)$`, "s");
+  const BARE_SCHEME = new RegExp(`^(${TOKEN})$`);
   for (const raw of segments) {
     const seg = raw.trim();
     if (!seg) continue;
@@ -297,7 +306,7 @@ export function isUnauthenticatedProbeChallenge(input: {
 }
 
 export function parseInsufficientScopeChallenge(
-  header?: string,
+  header?: string
 ): InsufficientScopeChallenge {
   const bearerChallenges = parseBearerChallenges(header);
   // Select the insufficient_scope challenge among ALL Bearer challenges — a

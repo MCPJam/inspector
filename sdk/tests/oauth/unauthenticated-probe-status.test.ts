@@ -365,6 +365,15 @@ describe("parseBearerAuthenticateParameters", () => {
     ).toEqual({ realm: "x", resource_metadata: PRM });
   });
 
+  // `auth-param` names are the same `token` production as `auth-scheme`, so one
+  // may open with a digit. Spelling the name pattern more narrowly than the
+  // scheme pattern did not drop the pair — it truncated the name to `fa`.
+  it("keeps an auth-param whose name opens with a digit", () => {
+    expect(
+      parseBearerAuthenticateParameters('Bearer 2fa="totp", scope="mcp:read"')
+    ).toEqual({ "2fa": "totp", scope: "mcp:read" });
+  });
+
   it("unescapes quoted-pairs inside a parameter value", () => {
     expect(
       parseBearerAuthenticateParameters('Bearer realm="say \\"hi\\""')
