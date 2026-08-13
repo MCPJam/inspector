@@ -35,6 +35,7 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
+import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./shared/required-metadata.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -492,7 +493,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field",
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
