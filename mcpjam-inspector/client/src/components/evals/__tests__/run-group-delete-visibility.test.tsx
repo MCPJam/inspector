@@ -10,8 +10,9 @@
  * themselves — plus that the delete control stays rendered and activatable,
  * including when the group carries no host/environment context data.
  */
-import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen, userEvent } from "@/test";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
+import { toast } from "sonner";
 import { SuiteResultsSplit } from "../suite-results-split";
 import { contextSuite, envRun, hostRun } from "./run-context-fixtures";
 import type { EvalSuiteRun } from "../types";
@@ -20,6 +21,12 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
   useProjectEnvironmentsEnabledState: () => true,
   PROJECT_ENVIRONMENTS_FEATURE_FLAG: "project-environments-enabled",
+}));
+
+// Mirrors the repo convention for asserting toast feedback: mock sonner and
+// assert the toast fn was called, rather than depending on a mounted Toaster.
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 // A two-run group whose environment names are long enough that, without
@@ -61,6 +68,10 @@ function renderRail(
 }
 
 describe("RunGroupItem delete button stays visible in the narrow rail (PUR-28)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("keeps the min-w-0 guards so a long label can't push the trash button out", () => {
     renderRail(longLabelGroup);
 
@@ -102,6 +113,28 @@ describe("RunGroupItem delete button stays visible in the narrow rail (PUR-28)",
     expect(deletedIds).toEqual(
       expect.arrayContaining(["twoenv01", "twoenv02"]),
     );
+  });
+
+  it("surfaces failure feedback when a deletion rejects", async () => {
+    const onDeleteRun = vi.fn().mockRejectedValue(new Error("network down"));
+    // confirmDeleteRuns logs the failure via console.error before toasting;
+    // swallow it so the expected rejection doesn't clutter test output.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+    renderRail(longLabelGroup, { onDeleteRun });
+
+    await user.click(screen.getByRole("button", { name: "Delete run group" }));
+    await user.click(screen.getByRole("button", { name: /^Delete$/ }));
+
+    // The delete was attempted, and the failure surfaced as error feedback
+    // rather than a silent no-op.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Failed to delete run"),
+    );
+    expect(onDeleteRun).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    consoleError.mockRestore();
   });
 
   it("renders the delete button for a group carrying no host/environment context data", () => {
