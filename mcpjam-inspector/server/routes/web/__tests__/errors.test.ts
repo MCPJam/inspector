@@ -137,35 +137,46 @@ describe("mapRuntimeError", () => {
     });
   });
 
-  it("maps ECONN* errno messages to 502", () => {
+  it("maps ECONN* errno messages to 424", () => {
     expect(
       mapRuntimeError(new Error("connect ECONNREFUSED 127.0.0.1:8080")).status,
-    ).toBe(502);
-    expect(mapRuntimeError(new Error("read ECONNRESET")).status).toBe(502);
-    expect(mapRuntimeError(new Error("ECONNABORTED")).status).toBe(502);
+    ).toBe(424);
+    expect(mapRuntimeError(new Error("read ECONNRESET")).status).toBe(424);
+    expect(mapRuntimeError(new Error("ECONNABORTED")).status).toBe(424);
   });
 
-  it("maps standard connection-failure phrases to 502", () => {
+  it("maps standard connection-failure phrases to 424", () => {
     expect(
       mapRuntimeError(new Error("Connection refused by peer")).status,
-    ).toBe(502);
-    expect(mapRuntimeError(new Error("Connection reset")).status).toBe(502);
+    ).toBe(424);
+    expect(mapRuntimeError(new Error("Connection reset")).status).toBe(424);
     expect(
       mapRuntimeError(new Error("Failed to connect to upstream")).status,
-    ).toBe(502);
-    expect(mapRuntimeError(new Error("fetch failed")).status).toBe(502);
+    ).toBe(424);
+    expect(mapRuntimeError(new Error("fetch failed")).status).toBe(424);
     expect(
       mapRuntimeError(new Error("getaddrinfo ENOTFOUND example.com")).status,
-    ).toBe(502);
-    expect(mapRuntimeError(new Error("socket hang up")).status).toBe(502);
+    ).toBe(424);
+    expect(mapRuntimeError(new Error("socket hang up")).status).toBe(424);
   });
 
-  it("frames connection-class 502s as a target-server problem, preserving the raw error", () => {
+  it("keeps the connection class OUT of the 5xx range so the edge cannot eat it", () => {
+    // Not a style preference. Cloudflare replaces an origin 5xx with its own
+    // error page, discarding the body and the `x-mcpjam-error-origin` header —
+    // and the chat client then reports a user's unreachable MCP server as an
+    // MCPJam outage. Any 4xx survives that hop; this pins the range, not just
+    // the digits.
+    const mapped = mapRuntimeError(new Error("fetch failed"));
+    expect(mapped.status).toBeGreaterThanOrEqual(400);
+    expect(mapped.status).toBeLessThan(500);
+  });
+
+  it("frames the connection class as a target-server problem, preserving the raw error", () => {
     // The raw errno text ("read ECONNRESET") in a client toast reads like an
     // MCPJam outage; the mapped message must name the target server as the
     // failing side while keeping the raw error for debugging.
     const mapped = mapRuntimeError(new Error("read ECONNRESET"));
-    expect(mapped.status).toBe(502);
+    expect(mapped.status).toBe(424);
     expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
     expect(mapped.message).toContain("read ECONNRESET");
     expect(mapped.message).toContain("not an MCPJam outage");

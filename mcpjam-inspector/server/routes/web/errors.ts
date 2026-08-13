@@ -448,9 +448,20 @@ function classifyRuntimeError(error: unknown): WebRouteError {
     return new WebRouteError(504, ErrorCode.TIMEOUT, message, undefined, normalized);
   }
 
+  // 424, NOT 502. The failure is the TARGET server refusing us; the request
+  // itself was fine, which is exactly what "Failed Dependency" states.
+  //
+  // The status is load-bearing beyond honesty. Hosted traffic runs behind
+  // Cloudflare, which replaces an origin 5xx with its own branded error page —
+  // discarding this body AND the `x-mcpjam-error-origin` header `webError`
+  // attaches. The chat client is then left with a bare 5xx, and its documented
+  // fallback ("a 5xx from our own route is ours") reports the user's own
+  // unreachable MCP server as an MCPJam outage: it pages us, and it tells the
+  // user MCPJam was down when their server was. A 4xx passes through
+  // untouched, so the origin verdict survives to the reader that needs it.
   if (CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message))) {
     return new WebRouteError(
-      502,
+      424,
       ErrorCode.SERVER_UNREACHABLE,
       formatServerUnreachableMessage(message),
       undefined,
