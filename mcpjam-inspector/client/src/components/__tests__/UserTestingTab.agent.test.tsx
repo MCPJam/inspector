@@ -533,7 +533,7 @@ describe("UserTestingTab — agent bridge handlers", () => {
       ok: true,
       data: {
         activeView: "detail",
-        detailTab: "sessions",
+        detailTab: "insights",
         scenarioCount: 2,
         scenarios: [
           { chatboxId: "cb-1", hostId: "host-1", hasPublishLink: true },
