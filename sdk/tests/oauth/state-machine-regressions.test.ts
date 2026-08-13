@@ -1008,7 +1008,7 @@ describe("authorization-server metadata discovery diagnostics", () => {
     async (protocolVersion) => {
       // The other route to the same message: a candidate answers 200, so the
       // loop breaks, but the body is unusable. `lastError` is still null.
-      const { getState } = await driveDiscovery(protocolVersion, {
+      const { getState, executor } = await driveDiscovery(protocolVersion, {
         ok: true,
         status: 200,
         statusText: "OK",
@@ -1022,6 +1022,12 @@ describe("authorization-server metadata discovery diagnostics", () => {
       );
       expect(error).not.toContain("null");
       expect(error).toContain("200");
+      // The endpoint that answered has to be named here too, not just on the
+      // all-404 path.
+      expect(executor.mock.calls.length).toBeGreaterThan(0);
+      for (const [request] of executor.mock.calls) {
+        expect(error).toContain((request as { url: string }).url);
+      }
     },
   );
 });
