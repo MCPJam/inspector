@@ -17,6 +17,15 @@ const CHROMIUM_AVAILABLE = await isChromiumInstalled();
 
 const MCP_APP_META = { ui: { resourceUri: "ui://widget/seats" } };
 
+// INSPECTOR-CLIENT-227: resourceUri shapes a connected server can advertise that
+// make upstream's `getToolUiResourceUri` throw.
+const MALFORMED_URIS: Array<[string, unknown]> = [
+  ["the empty string", ""],
+  ["a non-ui:// string", "https://example.com/app.html"],
+  ["a number", 42],
+  ["null", null],
+];
+
 describe("isRenderableMcpAppTool", () => {
   it("accepts MCP App tools that declare a UI resource", () => {
     expect(isRenderableMcpAppTool(MCP_APP_META)).toBe(true);
@@ -27,15 +36,13 @@ describe("isRenderableMcpAppTool", () => {
     expect(isRenderableMcpAppTool(undefined)).toBe(false);
   });
 
-  // INSPECTOR-CLIENT-227: `_meta` is whatever the connected server sent, so a
-  // malformed resourceUri has to read as "not renderable" rather than throw
-  // out of the eval render-check path.
-  it.each([
-    ["the empty string", ""],
-    ["a non-ui:// string", "https://example.com/app.html"],
-    ["a number", 42],
-    ["null", null],
-  ])("rejects metadata declaring %s", (_label, resourceUri) => {
+  // `_meta` is whatever the connected server sent, so a malformed resourceUri
+  // has to read as "not renderable" rather than throw out of the eval
+  // render-check path. Only the string shapes reach `resolveToolUiResourceUri`
+  // here — `isMcpAppTool` already answers false for a non-string resourceUri, so
+  // the other rows pin that gate; the render surface below covers all four
+  // against the throw.
+  it.each(MALFORMED_URIS)("rejects metadata declaring %s", (_l, resourceUri) => {
     expect(isRenderableMcpAppTool({ ui: { resourceUri } })).toBe(false);
   });
 });
@@ -60,29 +67,34 @@ describe("renderMcpAppToolResult — short-circuits", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("returns no_ui_resource for a malformed resourceUri without reading it", async () => {
-    const harness = stubHarness();
-    const mcpClientManager = {
-      readResource: vi.fn(),
-    } as unknown as MCPClientManager;
+  // No `isMcpAppTool` gate stands in front of the resolve here, so every
+  // malformed shape reaches the guard that absorbs upstream's throw.
+  it.each(MALFORMED_URIS)(
+    "returns no_ui_resource for %s without reading it",
+    async (_label, resourceUri) => {
+      const harness = stubHarness();
+      const mcpClientManager = {
+        readResource: vi.fn(),
+      } as unknown as MCPClientManager;
 
-    const obs = await renderMcpAppToolResult({
-      toolCallId: "tc",
-      toolName: "t",
-      serverId: "s",
-      toolMetadata: { ui: { resourceUri: "" } },
-      mcpClientManager,
-      harness,
-    });
+      const obs = await renderMcpAppToolResult({
+        toolCallId: "tc",
+        toolName: "t",
+        serverId: "s",
+        toolMetadata: { ui: { resourceUri } },
+        mcpClientManager,
+        harness,
+      });
 
-    expect(obs.status).toBe("no_ui_resource");
-    expect(
-      mcpClientManager.readResource as ReturnType<typeof vi.fn>
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.renderWidget as ReturnType<typeof vi.fn>
-    ).not.toHaveBeenCalled();
-  });
+      expect(obs.status).toBe("no_ui_resource");
+      expect(
+        mcpClientManager.readResource as ReturnType<typeof vi.fn>
+      ).not.toHaveBeenCalled();
+      expect(
+        harness.renderWidget as ReturnType<typeof vi.fn>
+      ).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns resource_read_failed when readResource throws", async () => {
     const harness = stubHarness();
