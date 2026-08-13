@@ -62,6 +62,58 @@ describe("normalizeStepFailureMessage", () => {
     ).toBe("could not discover authorization server metadata. last error: null");
   });
 
+  it("collapses IPv6 written with a leading `::`", () => {
+    // `\b` cannot hold before the first colon, so a `\b`-anchored matcher
+    // alone leaves these in the key.
+    expect(normalizeStepFailureMessage("connect ECONNREFUSED ::1")).toBe(
+      "connect econnrefused <ip>",
+    );
+    expect(normalizeStepFailureMessage("connect ECONNREFUSED ::1:9876")).toBe(
+      "connect econnrefused <ip>",
+    );
+  });
+
+  it("collapses a whole UUID, not just its long segments", () => {
+    const forId = (id: string) =>
+      normalizeStepFailureMessage(`Unknown client ${id}`);
+
+    expect(forId("550e8400-e29b-41d4-a716-446655440000")).toBe(
+      "unknown client <id>",
+    );
+    expect(forId("550e8400-e29b-41d4-a716-446655440000")).toBe(
+      forId("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
+    );
+  });
+
+  it("collapses host:port regardless of how many digits the port has", () => {
+    // A three-digit port survived the >=4-digit rule, so the same failure
+    // split by port length as well as by host.
+    const forHost = (host: string) =>
+      normalizeStepFailureMessage(`connect ECONNREFUSED ${host}`);
+
+    expect(forHost("localhost:443")).toBe(forHost("localhost:8443"));
+    expect(forHost("localhost:443")).toBe(forHost("auth.acme.com:8443"));
+    expect(forHost("localhost:443")).toBe("connect econnrefused <host>");
+  });
+
+  it("collapses a bare host named by a DNS failure", () => {
+    const forHost = (host: string) =>
+      normalizeStepFailureMessage(`getaddrinfo ENOTFOUND ${host}`);
+
+    expect(forHost("auth.acme.com")).toBe(forHost("auth.other.com"));
+    expect(forHost("auth.acme.com")).toBe("getaddrinfo enotfound <host>");
+  });
+
+  it("leaves dotted prose alone", () => {
+    // The bare-host rule is scoped to errno prefixes precisely so it cannot
+    // eat "e.g." or a version number out of an unrelated message.
+    expect(
+      normalizeStepFailureMessage(
+        "invalid_client - Client authentication failed (e.g., unknown client).",
+      ),
+    ).toBe("invalid_client - client authentication failed (e.g., unknown client).");
+  });
+
   it("normalizes whitespace and bounds the length", () => {
     expect(normalizeStepFailureMessage("  a \n  b  ")).toBe("a b");
     expect(normalizeStepFailureMessage("x".repeat(500))).toHaveLength(200);
