@@ -63,13 +63,28 @@ export function buildCookie(
   value: string,
   options: CookieOptions = {}
 ): string {
-  const parts = [
-    `${name}=${value}`,
-    `Path=${options.path ?? "/"}`,
-    "HttpOnly",
-    "Secure",
-    `SameSite=${options.sameSite ?? "Lax"}`,
-  ];
+  return buildCookieWithSecurity(name, value, options, true);
+}
+
+/**
+ * `Secure` is a parameter, not a substring to delete afterwards.
+ *
+ * The loopback twin below used to be built by `buildCookie(...).replace("; Secure", "")`
+ * — a string edit reaching into a formatter's output, which only works while the
+ * attribute list happens to contain that exact text in that exact spelling.
+ * `SameSite=None` requires `Secure`, so a caller passing it would have produced
+ * a cookie every browser rejects, and the formatter would have had no way to
+ * say so.
+ */
+function buildCookieWithSecurity(
+  name: string,
+  value: string,
+  options: CookieOptions,
+  secure: boolean
+): string {
+  const parts = [`${name}=${value}`, `Path=${options.path ?? "/"}`, "HttpOnly"];
+  if (secure) parts.push("Secure");
+  parts.push(`SameSite=${options.sameSite ?? "Lax"}`);
   if (typeof options.maxAgeSeconds === "number") {
     parts.push(`Max-Age=${options.maxAgeSeconds}`);
   }
@@ -100,7 +115,7 @@ export function setCookie(
       // Same cookie, minus the two things plain http cannot honour.
       c.header(
         "Set-Cookie",
-        buildCookie(local, value, options).replace("; Secure", ""),
+        buildCookieWithSecurity(local, value, options, false),
         { append: true }
       );
     }
@@ -116,7 +131,15 @@ export function clearCookie(
 }
 
 /**
- * Read one cookie's value, checking the loopback name too.
+ * Read one cookie's value, checking the loopback name too — but ONLY on
+ * loopback.
+ *
+ * `setCookie` writes the de-prefixed twin only on local http, and accepting it
+ * everywhere gave back the one property `__Host-` was chosen for. The prefix's
+ * whole guarantee is that a subdomain cannot set the cookie; a reader that also
+ * honours `mcpjam_server_connection` lets `evil.app.example` set exactly that
+ * name and have it believed on `app.example`. Symmetry with the writer is what
+ * makes the prefix mean anything.
  *
  * Reads only the named cookie rather than handing the whole `Cookie` header
  * onward — forwarding everything would leak unrelated auth and CSRF cookies
@@ -125,7 +148,9 @@ export function clearCookie(
 export function readCookie(c: Context, name: string): string | null {
   const header = c.req.header("cookie");
   if (!header) return null;
-  const candidates = [name, localCookieName(name)];
+  const candidates = isLocalHttpRequest(c.req.url)
+    ? [name, localCookieName(name)]
+    : [name];
   for (const part of header.split(/;\s*/)) {
     for (const candidate of candidates) {
       const prefix = `${candidate}=`;

@@ -21,6 +21,7 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
+import { getClientIp } from "../../utils/client-ip.js";
 import { v1Resource } from "./envelope.js";
 
 const serverConnections = new Hono();
@@ -131,10 +132,15 @@ serverConnections.post("/server-connections", async (c) => {
         // The guest per-IP budget is keyed on this. A caller we cannot place
         // passes the sentinel rather than being exempted, so stripping a
         // forwarded-for header buys a seat in the busiest bucket, not a pass.
-        clientIpKey:
-          c.req.header("cf-connecting-ip") ??
-          c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
-          "_unknown",
+        //
+        // `getClientIp` rather than a hand-rolled header read: it consults
+        // `x-real-ip` (set by the trusted reverse proxy) BEFORE the
+        // client-mutable `x-forwarded-for`, so a caller cannot pick their own
+        // bucket on a deployment that terminates at Railway rather than
+        // Cloudflare. Every other rate-limited route in this server keys on it,
+        // and a limiter that disagrees with its neighbours about who the client
+        // is bounds a different population than the one it names.
+        clientIpKey: getClientIp(c) ?? "_unknown",
       } as never
     );
     return v1Resource(c, result as Record<string, unknown>, 201);

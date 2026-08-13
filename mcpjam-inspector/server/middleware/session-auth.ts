@@ -92,7 +92,13 @@ const UNPROTECTED_PREFIXES = [
   // guard ever ran. Authorization is NOT waived: the router mounts
   // `internalServiceAuthMiddleware()`, which rejects a missing or wrong service
   // token. This carve-out only decides WHICH gate answers.
-  "/api/internal/server-connections",
+  //
+  // TRAILING SLASH DELIBERATELY. These are `startsWith` matches, so the
+  // unslashed form would also exempt any sibling that merely begins with the
+  // same characters — `/api/internal/server-connections-admin` would inherit a
+  // bypass nobody wrote it for. The router's only path is
+  // `/api/internal/server-connections/dispatch`, so the slash costs nothing.
+  "/api/internal/server-connections/",
 ];
 
 /**

@@ -23,7 +23,18 @@ const worker = vi.hoisted(() => ({
   runConnectionJob: vi.fn(),
 }));
 
+const errorReport = vi.hoisted(() => ({
+  reportRouteFailure: vi.fn(),
+}));
+
 vi.mock("../../../services/server-connection-worker.js", () => worker);
+
+vi.mock("../../../utils/route-error-report.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/route-error-report.js")
+  >("../../../utils/route-error-report.js");
+  return { ...actual, ...errorReport };
+});
 
 const { sessionAuthMiddleware } = await import(
   "../../../middleware/session-auth.js"
@@ -162,18 +173,26 @@ describe("doorbell semantics", () => {
     finish?.();
   });
 
-  it("still answers 202 when the job rejects", async () => {
+  it("still answers 202 when the job rejects, and reports the failure", async () => {
     worker.runConnectionJob.mockRejectedValue(new Error("probe exploded"));
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
 
     const res = await dispatch(createApp(), { requestId: "scr_x" }, authed);
 
     expect(res.status).toBe(202);
     // Let the rejection settle so the handler's catch runs before we assert.
     await new Promise((resolve) => setImmediate(resolve));
-    expect(consoleError).toHaveBeenCalled();
-    consoleError.mockRestore();
+
+    // The 202 already went out, so this report is the only record the failure
+    // will ever have. `user_server_hop` keeps a third-party server's outage off
+    // the on-call pager, and `requestId` is the only field safe to carry — the
+    // job's context holds a decrypted access token.
+    expect(errorReport.reportRouteFailure).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Error),
+      expect.objectContaining({
+        hop: "user_server_hop",
+        context: { requestId: "scr_x" },
+      })
+    );
   });
 });

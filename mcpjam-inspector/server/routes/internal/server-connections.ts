@@ -26,6 +26,7 @@
 import { Hono } from "hono";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
 import { runConnectionJob } from "../../services/server-connection-worker.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const internalServerConnections = new Hono();
 
@@ -46,16 +47,23 @@ internalServerConnections.post("/dispatch", async (c) => {
 
   // Deliberately not awaited. See the note above: the caller is a doorbell.
   void runConnectionJob(requestId).catch((error: unknown) => {
-    // Nothing upstream is listening by now, so this is the last place the
-    // failure can be seen. The request id is safe to log; nothing else from the
-    // job is, which is why only this is logged.
-    console.error(
-      "[server-connections] job failed",
-      JSON.stringify({
-        requestId,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    );
+    // Nothing upstream is listening by now — the 202 below has already gone out
+    // — so this is the last place the failure can be seen. `console.error` put
+    // it only in a container log; `reportRouteFailure` is the route catch-site
+    // reporter, so it reaches Axiom and pages only when the fault is ours.
+    //
+    // `user_server_hop`, not `mcpjam_internal`: the overwhelmingly likely cause
+    // is the third-party MCP server the job just dialled, and promoting that to
+    // an internal boundary would page the on-call for somebody else's dead
+    // endpoint.
+    //
+    // The request id is the ONLY safe field here. The job's context carries a
+    // decrypted third-party access token, and nothing from it may reach a log.
+    reportRouteFailure("Server-connection job failed", error, {
+      source: "server-connections.dispatch",
+      hop: "user_server_hop",
+      context: { requestId },
+    });
   });
 
   return c.json({ ok: true, accepted: true }, 202);

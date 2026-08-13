@@ -246,6 +246,10 @@ const APPROVAL_REQUIRED_IDS = new Set([
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,
+  // Belongs with its create/update/delete siblings and then some: the URL is
+  // supplied by whoever is talking to the model, this server dials it, and a
+  // completed flow adds a server row to the user's project.
+  connectProjectServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted

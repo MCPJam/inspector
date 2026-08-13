@@ -41,11 +41,26 @@ import {
   ServerConnectionBackendError,
 } from "./server-connections-backend.js";
 import { createPinnedFetch } from "../utils/pinned-fetch.js";
+import {
+  BlockedEgressTargetError,
+  EgressResolutionError,
+} from "../utils/hosted-egress-guard.js";
 
 /** Bounds the authenticated initialize. Shorter than discovery's budget: by
  * this point we know the server answers, so a long hang is a fault rather than
  * a slow first contact. */
 const VALIDATION_TIMEOUT_MS = 20_000;
+
+/**
+ * Bounds the whole STEP, which `VALIDATION_TIMEOUT_MS` does not.
+ *
+ * That value bounds one request and the probe makes several — initialize, an
+ * SSE fallback, OAuth metadata — so a target that stalls each of them in turn
+ * holds this request's work lease for the sum rather than for the timeout.
+ * Discovery races its probe against a deadline for exactly this reason, and
+ * validation dials the same attacker-supplied hostname.
+ */
+const VALIDATION_DEADLINE_MS = 45_000;
 
 export interface RunConnectionJobResult {
   requestId: string;
@@ -76,7 +91,28 @@ export async function runConnectionJob(
 
   try {
     if (lease.status === "discovering") {
-      await runDiscoveryStep(requestId, leaseId, lease.serverUrl ?? "");
+      // A lease in `discovering` with no URL is OUR contract broken, not a
+      // verdict about the user's server. Passing `""` down made the guard throw
+      // and the step report `authMethod: "unsupported"` — the terminal
+      // discovery arm — which permanently tells someone their URL was refused
+      // when the truth is that the backend handed us a row with nothing in it.
+      if (!lease.serverUrl) {
+        await reportValidation({
+          requestId,
+          leaseId,
+          outcome: "retryable",
+          errorCode: "VALIDATION_FAILED",
+          errorMessage:
+            "The connection request arrived without a server URL to discover.",
+        }).catch(async () => {
+          // `reportValidation` is only legal from `validating`; a request in
+          // `discovering` cannot take it. Release and let the retry cron bring
+          // it back around.
+          await releaseLease(requestId, leaseId).catch(() => {});
+        });
+        return { requestId, ran: true, status: lease.status };
+      }
+      await runDiscoveryStep(requestId, leaseId, lease.serverUrl);
       return { requestId, ran: true, status: lease.status };
     }
 
@@ -215,6 +251,28 @@ const NOT_AN_MCP_SERVER: InitializeAttempt = {
     "The server responded, but not as a Model Context Protocol server.",
 };
 
+/**
+ * It refused an ANONYMOUS connection — and we had no credential to offer,
+ * because discovery concluded it wanted none.
+ *
+ * A 401 or 403 is only evidence that a STORED GRANT was rejected if a stored
+ * grant was actually sent. When none was, `authentication-failed` would be
+ * actively wrong rather than merely imprecise: it moves the request to
+ * `awaiting_authorization`, and a request whose discovered auth method is
+ * `none` has no authorization server to send anyone to, so it would sit in a
+ * state whose next step cannot be performed.
+ *
+ * `UNSUPPORTED_AUTH_METHOD` is the frozen code for "wants authentication this
+ * flow cannot negotiate", which is precisely the contradiction: the server
+ * demands credentials while advertising no challenge discovery could act on.
+ */
+const REFUSED_ANONYMOUS_CONNECTION: InitializeAttempt = {
+  outcome: "terminal",
+  errorCode: "UNSUPPORTED_AUTH_METHOD",
+  errorMessage:
+    "The server refused an unauthenticated connection but advertised no authentication method MCPJam can negotiate.",
+};
+
 /** We learned nothing about the target. Keep the credential, come back. */
 const COULD_NOT_CONNECT: InitializeAttempt = {
   outcome: "retryable",
@@ -253,7 +311,8 @@ function isCredentialRejection(statuses: readonly number[]): boolean {
 
 async function attemptInitialize(
   serverUrl: string,
-  accessToken: string | null
+  accessToken: string | null,
+  deadlineMs: number = VALIDATION_DEADLINE_MS
 ): Promise<InitializeAttempt> {
   // The SAME pinned transport discovery uses. Validation dials the same
   // attacker-supplied hostname, and a guard that covered only the
@@ -261,18 +320,44 @@ async function attemptInitialize(
   // a bearer token — on the unpinned path.
   const pinnedFetch = createPinnedFetch({ timeoutMs: VALIDATION_TIMEOUT_MS });
 
+  // Whether we had anything to be rejected. A 401 or 403 is only evidence that
+  // a stored grant was refused if a stored grant was sent; without one it means
+  // the server refuses anonymous callers, which is a different verdict with a
+  // different next step.
+  const sentCredential = Boolean(accessToken);
+
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const probe = await probeMcpServer({
-      url: serverUrl,
-      accessToken: accessToken ?? undefined,
-      fetchFn: pinnedFetch,
-      timeoutMs: VALIDATION_TIMEOUT_MS,
-      clientName: "mcpjam-connection-validator",
-      // No retry policy: the state machine owns retries, with its own budget
-      // and backoff. A second retry loop in here would multiply against it and
-      // burn the job budget five times faster than intended.
-      retryPolicy: undefined,
+    const deadline = new Promise<"deadline">((resolve) => {
+      deadlineTimer = setTimeout(() => resolve("deadline"), deadlineMs);
     });
+
+    const raced = await Promise.race([
+      probeMcpServer({
+        url: serverUrl,
+        accessToken: accessToken ?? undefined,
+        fetchFn: pinnedFetch,
+        timeoutMs: VALIDATION_TIMEOUT_MS,
+        clientName: "mcpjam-connection-validator",
+        // No retry policy: the state machine owns retries, with its own budget
+        // and backoff. A second retry loop in here would multiply against it and
+        // burn the job budget five times faster than intended.
+        retryPolicy: undefined,
+      }),
+      deadline,
+    ]);
+
+    if (raced === "deadline") {
+      // The probe keeps running — `ProbeMcpServerConfig` takes no abort signal,
+      // so there is nothing to cancel from here — but its result is dropped and
+      // the lease is released now rather than whenever it finishes. Retryable:
+      // a stall is not a verdict about the server.
+      return {
+        ...COULD_NOT_CONNECT,
+        errorMessage: `The connection attempt did not finish within ${deadlineMs}ms.`,
+      };
+    }
+    const probe = raced;
 
     // EXHAUSTIVE OVER THE PROBE'S UNION, ON PURPOSE. The first cut of this
     // branched on `probe.status === "ok"` — a value `probeMcpServer` cannot
@@ -292,19 +377,26 @@ async function attemptInitialize(
       case "ready":
         return { outcome: "ready" };
 
-      // A 401 with a challenge. We sent the stored credential, so this is the
-      // server telling us that credential is not accepted.
+      // A 401 with a challenge. If we sent the stored credential, this is the
+      // server rejecting it. If we had none to send — discovery said the server
+      // wanted none — then it is refusing anonymous callers instead, and the
+      // two need different next steps.
       case "oauth_required":
-        return AUTHENTICATION_FAILED;
+        return sentCredential
+          ? AUTHENTICATION_FAILED
+          : REFUSED_ANONYMOUS_CONNECTION;
 
       // NOT a success — the name is about the socket, not the protocol. Either
       // a 2xx whose body was not an initialize result, or a non-2xx the probe
       // did not judge transient (403 lands here, since 401 became
       // `oauth_required` above).
       case "reachable":
-        return isCredentialRejection(statuses) || probe.oauth?.required === true
-          ? AUTHENTICATION_FAILED
-          : NOT_AN_MCP_SERVER;
+        if (isCredentialRejection(statuses) || probe.oauth?.required === true) {
+          return sentCredential
+            ? AUTHENTICATION_FAILED
+            : REFUSED_ANONYMOUS_CONNECTION;
+        }
+        return NOT_AN_MCP_SERVER;
 
       // No usable answer: DNS, TLS, connect, timeout, or a 5xx that kept
       // repeating.
@@ -313,7 +405,8 @@ async function attemptInitialize(
           new Error(
             probe.error ?? "The connection attempt did not reach the server."
           ),
-          statuses
+          statuses,
+          sentCredential
         );
 
       default: {
@@ -325,7 +418,11 @@ async function attemptInitialize(
       }
     }
   } catch (error) {
-    return classifyInitializeFailure(error);
+    return classifyInitializeFailure(error, [], sentCredential);
+  } finally {
+    // Otherwise the pending timer keeps the event loop alive for the full
+    // deadline after an answer has already been returned.
+    clearTimeout(deadlineTimer);
   }
 }
 
@@ -348,10 +445,33 @@ async function attemptInitialize(
  */
 function classifyInitializeFailure(
   error: unknown,
-  transportStatuses: readonly number[] = []
+  transportStatuses: readonly number[] = [],
+  sentCredential = true
 ): InitializeAttempt {
+  // A REFUSED TARGET IS TERMINAL, and it must be recognized before anything
+  // else. The pinned transport throws this for a private, reserved, or
+  // otherwise disallowed address; discovery already treats it as terminal, and
+  // letting it fall through to the generic arm here would put an SSRF attempt
+  // back on a retry schedule from the validation side — the same hole
+  // `pinned-fetch.ts` was fixed to close on the discovery side.
+  if (error instanceof BlockedEgressTargetError) {
+    return {
+      outcome: "terminal",
+      errorCode: "URL_NOT_ALLOWED",
+      // The guard's message names the reason without echoing anything a caller
+      // could use to map the internal network.
+      errorMessage: error.message,
+    };
+  }
+
+  // DNS could not answer. Ours to retry, and emphatically not a verdict about
+  // the user's server.
+  if (error instanceof EgressResolutionError) {
+    return { ...COULD_NOT_CONNECT, errorMessage: error.message };
+  }
+
   if (isCredentialRejection(transportStatuses)) {
-    return AUTHENTICATION_FAILED;
+    return sentCredential ? AUTHENTICATION_FAILED : REFUSED_ANONYMOUS_CONNECTION;
   }
 
   const message = error instanceof Error ? error.message : String(error);
@@ -361,7 +481,7 @@ function classifyInitializeFailure(
     transportStatuses.length === 0 &&
     /\b401\b|\b403\b|unauthorized|forbidden/i.test(message)
   ) {
-    return AUTHENTICATION_FAILED;
+    return sentCredential ? AUTHENTICATION_FAILED : REFUSED_ANONYMOUS_CONNECTION;
   }
 
   // The endpoint answered, but not as MCP. Retrying an endpoint that speaks the

@@ -34,6 +34,8 @@ import {
 } from "../../services/server-connections-backend.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "./errors.js";
 import { readCookie, setCookie, clearCookie } from "./shared/cookies.js";
+import { resolveOptionalActor } from "../../middleware/optional-actor.js";
+import { serverConnectionClaimRateLimitMiddleware } from "../../middleware/server-connection-claim-rate-limit.js";
 
 const serverConnections = new Hono();
 
@@ -104,6 +106,17 @@ function translate(error: unknown): WebRouteError {
     if (error.isGone) {
       return new WebRouteError(404, ErrorCode.NOT_FOUND, error.message);
     }
+    // A continuation token the backend no longer recognizes — expired, or
+    // consumed by a cancel. Without this arm it surfaced as a 500, which tells
+    // the user something broke when the honest answer is that their session
+    // ended and re-opening the link fixes it.
+    if (error.status === 401) {
+      return new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "This authorization session has ended. Open the link again to continue."
+      );
+    }
     if (error.status === 403) {
       return new WebRouteError(403, ErrorCode.FORBIDDEN, error.message);
     }
@@ -132,6 +145,25 @@ function mintContinuationToken(): string {
   crypto.getRandomValues(bytes);
   return Buffer.from(bytes).toString("base64url");
 }
+
+/**
+ * The claim's two gates, mounted on the router rather than in `web/index.ts` so
+ * they travel with the route instead of depending on a mount order.
+ *
+ * `resolveOptionalActor` is what makes the ownership check below real: it
+ * resolves a VERIFIED signed-in user when there is one and does nothing at all
+ * when there is not, which is the combination `bearerAuthMiddleware` cannot
+ * offer — it 401s on a missing header, and the signed-out visitor is the normal
+ * case here.
+ *
+ * The rate limiter is because this route is credential-free by design, so
+ * nothing else bounds it.
+ */
+serverConnections.use(
+  "/claim",
+  serverConnectionClaimRateLimitMiddleware,
+  resolveOptionalActor()
+);
 
 // POST /api/web/server-connections/claim
 serverConnections.post("/claim", async (c) => {

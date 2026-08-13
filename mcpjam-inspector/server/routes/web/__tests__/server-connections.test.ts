@@ -1,0 +1,394 @@
+/**
+ * The handoff page's back end.
+ *
+ * THE COOKIE IS THE WHOLE DESIGN, so most of what is pinned here is about it:
+ * the claim mints a continuation token server-side and puts it in an HttpOnly
+ * cookie, every later step authenticates with that cookie, and the browser
+ * never holds a credential it could leak. A change that let the client choose
+ * the token, or that dropped `HttpOnly`, would pass a naive "does the flow
+ * work" test and quietly undo the reason the flow is shaped this way.
+ *
+ * The other load-bearing assertion is the ACTOR. The backend refuses a claim on
+ * an account-owned request unless the claimer's user id matches, and it has
+ * only what the Inspector forwards to compare — so "the Inspector resolves a
+ * signed-in user when there is one, and does not invent one when there is not"
+ * is the property that makes a leaked link safe. Until the optional-actor
+ * middleware existed, the route read a context value nothing ever set and
+ * forwarded `undefined` on every single claim.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+
+const backendCalls = vi.hoisted(() => ({
+  claimHandoff: vi.fn(),
+  fetchHandoffState: vi.fn(),
+  selectProject: vi.fn(),
+  ensureDefaultProject: vi.fn(),
+  cancelFromHandoff: vi.fn(),
+}));
+
+const authkit = vi.hoisted(() => ({ verifyAuthKitToken: vi.fn() }));
+const identity = vi.hoisted(() => ({ resolveUserByExternalId: vi.fn() }));
+
+vi.mock("../../../services/server-connections-backend.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/server-connections-backend.js")
+  >("../../../services/server-connections-backend.js");
+  return { ...actual, ...backendCalls };
+});
+
+vi.mock("../../../services/authkit-jwt.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/authkit-jwt.js")
+  >("../../../services/authkit-jwt.js");
+  return { ...actual, ...authkit };
+});
+
+vi.mock("../../../services/identity.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/identity.js")
+  >("../../../services/identity.js");
+  return { ...actual, ...identity };
+});
+
+const { ServerConnectionBackendError } = await import(
+  "../../../services/server-connections-backend.js"
+);
+const { AuthKitVerificationError } = await import(
+  "../../../services/authkit-jwt.js"
+);
+const { default: serverConnectionsWeb } = await import("../server-connections.js");
+const { resetServerConnectionClaimRateLimitForTests } = await import(
+  "../../../middleware/server-connection-claim-rate-limit.js"
+);
+const { mapRuntimeError, webError } = await import("../errors.js");
+
+const ORIGIN = "https://app.mcpjam.test";
+const COOKIE = "__Host-mcpjam_server_connection";
+
+/** Mirrors `routes/web/index.ts`: the router plus that file's `onError`, which
+ * is what turns a thrown `WebRouteError` into the status the route intended. */
+function createApp(): Hono {
+  const app = new Hono();
+  app.route("/api/web/server-connections", serverConnectionsWeb);
+  app.onError((error, c) => {
+    const routeError = mapRuntimeError(error);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details
+    );
+  });
+  return app;
+}
+
+function post(
+  path: string,
+  body: unknown,
+  headers: Record<string, string> = {}
+) {
+  return createApp().request(`${ORIGIN}/api/web/server-connections${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: ORIGIN, ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+function get(path: string, headers: Record<string, string> = {}) {
+  return createApp().request(`${ORIGIN}/api/web/server-connections${path}`, {
+    headers,
+  });
+}
+
+const withCookie = { cookie: `${COOKIE}=continuation-abc` };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetServerConnectionClaimRateLimitForTests();
+  backendCalls.claimHandoff.mockResolvedValue({
+    requestId: "scr_1",
+    status: "awaiting_project",
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("claim", () => {
+  it("mints the continuation token itself and never takes one from the client", async () => {
+    const res = await post("/claim", {
+      handoffToken: "handoff-1",
+      // A client-chosen capability could be predictable, reused across users,
+      // or replayed. The schema is strict, so offering one is a 400 rather
+      // than something silently ignored.
+      continuationToken: "attacker-chosen",
+    });
+
+    expect(res.status).toBe(400);
+    expect(backendCalls.claimHandoff).not.toHaveBeenCalled();
+  });
+
+  it("puts the continuation token in an HttpOnly cookie and the request id in the body", async () => {
+    const res = await post("/claim", { handoffToken: "handoff-1" });
+    const rawBody = await res.clone().text();
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      requestId: "scr_1",
+      status: "awaiting_project",
+      next: "/connect/server/request/scr_1",
+    });
+
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(`${COOKIE}=`);
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("Secure");
+    // Lax, not Strict: the OAuth provider returns the user with a top-level GET
+    // navigation, and Strict would withhold the cookie on exactly that hop.
+    expect(setCookie).toContain("SameSite=Lax");
+
+    // The minted token goes to the backend and to the cookie — never to the body.
+    const sent = backendCalls.claimHandoff.mock.calls[0][0];
+    expect(sent.continuationToken).toEqual(expect.any(String));
+    expect(rawBody).not.toContain(sent.continuationToken);
+  });
+
+  it("forwards no actor for a signed-out visitor", async () => {
+    const res = await post("/claim", { handoffToken: "handoff-1" });
+
+    expect(res.status).toBe(200);
+    expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: undefined })
+    );
+    expect(authkit.verifyAuthKitToken).not.toHaveBeenCalled();
+  });
+
+  it("forwards the verified user id for a signed-in visitor", async () => {
+    authkit.verifyAuthKitToken.mockResolvedValue({ sub: "workos_user_1" });
+    identity.resolveUserByExternalId.mockResolvedValue({ _id: "users_1" });
+
+    const res = await post(
+      "/claim",
+      { handoffToken: "handoff-1" },
+      { authorization: "Bearer real-authkit-jwt" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: "users_1" })
+    );
+  });
+
+  it("forwards no actor when the bearer does not verify", async () => {
+    // The identity is ASSERTED to the backend over the service channel, so an
+    // unverified bearer must never become an actor — otherwise `Authorization:
+    // Bearer anything` plus a stolen link would pass the ownership check.
+    authkit.verifyAuthKitToken.mockRejectedValue(
+      new AuthKitVerificationError("bad signature")
+    );
+
+    const res = await post(
+      "/claim",
+      { handoffToken: "handoff-1" },
+      { authorization: "Bearer forged" }
+    );
+
+    // Not a 401: a stale token in a browser must not break the guest flow. The
+    // backend fails closed on the other side.
+    expect(res.status).toBe(200);
+    expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: undefined })
+    );
+    expect(identity.resolveUserByExternalId).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the backend's wrong-account refusal as a 403", async () => {
+    backendCalls.claimHandoff.mockRejectedValue(
+      new ServerConnectionBackendError(
+        "This authorization link belongs to a different account.",
+        403,
+        "FORBIDDEN"
+      )
+    );
+
+    const res = await post("/claim", { handoffToken: "handoff-1" });
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("rejects a cross-origin POST", async () => {
+    const res = await post(
+      "/claim",
+      { handoffToken: "handoff-1" },
+      { origin: "https://evil.example" }
+    );
+
+    expect(res.status).toBe(403);
+    expect(backendCalls.claimHandoff).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed body", async () => {
+    const res = await createApp().request(
+      `${ORIGIN}/api/web/server-connections/claim`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: "{not json",
+      }
+    );
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("claim rate limiting", () => {
+  it("bounds attempts per address in hosted mode", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.resetModules();
+    const { serverConnectionClaimRateLimitMiddleware, ...rest } = await import(
+      "../../../middleware/server-connection-claim-rate-limit.js"
+    );
+    rest.resetServerConnectionClaimRateLimitForTests();
+
+    const app = new Hono();
+    app.use("*", serverConnectionClaimRateLimitMiddleware);
+    app.post("/claim", (c) => c.json({ ok: true }));
+
+    const hit = () =>
+      app.request("/claim", {
+        method: "POST",
+        headers: { "x-real-ip": "203.0.113.9" },
+      });
+
+    for (let i = 0; i < rest.SERVER_CONNECTION_CLAIM_RATE_LIMIT; i += 1) {
+      expect((await hit()).status).toBe(200);
+    }
+    expect((await hit()).status).toBe(429);
+
+    // A different address keeps its own budget.
+    const other = await app.request("/claim", {
+      method: "POST",
+      headers: { "x-real-ip": "198.51.100.4" },
+    });
+    expect(other.status).toBe(200);
+
+    rest.resetServerConnectionClaimRateLimitForTests();
+  });
+});
+
+describe("the steps after the claim", () => {
+  it("refuses every one of them without the cookie", async () => {
+    backendCalls.fetchHandoffState.mockResolvedValue({ requestId: "scr_1" });
+
+    expect((await get("/state")).status).toBe(401);
+    expect(
+      (await post("/select-project", { projectId: "proj_1" })).status
+    ).toBe(401);
+    expect((await post("/create-project", {})).status).toBe(401);
+    expect((await post("/cancel", {})).status).toBe(401);
+
+    expect(backendCalls.fetchHandoffState).not.toHaveBeenCalled();
+    expect(backendCalls.selectProject).not.toHaveBeenCalled();
+  });
+
+  it("authenticates with the cookie and forwards nothing else", async () => {
+    backendCalls.fetchHandoffState.mockResolvedValue({
+      requestId: "scr_1",
+      status: "awaiting_project",
+    });
+
+    const res = await get("/state", {
+      // An unrelated cookie on the same origin must not travel to the backend.
+      cookie: `session=other-secret; ${COOKIE}=continuation-abc`,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(backendCalls.fetchHandoffState).toHaveBeenCalledWith(
+      "continuation-abc"
+    );
+  });
+
+  it("ignores the de-prefixed cookie name off loopback", async () => {
+    // `__Host-` exists so a subdomain cannot set this cookie. Honouring the
+    // bare name on a real origin would hand that property straight back.
+    const res = await get("/state", {
+      cookie: "mcpjam_server_connection=continuation-abc",
+    });
+
+    expect(res.status).toBe(401);
+    expect(backendCalls.fetchHandoffState).not.toHaveBeenCalled();
+  });
+
+  it("accepts the de-prefixed cookie on local http, where the prefix is illegal", async () => {
+    backendCalls.fetchHandoffState.mockResolvedValue({ requestId: "scr_1" });
+
+    const res = await createApp().request(
+      "http://localhost:3001/api/web/server-connections/state",
+      { headers: { cookie: "mcpjam_server_connection=continuation-abc" } }
+    );
+
+    expect(res.status).toBe(200);
+    expect(backendCalls.fetchHandoffState).toHaveBeenCalledWith(
+      "continuation-abc"
+    );
+  });
+
+  it("clears the cookie on cancel", async () => {
+    backendCalls.cancelFromHandoff.mockResolvedValue({ status: "cancelled" });
+
+    const res = await post("/cancel", {}, withCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("reports an expired continuation as 401, not 500", async () => {
+    backendCalls.fetchHandoffState.mockRejectedValue(
+      new ServerConnectionBackendError("no such continuation", 401)
+    );
+
+    const res = await get("/state", withCookie);
+
+    expect(res.status).toBe(401);
+  });
+
+  it("preserves the backend's conflict and gone distinctions", async () => {
+    backendCalls.selectProject.mockRejectedValue(
+      new ServerConnectionBackendError("already chosen", 409)
+    );
+    expect(
+      (await post("/select-project", { projectId: "proj_1" }, withCookie)).status
+    ).toBe(409);
+
+    backendCalls.selectProject.mockRejectedValue(
+      new ServerConnectionBackendError("gone", 410)
+    );
+    expect(
+      (await post("/select-project", { projectId: "proj_1" }, withCookie)).status
+    ).toBe(404);
+  });
+
+  it("creates a project only from its own explicit endpoint", async () => {
+    backendCalls.ensureDefaultProject.mockResolvedValue({
+      status: "discovering",
+      projectId: "proj_new",
+    });
+    backendCalls.fetchHandoffState.mockResolvedValue({ requestId: "scr_1" });
+
+    // Reading state must never have the side effect of acquiring a project.
+    await get("/state", withCookie);
+    expect(backendCalls.ensureDefaultProject).not.toHaveBeenCalled();
+
+    const res = await post("/create-project", {}, withCookie);
+    expect(res.status).toBe(200);
+    expect(backendCalls.ensureDefaultProject).toHaveBeenCalledWith(
+      "continuation-abc"
+    );
+  });
+});

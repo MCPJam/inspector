@@ -17,6 +17,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProbeHttpAttempt, ProbeMcpServerResult } from "@mcpjam/sdk";
+import {
+  BlockedEgressTargetError,
+  EgressResolutionError,
+} from "../../utils/hosted-egress-guard.js";
 
 const backend = vi.hoisted(() => ({
   acquireLease: vi.fn(),
@@ -320,6 +324,34 @@ describe("validation outcomes", () => {
     );
   });
 
+  it("does not send the user to consent over a 403 when nothing was sent", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: null,
+      authMethod: "none",
+    });
+    // A 403 is evidence a STORED GRANT was rejected only if a stored grant was
+    // sent. `authentication-failed` would move this request to
+    // `awaiting_authorization` — a state whose next step cannot be performed,
+    // because discovery found no authorization server to send anyone to.
+    probe.probeMcpServer.mockResolvedValue(
+      probeResult({
+        status: "reachable",
+        transport: { attempts: [attempt("streamable_initialize", 403)] },
+        error: "Server responded with HTTP 403 Forbidden to the initialize probe.",
+      })
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "terminal",
+        errorCode: "UNSUPPORTED_AUTH_METHOD",
+      })
+    );
+  });
+
   it("treats a 403 on a reachable target as a rejected credential", async () => {
     backend.fetchValidationContext.mockResolvedValue({
       serverUrl: "https://example.com/mcp",
@@ -494,6 +526,82 @@ describe("validation outcomes", () => {
         errorCode: "VALIDATION_FAILED",
       })
     );
+  });
+
+  it("keeps a refused target terminal instead of retrying it", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://rebinding.example/mcp",
+      accessToken: "secret-token",
+      authMethod: "oauth",
+    });
+    // The pinned transport refuses a private or reserved address by throwing
+    // this. Discovery already treats it as terminal; classifying it as
+    // `retryable` here would put an SSRF attempt back on a retry schedule from
+    // the validation side, which is the same hole closed on the discovery side.
+    probe.probeMcpServer.mockRejectedValue(
+      new BlockedEgressTargetError(
+        "rebinding.example resolves to a private/reserved IP address (169.254.169.254)"
+      )
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "terminal",
+        errorCode: "URL_NOT_ALLOWED",
+      })
+    );
+  });
+
+  it("keeps a resolver outage retryable", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: "secret-token",
+      authMethod: "oauth",
+    });
+    // The opposite verdict to the one above, and the reason the two error
+    // classes exist separately: DNS failing is ours, not the user's.
+    probe.probeMcpServer.mockRejectedValue(
+      new EgressResolutionError("Could not resolve oauth target example.com")
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "retryable",
+        errorCode: "VALIDATION_FAILED",
+      })
+    );
+  });
+
+  it("gives up on a probe that never returns, rather than holding the lease", async () => {
+    vi.useFakeTimers();
+    try {
+      backend.fetchValidationContext.mockResolvedValue({
+        serverUrl: "https://stalls.example/mcp",
+        accessToken: "secret-token",
+        authMethod: "oauth",
+      });
+      // `timeoutMs` bounds ONE request and the probe makes several, so a target
+      // that stalls each in turn would hold this request's work lease for the
+      // sum of them.
+      probe.probeMcpServer.mockReturnValue(new Promise(() => {}));
+
+      const job = runConnectionJob("scr_x");
+      await vi.advanceTimersByTimeAsync(60_000);
+      await job;
+
+      expect(backend.reportValidation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: "retryable",
+          errorCode: "VALIDATION_FAILED",
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails terminally when the request has no server URL to validate", async () => {
