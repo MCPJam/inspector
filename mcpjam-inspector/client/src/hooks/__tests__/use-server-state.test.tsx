@@ -603,17 +603,112 @@ describe("useServerState CLI config import", () => {
   // names are unique per workspace, so creating over it can only resolve back
   // to it — which is how one CLI re-import re-attempted the same doomed create
   // on every launch (Sentry CONVEX-1R / CONVEX-1NG).
-  it("reuses a same-name server owned by a sibling project instead of re-creating it", async () => {
+  //
+  // Both branches that can spot the twin are covered: the local snapshot, and
+  // the fresh `servers:getProjectServers` query the resolver falls back to when
+  // the snapshot has nothing.
+  describe.each([
+    {
+      label: "from the local snapshot",
+      snapshotHasTwin: true,
+      cliServer: {
+        name: "cli-http",
+        type: "http",
+        url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer secret" },
+      },
+    },
+    {
+      label: "from the fresh workspace query, with secrets",
+      snapshotHasTwin: false,
+      cliServer: {
+        name: "cli-http",
+        type: "http",
+        url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer secret" },
+      },
+    },
+    {
+      // No env and no headers, so the save takes the create-if-missing path
+      // rather than the client-secret action.
+      label: "from the fresh workspace query, without secrets",
+      snapshotHasTwin: false,
+      cliServer: {
+        name: "cli-http",
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    },
+  ])(
+    "a same-name server owned by a sibling project ($label)",
+    ({ snapshotHasTwin, cliServer }) => {
+      it("is reused instead of re-created", async () => {
+        mockUseDbUserReady.mockReturnValue(true);
+        vi.mocked(authFetch).mockResolvedValueOnce({
+          json: async () => ({ config: { servers: [cliServer] } }),
+        } as Response);
+        const siblingRow = {
+          _id: "srv_sibling",
+          projectId: "proj_sibling",
+          name: "cli-http",
+          enabled: true,
+          transportType: "http" as const,
+          url: "https://example.com/mcp",
+        };
+        mockConvexQuery.mockResolvedValue([siblingRow]);
+        const appState = createCloudCliAppState();
+        const logger = {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        };
+
+        renderHook(() =>
+          useServerState({
+            appState,
+            dispatch: vi.fn(),
+            isLoading: false,
+            isAuthenticated: true,
+            hasSignedInUser: true,
+            isAuthLoading: false,
+            isLoadingProjects: false,
+            useLocalFallback: false,
+            effectiveProjects: appState.projects,
+            effectiveActiveProjectId: "proj_cloud",
+            activeProjectServersFlat: snapshotHasTwin ? [siblingRow] : [],
+            logger,
+          })
+        );
+
+        await waitFor(() => {
+          expect(logger.warn).toHaveBeenCalledWith(
+            "Server name already belongs to another project in this workspace",
+            expect.objectContaining({
+              serverName: "cli-http",
+              existingServerId: "srv_sibling",
+              existingProjectId: "proj_sibling",
+            })
+          );
+        });
+        expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+        expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+        expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
+        expect(mockUpdateServer).not.toHaveBeenCalled();
+      });
+    }
+  );
+
+  it("does not retry the create when the twin only appears after the first attempt fails", async () => {
+    // A sibling project can win the name between the resolve and the write.
+    // The retry re-resolves, so it sees the twin the first pass missed — and a
+    // second create would resolve to that same row.
+    mockUseDbUserReady.mockReturnValue(true);
     vi.mocked(authFetch).mockResolvedValueOnce({
       json: async () => ({
         config: {
           servers: [
-            {
-              name: "cli-http",
-              type: "http",
-              url: "https://example.com/mcp",
-              headers: { Authorization: "Bearer secret" },
-            },
+            { name: "cli-http", type: "http", url: "https://example.com/mcp" },
           ],
         },
       }),
@@ -626,7 +721,10 @@ describe("useServerState CLI config import", () => {
       transportType: "http" as const,
       url: "https://example.com/mcp",
     };
-    mockConvexQuery.mockResolvedValue([siblingRow]);
+    mockConvexQuery.mockResolvedValueOnce([]).mockResolvedValue([siblingRow]);
+    mockCreateServerIfMissing.mockRejectedValueOnce(
+      new Error(`Server with name "cli-http" already exists in this workspace`)
+    );
     const appState = createCloudCliAppState();
     const logger = {
       info: vi.fn(),
@@ -647,7 +745,7 @@ describe("useServerState CLI config import", () => {
         useLocalFallback: false,
         effectiveProjects: appState.projects,
         effectiveActiveProjectId: "proj_cloud",
-        activeProjectServersFlat: [siblingRow],
+        activeProjectServersFlat: [],
         logger,
       })
     );
@@ -655,17 +753,14 @@ describe("useServerState CLI config import", () => {
     await waitFor(() => {
       expect(logger.warn).toHaveBeenCalledWith(
         "Server name already belongs to another project in this workspace",
-        expect.objectContaining({
-          serverName: "cli-http",
-          existingServerId: "srv_sibling",
-          existingProjectId: "proj_sibling",
-        })
+        expect.objectContaining({ existingServerId: "srv_sibling" })
       );
     });
+    // The failed first attempt only.
+    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
     expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
-    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
-    expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
     expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
   });
 });
 
@@ -1619,6 +1714,67 @@ describe("useServerState OAuth callback failures", () => {
     });
     expect(restoreActiveOrganizationId).toHaveBeenCalledWith("org_pinned");
     expect(window.location.pathname).toBe("/servers");
+  });
+
+  it("does not fall back onto a sibling project's row when the pinned server id is stale", async () => {
+    // The pinned row was deleted and recreated mid-flow, so the id misses and
+    // the resolver falls back to matching by name. `servers:getProjectServers`
+    // is workspace-wide, so an unscoped name match there would hand the update
+    // to another project's server — the pin says which project, and the
+    // fallback has to honor it.
+    mockHostedMode.mockReturnValue(true);
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        organizationId: "org_pinned",
+        projectId: "project_pinned",
+        serverId: "srv_deleted",
+        serverName: "bart",
+        serverUrl: "https://bart.example.com/mcp",
+        accessScope: "project_member",
+        returnPath: "/servers",
+        startedAt: Date.now(),
+      })
+    );
+    completeHostedOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "bart",
+      serverConfig: {
+        type: "http",
+        url: "https://bart.example.com/mcp",
+      },
+    });
+    mockConvexQuery.mockResolvedValue([
+      {
+        _id: "srv_sibling",
+        projectId: "project_sibling",
+        name: "bart",
+      },
+    ]);
+    mockCreateServerIfMissing.mockResolvedValue("srv_new");
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_ambient";
+    renderUseServerState(vi.fn(), appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      isUserReady: true,
+      useLocalFallback: false,
+      activeOrganizationId: "org_fallback",
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "project_ambient",
+      activeProjectServersFlat: [],
+    });
+
+    await waitFor(() => {
+      expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "project_pinned", name: "bart" })
+      );
+    });
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
   });
 
   it("pins the post-callback sync in local (non-hosted) mode too", async () => {

@@ -1771,8 +1771,15 @@ export function useServerState({
           )) as RemoteServer[] | undefined;
           const owned =
             fresh?.find(matches) ??
+            // Project-scoped, as the comment on `matches` says: the list is
+            // workspace-wide, so an unscoped name match here would let a
+            // pinned-but-stale id land the write on a sibling project's row.
             (target?.serverId
-              ? fresh?.find((s) => s.name === serverName)
+              ? fresh?.find(
+                  (s) =>
+                    s.name === serverName &&
+                    remoteServerBelongsToProject(s, latestProjectId)
+                )
               : undefined);
           return owned
             ? { owned }
@@ -1780,6 +1787,22 @@ export function useServerState({
         } catch {
           return { workspaceTwin: findWorkspaceTwin(snapshot) };
         }
+      };
+
+      // The name is taken by another project in this workspace. Creating would
+      // hand back that same row without applying this payload, so report which
+      // row the save resolved to instead of writing.
+      const reuseWorkspaceTwin = (twin: RemoteServer): string => {
+        logger.warn(
+          "Server name already belongs to another project in this workspace",
+          {
+            serverName,
+            projectId: latestProjectId,
+            existingServerId: twin._id,
+            existingProjectId: twin.projectId,
+          }
+        );
+        return twin._id;
       };
 
       // Existing-server edits from a hosted UI carry the exact authorized row
@@ -1901,20 +1924,8 @@ export function useServerState({
           return serverIdToUpdate;
         }
 
-        // The name is taken by another project in this workspace. Creating
-        // would hand back that same row without applying this payload, so
-        // report which row the save resolved to instead of writing.
         if (existing.workspaceTwin) {
-          logger.warn(
-            "Server name already belongs to another project in this workspace",
-            {
-              serverName,
-              projectId: latestProjectId,
-              existingServerId: existing.workspaceTwin._id,
-              existingProjectId: existing.workspaceTwin.projectId,
-            }
-          );
-          return existing.workspaceTwin._id;
+          return reuseWorkspaceTwin(existing.workspaceTwin);
         }
 
         const createPayload = {
@@ -1959,7 +1970,8 @@ export function useServerState({
           }
           const flatRetry =
             activeProjectServersFlatRef.current ?? activeProjectServersFlat;
-          const retryExisting = (await resolveExistingServer(flatRetry)).owned;
+          const retry = await resolveExistingServer(flatRetry);
+          const retryExisting = retry.owned;
           if (retryExisting) {
             const updatePayload = {
               serverId: retryExisting._id,
@@ -1974,6 +1986,12 @@ export function useServerState({
               await convexUpdateServer(updatePayload);
             }
             return retryExisting._id;
+          }
+          // A twin can surface here even when the first resolve missed it —
+          // a concurrent create in a sibling project is exactly the race the
+          // primary write just lost. Creating again would only return it.
+          if (retry.workspaceTwin) {
+            return reuseWorkspaceTwin(retry.workspaceTwin);
           }
           const createPayload = {
             projectId: latestProjectId,
