@@ -246,25 +246,44 @@ for (const c of CASES) {
 // PR #3948 moved upstream auth rejections from 500 to 403 and left the 08-06
 // incident undetectable by the two status/radius-gated rules.
 //
-// This asserts the bar still sits clear of organic 4xx traffic. If real 4xx
+// This asserts the bar still sits clear of ORGANIC 4xx traffic. If real 4xx
 // ever approaches 1,000/hr the bar must be raised BEFORE it starts paging, and
 // learning that here rather than from a false page at 3am is the point.
+//
+// Two deliberate departures from the fixtures above, both load-bearing:
+//
+// 1. p99, not max. A max would count an INCIDENT hour as organic traffic — so
+//    the moment rule 1 correctly fired on a real 4xx spike, this guard would
+//    fail the replay on a healthy monitor. Exactly backwards. With ~1,000
+//    class-hours in the window, one incident hour cannot move p99 (measured
+//    2026-08-13: p95=24, p99=41, max=93). Note this only became a live hazard
+//    when PR #3948 moved the high-volume auth class from 500 to 403 — before
+//    that, a 4xx filter could not see it at all.
+//
+// 2. Rolling window, not a fixed instant. The other cases replay known history
+//    and must be pinned. This one asks "is traffic GROWING toward the bar",
+//    which is only meaningful against recent data. It is a trend check living
+//    in a replay harness, not a fixture, and it is stated here so nobody
+//    "fixes" it into a fixed window and quietly stops measuring the trend.
 const busiest4xx = await run(
   `['inspector-logs']
 ${SHARED_FILTERS}
 | where toint(statusCode) < 500
 ${FP}
 | summarize n = count() by fp, bin(_time, 1h)
-| summarize Busiest = max(n)`,
+| summarize Organic = percentile(n, 99), Sample = count()`,
   new Date().toISOString(),
 );
-const peak4xx = busiest4xx[0]?.Busiest ?? 0;
-const headroomOk = peak4xx < 1000;
+const organic4xx = Math.round(busiest4xx[0]?.Organic ?? 0);
+const sample = busiest4xx[0]?.Sample ?? 0;
+const headroomOk = organic4xx < 1000;
 if (!headroomOk) failures++;
 console.log(
   `${headroomOk ? "PASS" : "FAIL"}  organic 4xx stays clear of the 1,000/hr absolute rule`,
 );
-console.log(`      busiest 4xx class-hour: ${peak4xx} (must be < 1000)`);
+console.log(
+  `      p99 of ${sample} 4xx class-hours: ${organic4xx} (must be < 1000)`,
+);
 
 console.log(
   `\n${failures === 0 ? "ALL CASES PASS" : `${failures} CASE(S) FAILED`}`,
