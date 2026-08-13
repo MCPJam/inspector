@@ -295,6 +295,14 @@ describe("mapRuntimeError", () => {
   });
 });
 
+/**
+ * A connect failure as `MCPClientManager` actually raises it. The quoted
+ * server id is the part that matters: it is how a target-server failure is
+ * told apart from an MCPJam-internal one inside the same route catch.
+ */
+const TARGET_CONNECT_FAILURE =
+  'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: fetch failed. SSE error: fetch failed.';
+
 describe("mapTargetServerError", () => {
   it("downgrades the connection class out of the 5xx range", () => {
     // The range is the load-bearing part, not the digits: Cloudflare replaces
@@ -302,18 +310,42 @@ describe("mapTargetServerError", () => {
     // the `x-mcpjam-error-origin` header, and the chat client then reports a
     // user's unreachable MCP server as an MCPJam outage. A later "more
     // specific" 5xx would silently restore that.
-    const mapped = mapTargetServerError(new Error("fetch failed"));
+    const mapped = mapTargetServerError(new Error(TARGET_CONNECT_FAILURE));
     expect(mapped.status).toBe(424);
     expect(mapped.status).toBeGreaterThanOrEqual(400);
     expect(mapped.status).toBeLessThan(500);
     expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
   });
 
+  it("keeps an MCPJam-internal fetch failure at 502", () => {
+    // The hosted chat turn's catch spans more than its MCP work: it also
+    // covers `/stream/org/resolve`, which is OUR Convex deployment reached
+    // with a bare `fetch`. undici raises `TypeError("fetch failed")` with no
+    // server named. Downgrading that would silence the page during a Convex
+    // outage and tell the user their own server was down — both wrong, and
+    // the second one is the exact misattribution this whole change removes.
+    const mapped = mapTargetServerError(new Error("fetch failed"));
+    expect(mapped.status).toBe(502);
+    expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
+  });
+
+  it("keeps an internal errno failure at 502 too", () => {
+    // Same boundary, different symptom: a refused socket to an internal
+    // service names no server either.
+    expect(
+      mapTargetServerError(new Error("connect ECONNREFUSED 10.0.0.4:3210"))
+        .status,
+    ).toBe(502);
+  });
+
   it("preserves the message, normalized block and origin the shared mapper attached", () => {
     // The status is mutated on the mapped error rather than rebuilt: a fresh
     // `WebRouteError` would drop `origin`, `normalized` and the cause link the
     // capture dedupe walks — and `origin` is what the response header carries.
-    const mapped = mapTargetServerError(new Error("read ECONNRESET"));
+    const mapped = mapTargetServerError(
+      new Error('Failed to connect to MCP server "srv-1": read ECONNRESET'),
+    );
+    expect(mapped.status).toBe(424);
     expect(mapped.message).toContain("read ECONNRESET");
     expect(mapped.message).toContain("not an MCPJam outage");
     expect(mapped.normalized).toBeDefined();

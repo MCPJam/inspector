@@ -363,6 +363,28 @@ export function mapRuntimeError(error: unknown): WebRouteError {
 }
 
 /**
+ * Did this failure come from an attempt to reach a NAMED MCP server?
+ *
+ * Every connect failure the SDK's `MCPClientManager` raises quotes the server
+ * it was reaching — `Failed to connect to MCP server "<id>" …`,
+ * `Authentication failed for MCP server "<id>" …`. Nothing else in a hosted
+ * turn produces that phrase: a Convex `fetch` that dies at the socket surfaces
+ * as undici's bare `TypeError("fetch failed")`, with no server in it.
+ *
+ * Matching MCPJam's OWN wording, not a server's. The text is authored in our
+ * SDK, so a third party cannot make their error look like this one — which is
+ * the property that makes a message check safe here, where the usual objection
+ * (servers can say anything) would otherwise apply.
+ *
+ * Errs toward 502. A target-server failure raised somewhere that does not name
+ * the server keeps the old status and pages us — a false page, which is the
+ * direction to be wrong in: the alternative is silence during our own outage.
+ */
+function namesAnMcpServer(message: string): boolean {
+  return /\bMCP server "/i.test(message);
+}
+
+/**
  * `mapRuntimeError` for a catch site whose failing outbound hop can only have
  * been the user's own MCP server.
  *
@@ -387,6 +409,15 @@ export function mapRuntimeError(error: unknown): WebRouteError {
  * Downgrading those to a 4xx would stop paging us during our OWN outage, which
  * is a strictly worse failure than the one this fixes. So the status follows
  * the same rule the origin does: the catch site that knows the hop says so.
+ *
+ * The catch site declaring it is NOT sufficient on its own, though. A route's
+ * outer catch spans more than its MCP work: the hosted chat turn also calls
+ * `/stream/org/resolve`, which is MCPJam's own Convex deployment reached with
+ * a bare `fetch` that throws a plain `TypeError("fetch failed")`. That is
+ * indistinguishable, to the shared mapper, from the user's server refusing —
+ * and mislabelling it would silence a page during a Convex outage AND tell the
+ * user their MCP server was down. So the downgrade needs the hop to be
+ * POSITIVELY identified as well as declared; see {@link namesAnMcpServer}.
  */
 export function mapTargetServerError(error: unknown): WebRouteError {
   const routeError = mapRuntimeError(error);
@@ -401,7 +432,8 @@ export function mapTargetServerError(error: unknown): WebRouteError {
   // dedupe walks. A fresh `WebRouteError` would drop all three.
   if (
     routeError.status === 502 &&
-    routeError.code === ErrorCode.SERVER_UNREACHABLE
+    routeError.code === ErrorCode.SERVER_UNREACHABLE &&
+    namesAnMcpServer(routeError.message)
   ) {
     routeError.status = 424;
   }
