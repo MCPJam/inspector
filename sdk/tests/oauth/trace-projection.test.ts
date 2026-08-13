@@ -281,4 +281,49 @@ describe("OAuth trace projection", () => {
     expect(step?.error?.length).toBe(500);
     expect(snapshot.httpHistory[0]?.response?.body).toBe(page);
   });
+
+  // A step error renders as a line, and the text behind this one is a response
+  // body — routinely a stack trace or an error page.
+  it.each([true, false])(
+    "keeps a derived step error on one line (sanitize: %s)",
+    (sanitize) => {
+      const snapshot = projectOAuthTraceSnapshot({
+        state: {
+          ...EMPTY_OAUTH_FLOW_STATE,
+          currentStep: "request_client_registration",
+          httpHistory: [
+            {
+              step: "request_client_registration",
+              timestamp: 1_000,
+              request: {
+                method: "POST",
+                url: "https://auth.example.com/register",
+                headers: {},
+                body: { client_name: "MCPJam Inspector" },
+              },
+              response: {
+                status: 400,
+                statusText: "Bad Request",
+                headers: { "content-type": "application/json" },
+                body: {
+                  error: "invalid_client_metadata",
+                  error_description:
+                    "redirect_uris is invalid:\n  - must be absolute\n  - must be https",
+                },
+              },
+            },
+          ],
+          infoLogs: [],
+        },
+        sanitize,
+      });
+
+      const step = snapshot.steps.find(
+        (entry) => entry.step === "request_client_registration",
+      );
+      expect(step?.error).toBe(
+        "invalid_client_metadata: redirect_uris is invalid: - must be absolute - must be https",
+      );
+    },
+  );
 });

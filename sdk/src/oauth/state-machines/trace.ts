@@ -1,4 +1,7 @@
-import { extractResponseErrorReason } from "./shared/response-error.js";
+import {
+  extractResponseErrorReason,
+  toSingleLine,
+} from "./shared/response-error.js";
 import {
   getStepIndex,
   getStepInfo,
@@ -314,9 +317,15 @@ export function projectOAuthTraceSnapshot(input: {
       // The error is derived from a response body and can be an HTML error
       // page in full; a step's error is a line, and the untruncated body is
       // already on `record.details.response` right above.
-      record.error = sanitizeTraces
-        ? sanitizeTraceErrorMessage(entryError)
-        : entryError.slice(0, MAX_REPORTED);
+      //
+      // Collapsed after both, in either mode: the body's own newlines would
+      // otherwise reach the step error, and collapsing first would hide the
+      // redactor's cut from its credential tail guards.
+      record.error = toSingleLine(
+        sanitizeTraces
+          ? sanitizeTraceErrorMessage(entryError)
+          : entryError.slice(0, MAX_REPORTED),
+      );
     }
   }
 

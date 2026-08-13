@@ -38,6 +38,22 @@ function toReason(value: unknown): string | undefined {
 }
 
 /**
+ * Collapse a redacted, already-bounded error onto one line.
+ *
+ * A step error renders as a line — in a toast, in a trace step, as the title of
+ * an error-report group — and the text behind it is a response body, routinely
+ * a stack trace or an HTML page.
+ *
+ * Only ever after redaction and capping, never before. Collapsing shortens the
+ * text, so a message that crosses back under `MAX_SCANNED` on the way in reads
+ * as untruncated to `sanitizeTraceErrorMessage`, which then skips the guards
+ * that close a credential its own cut left unterminated.
+ */
+export function toSingleLine(message: string): string {
+  return message.replace(/\s+/g, " ").trim();
+}
+
+/**
  * Pull the server's own explanation out of a failed response body.
  *
  * A status line alone ("400 Bad Request") names no cause: the reason a server
@@ -132,9 +148,9 @@ export function describeAuthenticatedRequestFailure(response: {
 }): string {
   const reason = extractResponseErrorReason(response.body);
   const safeReason = reason
-    ? sanitizeTraceErrorMessage(reason, { maxLength: MAX_REASON_CHARS })
-        .replace(/\s+/g, " ")
-        .trim()
+    ? toSingleLine(
+        sanitizeTraceErrorMessage(reason, { maxLength: MAX_REASON_CHARS }),
+      )
     : undefined;
   return `Authenticated request failed: ${response.status} ${
     response.statusText
