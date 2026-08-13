@@ -122,10 +122,15 @@ export function classifyModelIdProvider(
 
   const slashIdx = id.indexOf("/");
   if (slashIdx > 0) {
-    // `hasOwnProperty`, not a bare index. `MODEL_ID_PREFIX_TO_PROVIDER` is an
-    // ordinary object, so `"constructor/x"` or `"toString/x"` would otherwise
-    // read a FUNCTION off `Object.prototype` and — being truthy — return it as
-    // the provider, which then flows into provider dispatch as a non-string.
+    // `hasOwnProperty`, not a bare index, for `"constructor/x"` and
+    // `"toString/x"`. The map above is built on a NULL prototype, so those
+    // already read as `undefined` here — this is the belt to that braces, and
+    // it is what makes the lookup safe on its own terms rather than by way of
+    // one `Object.create(null)` twenty lines up. The backend mirror of this
+    // function is the reason that matters: it is hand-kept, and a copy that
+    // reconstructs the map as an ordinary object literal would otherwise read a
+    // FUNCTION off `Object.prototype` and — being truthy — return it as the
+    // provider, which then flows into provider dispatch as a non-string.
     const prefix = id.slice(0, slashIdx);
     if (
       Object.prototype.hasOwnProperty.call(MODEL_ID_PREFIX_TO_PROVIDER, prefix)

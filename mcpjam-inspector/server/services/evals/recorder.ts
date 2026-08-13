@@ -19,6 +19,7 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import {
   environmentLaunchConflictError,
+  environmentModelRequiredError,
   isEnvironmentLaunchConflict,
 } from "../environments/resolve.js";
 
@@ -482,6 +483,15 @@ export const startSuiteRunWithRecorder = async ({
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
+    }
+    // The environment resolves to no model — no override on it, none pinned on
+    // its client — so the backend refused before creating anything. Remediable
+    // and specific, so it gets its own 409 rather than surfacing as an opaque
+    // Convex rejection. NOT gated on the drift echoes below: this refusal is a
+    // property of the environment itself, not of a precondition we sent.
+    const modelRequired = environmentModelRequiredError(error);
+    if (modelRequired) {
+      throw modelRequired;
     }
     // The environment changed between prepareEvalRun's resolution and the
     // run-start mutation — either its revision moved, or it resolved

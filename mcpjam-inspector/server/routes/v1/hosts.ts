@@ -358,10 +358,32 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
   const token = await getConvexBearerForRequest(c);
 
   // `hosts:updateHost` enforces project scope from `projectId` (a host from
-  // another project throws not-found → 404), so there is no separate preflight.
+  // another project throws not-found → 404), so there is no separate preflight
+  // for AUTHORIZATION. A config write needs the current row for a different
+  // reason — see below.
   const updateArgs: Record<string, unknown> = { hostId, projectId };
   if (body.name !== undefined) updateArgs.name = body.name;
-  if (body.config !== undefined) updateArgs.input = body.config;
+  if (body.config !== undefined) {
+    // A config PATCH REPLACES the config, so it is the one write on this route
+    // that can strip the model off an existing host — the forward-client
+    // invariant that `create` enforces would otherwise be one PATCH wide open.
+    // Same rule as the Behavior tab: CLEARING a pinned model is refused, while
+    // a legacy modelless host stays editable for everything else. That needs
+    // the pre-edit model, so the read happens only on the branch that needs it.
+    const current = await readHostDetail(token, projectId, hostId);
+    if (
+      hostConfigPinsAModel(current.config) &&
+      !hostConfigPinsAModel(body.config)
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "`config.modelId` is required and must be a non-empty model id: this host pins a model, and clearing it would leave it unable to back a headless environment.",
+        { modelId: current.config.modelId }
+      );
+    }
+    updateArgs.input = withTrimmedModelId(body.config);
+  }
   const convexClient = createConvexClient(token);
   try {
     await convexClient.mutation("hosts:updateHost" as any, updateArgs);
@@ -413,6 +435,21 @@ hosts.post("/projects/:projectId/hosts/:hostId/duplicate", async (c) => {
   );
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
+
+  // Duplication MINTS a host, so it is held to the same forward-client
+  // invariant as `create`. Copying a legacy modelless row is the one way this
+  // route could keep producing the state `create` now refuses — and unlike an
+  // edit to a legacy row, nothing is stranded by refusing: the source still
+  // exists, and pinning its model makes the copy legal.
+  const source = await readHostDetail(token, projectId, hostId);
+  if (!hostConfigPinsAModel(source.config)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Host "${source.name}" does not pin a model, so duplicating it would create another host that cannot back a headless environment. Pin a model on it first.`
+    );
+  }
+
   let created: { hostId: string };
   try {
     created = (await convexClient.mutation("hosts:duplicateHost" as any, {

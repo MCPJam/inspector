@@ -502,7 +502,16 @@ export function aggregateSuite(
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> =>
           Boolean(snapshot?.model || snapshot?.provider)
         );
-      const representativeSnapshot = snapshots[snapshots.length - 1];
+      // ONE representative iteration for the whole row. Title and model must be
+      // read from the SAME iteration: sourcing the title from the first
+      // iteration and the model from the last snapshot-bearing one shows a
+      // renamed-then-rerun case under its old title beside its new model, a
+      // pairing that never existed. Falls back to this iteration's own snapshot
+      // when none carries a model, which is the title source either way.
+      const representativeSnapshot =
+        snapshots.length > 0
+          ? snapshots[snapshots.length - 1]
+          : it.testCaseSnapshot;
       // Key EVERY iteration, not only the snapshot-bearing ones. A case whose
       // iterations mix snapshot rows with pre-snapshot rows is still a mix: the
       // legacy rows are labelled from the case's CURRENT model, so keying only
@@ -536,16 +545,16 @@ export function aggregateSuite(
       // SCOPE, unchanged by this: `byCase` is ONE ROW PER CASE, folding every
       // iteration handed to `aggregateSuite` — which, when the caller passes
       // iterations from more than one run, can span two models. The label then
-      // comes from whichever iteration was seen first while the counts cover
-      // all of them. That is a pre-existing property of the aggregation shape,
+      // comes from ONE representative iteration while the counts cover all of
+      // them (the explicit `multiple` marker below is what keeps that from
+      // reading as a claim). That is a pre-existing property of the shape,
       // not something the snapshot introduces (the live case's `models[0]` was
       // equally single-valued), and narrowing it means giving `byCase` a
       // run/model key — a change to the type every caller renders. Callers that
       // need per-model rows should aggregate one run at a time.
-      const snapshot = it.testCaseSnapshot;
       byCaseMap.set(id, {
         testCaseId: id,
-        title: snapshot?.title || c?.title || "Untitled",
+        title: representativeSnapshot?.title || c?.title || "Untitled",
         // A suite can legitimately contain the same case under multiple
         // environment models. Never label the combined counters with whichever
         // snapshot happened to be visited first; surface an explicit mixed

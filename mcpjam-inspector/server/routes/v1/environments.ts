@@ -439,18 +439,6 @@ const revisionBodySchema = z.strictObject({
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// GET /v1/projects/:projectId/environments — list a project's environments.
-// Archived rows are excluded unless `?includeArchived=true`; without it there
-// is no way to find an archived environment to restore.
-//
-// AD-HOC rows are excluded unconditionally — not even opt-in. `/v1` is the
-// NAMED-environments API: `PlatformEnvironment.name` is a required field in the
-// published SDK type, so emitting a nameless DTO here would be a breaking
-// change for every external consumer. Ad-hoc rows are an internal
-// run-provenance concept; the browser surfaces read them through Convex.
-//
-// The backend's own default is already named-only, so this filter is belt and
-// braces against a backend that widens that default later.
 // GET /v1/projects/:projectId/environments/capabilities
 //
 // What THIS deployment's environment surface accepts. Exists for version skew,
@@ -503,6 +491,18 @@ environments.get(
   }
 );
 
+// GET /v1/projects/:projectId/environments — list a project's environments.
+// Archived rows are excluded unless `?includeArchived=true`; without it there
+// is no way to find an archived environment to restore.
+//
+// AD-HOC rows are excluded unconditionally — not even opt-in. `/v1` is the
+// NAMED-environments API: `PlatformEnvironment.name` is a required field in the
+// published SDK type, so emitting a nameless DTO here would be a breaking
+// change for every external consumer. Ad-hoc rows are an internal
+// run-provenance concept; the browser surfaces read them through Convex.
+//
+// The backend's own default is already named-only, so this filter is belt and
+// braces against a backend that widens that default later.
 environments.get("/projects/:projectId/environments", async (c) => {
   const projectId = c.req.param("projectId");
   const includeArchived = c.req.query("includeArchived") === "true";

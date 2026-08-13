@@ -1296,20 +1296,52 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
 }
 
 /**
- * Resolve a model id's provider.
+ * The provider for `id` when it can be ATTRIBUTED, else undefined.
  *
- * The catalog is consulted FIRST for bare ids (suite execution configs store
- * bare ids like "claude-sonnet-4-5", and the catalog knows their real vendor);
- * everything else goes through the shared classifier, so this route agrees with
- * `buildSyntheticModelDefinition`, the chat-session fallback, and the backend
- * mirror on prefixes and aliases — `meta-llama/...` is `meta`, not
- * `meta-llama`, and `mistralai/...` is `mistral`.
+ * Three sources, most specific first:
  *
- * TOTAL for any non-blank id: the classifier ends in a catch-all (`ollama`), so
- * the only input it cannot name a provider for is a blank one — and that is
- * rejected up front, as a 400, rather than reported as an unresolvable
- * provider. Callers therefore never need a "couldn't derive it" branch; one
- * written anyway would be unreachable and would read as a live guard.
+ *  1. the shared catalog, for BOTH bare and qualified ids. The catalog carries
+ *     more vendors than the classifier's prefix map does, so gating this lookup
+ *     on "no slash" would answer `cohere/command-a` from the map's catch-all
+ *     (Ollama) while the catalog is sitting right there knowing it is Cohere;
+ *  2. the shared classifier, so this route agrees with
+ *     `buildSyntheticModelDefinition`, the chat-session fallback, and the
+ *     backend mirror on prefixes and aliases — `meta-llama/...` is `meta`, not
+ *     `meta-llama`, and `mistralai/...` is `mistral`;
+ *  3. the id's own vendor prefix, for a qualified id neither of the first two
+ *     recognizes. The classifier's final answer for those is its bare-id
+ *     catch-all (`ollama`), which is right for `llama3` and wrong for
+ *     `newvendor/some-model` — a literal prefix is the vendor the author wrote.
+ *
+ * Undefined ONLY for a bare id nothing recognizes, where `ollama` is the
+ * classifier's guess rather than knowledge. Callers that must store a provider
+ * take that guess (`providerForModelId`); callers that can defer instead defer.
+ */
+function attributedProvider(id: string): string | undefined {
+  const match = MODEL_LOOKUP.find(
+    (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`)
+  );
+  if (match) return String(match.provider);
+  const classified = classifyModelIdProvider(id)?.provider;
+  if (classified && classified !== "ollama") return classified;
+  // `> 0`, not `>= 0`: a leading slash makes the prefix empty, and an empty
+  // provider is worse than the catch-all it would replace.
+  const slash = id.indexOf("/");
+  if (slash > 0) return id.slice(0, slash);
+  // A bare id nothing above recognized. `classified` is `ollama` here — the
+  // classifier's catch-all — and returning it would make this function total,
+  // which is the whole distinction it exists to draw.
+  return undefined;
+}
+
+/**
+ * Resolve a model id's provider, for a caller that must persist one.
+ *
+ * TOTAL for any non-blank id: an unattributable BARE id falls back to the
+ * classifier's `ollama` catch-all, since the open-namespace providers are the
+ * only ones where an id we cannot place is still plausibly runnable. Blank ids
+ * are rejected up front, as a 400, rather than reported as an unresolvable
+ * provider — so callers never need a "couldn't derive it" branch.
  */
 function providerForModelId(modelId: string): string {
   // Trim FIRST, exactly as `classifyModelIdProvider` does. Without it a padded
@@ -1317,15 +1349,7 @@ function providerForModelId(modelId: string): string {
   // bare-id catch-all, so `" claude-sonnet-4-5 "` would be attributed to
   // Ollama rather than to its real vendor.
   const id = requireNonBlankModelId(modelId);
-  if (!id.includes("/")) {
-    const match = MODEL_LOOKUP.find(
-      (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`)
-    );
-    if (match) return String(match.provider);
-  }
-  // Non-null by the totality above; the `??` is a type-level formality that
-  // must never fire, not a fallback with a meaning of its own.
-  return classifyModelIdProvider(id)?.provider ?? "ollama";
+  return attributedProvider(id) ?? "ollama";
 }
 
 /**
@@ -2348,7 +2372,16 @@ async function defaultCaseModels(
     if (modelId) {
       // Suite configs store bare ids (e.g. "claude-sonnet-4-5"); resolve the
       // provider via the catalog so the new case isn't persisted model-less.
-      return [{ model: modelId, provider: providerForModelId(modelId) }];
+      //
+      // ATTRIBUTED, not total: pinning a case to a provider is a durable write,
+      // and the classifier's `ollama` catch-all is a guess. A suite default we
+      // cannot place (an org BYOK id, a catalog-only id) falls through to "no
+      // default", which is not a failure — it is the case inheriting the suite
+      // model at run time, where the runner can see keys this route cannot.
+      const provider = attributedProvider(modelId);
+      if (provider) {
+        return [{ model: modelId, provider }];
+      }
     }
   } catch {
     // No resolvable suite model — the case inherits the suite default at run.

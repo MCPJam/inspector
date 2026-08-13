@@ -3010,12 +3010,30 @@ const createHostInput = z
       })
       .optional()
       .describe(
-        "Full host config v2 to use verbatim (alternative to template)."
+        "Full host config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`."
       ),
   })
   .refine((value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1, {
     message: "Provide exactly one of `template` or a non-empty `config`.",
-  });
+  })
+  // The XOR is checked FIRST, and returns, so a degenerate `config: {}` is
+  // reported as "you picked neither branch" rather than "you forgot a model" —
+  // matching the route, whose 400 is the one the caller actually receives.
+  .refine(
+    (value) =>
+      value.config === undefined ||
+      Object.keys(value.config).length === 0 ||
+      (typeof value.config.modelId === "string" &&
+        value.config.modelId.trim().length > 0),
+    {
+      // Mirrors the v1 route's forward-client invariant. Enforced here too so
+      // an SDK/agent caller is told by the schema rather than by a 400 the
+      // published contract never predicted.
+      message:
+        "`config.modelId` is required and must be a non-empty model id (e.g. \"anthropic/claude-sonnet-4-5\").",
+      path: ["config", "modelId"],
+    }
+  );
 export type CreateHostInput = z.infer<typeof createHostInput>;
 
 export const createHostOperation: PlatformOperation<
@@ -3025,7 +3043,7 @@ export const createHostOperation: PlatformOperation<
   name: "create_host",
   title: "Create an MCPJam host",
   description:
-    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`). Returns the created host.",
+    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`, which must pin a non-empty `modelId`). Returns the created host.",
   readOnly: false,
   inputSchema: createHostInput,
   async execute(input, { client, signal }) {

@@ -1348,7 +1348,12 @@ export function NewSwarmCreateFlow({
               // when the first 402 came back.
               if (err instanceof LaunchJourneyRunError && err.status === 402) {
                 billingBlocked = true;
-                firstError = err.message;
+                // `??=`, like every other arm: a target that failed for a real
+                // reason BEFORE the credit limit was hit still has the more
+                // actionable message, and `billingBlocked` already routes the
+                // toast to the billing copy. Overwriting here would drop the
+                // only report of that first failure.
+                firstError ??= err.message;
                 return "stop";
               }
               firstError ??= errorMessageOf(

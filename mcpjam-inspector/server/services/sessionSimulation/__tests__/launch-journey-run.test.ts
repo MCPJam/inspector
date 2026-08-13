@@ -221,12 +221,37 @@ describe("launchJourneyRun", () => {
     );
 
     const err = (await launchJourneyRun(DEPS, INPUT).catch((e) => e)) as {
-      details?: unknown;
+      details?: Record<string, unknown>;
       message: string;
     };
-    expect(err.details).toBeUndefined();
-    // The message still survives — a bad `details` invalidates only itself.
+    // The list is dropped whole — no index keys survive into the bag.
+    expect(err.details).not.toHaveProperty("0");
+    // A bad `details` invalidates only ITSELF: the message survives, and so
+    // does the `code`, which is a sibling field rather than part of the bag.
+    expect(err.details).toEqual({ code: "BILLING_LIMIT_REACHED" });
     expect(err.message).toBe("Monthly credit limit reached.");
+  });
+
+  it("forwards the backend `code` so a caller can branch on the reason", async () => {
+    // The message is bounded and prose-shaped by design, so it is the wrong
+    // thing to branch on. Without the code, "this environment has no model"
+    // is indistinguishable from a transient resolution failure.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        409,
+        JSON.stringify({
+          code: "ENV_MODEL_REQUIRED",
+          message: "Environment has no model to run.",
+          details: { environmentId: "env-1" },
+        }),
+        "nope"
+      )
+    );
+
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      message: "Environment has no model to run.",
+      details: { environmentId: "env-1", code: "ENV_MODEL_REQUIRED" },
+    });
   });
 
   it("falls back when a structured message is unsafe or oversized", async () => {

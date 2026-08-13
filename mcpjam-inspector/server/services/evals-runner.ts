@@ -3091,7 +3091,11 @@ const runLocalIteration = async ({
         totalTokens: acc.accumulatedUsage.totalTokens,
       },
       messages: failMessages,
-      modelId: test.model,
+      // Gated exactly as on the success path: a model-free case carries a
+      // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be
+      // attributed to a model it never called just because it failed rather
+      // than finished.
+      ...(caseNeedsModel ? { modelId: test.model } : {}),
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),

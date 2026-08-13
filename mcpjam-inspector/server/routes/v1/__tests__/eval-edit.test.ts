@@ -952,6 +952,82 @@ describe("v1 eval-edit routes", () => {
     ]);
   });
 
+  it.each([
+    ["cohere/command-a", "cohere"],
+    ["nvidia/nemotron-3-nano-30b-a3b", "nvidia"],
+  ])(
+    "attributes %s to its real vendor, not the Ollama catch-all",
+    async (model, provider) => {
+      // These vendors are in the hosted CATALOG but not in the classifier's
+      // prefix map. Consulting the catalog only for bare ids answered them
+      // from the map's `ollama` catch-all — which then short-circuits
+      // `assertInlineTestModelsValid` (ollama is an open namespace), so a
+      // typo'd hosted id stopped being caught here and was dispatched at a
+      // local Ollama instead.
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        {
+          title: "vendor",
+          steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          models: [{ model }],
+        }
+      );
+      expect(res.status).toBe(201);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:createTestCase"
+      )![1];
+      expect(args.models).toEqual([{ model, provider }]);
+    }
+  );
+
+  it("falls back to the vendor PREFIX for a qualified id nothing knows", async () => {
+    // Not in the catalog and not in the prefix map. `ollama` is the
+    // classifier's answer for a BARE id; for a qualified one the vendor the
+    // author wrote is strictly better information than a guess.
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "unknown vendor",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        models: [{ model: "newvendor/some-model", provider: "newvendor" }],
+      }
+    );
+    expect(res.status).toBe(201);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:createTestCase"
+    )![1];
+    expect(args.models).toEqual([
+      { model: "newvendor/some-model", provider: "newvendor" },
+    ]);
+  });
+
+  it("leaves the case model-less when the suite default cannot be attributed", async () => {
+    // A bare id no catalog knows (an org BYOK id). Pinning a provider is a
+    // durable write and `ollama` would be a guess; "no default" is not a
+    // failure but the case inheriting the suite model at run time, where the
+    // runner can see keys this route cannot.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "hostConfigsV2:getSuiteConfig"
+        ? Promise.resolve({ ...EXEC_CONFIG, modelId: "org-private-model" })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "inherits",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+      }
+    );
+    expect(res.status).toBe(201);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:createTestCase"
+    )![1];
+    expect(args.models).toEqual([]);
+  });
+
   it("TRIMS a padded model id rather than persisting it verbatim", async () => {
     // The id is stored and handed to the provider verbatim, so a padded value
     // would resolve to the right provider and then match nothing downstream.

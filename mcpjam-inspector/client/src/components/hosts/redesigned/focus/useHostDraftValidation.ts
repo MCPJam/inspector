@@ -8,9 +8,18 @@ import type {
 export type HostDraftValidationOptions = {
   /**
    * The model the host has PERSISTED, used to tell "this host never had a
-   * model" from "this edit removed it". Absent on a brand-new host, where
-   * there is no saved row yet and the draft is held to the forward invariant
-   * outright.
+   * model" from "this edit removed it". Only the second is blocking.
+   *
+   * ABSENT means the saved baseline is UNKNOWN, and an unknown baseline is
+   * treated as "not pinned" — a warning, never a blocking error. That is
+   * deliberate for the two ways it occurs today: the host row is still
+   * loading (a blocking error that appears and then vanishes is worse than a
+   * late one), and a legacy row genuinely has no model.
+   *
+   * It also means this hook alone does NOT hold a brand-new host to the
+   * forward-client invariant; a create surface that adopts it needs its own
+   * gate. The v1 `POST/PATCH /hosts` routes enforce the invariant server-side
+   * regardless of which client is asking.
    */
   savedModelId?: string;
 };

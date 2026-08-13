@@ -521,6 +521,96 @@ describe("v1 host routes", () => {
       );
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
+
+    describe("the model invariant", () => {
+      it.each([
+        ["empty", ""],
+        ["whitespace-only", "   "],
+      ])(
+        "refuses to CLEAR a pinned model with an %s one (400)",
+        async (_label, modelId) => {
+          // A config PATCH replaces the config, so it is the one write here
+          // that can strip the model off an existing host — the invariant
+          // `create` enforces would otherwise be one PATCH wide open.
+          mockQuery({ "hosts:getHost": DETAIL_ROW });
+          const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+            body: { config: { systemPrompt: "hi", modelId } },
+          });
+          expect(res.status).toBe(400);
+          expect(((await res.json()) as { code?: string }).code).toBe(
+            "VALIDATION_ERROR"
+          );
+          expect(convexMutationMock).not.toHaveBeenCalled();
+        }
+      );
+
+      it("still lets a LEGACY modelless host be edited", async () => {
+        // Those rows predate the invariant and are deliberately not
+        // backfilled; holding their unrelated edits hostage to a model choice
+        // is the lockout the rule exists to avoid.
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({
+          "hosts:getHost": { ...DETAIL_ROW, config: { modelId: "" } },
+        });
+        const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+          body: { config: { systemPrompt: "edited", modelId: "" } },
+        });
+        expect(res.status).toBe(200);
+        expect(convexMutationMock).toHaveBeenCalledWith(
+          "hosts:updateHost",
+          expect.objectContaining({
+            input: { systemPrompt: "edited", modelId: "" },
+          })
+        );
+      });
+
+      it("TRIMS a padded model on the PATCH boundary too", async () => {
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+          body: { config: { modelId: "  openai/gpt-5  " } },
+        });
+        expect(res.status).toBe(200);
+        expect(convexMutationMock).toHaveBeenCalledWith(
+          "hosts:updateHost",
+          expect.objectContaining({ input: { modelId: "openai/gpt-5" } })
+        );
+      });
+    });
+  });
+
+  describe("POST duplicate", () => {
+    it("refuses to duplicate a modelless host (400)", async () => {
+      // Duplication MINTS a host, so it is held to the same invariant as
+      // create — otherwise copying a legacy row is a supported way to keep
+      // producing the state create now refuses.
+      mockQuery({
+        "hosts:getHost": { ...DETAIL_ROW, config: { modelId: "" } },
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/hosts/h1/duplicate",
+        { body: {} }
+      );
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toMatch(/does not pin a model/i);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("duplicates a host that pins one", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h2" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/hosts/h1/duplicate",
+        { body: {} }
+      );
+      expect(res.status).toBe(201);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:duplicateHost",
+        expect.objectContaining({ hostId: "h1", projectId: "p1" })
+      );
+    });
   });
 
   describe("DELETE", () => {

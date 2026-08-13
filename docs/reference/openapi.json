@@ -8196,7 +8196,18 @@
             "type": "object",
             "additionalProperties": true,
             "minProperties": 1,
-            "description": "Full host config v2, used verbatim (alternative to `template`)."
+            "required": [
+              "modelId"
+            ],
+            "properties": {
+              "modelId": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "description": "Model id the host pins. Required and non-empty: an environment inherits its client's model when it sets no override, so a host created without one cannot back a headless environment and its launches are refused with `ENV_MODEL_REQUIRED`. A `PATCH` may not clear it either, though hosts created before this rule stay editable."
+              }
+            },
+            "description": "Full host config v2, used verbatim (alternative to `template`). Must pin `modelId`."
           }
         },
         "oneOf": [

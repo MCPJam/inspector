@@ -88,6 +88,20 @@ export interface LaunchJourneyRunResult {
   deduped?: boolean;
 }
 
+const MAX_PASSTHROUGH_REASON_LENGTH = 300;
+
+/**
+ * Every character a renderer may break a line on — not just `\n`. `String.trim`
+ * strips these at the ends but not in the middle, so a body carrying `\r` or a
+ * Unicode separator would otherwise pass as a "single sentence" and then render
+ * as multiple lines in a toast.
+ *
+ * Form feed is in the set because the toast renders with `white-space:
+ * pre-wrap`, and CSS Text converts U+000C to a segment break exactly as it does
+ * U+000D — so it breaks lines on screen even though it looks inert in a string.
+ */
+const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
+
 /**
  * A human-readable reason from a backend launch rejection.
  *
@@ -109,20 +123,6 @@ export interface LaunchJourneyRunResult {
  * runs inside is already a failure and a parse error here would replace a
  * useful message with a 500.
  */
-const MAX_PASSTHROUGH_REASON_LENGTH = 300;
-
-/**
- * Every character a renderer may break a line on — not just `\n`. `String.trim`
- * strips these at the ends but not in the middle, so a body carrying `\r` or a
- * Unicode separator would otherwise pass as a "single sentence" and then render
- * as multiple lines in a toast.
- *
- * Form feed is in the set because the toast renders with `white-space:
- * pre-wrap`, and CSS Text converts U+000C to a segment break exactly as it does
- * U+000D — so it breaks lines on screen even though it looks inert in a string.
- */
-const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
-
 export function launchFailureMessage(err: SwarmAgentError): string {
   const fallback =
     err.status === 402
@@ -193,9 +193,19 @@ function launchFailureDetails(
     const details = source.details;
     // `typeof [] === "object"`, and spreading an array yields `{0: …}` — index
     // keys masquerading as structured metadata. A list is not a details bag.
-    return details && typeof details === "object" && !Array.isArray(details)
-      ? { ...(details as Record<string, unknown>) }
-      : undefined;
+    const bag =
+      details && typeof details === "object" && !Array.isArray(details)
+        ? { ...(details as Record<string, unknown>) }
+        : undefined;
+    // Carry the backend's `code` alongside its details. The message is bounded
+    // and prose-shaped by design, so it is the wrong thing to branch on; a
+    // caller that needs to tell "this environment has no model"
+    // (`ENV_MODEL_REQUIRED`) from a transient resolution failure has nothing
+    // else to read. Cheap to forward, and the same code the eval and v1
+    // environment surfaces already expose.
+    const code = typeof source.code === "string" ? source.code : undefined;
+    if (!bag && !code) return undefined;
+    return { ...(bag ?? {}), ...(code ? { code } : {}) };
   } catch {
     return undefined;
   }
