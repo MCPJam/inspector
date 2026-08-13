@@ -266,6 +266,10 @@ function createHostedClientSecretResolver({
  * `warning` level, not `error`: many of these are the server-under-test
  * misbehaving, which is exactly what a debugger is for. The value is the
  * aggregate trend, not a page.
+ *
+ * `Warning: `-prefixed messages are skipped entirely — those are advisories the
+ * flow recovers from (an optional metadata field the server left out), not step
+ * failures.
  */
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
@@ -275,6 +279,15 @@ function withStepFailureReporting(
 
   return (updates) => {
     const error = updates.error;
+    if (typeof error === "string" && error.startsWith("Warning: ")) {
+      // Advisory only: the flow continues and the message is already on screen.
+      // Reporting these buries real step failures under server-under-test nits.
+      // Still counts as replacing the previous message, so a failure that
+      // recurs after it is a new failure — same as an explicit clear below.
+      lastReportedError = undefined;
+      updateState(updates);
+      return;
+    }
     if (typeof error === "string" && error !== "" && error !== lastReportedError) {
       lastReportedError = error;
       reportCaught(new Error(sanitizeStepError(error)), {
