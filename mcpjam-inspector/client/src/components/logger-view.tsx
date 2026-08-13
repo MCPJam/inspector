@@ -497,13 +497,40 @@ export function LoggerView({
     );
   }, [mcpServerItems, mcpAppsItems]);
 
-  const filteredItems = useMemo(() => {
-    let result = allItems;
-
-    // Filter by source type
-    if (sourceFilter !== "all") {
-      result = result.filter((item) => item.source === sourceFilter);
+  // Precomputed, lowercased search text per item — the same four fields the
+  // search used to concatenate inline (server label, method, direction, and
+  // the stringified payload). Keyed by `source:id` (not bare id) because
+  // mcpServerItems and mcpAppsItems generate ids independently — a hosted
+  // eventId or a `${timestamp}-${random}` id could collide across the two
+  // arrays and silently overwrite an entry. Memoized over `allItems`, so
+  // JSON.stringify runs once per row when the log set changes, not for
+  // every row on every keystroke.
+  const searchIndex = useMemo(() => {
+    const index = new Map<string, string>();
+    for (const item of allItems) {
+      index.set(
+        `${item.source}:${item.id}`,
+        [
+          getDisplayServerLabel(item),
+          item.method,
+          item.direction,
+          JSON.stringify(item.payload),
+        ]
+          .join("\n")
+          .toLowerCase()
+      );
     }
+    return index;
+  }, [allItems]);
+
+  // Everything EXCEPT the source filter. Split out so we can tell how many
+  // rows actually match the search before the source funnel removes them —
+  // that count is what powers the "N matches hidden by filter" banner and
+  // stops the "Server" filter from silently returning zero. The source
+  // filter is a plain conjunction like the others, so pulling it out of the
+  // chain does not change the final visible set.
+  const itemsBeforeSourceFilter = useMemo(() => {
+    let result = allItems;
 
     // Filter by serverIds if provided
     if (serverIds && serverIds.length > 0) {
@@ -525,23 +552,32 @@ export function LoggerView({
     }
 
     // Filter by search query
-    if (searchQuery.trim()) {
-      const queryLower = searchQuery.toLowerCase();
-      result = result.filter((item) => {
-        return (
-          getDisplayServerLabel(item).toLowerCase().includes(queryLower) ||
-          item.method.toLowerCase().includes(queryLower) ||
-          item.direction.toLowerCase().includes(queryLower) ||
-          JSON.stringify(item.payload).toLowerCase().includes(queryLower)
-        );
-      });
+    const queryLower = searchQuery.trim().toLowerCase();
+    if (queryLower) {
+      result = result.filter((item) =>
+        (searchIndex.get(`${item.source}:${item.id}`) ?? "").includes(
+          queryLower
+        )
+      );
     }
 
     return result;
-  }, [allItems, searchQuery, serverIds, sinceTimestamp, sourceFilter]);
+  }, [allItems, searchQuery, searchIndex, serverIds, sinceTimestamp]);
+
+  const filteredItems = useMemo(() => {
+    if (sourceFilter === "all") return itemsBeforeSourceFilter;
+    return itemsBeforeSourceFilter.filter(
+      (item) => item.source === sourceFilter
+    );
+  }, [itemsBeforeSourceFilter, sourceFilter]);
 
   const totalItemCount = allItems.length;
   const filteredItemCount = filteredItems.length;
+
+  // How many rows match the search + other filters but are being removed
+  // purely by the source filter. Zero when the filter is "all".
+  const matchesHiddenBySourceFilter =
+    itemsBeforeSourceFilter.length - filteredItemCount;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -840,12 +876,54 @@ export function LoggerView({
       </div>
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+        {searchQuery.trim() && matchesHiddenBySourceFilter > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              captureLogger("logger_source_filter_changed", {
+                from: sourceFilter,
+                to: "all",
+              });
+              setSourceFilter("all");
+            }}
+            className="flex w-full items-center justify-between gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted"
+            title="Clear the source filter to show these matches"
+          >
+            <span>
+              {matchesHiddenBySourceFilter}{" "}
+              {matchesHiddenBySourceFilter === 1 ? "match" : "matches"} hidden by
+              the source filter
+            </span>
+            <span className="whitespace-nowrap font-medium text-primary">
+              Clear filter
+            </span>
+          </button>
+        )}
         {filteredItemCount === 0 ? (
           <div className="text-center py-8">
-            <div className="text-xs text-muted-foreground">{"No logs yet"}</div>
-            <div className="text-[10px] text-muted-foreground mt-1">
-              {"Logs will appear here"}
-            </div>
+            {totalItemCount > 0 ? (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {"No matches in this view"}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  {matchesHiddenBySourceFilter > 0
+                    ? "Clear the source filter to see hidden matches"
+                    : searchQuery.trim()
+                      ? "Try a different search term"
+                      : "Adjust the active filters"}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {"No logs yet"}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  {"Logs will appear here"}
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <>

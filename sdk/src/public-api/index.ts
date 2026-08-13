@@ -124,6 +124,16 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   // publicly it is just a CONFLICT. Without this entry it fell through
   // `mapInternalCode`'s default and reached API callers as a 500.
   ENVIRONMENT_REVISION_CONFLICT: "CONFLICT",
+  // The target MCP server refused the credentials we presented (401/403/400
+  // per the MCP authorization spec's error table). Internally its own code so
+  // the hosted UI can say "reconnect this server"; publicly it collapses onto
+  // FORBIDDEN — the public union has no upstream-auth member, and FORBIDDEN
+  // carries the property that matters to an API caller: retrying with a
+  // different MCPJam credential will not help. Same trap as
+  // ENVIRONMENT_REVISION_CONFLICT above — without this entry it falls through
+  // `mapInternalCode`'s default and reaches API callers as a 500, which is
+  // exactly the misreport the internal code was introduced to end.
+  UPSTREAM_AUTH_FAILED: "FORBIDDEN",
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {
