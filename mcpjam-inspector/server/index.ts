@@ -145,7 +145,7 @@ import {
   mountHostedOpenRoutes,
 } from "./middleware/hosted-partition";
 import webRoutes from "./routes/web/index";
-import internalServerConnections from "./routes/internal/server-connections";
+import internalServerConnections from "./routes/internal/server-connections.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";

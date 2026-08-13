@@ -72,6 +72,12 @@ export async function serverConnectionClaimRateLimitMiddleware(
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
 
+  // POST ONLY. `/claim` is a POST route, but the middleware is mounted on the
+  // path, so a cross-site page could spend somebody's whole budget on image
+  // GETs that were never going to reach the handler — turning a limiter meant
+  // to protect the flow into a way to deny it.
+  if (c.req.method !== "POST") return next();
+
   const ip = getClientIp(c);
   // No attributable IP means no bucket to charge. Falling through matches the
   // other limiters' posture rather than collapsing every such caller into one

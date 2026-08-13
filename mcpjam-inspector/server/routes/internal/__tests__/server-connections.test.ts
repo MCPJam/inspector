@@ -183,14 +183,16 @@ describe("doorbell semantics", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     // The 202 already went out, so this report is the only record the failure
-    // will ever have. `user_server_hop` keeps a third-party server's outage off
-    // the on-call pager, and `requestId` is the only field safe to carry — the
-    // job's context holds a decrypted access token.
+    // will ever have. `mcpjam_internal` is right despite the job's work being a
+    // third-party call: everything the target does is classified and reported
+    // to the backend inside `runConnectionJob`, so what reaches this catch is
+    // our own residue. `requestId` is the only field safe to carry — the job's
+    // context holds a decrypted access token.
     expect(errorReport.reportRouteFailure).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Error),
       expect.objectContaining({
-        hop: "user_server_hop",
+        hop: "mcpjam_internal",
         context: { requestId: "scr_x" },
       })
     );

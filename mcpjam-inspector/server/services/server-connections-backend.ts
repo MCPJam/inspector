@@ -49,6 +49,25 @@ export class ServerConnectionBackendError extends Error {
   }
 }
 
+/**
+ * An abort, however it reaches us.
+ *
+ * `undici` raises a `DOMException` named `AbortError` for the request, but a
+ * body read cut short by the same signal can surface as a plain `Error` with
+ * that name, or wrapped in a `TypeError` whose `cause` carries it. Testing only
+ * for `DOMException` misses the case this check exists for.
+ */
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (error instanceof Error) {
+    if (error.name === "AbortError") return true;
+    if (error.cause !== undefined && error.cause !== error) {
+      return isAbortError(error.cause);
+    }
+  }
+  return false;
+}
+
 async function callBackend<T>(
   path: string,
   body: Record<string, unknown>
@@ -85,7 +104,16 @@ async function callBackend<T>(
       );
     }
 
-    const payload = (await response.json().catch(() => null)) as {
+    // A `fetch` that has RESOLVED has not finished — the body is still being
+    // read, and the timeout above still governs it. Swallowing every throw here
+    // would turn a body-read abort into `Backend call failed (200)`: a timeout
+    // reported as a status code, on a call that never completed. Aborts are
+    // re-thrown to the handler below; a genuinely unparseable body still
+    // becomes `null`, because the status line alone is enough to answer with.
+    const payload = (await response.json().catch((error: unknown) => {
+      if (isAbortError(error)) throw error;
+      return null;
+    })) as {
       ok?: boolean;
       error?: string;
       code?: string;
@@ -101,7 +129,7 @@ async function callBackend<T>(
 
     return payload as T;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbortError(error)) {
       throw new ServerConnectionBackendError(
         `Backend call timed out after ${REQUEST_TIMEOUT_MS}ms`,
         504

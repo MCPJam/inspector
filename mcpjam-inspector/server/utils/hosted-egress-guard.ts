@@ -138,8 +138,15 @@ export function isBlockedEgressHost(
  * than a 502 (we tried and it didn't work).
  */
 export class BlockedEgressTargetError extends Error {
-  constructor(message: string) {
-    super(message);
+  /**
+   * THE MESSAGE IS USER-VISIBLE. It is reported back to whoever submitted the
+   * URL, so it may name the host they asked for and must never name what that
+   * host resolved to — otherwise a refusal becomes a resolution oracle for
+   * mapping the internal network. Diagnostic detail belongs on `cause`, which
+   * reaches logs and nothing else.
+   */
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = "BlockedEgressTargetError";
   }
 }

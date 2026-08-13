@@ -195,9 +195,10 @@ export class PlatformApiClient {
     );
   }
 
-  /** Poll one request. Safe to call on a short interval — this path is not
-   * rate-limited, so a caller need not choose between responsiveness and
-   * tripping a budget. */
+  /** Poll one request. Safe to call on a short interval: this path is metered
+   * on its own poll budget rather than the shared per-caller one, so polling
+   * responsively does not spend the budget your other calls need. A 429 here
+   * means the interval itself is too fast — honour `Retry-After`. */
   getServerConnection(
     params: { connectionRequestId: string },
     options?: RequestOptions

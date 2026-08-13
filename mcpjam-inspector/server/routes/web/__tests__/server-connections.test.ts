@@ -206,6 +206,37 @@ describe("claim", () => {
     expect(identity.resolveUserByExternalId).not.toHaveBeenCalled();
   });
 
+  it("forwards no actor when the identity service is down", async () => {
+    authkit.verifyAuthKitToken.mockResolvedValue({ sub: "workos_user_1" });
+    identity.resolveUserByExternalId.mockRejectedValue(new Error("convex down"));
+
+    const res = await post(
+      "/claim",
+      { handoffToken: "handoff-1" },
+      { authorization: "Bearer real-authkit-jwt" }
+    );
+
+    // The degradation is deliberate: a signed-in user is treated as a guest,
+    // and the backend answers 403 for an account-owned link rather than
+    // admitting anyone. Failing open here is what would be the bug.
+    expect(res.status).toBe(200);
+    expect(backendCalls.claimHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: undefined })
+    );
+  });
+
+  it("does not attempt verification for an empty bearer", async () => {
+    const res = await post(
+      "/claim",
+      { handoffToken: "handoff-1" },
+      { authorization: "Bearer " }
+    );
+
+    expect(res.status).toBe(200);
+    // Short-circuits before any JWKS round trip.
+    expect(authkit.verifyAuthKitToken).not.toHaveBeenCalled();
+  });
+
   it("surfaces the backend's wrong-account refusal as a 403", async () => {
     backendCalls.claimHandoff.mockRejectedValue(
       new ServerConnectionBackendError(
@@ -247,37 +278,84 @@ describe("claim", () => {
 });
 
 describe("claim rate limiting", () => {
-  it("bounds attempts per address in hosted mode", async () => {
-    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+  /**
+   * `HOSTED_MODE` is read at config import, so each mode needs a fresh module
+   * registry — which means a fresh limiter with its OWN window map. The
+   * `beforeEach` at the top of this file resets the instance bound at import
+   * time, not this one, so every test here resets what it built.
+   */
+  async function limiterApp(hosted: boolean) {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", hosted ? "true" : "false");
     vi.resetModules();
-    const { serverConnectionClaimRateLimitMiddleware, ...rest } = await import(
+    const mod = await import(
       "../../../middleware/server-connection-claim-rate-limit.js"
     );
-    rest.resetServerConnectionClaimRateLimitForTests();
+    mod.resetServerConnectionClaimRateLimitForTests();
 
     const app = new Hono();
-    app.use("*", serverConnectionClaimRateLimitMiddleware);
+    app.use("*", mod.serverConnectionClaimRateLimitMiddleware);
     app.post("/claim", (c) => c.json({ ok: true }));
+    app.get("/claim", (c) => c.json({ ok: true }));
+    return { app, limit: mod.SERVER_CONNECTION_CLAIM_RATE_LIMIT, mod };
+  }
 
-    const hit = () =>
-      app.request("/claim", {
-        method: "POST",
-        headers: { "x-real-ip": "203.0.113.9" },
-      });
+  const claim = (app: Hono, headers: Record<string, string>, method = "POST") =>
+    app.request("/claim", { method, headers });
 
-    for (let i = 0; i < rest.SERVER_CONNECTION_CLAIM_RATE_LIMIT; i += 1) {
-      expect((await hit()).status).toBe(200);
+  it("bounds attempts per address in hosted mode", async () => {
+    const { app, limit, mod } = await limiterApp(true);
+    const ip = { "x-real-ip": "203.0.113.9" };
+
+    for (let i = 0; i < limit; i += 1) {
+      expect((await claim(app, ip)).status).toBe(200);
     }
-    expect((await hit()).status).toBe(429);
+    expect((await claim(app, ip)).status).toBe(429);
 
     // A different address keeps its own budget.
-    const other = await app.request("/claim", {
-      method: "POST",
-      headers: { "x-real-ip": "198.51.100.4" },
-    });
-    expect(other.status).toBe(200);
+    expect(
+      (await claim(app, { "x-real-ip": "198.51.100.4" })).status
+    ).toBe(200);
 
-    rest.resetServerConnectionClaimRateLimitForTests();
+    mod.resetServerConnectionClaimRateLimitForTests();
+  });
+
+  it("does not let a GET spend the budget a real claim needs", async () => {
+    const { app, limit, mod } = await limiterApp(true);
+    const ip = { "x-real-ip": "203.0.113.11" };
+
+    // A cross-site page can issue image GETs that never reach the handler. If
+    // those charged the bucket, anyone could deny a visitor their one claim.
+    for (let i = 0; i < limit + 5; i += 1) {
+      await claim(app, ip, "GET");
+    }
+    expect((await claim(app, ip)).status).toBe(200);
+
+    mod.resetServerConnectionClaimRateLimitForTests();
+  });
+
+  it("never refuses in local mode", async () => {
+    const { app, limit, mod } = await limiterApp(false);
+    const ip = { "x-real-ip": "127.0.0.1" };
+
+    // One developer, dialling their own server. There is no fleet to protect.
+    for (let i = 0; i < limit + 5; i += 1) {
+      expect((await claim(app, ip)).status).toBe(200);
+    }
+
+    mod.resetServerConnectionClaimRateLimitForTests();
+  });
+
+  it("passes through a caller it cannot place", async () => {
+    const { app, limit, mod } = await limiterApp(true);
+
+    // No attributable address means no bucket to charge. Collapsing every such
+    // caller into one shared bucket would let a single header-stripped request
+    // starve the rest.
+    for (let i = 0; i < limit + 5; i += 1) {
+      expect((await claim(app, {})).status).toBe(200);
+    }
+
+    mod.resetServerConnectionClaimRateLimitForTests();
   });
 });
 

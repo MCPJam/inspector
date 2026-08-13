@@ -126,10 +126,28 @@ describe("outages stay retryable", () => {
     ).catch((e: unknown) => e);
 
     expect(error).not.toBeInstanceOf(BlockedEgressTargetError);
-    // On a resolver that behaves (every CI runner), it is specifically a
-    // resolution failure rather than an anonymous one.
-    if (!(error instanceof EgressResolutionError)) {
-      expect(error).toBeInstanceOf(Error);
+    // A wildcard resolver that answers for `.invalid` makes the call SUCCEED,
+    // so `error` holds a Response. That is still not a refusal, which is the
+    // property under test. Only when neither happened is the specific class
+    // asserted — on any behaving resolver, that is the branch taken.
+    if (!(error instanceof Response)) {
+      expect(error).toBeInstanceOf(EgressResolutionError);
     }
+  });
+});
+
+describe("a refusal does not describe the internal network", () => {
+  it("names the host that was asked for, never what it resolved to", async () => {
+    // The message is reported back to whoever submitted the URL. Echoing the
+    // resolved address would turn a refusal into a resolution oracle: submit a
+    // hostname, read back what our resolver saw, repeat.
+    const error = await pinnedFetch("http://169.254.169.254/latest/").catch(
+      (e: unknown) => e
+    );
+
+    expect(error).toBeInstanceOf(BlockedEgressTargetError);
+    const message = (error as Error).message;
+    expect(message).toContain("169.254.169.254"); // the host they typed
+    expect(message).not.toMatch(/resolves to|resolved/i);
   });
 });

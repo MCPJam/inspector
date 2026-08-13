@@ -364,20 +364,23 @@ export function registerProjectsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
 
+      // Parsed at the keyboard, like every sibling command here. Commander
+      // hands back whatever was typed, so without this `--url " "` and
+      // `--url file:///etc/passwd` travel all the way to the API to be
+      // rejected there — a slower, vaguer error for a mistake visible now.
+      const input = connectProjectServerOperation.inputSchema.parse({
+        url: options.url,
+        project: options.project,
+        serverId: options.server,
+        name: options.name,
+        reauthorize: options.reauthorize,
+      });
+
       const created = await runPlatformCommand(
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          connectProjectServerOperation.execute(
-            {
-              url: options.url,
-              project: options.project,
-              serverId: options.server,
-              name: options.name,
-              reauthorize: options.reauthorize,
-            },
-            { client, signal }
-          )
+          connectProjectServerOperation.execute(input, { client, signal })
       );
 
       if (created.handoffUrl) {
@@ -397,6 +400,11 @@ export function registerProjectsCommands(program: Command): void {
       }
 
       if (options.wait === false || isTerminalConnectionStatus(created.status)) {
+        if (options.wait === false && !isTerminalConnectionStatus(created.status)) {
+          process.stderr.write(
+            `Not waiting. Follow it with:\n  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+          );
+        }
         writeResult(created, globalOptions.format);
         return;
       }
@@ -404,9 +412,43 @@ export function registerProjectsCommands(program: Command): void {
       const settled = await pollConnection(
         options,
         globalOptions.timeout,
-        created.connectionRequestId
+        created.connectionRequestId,
+        created.expiresAt
       );
-      writeResult(settled, globalOptions.format);
+      writeResult(settled.result, globalOptions.format);
+      if (settled.gaveUp) {
+        // A script must be able to tell "it finished" from "I stopped
+        // watching". Returning the last poll silently made those identical.
+        process.stderr.write(
+          `Stopped waiting; the request is still ${settled.result.status} and continues in the cloud.\n` +
+            `  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+        );
+        process.exitCode = 1;
+      }
+    }
+  );
+
+  addPlatformOptions(
+    servers
+      .command("connect-status")
+      .description("Check a connection request started by `server connect`")
+      .requiredOption("--request <id>", "Connection request id (scr_…)")
+  ).action(
+    async (options: PlatformOptions & { request: string }, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = getProjectServerConnectionStatusOperation.inputSchema.parse({
+        connectionRequestId: options.request,
+      });
+      const payload = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          getProjectServerConnectionStatusOperation.execute(input, {
+            client,
+            signal,
+          })
+      );
+      writeResult(payload, globalOptions.format);
     }
   );
 
@@ -453,6 +495,9 @@ function isTerminalConnectionStatus(status: string): boolean {
   return TERMINAL_CONNECTION_STATUSES.has(status);
 }
 
+/** How long to keep watching when the server did not say when it expires. */
+const FALLBACK_POLL_WINDOW_MS = 60 * 60 * 1000;
+
 /**
  * Poll until the request settles.
  *
@@ -460,34 +505,82 @@ function isTerminalConnectionStatus(status: string): boolean {
  * for an unauthenticated server, and after that the flow is waiting on a human
  * at a browser, where a tighter interval buys nothing.
  *
- * Ctrl-C STOPS THE POLLING, NOT THE REQUEST. The request lives in the cloud
- * with its own 60-minute deadline, so a user who gives up on watching can still
- * open the link and finish — which is why the message says so rather than
- * letting them assume they cancelled it.
+ * THE DEADLINE COMES FROM THE SERVER. The request's own `expiresAt` is the
+ * authority on how long it can still be finished; a duplicated 60-minute
+ * constant here would silently disagree the moment that TTL changed, and would
+ * disagree in the wrong direction — watching a request that already expired, or
+ * abandoning one that had not. The constant above is only for a response that
+ * omitted the field.
+ *
+ * CTRL-C STOPS THE POLLING, NOT THE REQUEST. The request lives in the cloud, so
+ * a user who gives up on watching can still open the link and finish. Saying so
+ * matters: the default reading of Ctrl-C is "I cancelled it", and acting on that
+ * belief means abandoning a request that was about to succeed.
+ *
+ * Returns `gaveUp` so the caller can tell "it finished" from "I stopped
+ * watching" — a distinction a script cannot recover from the status alone.
  */
 async function pollConnection(
   options: PlatformOptions,
   timeoutMs: number,
-  connectionRequestId: string
-) {
+  connectionRequestId: string,
+  expiresAt?: string | null
+): Promise<{
+  result: Awaited<
+    ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
+  >;
+  gaveUp: boolean;
+}> {
   let delayMs = 2_000;
-  const deadline = Date.now() + 60 * 60 * 1000;
 
-  for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    delayMs = Math.min(delayMs * 1.5, 10_000);
+  const expiryMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+  const deadline = Number.isFinite(expiryMs)
+    ? expiryMs
+    : Date.now() + FALLBACK_POLL_WINDOW_MS;
 
-    const current = await runPlatformCommand(
-      options,
-      timeoutMs,
-      ({ client, signal }) =>
-        getProjectServerConnectionStatusOperation.execute(
-          { connectionRequestId },
-          { client, signal }
-        )
+  let interrupted = false;
+  const onInterrupt = () => {
+    interrupted = true;
+    process.stderr.write(
+      "\nStopped watching. The request continues in the cloud — open the link above to finish it.\n"
     );
+  };
+  // Registered only for the duration of the wait, and `once`, so a second
+  // Ctrl-C still terminates the process the way a user expects.
+  process.once("SIGINT", onInterrupt);
 
-    if (isTerminalConnectionStatus(current.status)) return current;
-    if (Date.now() > deadline) return current;
+  try {
+    for (;;) {
+      const current = await runPlatformCommand(
+        options,
+        timeoutMs,
+        ({ client, signal }) =>
+          getProjectServerConnectionStatusOperation.execute(
+            { connectionRequestId },
+            { client, signal }
+          )
+      );
+
+      if (isTerminalConnectionStatus(current.status)) {
+        return { result: current, gaveUp: false };
+      }
+      if (interrupted) return { result: current, gaveUp: true };
+      // Checked BEFORE the sleep. Checking after it meant spending a round trip
+      // to discover the deadline had passed while we were asleep.
+      if (Date.now() + delayMs > deadline) {
+        return { result: current, gaveUp: true };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (interrupted) {
+        return {
+          result: current,
+          gaveUp: true,
+        };
+      }
+      delayMs = Math.min(delayMs * 1.5, 10_000);
+    }
+  } finally {
+    process.removeListener("SIGINT", onInterrupt);
   }
 }

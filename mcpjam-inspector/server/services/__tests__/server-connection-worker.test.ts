@@ -38,6 +38,13 @@ const probe = vi.hoisted(() => ({
   probeMcpServer: vi.fn(),
 }));
 
+/** The transport the worker hands to the probe. Mocked so a test can make it
+ * refuse a target without touching DNS. */
+const transport = vi.hoisted(() => ({
+  pinnedFetch: vi.fn(),
+  createPinnedFetch: vi.fn(),
+}));
+
 vi.mock("../server-connections-backend.js", async () => {
   const actual = await vi.importActual<
     typeof import("../server-connections-backend.js")
@@ -49,7 +56,14 @@ vi.mock("../server-connection-discovery.js", () => discovery);
 
 vi.mock("@mcpjam/sdk", () => probe);
 
+vi.mock("../../utils/pinned-fetch.js", () => ({
+  createPinnedFetch: transport.createPinnedFetch,
+}));
+
 const { runConnectionJob } = await import("../server-connection-worker.js");
+const { ServerConnectionBackendError } = await import(
+  "../server-connections-backend.js"
+);
 
 function leased(status: string, extra: Record<string, unknown> = {}) {
   return {
@@ -104,6 +118,8 @@ beforeEach(() => {
   backend.releaseLease.mockResolvedValue(undefined);
   backend.reportDiscovery.mockResolvedValue({ status: "validating" });
   backend.reportValidation.mockResolvedValue({ status: "ready" });
+  transport.pinnedFetch.mockResolvedValue(new Response("{}"));
+  transport.createPinnedFetch.mockReturnValue(transport.pinnedFetch);
 });
 
 describe("lease handling", () => {
@@ -134,6 +150,76 @@ describe("lease handling", () => {
     expect(result.skipped).toBe("not-actionable");
     expect(backend.releaseLease).toHaveBeenCalledWith("scr_x", expect.any(String));
     expect(backend.reportValidation).not.toHaveBeenCalled();
+  });
+
+  it("swallows a lost race instead of throwing at a route that already answered", async () => {
+    backend.acquireLease.mockResolvedValue(leased("discovering"));
+    // The row moved underneath us, or someone else owns it now. Both are normal
+    // races. The caller is an HTTP route that has already sent its 202, so a
+    // throw here lands in a log with nobody to read it.
+    discovery.runDiscoveryPreflight.mockRejectedValue(
+      new ServerConnectionBackendError("someone else has the lease", 409)
+    );
+
+    const result = await runConnectionJob("scr_x");
+
+    expect(result).toEqual({
+      requestId: "scr_x",
+      ran: false,
+      skipped: "not-leased",
+    });
+    // Released before giving up: whichever report would have released it never
+    // ran, so holding the lease would strand the request until it lapsed.
+    expect(backend.releaseLease).toHaveBeenCalledWith("scr_x", expect.any(String));
+  });
+
+  it("treats a request that is gone the same way", async () => {
+    backend.acquireLease.mockResolvedValue(leased("validating"));
+    backend.fetchValidationContext.mockRejectedValue(
+      new ServerConnectionBackendError("not found", 404)
+    );
+
+    const result = await runConnectionJob("scr_x");
+
+    expect(result.skipped).toBe("not-leased");
+    expect(backend.releaseLease).toHaveBeenCalled();
+  });
+
+  it("releases the lease when reporting the discovery outcome fails", async () => {
+    backend.acquireLease.mockResolvedValue(leased("discovering"));
+    discovery.runDiscoveryPreflight.mockResolvedValue({
+      kind: "retryable",
+      detail: "dns hiccup",
+    });
+    // `reportValidation` is only legal from `validating`; a request still in
+    // `discovering` cannot take it. Without the release the lease would be held
+    // until it lapsed, delaying the retry the cron exists to schedule.
+    backend.reportValidation.mockRejectedValue(
+      new ServerConnectionBackendError("invalid state", 409)
+    );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.releaseLease).toHaveBeenCalledWith("scr_x", expect.any(String));
+  });
+
+  it("does not blame the target for a lease with no server URL", async () => {
+    backend.acquireLease.mockResolvedValue(
+      leased("discovering", { serverUrl: undefined })
+    );
+
+    const result = await runConnectionJob("scr_x");
+
+    // Passing `""` into the guard made it throw, which reported
+    // `authMethod: "unsupported"` — permanently telling someone their URL was
+    // refused when the backend had handed us a row with nothing in it. There is
+    // no legal report from `discovering`, so releasing the lease and letting the
+    // cron come back is the whole remedy.
+    expect(discovery.runDiscoveryPreflight).not.toHaveBeenCalled();
+    expect(backend.reportDiscovery).not.toHaveBeenCalled();
+    expect(backend.reportValidation).not.toHaveBeenCalled();
+    expect(backend.releaseLease).toHaveBeenCalledWith("scr_x", expect.any(String));
+    expect(result.skipped).toBe("not-actionable");
   });
 
   it("runs discovery only when the lease said discovering", async () => {
@@ -540,9 +626,41 @@ describe("validation outcomes", () => {
     // the validation side, which is the same hole closed on the discovery side.
     probe.probeMcpServer.mockRejectedValue(
       new BlockedEgressTargetError(
-        "rebinding.example resolves to a private/reserved IP address (169.254.169.254)"
+        'Refusing to connect to "rebinding.example": it is not a publicly routable address.'
       )
     );
+
+    await runConnectionJob("scr_x");
+
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "terminal",
+        errorCode: "URL_NOT_ALLOWED",
+      })
+    );
+  });
+
+  it("records a refusal the probe swallowed", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://rebinding.example/mcp",
+      accessToken: "secret-token",
+      authMethod: "oauth",
+    });
+    // THE ORDINARY CASE, and the one that matters: `probeMcpServer` catches
+    // whatever `fetchFn` throws and reports `status: "error"`, so the refusal
+    // never reaches a catch here. Reading the probe's own account would call it
+    // retryable and put an SSRF attempt back on a schedule with a live
+    // credential attached.
+    transport.pinnedFetch.mockRejectedValue(
+      new BlockedEgressTargetError(
+        'Refusing to connect to "rebinding.example": it is not a publicly routable address.'
+      )
+    );
+    probe.probeMcpServer.mockImplementation(async (config: never) => {
+      const { fetchFn } = config as unknown as { fetchFn: typeof fetch };
+      await fetchFn("https://rebinding.example/mcp").catch(() => {});
+      return probeResult({ status: "error", error: "fetch failed" });
+    });
 
     await runConnectionJob("scr_x");
 

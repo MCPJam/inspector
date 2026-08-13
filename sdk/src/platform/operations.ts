@@ -4734,10 +4734,26 @@ export const unpublishScenarioOperation: PlatformOperation<
  * operation is neither exposed nor explicitly excluded.
  */
 const connectProjectServerInput = z.object({
+  // Validated HERE rather than left to the API. This is the field a model or a
+  // CLI flag fills in, and rejecting `not-a-url` or `file:///etc/passwd` at the
+  // keyboard is both a better error and one fewer caller-supplied string that
+  // reaches an egress guard to be refused. The guard still runs — this is the
+  // outer of two checks, never a replacement for it.
   url: z
     .string()
     .trim()
     .min(1)
+    .refine(
+      (value) => {
+        try {
+          const parsed = new URL(value);
+          return parsed.protocol === "http:" || parsed.protocol === "https:";
+        } catch {
+          return false;
+        }
+      },
+      { message: "Must be an http:// or https:// URL." }
+    )
     .describe("The MCP server URL to connect (http or https)."),
   project: z
     .string()

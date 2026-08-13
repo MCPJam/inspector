@@ -58,6 +58,10 @@
       "description": "Asynchronous eval suite runs: create with 202, poll status, iterations, and traces."
     },
     {
+      "name": "Server connections",
+      "description": "Connect an MCP server URL to a project, authorizing in a browser when the server requires it."
+    },
+    {
       "name": "OAuth",
       "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
     },
@@ -5226,7 +5230,7 @@
           "Server connections"
         ],
         "summary": "Get a connection request",
-        "description": "Current state of one connection request. Not rate-limited, so it is safe to poll on a short interval.",
+        "description": "Current state of one connection request. Metered on its own poll budget rather than the shared per-caller one, so polling on a short interval is expected and will not spend the budget your other calls need. A 429 here means the poll interval itself is too fast; honour Retry-After.",
         "parameters": [
           {
             "name": "requestId",

@@ -22,6 +22,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { serverConnectionPollRateLimitMiddleware } from "../../middleware/server-connection-poll-rate-limit.js";
 import { v1Resource } from "./envelope.js";
 
 const serverConnections = new Hono();
@@ -150,18 +151,27 @@ serverConnections.post("/server-connections", async (c) => {
 });
 
 // GET /v1/server-connections/:requestId — poll one request's status.
-serverConnections.get("/server-connections/:requestId", async (c) => {
-  const token = await getConvexBearerForRequest(c);
-  try {
-    const result = await convexClient(token).query(
-      "serverConnectionsPublic:getConnection" as never,
-      { connectionRequestId: c.req.param("requestId") } as never
-    );
-    return v1Resource(c, result as Record<string, unknown>);
-  } catch (error) {
-    throw translateConnectionError(error);
+//
+// Its own budget rather than the shared 60/min guest bucket: this route is
+// meant to be polled every few seconds while a person authorizes in a browser,
+// and charging that to the general bucket would 429 a guest out of the flow for
+// following it correctly.
+serverConnections.get(
+  "/server-connections/:requestId",
+  serverConnectionPollRateLimitMiddleware,
+  async (c) => {
+    const token = await getConvexBearerForRequest(c);
+    try {
+      const result = await convexClient(token).query(
+        "serverConnectionsPublic:getConnection" as never,
+        { connectionRequestId: c.req.param("requestId") } as never
+      );
+      return v1Resource(c, result as Record<string, unknown>);
+    } catch (error) {
+      throw translateConnectionError(error);
+    }
   }
-});
+);
 
 // POST /v1/server-connections/:requestId/cancel
 serverConnections.post("/server-connections/:requestId/cancel", async (c) => {

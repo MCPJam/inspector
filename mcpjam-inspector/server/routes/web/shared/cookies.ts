@@ -84,7 +84,12 @@ function buildCookieWithSecurity(
 ): string {
   const parts = [`${name}=${value}`, `Path=${options.path ?? "/"}`, "HttpOnly"];
   if (secure) parts.push("Secure");
-  parts.push(`SameSite=${options.sameSite ?? "Lax"}`);
+  // `SameSite=None` REQUIRES `Secure`; a browser rejects the pair without it,
+  // so emitting it on the plain-http loopback twin would produce a cookie that
+  // is silently never stored. Narrowing to `Lax` there keeps the cookie working
+  // locally and is strictly the safer of the two.
+  const sameSite = options.sameSite ?? "Lax";
+  parts.push(`SameSite=${!secure && sameSite === "None" ? "Lax" : sameSite}`);
   if (typeof options.maxAgeSeconds === "number") {
     parts.push(`Max-Age=${options.maxAgeSeconds}`);
   }

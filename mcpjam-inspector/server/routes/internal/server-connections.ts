@@ -50,18 +50,22 @@ internalServerConnections.post("/dispatch", async (c) => {
     // Nothing upstream is listening by now — the 202 below has already gone out
     // — so this is the last place the failure can be seen. `console.error` put
     // it only in a container log; `reportRouteFailure` is the route catch-site
-    // reporter, so it reaches Axiom and pages only when the fault is ours.
+    // reporter, so it reaches Axiom and pages when the fault is ours.
     //
-    // `user_server_hop`, not `mcpjam_internal`: the overwhelmingly likely cause
-    // is the third-party MCP server the job just dialled, and promoting that to
-    // an internal boundary would page the on-call for somebody else's dead
-    // endpoint.
+    // `mcpjam_internal` IS the right default here, despite this job's work
+    // being a call to a third-party server. Everything the target does — a
+    // timeout, a 5xx, a refused address, an answer that is not MCP — is
+    // classified inside `runConnectionJob` and REPORTED to the backend rather
+    // than thrown. What reaches this catch is the residue: a lease, report, or
+    // validation-context call that failed, or an unexpected throw. Those are
+    // ours, and marking them `user_server_hop` would suppress the page for the
+    // one class of failure that should raise it.
     //
     // The request id is the ONLY safe field here. The job's context carries a
     // decrypted third-party access token, and nothing from it may reach a log.
     reportRouteFailure("Server-connection job failed", error, {
       source: "server-connections.dispatch",
-      hop: "user_server_hop",
+      hop: "mcpjam_internal",
       context: { requestId },
     });
   });

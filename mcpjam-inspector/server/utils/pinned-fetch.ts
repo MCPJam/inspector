@@ -79,6 +79,23 @@ const REFUSAL_PATTERNS: readonly RegExp[] = [
 /** DNS could not answer. Ours to retry, not the caller's to fix. */
 const RESOLUTION_FAILURE_PATTERN = /could not resolve/i;
 
+function isHttps(url: string): boolean {
+  try {
+    return new URL(url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** The host alone — never the path or query, which can carry a token. */
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "an unparseable URL";
+  }
+}
+
 /**
  * Serialize whatever the SDK transport handed back into a `Response` body.
  *
@@ -160,6 +177,20 @@ export function createPinnedFetch(
         timeoutMs: options.timeoutMs,
       });
 
+      // WHERE WE ACTUALLY ENDED UP. `httpsOnly: false` is required so a
+      // loopback dev target stays reachable, and it also lets the transport
+      // follow an https→http redirect to a public host. Credentials are already
+      // stripped across origins (scheme is part of an origin), so this is not a
+      // token leak — it is a probe that quietly became plaintext, where anyone
+      // on the path can rewrite the 401 challenge we classify on. Refuse the
+      // downgrade rather than report on a conversation someone else could have
+      // written.
+      if (options.allowLoopback !== true && !isHttps(result.finalUrl)) {
+        throw new BlockedEgressTargetError(
+          `Refusing a plaintext connection after a redirect to "${safeHost(result.finalUrl)}".`
+        );
+      }
+
       return new Response(toBodyInit(result.body), {
         status: result.status,
         statusText: result.statusText,
@@ -175,7 +206,18 @@ export function createPinnedFetch(
       // exact outcome that module's bookkeeping exists to prevent.
       if (error instanceof OAuthProxyError) {
         if (REFUSAL_PATTERNS.some((pattern) => pattern.test(error.message))) {
-          throw new BlockedEgressTargetError(error.message);
+          // NOT the transport's message. It names the address the hostname
+          // RESOLVED to — "example.com resolves to a private/reserved IP
+          // address (169.254.169.254)" — and this error's message is reported
+          // back to whoever submitted the hostname. That would make a refusal
+          // into a resolution oracle: submit a name, read back what our
+          // resolver saw, and map the internal network one answer at a time.
+          // The requested host is fine to repeat (they typed it); what it
+          // resolved to is not. The original stays on `cause` for logs.
+          throw new BlockedEgressTargetError(
+            `Refusing to connect to "${safeHost(url)}": it is not a publicly routable address.`,
+            { cause: error }
+          );
         }
         if (RESOLUTION_FAILURE_PATTERN.test(error.message)) {
           throw new EgressResolutionError(error.message);

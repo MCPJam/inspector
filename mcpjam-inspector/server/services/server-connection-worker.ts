@@ -45,6 +45,7 @@ import {
   BlockedEgressTargetError,
   EgressResolutionError,
 } from "../utils/hosted-egress-guard.js";
+import { logger } from "../utils/logger.js";
 
 /** Bounds the authenticated initialize. Shorter than discovery's budget: by
  * this point we know the server answers, so a long hang is a fault rather than
@@ -97,20 +98,18 @@ export async function runConnectionJob(
       // discovery arm — which permanently tells someone their URL was refused
       // when the truth is that the backend handed us a row with nothing in it.
       if (!lease.serverUrl) {
-        await reportValidation({
+        // There is no legal report from `discovering` — `reportValidation` is
+        // only accepted from `validating` — so releasing the lease IS the
+        // remedy. Calling the report first and treating its inevitable refusal
+        // as the trigger would spend an authenticated round trip and a recorded
+        // 4xx to arrive at the same place, and would swallow a genuine backend
+        // outage along the way.
+        logger.warn("Connection lease in `discovering` carried no server URL", {
+          event: "server_connections.lease_missing_url",
           requestId,
-          leaseId,
-          outcome: "retryable",
-          errorCode: "VALIDATION_FAILED",
-          errorMessage:
-            "The connection request arrived without a server URL to discover.",
-        }).catch(async () => {
-          // `reportValidation` is only legal from `validating`; a request in
-          // `discovering` cannot take it. Release and let the retry cron bring
-          // it back around.
-          await releaseLease(requestId, leaseId).catch(() => {});
         });
-        return { requestId, ran: true, status: lease.status };
+        await releaseLease(requestId, leaseId).catch(() => {});
+        return { requestId, ran: false, skipped: "not-actionable" };
       }
       await runDiscoveryStep(requestId, leaseId, lease.serverUrl);
       return { requestId, ran: true, status: lease.status };
@@ -326,17 +325,65 @@ async function attemptInitialize(
   // different next step.
   const sentCredential = Boolean(accessToken);
 
+  /**
+   * THE PROBE SWALLOWS WHAT `fetchFn` THROWS. It catches every transport error
+   * and reports `status: "error"`, which classifies as retryable — right for a
+   * timeout and wrong for an egress refusal, because it would put an SSRF
+   * attempt on a retry schedule with a live credential attached. Catching the
+   * refusal around `probeMcpServer` does not help: it never gets that far.
+   *
+   * So the guard's verdict is recorded on the way past, exactly as
+   * `server-connection-discovery.ts` does, and consulted before the probe's own
+   * account of what happened.
+   */
+  const refusal: { blocked: BlockedEgressTargetError | null } = {
+    blocked: null,
+  };
+  /** Set when the step deadline fires. The probe cannot be cancelled — its
+   * config takes no abort signal — so this stops the NEXT hop instead, which is
+   * what keeps a credential-bearing request from outliving the lease that
+   * authorized it. */
+  let expired = false;
+
+  const guardedFetch: typeof fetch = async (target, init) => {
+    if (expired) {
+      throw new Error("The validation deadline passed before this request.");
+    }
+    try {
+      return await pinnedFetch(target, init);
+    } catch (error) {
+      if (error instanceof BlockedEgressTargetError) {
+        refusal.blocked = error;
+      }
+      throw error;
+    }
+  };
+
+  /** A recorded refusal OUTRANKS every retryable outcome, so this is consulted
+   * before each of them rather than only on the happy path. */
+  const refusalOutcome = (): InitializeAttempt | null =>
+    refusal.blocked === null
+      ? null
+      : {
+          outcome: "terminal",
+          errorCode: "URL_NOT_ALLOWED",
+          errorMessage: refusal.blocked.message,
+        };
+
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const deadline = new Promise<"deadline">((resolve) => {
-      deadlineTimer = setTimeout(() => resolve("deadline"), deadlineMs);
+      deadlineTimer = setTimeout(() => {
+        expired = true;
+        resolve("deadline");
+      }, deadlineMs);
     });
 
     const raced = await Promise.race([
       probeMcpServer({
         url: serverUrl,
         accessToken: accessToken ?? undefined,
-        fetchFn: pinnedFetch,
+        fetchFn: guardedFetch,
         timeoutMs: VALIDATION_TIMEOUT_MS,
         clientName: "mcpjam-connection-validator",
         // No retry policy: the state machine owns retries, with its own budget
@@ -348,16 +395,26 @@ async function attemptInitialize(
     ]);
 
     if (raced === "deadline") {
-      // The probe keeps running — `ProbeMcpServerConfig` takes no abort signal,
-      // so there is nothing to cancel from here — but its result is dropped and
-      // the lease is released now rather than whenever it finishes. Retryable:
-      // a stall is not a verdict about the server.
-      return {
-        ...COULD_NOT_CONNECT,
-        errorMessage: `The connection attempt did not finish within ${deadlineMs}ms.`,
-      };
+      // The in-flight request cannot be cancelled — `ProbeMcpServerConfig`
+      // takes no abort signal — but `expired` stops the probe from opening
+      // another, so the credential-bearing traffic ends here rather than
+      // continuing under a lease we are about to release. A refusal recorded
+      // before the stall still decides the outcome; one arriving after is lost,
+      // and that is a cost rather than a hole, since the guard refused the hop
+      // either way and nothing was reached.
+      return (
+        refusalOutcome() ?? {
+          ...COULD_NOT_CONNECT,
+          errorMessage: `The connection attempt did not finish within ${deadlineMs}ms.`,
+        }
+      );
     }
     const probe = raced;
+
+    // Before the probe's own account of what happened: it reports a refused
+    // target as an ordinary transport error, which would read as retryable.
+    const recorded = refusalOutcome();
+    if (recorded !== null) return recorded;
 
     // EXHAUSTIVE OVER THE PROBE'S UNION, ON PURPOSE. The first cut of this
     // branched on `probe.status === "ok"` — a value `probeMcpServer` cannot
@@ -418,7 +475,12 @@ async function attemptInitialize(
       }
     }
   } catch (error) {
-    return classifyInitializeFailure(error, [], sentCredential);
+    // The `instanceof` inside `classifyInitializeFailure` covers a refusal that
+    // escapes the probe; `refusalOutcome` covers the ordinary case where the
+    // probe swallowed it. Both paths exist because only the second one happens.
+    return (
+      refusalOutcome() ?? classifyInitializeFailure(error, [], sentCredential)
+    );
   } finally {
     // Otherwise the pending timer keeps the event loop alive for the full
     // deadline after an answer has already been returned.
