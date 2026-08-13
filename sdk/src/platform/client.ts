@@ -26,6 +26,7 @@ import type {
   PlatformScenario,
   PlatformScenarioDeleted,
   PlatformEnvironmentCreateBody,
+  PlatformEnvironmentCapabilities,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -518,6 +519,28 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * What this deployment's environment surface supports.
+   *
+   * CALL THIS BEFORE SENDING `modelId`. The SDK ships independently of the
+   * backend, and a field an older deployment does not know is a hard validator
+   * error there rather than a silently ignored one. A deployment too old to
+   * answer reports `false` for everything, which is the correct assumption.
+   */
+  getEnvironmentCapabilities(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironmentCapabilities> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/capabilities`,
+      {},
+      options
+    );
+  }
+
   getEnvironment(
     params: { projectId: string; environmentId: string },
     options?: RequestOptions
@@ -566,8 +589,8 @@ export class PlatformApiClient {
 
   /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
-   * `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting a field
-   * leaves it alone.
+   * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
+   * a field leaves it alone.
    */
   updateEnvironment(
     params: {

@@ -3760,6 +3760,51 @@
         }
       }
     },
+    "/projects/{projectId}/environments/capabilities": {
+      "get": {
+        "operationId": "getEnvironmentCapabilities",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Check what this deployment's environment surface supports",
+        "description": "Report which environment features this MCPJam deployment accepts. Call it before sending a model override: clients ship independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports `false` for everything, which is the correct assumption.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deployment's environment capabilities.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvironmentCapabilities"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/environments/{environmentId}": {
       "get": {
         "operationId": "getEnvironment",
@@ -8376,7 +8421,18 @@
             "type": "object",
             "additionalProperties": true,
             "minProperties": 1,
-            "description": "Full host config v2, used verbatim (alternative to `template`)."
+            "required": [
+              "modelId"
+            ],
+            "properties": {
+              "modelId": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "description": "Model id the host pins. Required and non-empty: an environment inherits its client's model when it sets no override, so a host created without one cannot back a headless environment and its launches are refused with `ENV_MODEL_REQUIRED`. A `PATCH` may not clear it either, though hosts created before this rule stay editable."
+              }
+            },
+            "description": "Full host config v2, used verbatim (alternative to `template`). Must pin `modelId`."
           }
         },
         "oneOf": [
@@ -8775,6 +8831,10 @@
             "type": "string",
             "description": "Present only when the environment pins a standalone server group; otherwise the host config's own servers apply."
           },
+          "modelId": {
+            "type": "string",
+            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -9059,6 +9119,12 @@
           "serverAttachmentId": {
             "type": "string"
           },
+          "modelId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim — no alias canonicalization — so pass exactly the id the provider request should carry."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -9106,6 +9172,13 @@
             "type": "string",
             "nullable": true,
             "description": "`null` clears the pin and falls back to the host config's servers."
+          },
+          "modelId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "nullable": true,
+            "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
           },
           "skillSelection": {
             "allOf": [
@@ -9194,6 +9267,22 @@
           "hostConfigId": {
             "type": "string",
             "description": "The host's config at resolve time \u2014 hosts rotate configs live, so this can change without the environment's `revision` changing."
+          },
+          "modelId": {
+            "type": "string",
+            "description": "The environment's stored override, when it sets one."
+          },
+          "effectiveModelId": {
+            "type": "string",
+            "description": "The model this environment WILL RUN — the override if it has one, else the host config's. Always present on a successful resolve: an environment with no model anywhere cannot be resolved for launch and fails with 409 `details.reason: \"environment_model_required\"`."
+          },
+          "modelSource": {
+            "type": "string",
+            "enum": [
+              "environment",
+              "host"
+            ],
+            "description": "Which of the two supplied `effectiveModelId`."
           },
           "serverAttachmentId": {
             "type": "string"
@@ -10070,6 +10159,23 @@
           "reauthorize": {
             "type": "boolean",
             "description": "Skip deduplication and force a fresh authorization."
+          }
+        }
+      },
+      "ProjectEnvironmentCapabilities": {
+        "type": "object",
+        "required": [
+          "modelOverrides",
+          "modelMatrix"
+        ],
+        "properties": {
+          "modelOverrides": {
+            "type": "boolean",
+            "description": "`modelId` is accepted on environment create and update."
+          },
+          "modelMatrix": {
+            "type": "boolean",
+            "description": "Environment cells may vary by model on one host (the compare grid)."
           }
         }
       }

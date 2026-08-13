@@ -193,6 +193,8 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   delete_host:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not an action: it answers whether this platform accepts an environment model override, which the write paths already ask on the caller's behalf.",
   create_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   update_project_environment:

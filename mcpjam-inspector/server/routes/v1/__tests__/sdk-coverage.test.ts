@@ -98,6 +98,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
 
   // Project environments
   "get /projects/{projectId}/environments": "listEnvironments",
+  "get /projects/{projectId}/environments/capabilities":
+    "getEnvironmentCapabilities",
   "post /projects/{projectId}/environments": "createEnvironment",
   "get /projects/{projectId}/environments/{environmentId}": "getEnvironment",
   "patch /projects/{projectId}/environments/{environmentId}":
