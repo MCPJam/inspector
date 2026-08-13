@@ -102,7 +102,12 @@ export async function refreshTokensAgainstPrivateAuthorizationServer(
   });
 
   logger.debug("[local oauth refresh] refreshed against private auth server", {
-    authorizationServerUrl: material.authorizationServerUrl,
+    // Origin only, never the raw URL: logger.debug ships to Axiom, and an
+    // imported authorization-server URL can carry basic-auth userinfo or an
+    // `x-api-key`-style query parameter. `.origin` drops userinfo, path and
+    // query, which is the whole credential surface. Same rule the backend
+    // applies with sanitizeUrlForLog.
+    authorizationServerOrigin: new URL(material.authorizationServerUrl).origin,
     rotatedRefreshToken: Boolean(tokens.refresh_token),
   });
 

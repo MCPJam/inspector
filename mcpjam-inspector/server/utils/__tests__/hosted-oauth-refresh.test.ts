@@ -455,6 +455,55 @@ describe("private authorization server fallback", () => {
     expect(importBody.tokens.access_token).toBe("locally-refreshed-token");
   });
 
+  it("keeps the existing refresh token when the authorization server omits one", async () => {
+    // RFC 6749 §6: omitting refresh_token means "keep the one you have".
+    // Storing the raw response would drop it, and the NEXT expiry would fail
+    // with "missing refresh_token" — the fix breaking itself one cycle later.
+    localRefreshMock.mockResolvedValue({
+      access_token: "locally-refreshed-token",
+      token_type: "Bearer",
+    });
+    const fetchMock = vi.fn(async (input: any) =>
+      String(input).endsWith("/web/oauth/force-refresh")
+        ? privateAuthServer409({ refresh: REFRESH_MATERIAL })
+        : new Response(JSON.stringify({ success: true }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      refreshHostedOAuthAccessTokenWithLocalFallback(
+        "bearer-token",
+        "project-1",
+        "server-1"
+      )
+    ).resolves.toBe("locally-refreshed-token");
+
+    const importBody = JSON.parse((fetchMock.mock.calls[1][1] as any).body);
+    expect(importBody.tokens.refresh_token).toBe("stored-refresh-token");
+  });
+
+  it("stores a rotated refresh token when the authorization server issues one", async () => {
+    localRefreshMock.mockResolvedValue({
+      access_token: "locally-refreshed-token",
+      refresh_token: "rotated-refresh-token",
+    });
+    const fetchMock = vi.fn(async (input: any) =>
+      String(input).endsWith("/web/oauth/force-refresh")
+        ? privateAuthServer409({ refresh: REFRESH_MATERIAL })
+        : new Response(JSON.stringify({ success: true }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-token",
+      "project-1",
+      "server-1"
+    );
+
+    const importBody = JSON.parse((fetchMock.mock.calls[1][1] as any).body);
+    expect(importBody.tokens.refresh_token).toBe("rotated-refresh-token");
+  });
+
   it("still returns the fresh token when storing it fails", async () => {
     // This connect has a working token; failing it too would help nobody. If
     // the AS rotated the refresh token, the next connect sees invalid_grant

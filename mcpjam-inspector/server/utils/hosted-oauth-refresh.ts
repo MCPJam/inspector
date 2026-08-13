@@ -305,13 +305,23 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
       );
     }
 
+    // RFC 6749 §6 lets the authorization server omit refresh_token on a
+    // refresh, meaning "keep using the one you have" — and many do. Importing
+    // the raw response would then store a credential with NO refresh token, so
+    // the very next expiry fails with "missing refresh_token" and forces a
+    // reconnect: a fix that breaks the thing it just fixed, one cycle later.
+    // Mirrors mergeRefreshedTokens on the backend's own refresh path.
+    const tokensToStore: OAuthTokens = tokens.refresh_token?.trim()
+      ? tokens
+      : { ...tokens, refresh_token: error.refreshMaterial.refreshToken };
+
     try {
       await importRefreshedTokens(
         bearerToken,
         projectId,
         serverId,
         error.refreshMaterial,
-        tokens
+        tokensToStore
       );
     } catch (importError) {
       // THIS connect succeeds — the token in hand is good. But if the
