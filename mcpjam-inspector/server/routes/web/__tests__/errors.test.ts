@@ -7,7 +7,7 @@ vi.mock("@sentry/node", () => ({
 }));
 import * as Sentry from "@sentry/node";
 const captureException = vi.mocked(Sentry.captureException);
-import { originOf } from "@mcpjam/sdk";
+import { MCPAuthError, originOf } from "@mcpjam/sdk";
 import { InsufficientScopeError } from "@modelcontextprotocol/client";
 
 import {
@@ -40,6 +40,101 @@ describe("mapRuntimeError", () => {
     // No per-server auth context here — the escalation tag is applied only
     // where the effective auth method is known.
     expect(mapped.details?.oauthRequired).toBeUndefined();
+  });
+
+  describe("upstream auth rejections", () => {
+    // The SDK raises this exact shape from `MCPClientManager`'s connect path
+    // (`new MCPAuthError('Authentication failed for MCP server "…": …',
+    // authCheck.statusCode, { cause })`). 3,706 of them landed on
+    // `/api/web/tools/list` in 30 days, every one reported as a 500
+    // INTERNAL_ERROR — an MCPJam fault code for the user's server refusing our
+    // credentials.
+    function upstreamAuthError(statusCode?: number, detail = "") {
+      return new MCPAuthError(
+        `Authentication failed for MCP server "acme": Streamable HTTP error: ${detail}`,
+        statusCode,
+      );
+    }
+
+    // The spec's authorization error table is identical in 2025-03-26,
+    // 2025-06-18, 2025-11-25, 2026-07-28 and draft: 401 (token invalid), 403
+    // (insufficient permissions), 400 (malformed authorization request). All
+    // three are legitimate upstream auth rejections, so none of them may be
+    // reported as an MCPJam internal error.
+    it.each([401, 403, 400])(
+      "never reports an upstream %i auth rejection as 500 INTERNAL_ERROR",
+      (statusCode) => {
+        const mapped = mapRuntimeError(upstreamAuthError(statusCode));
+
+        expect(mapped.status).not.toBe(500);
+        expect(mapped.code).not.toBe(ErrorCode.INTERNAL_ERROR);
+      },
+    );
+
+    it("never reports a status-less auth rejection as 500 INTERNAL_ERROR", () => {
+      // `isAuthError` returns no statusCode when it recognized the failure by
+      // message alone, so the MCPAuthError the SDK builds carries none.
+      const mapped = mapRuntimeError(upstreamAuthError(undefined));
+
+      expect(mapped.status).not.toBe(500);
+      expect(mapped.code).not.toBe(ErrorCode.INTERNAL_ERROR);
+    });
+
+    it("keeps a clean upstream 401 on the existing 401 UNAUTHORIZED branch", () => {
+      const mapped = mapRuntimeError(upstreamAuthError(401));
+
+      expect(mapped.status).toBe(401);
+      expect(mapped.code).toBe(ErrorCode.UNAUTHORIZED);
+    });
+
+    it.each([403, 400, undefined])(
+      "maps an upstream %s auth rejection to 403 UPSTREAM_AUTH_FAILED",
+      (statusCode) => {
+        const mapped = mapRuntimeError(upstreamAuthError(statusCode));
+
+        expect(mapped.status).toBe(403);
+        expect(mapped.code).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+        expect(mapped.details?.upstreamAuthRequired).toBe(true);
+      },
+    );
+
+    it("does NOT widen the guest-retry 401 surface", () => {
+      // `authFetch` retries any 401 from `/api/web/*` for an actor with no
+      // WorkOS session (`shouldRetryApiAuth401`) by force-refreshing the guest
+      // token and replaying — and the hosted `webError` envelope cannot send
+      // the `X-MCP-Auth-Required: oauth` header that suppresses it. Sending
+      // these thousands of upstream rejections back as 401 would put every
+      // guest through a refresh + replay that cannot fix the failure.
+      for (const statusCode of [403, 400, undefined]) {
+        expect(mapRuntimeError(upstreamAuthError(statusCode)).status).not.toBe(
+          401,
+        );
+      }
+    });
+
+    it("still carries the normalized block and the effective origin", () => {
+      // The whole point of moving off INTERNAL_ERROR is attribution, so the
+      // envelope must keep saying whose failure this was: `user_config`, which
+      // is also what keeps the strict Sentry policy from paging us for it.
+      const mapped = mapRuntimeError(upstreamAuthError(403));
+
+      expect(mapped.normalized?.slug).toBeTruthy();
+      expect(originOf(mapped.normalized)).toBe("user_config");
+      expect(mapped.origin).toBe("user_config");
+    });
+
+    it("outranks transport noise quoted inside the auth message", () => {
+      // The connect path quotes BOTH the Streamable HTTP and the SSE failure in
+      // one message, so an auth rejection routinely carries "fetch failed" or
+      // "timed out" text. The SDK already classified it from the status codes;
+      // a substring match must not override that.
+      expect(
+        mapRuntimeError(upstreamAuthError(403, "fetch failed")).code,
+      ).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+      expect(
+        mapRuntimeError(upstreamAuthError(403, "the request timed out")).code,
+      ).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+    });
   });
 
   it("maps ECONN* errno messages to 502", () => {
@@ -136,6 +231,11 @@ describe("mapRuntimeError", () => {
         "https://rs.example/.well-known/oauth-protected-resource",
       errorDescription: undefined,
     });
+    // Regression guard for the generic upstream-auth branch added below it:
+    // `InsufficientScopeError` is also an auth rejection, so it would be
+    // swallowed as UPSTREAM_AUTH_FAILED (dropping the challenge the client
+    // needs to drive the step-up) if that branch ever moved ahead of this one.
+    expect(mapped.code).not.toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
   });
 
   it("recognizes a wrapped insufficient_scope challenge (cause chain) as 403", () => {
