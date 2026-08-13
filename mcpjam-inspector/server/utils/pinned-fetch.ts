@@ -135,6 +135,35 @@ function withoutCredentials(
   );
 }
 
+/** Headers that describe a body which no longer exists after a method rewrite. */
+function withoutBodyHeaders(
+  headers: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) =>
+        !["content-type", "content-length", "content-encoding"].includes(
+          name.toLowerCase()
+        )
+    )
+  );
+}
+
+/**
+ * What is left of the caller's budget.
+ *
+ * Never returns zero or a negative: `executeOAuthProxy` rejects a
+ * non-positive `timeoutMs` outright, and a chain that has already run long
+ * should fail as a timeout on the wire rather than as a bad argument.
+ */
+function remainingTimeout(
+  timeoutMs: number | undefined,
+  startedAt: number
+): number | undefined {
+  if (timeoutMs === undefined) return undefined;
+  return Math.max(1, timeoutMs - (Date.now() - startedAt));
+}
+
 /**
  * Every hop must be https, unless loopback was opted into AND this hop is
  * actually loopback.
@@ -234,28 +263,40 @@ export function createPinnedFetch(
       // treatment: resolve once, refuse private answers, pin the address.
       let currentUrl = url;
       let currentHeaders = headers;
+      let currentMethod = (init?.method ?? "GET").toUpperCase();
+      let currentBody = init?.body ?? undefined;
       let result: Awaited<ReturnType<typeof executeOAuthProxy>> | undefined;
+
+      // ONE deadline for the whole chain, not one per hop. `timeoutMs` is the
+      // caller's budget for this fetch; handing each hop the full value would
+      // let a six-hop chain spend six of them and outlive whatever the caller
+      // was bounding.
+      const startedAt = Date.now();
 
       for (let hop = 0; ; hop += 1) {
         if (hop > MAX_REDIRECT_HOPS) {
           throw new Error(`Too many redirects (more than ${MAX_REDIRECT_HOPS}).`);
         }
 
+        const hopAllowsLoopback =
+          options.allowLoopback === true && isLoopbackOAuthUrl(currentUrl);
         assertSchemeAllowed(currentUrl, options.allowLoopback === true);
 
         result = await executeOAuthProxy({
           url: currentUrl,
-          method: init?.method ?? "GET",
+          method: currentMethod,
           headers: currentHeaders,
-          body: init?.body ?? undefined,
-          // HTTPS for PUBLIC hosts is enforced by `assertSchemeAllowed` above
-          // rather than by the transport, so a loopback dev target stays
-          // reachable when it opted in. Passing `httpsOnly: true` instead would
-          // ALSO force `redirect: "manual"` inside the transport, which is what
-          // this loop is doing deliberately and per-hop.
-          httpsOnly: false,
+          body: currentBody,
+          // PER HOP, AND THIS IS THE LOAD-BEARING LINE. The transport derives
+          // `allowLoopbackFlow = !httpsOnly && isLoopbackOAuthUrl(url)` from
+          // whatever url it is handed — so passing `false` unconditionally
+          // would let a public https target redirect to `https://127.0.0.1`
+          // and have the transport permit it, because that HOP is loopback.
+          // Loopback permission has to be re-derived for the hop being dialled,
+          // not inherited from the call that started the chain.
+          httpsOnly: !hopAllowsLoopback,
           redirect: "manual",
-          timeoutMs: options.timeoutMs,
+          timeoutMs: remainingTimeout(options.timeoutMs, startedAt),
         });
 
         const location = result.headers["location"] ?? result.headers["Location"];
@@ -266,6 +307,23 @@ export function createPinnedFetch(
           nextUrl = new URL(location, currentUrl);
         } catch {
           throw new Error("The server returned an invalid redirect location.");
+        }
+
+        // Fetch's method rewrite. A 303 always becomes a GET; 301 and 302 do
+        // the same for anything that is not GET/HEAD, which is what every
+        // browser and `undici` actually do regardless of what the RFC once
+        // implied. Replaying the initialize POST into a redirect would send the
+        // body somewhere the caller never addressed — and would also fail the
+        // probe against a server that redirects for an ordinary reason.
+        if (
+          result.status === 303 ||
+          ((result.status === 301 || result.status === 302) &&
+            currentMethod !== "GET" &&
+            currentMethod !== "HEAD")
+        ) {
+          currentMethod = "GET";
+          currentBody = undefined;
+          currentHeaders = withoutBodyHeaders(currentHeaders);
         }
 
         // Match Fetch's credential boundary, which the transport applies within

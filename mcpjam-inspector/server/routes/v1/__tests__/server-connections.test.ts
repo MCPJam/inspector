@@ -87,10 +87,18 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
   // Vitest does not restore stubbed env automatically, and `CONVEX_URL`
   // leaking into a neighbouring file would make it pass for the wrong reason.
   vi.unstubAllEnvs();
+  // Both limiters are module singletons, so a test that throws mid-loop would
+  // otherwise leave a warm bucket for whatever runs next. Restoring here rather
+  // than at the end of a test body means it happens on failure too.
+  resetServerConnectionPollRateLimitForTests();
+  const { resetGuestRateLimitForTests } = await import(
+    "../../../middleware/guest-rate-limit.js"
+  );
+  resetGuestRateLimitForTests();
 });
 
 describe("create", () => {
@@ -238,13 +246,12 @@ describe("status, cancel and retry", () => {
   });
 
   it("polls without spending the shared guest bucket", async () => {
-    const { guestRateLimitMiddleware, resetGuestRateLimitForTests } =
-      await import("../../../middleware/guest-rate-limit.js");
+    const { guestRateLimitMiddleware } = await import(
+      "../../../middleware/guest-rate-limit.js"
+    );
     const { serverConnectionPollRateLimitMiddleware } = await import(
       "../../../middleware/server-connection-poll-rate-limit.js"
     );
-    resetGuestRateLimitForTests();
-    resetServerConnectionPollRateLimitForTests();
 
     // Both limiters, in the order the v1 router applies them, with a guest.
     const app = new Hono();
@@ -268,9 +275,6 @@ describe("status, cancel and retry", () => {
       ).toBe(200);
     }
     expect((await app.request("/api/v1/projects")).status).toBe(200);
-
-    resetGuestRateLimitForTests();
-    resetServerConnectionPollRateLimitForTests();
   });
 
   it("cancels", async () => {

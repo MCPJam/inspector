@@ -537,3 +537,244 @@ test("projects status renders a human summary", async () => {
     await fixture.close();
   }
 });
+
+/**
+ * A fixture for the connection flow.
+ *
+ * `statuses` is consumed one poll at a time, so a test can describe a request
+ * that starts non-terminal and settles.
+ */
+async function startConnectionFixture(options: {
+  created: Record<string, unknown>;
+  statuses?: Array<Record<string, unknown>>;
+}): Promise<{
+  baseUrl: string;
+  createBodies: unknown[];
+  polls: number;
+  close: () => Promise<void>;
+}> {
+  const createBodies: unknown[] = [];
+  const remaining = [...(options.statuses ?? [])];
+  let polls = 0;
+
+  const server: Server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += String(chunk);
+    const url = new URL(req.url ?? "/", "http://fixture");
+    res.setHeader("content-type", "application/json");
+
+    if (url.pathname === "/api/v1/server-connections" && req.method === "POST") {
+      createBodies.push(raw ? JSON.parse(raw) : null);
+      res.statusCode = 201;
+      res.end(JSON.stringify(options.created));
+      return;
+    }
+    if (url.pathname.startsWith("/api/v1/server-connections/")) {
+      polls += 1;
+      res.end(JSON.stringify(remaining.shift() ?? options.created));
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end(JSON.stringify({ code: "NOT_FOUND", message: "no route" }));
+  });
+
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fixture server has no address");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
+    createBodies,
+    get polls() {
+      return polls;
+    },
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
+}
+
+test("server connect rejects a URL that is not http(s) at the keyboard", async () => {
+  const fixture = await startConnectionFixture({
+    created: { connectionRequestId: "scr_1", status: "awaiting_authorization" },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "file:///etc/passwd",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    // Rejected before any request: a bad URL is a typo, and finding out from
+    // the API is a slower, vaguer version of the same answer.
+    assert.equal(run.result.exitCode, 1);
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect prints the authorization link even with --no-browser", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "awaiting_authorization",
+      handoffUrl: "https://app.mcpjam.test/connect/server/tok",
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+          ),
+          "--no-browser",
+          "--no-wait",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    // A browser that fails to launch, or launches on the wrong machine over
+    // SSH, otherwise leaves the user with a request they cannot finish.
+    assert.match(run.stderr, /connect\/server\/tok/);
+    // `--no-wait` hands back a request id, so it must also say how to follow it.
+    assert.match(run.stderr, /connect-status --request scr_1/);
+    assert.equal(run.result.exitCode, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect-status reads an existing request", async () => {
+  const fixture = await startConnectionFixture({
+    created: { connectionRequestId: "scr_1", status: "ready" },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect-status",
+            "--request",
+            "scr_1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(JSON.parse(run.stdout).status, "ready");
+    assert.equal(fixture.polls, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect stops watching once the request settles", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "validating",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+    statuses: [
+      { connectionRequestId: "scr_1", status: "validating" },
+      { connectionRequestId: "scr_1", status: "ready" },
+    ],
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+          ),
+          "--no-browser",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(JSON.parse(run.stdout).status, "ready");
+    assert.equal(fixture.polls, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect exits non-zero when it gave up rather than finished", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "awaiting_authorization",
+      // Already expired, so the deadline is met on the first check.
+      expiresAt: new Date(Date.now() - 1_000).toISOString(),
+    },
+    statuses: [{ connectionRequestId: "scr_1", status: "awaiting_authorization" }],
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+          ),
+          "--no-browser",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    // A script must be able to tell "the connection is ready" from "I stopped
+    // watching"; both print a status, so the exit code carries the difference.
+    assert.equal(run.result.exitCode, 1);
+    assert.match(run.stderr, /Stopped waiting/);
+    assert.match(run.stderr, /connect-status --request scr_1/);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});

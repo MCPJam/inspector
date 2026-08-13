@@ -39,6 +39,23 @@ function addPlatformOptions(command: Command): Command {
     );
 }
 
+/**
+ * The platform options for the command being run, INCLUDING the ones its
+ * ancestors declared.
+ *
+ * `addPlatformOptions` is applied to the `servers` group as well as to each of
+ * its subcommands, and Commander stores a flag on the command that declares it
+ * nearest the top — so `--api-key` typed after `projects server connect` lands
+ * on `servers`, and the subcommand's own `options` object never sees it. The
+ * symptom is "Not logged in" while holding a perfectly good key.
+ *
+ * `getGlobalOptions` already reads `optsWithGlobals()` for exactly this reason;
+ * platform options need the same treatment and did not have it.
+ */
+function platformOptionsOf(command: Command): PlatformOptions {
+  return command.optsWithGlobals() as PlatformOptions;
+}
+
 async function runPlatformCommand<TOutput>(
   options: PlatformOptions,
   timeoutMs: number,
@@ -89,10 +106,10 @@ export function registerProjectsCommands(program: Command): void {
 
   addPlatformOptions(
     projects.command("list").description("List the projects you can access")
-  ).action(async (options: PlatformOptions, command) => {
+  ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectsOperation.execute({}, { client, signal })
@@ -139,7 +156,7 @@ export function registerProjectsCommands(program: Command): void {
           : { visibility: options.visibility }),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           createProjectOperation.execute(input, { client, signal })
@@ -178,7 +195,7 @@ export function registerProjectsCommands(program: Command): void {
           : { visibility: options.visibility }),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           updateProjectOperation.execute(input, { client, signal })
@@ -198,7 +215,7 @@ export function registerProjectsCommands(program: Command): void {
       project: options.project,
     });
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         deleteProjectOperation.execute(input, { client, signal })
@@ -218,7 +235,7 @@ export function registerProjectsCommands(program: Command): void {
   servers.action(async (options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectServersOperation.execute(
@@ -252,7 +269,7 @@ export function registerProjectsCommands(program: Command): void {
   ).action(async (options: PlatformOptions & { body: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         createProjectServerOperation.execute(
@@ -272,7 +289,7 @@ export function registerProjectsCommands(program: Command): void {
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         getProjectServerOperation.execute(
@@ -297,7 +314,7 @@ export function registerProjectsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           updateProjectServerOperation.execute(
@@ -323,7 +340,7 @@ export function registerProjectsCommands(program: Command): void {
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         deleteProjectServerOperation.execute(
@@ -377,7 +394,7 @@ export function registerProjectsCommands(program: Command): void {
       });
 
       const created = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           connectProjectServerOperation.execute(input, { client, signal })
@@ -410,7 +427,7 @@ export function registerProjectsCommands(program: Command): void {
       }
 
       const settled = await pollConnection(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         created.connectionRequestId,
         created.expiresAt
@@ -440,7 +457,7 @@ export function registerProjectsCommands(program: Command): void {
         connectionRequestId: options.request,
       });
       const payload = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getProjectServerConnectionStatusOperation.execute(input, {
@@ -465,7 +482,7 @@ export function registerProjectsCommands(program: Command): void {
   ).action(async (options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const payload = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         showServersOperation.execute(
@@ -557,6 +574,8 @@ async function pollConnection(
 
   try {
     for (;;) {
+      // Already merged by the caller — this helper receives resolved options
+      // rather than a Commander command.
       const current = await runPlatformCommand(
         options,
         timeoutMs,
