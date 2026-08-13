@@ -60,7 +60,7 @@ vi.mock("convex/react", () => ({
 const FINGERPRINT = "no_tools_used:journey:j-1";
 
 function signal(
-  overrides: Partial<SwarmWaveSignalCandidate> = {},
+  overrides: Partial<SwarmWaveSignalCandidate> = {}
 ): SwarmWaveSignalCandidate {
   return {
     detector: "no_tools_used",
@@ -90,7 +90,7 @@ function signals(overrides: Partial<SwarmWaveSignals> = {}): SwarmWaveSignals {
 }
 
 function insightCandidate(
-  overrides: Partial<SwarmWaveInsightCandidate> = {},
+  overrides: Partial<SwarmWaveInsightCandidate> = {}
 ): SwarmWaveInsightCandidate {
   return {
     fingerprint: FINGERPRINT,
@@ -112,7 +112,7 @@ function insightCandidate(
 }
 
 function insights(
-  overrides: Partial<SwarmWaveInsights> = {},
+  overrides: Partial<SwarmWaveInsights> = {}
 ): SwarmWaveInsights {
   return {
     summary: "Agents answered with advice instead of calling the restore tool.",
@@ -131,7 +131,7 @@ function insights(
 }
 
 function completed(
-  over: Partial<SwarmWaveInsights> = {},
+  over: Partial<SwarmWaveInsights> = {}
 ): SwarmWaveInsightsDto {
   return {
     status: "completed",
@@ -173,7 +173,7 @@ function renderInsights() {
         swarmRunGroupId: "run-1",
       }}
       onOpenSession={onOpenSession}
-    />,
+    />
   );
   return onOpenSession;
 }
@@ -194,13 +194,11 @@ describe("one row per problem", () => {
     renderInsights();
     expect(screen.getAllByTestId("run-insight")).toHaveLength(1);
     expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
-      /never called a tool/i,
+      /never called a tool/i
     );
     // The model's contribution lives behind the expand, never as a second
     // headline saying the same thing.
-    expect(
-      screen.queryByTestId("run-insight-detail"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-insight-detail")).not.toBeInTheDocument();
   });
 
   it("shows signals immediately, before any generation exists", () => {
@@ -209,7 +207,7 @@ describe("one row per problem", () => {
     state.dto = null;
     renderInsights();
     expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
-      /never called a tool/i,
+      /never called a tool/i
     );
   });
 
@@ -231,9 +229,9 @@ describe("one row per problem", () => {
     });
     renderInsights();
     fireEvent.click(screen.getByTestId("run-insight-headline"));
-    expect(
-      screen.getByTestId("run-insight-detail"),
-    ).not.toHaveTextContent(/Why:/);
+    expect(screen.getByTestId("run-insight-detail")).not.toHaveTextContent(
+      /Why:/
+    );
   });
 
   it("collapses to the top three, expandable to all", () => {
@@ -264,12 +262,70 @@ describe("one row per problem", () => {
   });
 });
 
+/**
+ * Evidence integrity — the rail must not lend its authority to a row nobody
+ * can check.
+ *
+ * The backend now refuses to mine or narrate an exemplar-less candidate, but
+ * an older server, a cached payload, or a future detector can still hand this
+ * component one. When that happens the deterministic sentence stays (it is a
+ * true statement about counts) and everything that requires evidence — the
+ * expander, the model's cause and fix, the session chips — does not appear.
+ */
+describe("evidence integrity", () => {
+  const unevidenced = () =>
+    signals({ candidates: [signal({ exemplarSessionIds: [] })] });
+
+  it("will not expand a row with no failing session to open", () => {
+    state.signals = unevidenced();
+    state.dto = completed();
+    renderInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.queryByTestId("run-insight-detail")).not.toBeInTheDocument();
+  });
+
+  it("keeps the deterministic sentence for that row", () => {
+    // Suppressing the row entirely would hide a real count. Only the
+    // unverifiable half is withheld.
+    state.signals = unevidenced();
+    renderInsights();
+    expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
+      /never called a tool/i
+    );
+  });
+
+  it("never renders a Clean chip without a failing one beside it", () => {
+    state.signals = signals({
+      candidates: [
+        signal({ exemplarSessionIds: [], contrastSessionIds: ["s-9"] }),
+      ],
+    });
+    state.dto = completed();
+    renderInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(
+      screen.queryByTestId("run-insight-session-link")
+    ).not.toBeInTheDocument();
+  });
+
+  it("still expands once a failing exemplar is present", () => {
+    state.signals = signals({
+      candidates: [signal({ contrastSessionIds: ["s-9"] })],
+    });
+    state.dto = completed();
+    renderInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Why:/);
+    expect(screen.getAllByTestId("run-insight-session-link")).toHaveLength(2);
+  });
+});
+
 describe("summary and caveats", () => {
   it("leads with the summary and demotes caveats to the footer", () => {
     state.dto = completed();
     renderInsights();
     expect(screen.getByTestId("run-insights-summary")).toHaveTextContent(
-      /answered with advice instead of calling the restore tool/i,
+      /answered with advice instead of calling the restore tool/i
     );
     // Coverage is a footnote, not a preamble — a reader scanning for what to
     // fix should not have to read past a disclaimer to reach it.
@@ -298,9 +354,9 @@ describe("summary and caveats", () => {
   it("waits for the run to finish", () => {
     state.signals = signals({ terminal: false });
     renderInsights();
-    expect(
-      screen.getByTestId("run-insights-pending-run"),
-    ).toHaveTextContent(/when the run finishes/i);
+    expect(screen.getByTestId("run-insights-pending-run")).toHaveTextContent(
+      /when the run finishes/i
+    );
     expect(screen.queryByTestId("run-insight")).not.toBeInTheDocument();
   });
 
@@ -314,7 +370,7 @@ describe("summary and caveats", () => {
     state.signals = signals({ candidates: [] });
     renderInsights();
     expect(screen.getByTestId("run-insights-empty")).toHaveTextContent(
-      /no anomalies detected across 20 sessions/i,
+      /no anomalies detected across 20 sessions/i
     );
   });
 });
@@ -331,7 +387,7 @@ function renderBannerAndRecommendations() {
     >
       <RunInsightsBanner />
       <RunInsightsRecommendations />
-    </RunInsightsProvider>,
+    </RunInsightsProvider>
   );
 }
 
@@ -343,12 +399,14 @@ describe("RunInsightsBanner + Recommendations", () => {
 
     expect(screen.getByTestId("run-insights-banner")).toBeInTheDocument();
     expect(screen.getByTestId("run-insights-summary")).toHaveTextContent(
-      /advice instead of calling the restore tool/i,
+      /advice instead of calling the restore tool/i
     );
-    expect(screen.getByTestId("run-insights-recommendations")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("run-insights-recommendations")
+    ).toBeInTheDocument();
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
     expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
-      /never called a tool/i,
+      /never called a tool/i
     );
   });
 
@@ -361,6 +419,25 @@ describe("RunInsightsBanner + Recommendations", () => {
     fireEvent.click(screen.getByTestId("run-insight-headline"));
     expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Why:/i);
     expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Fix:/i);
+  });
+
+  // The rail has TWO row components. The evidence rule is a property of the
+  // surface, not of one layout, so it is pinned on both.
+  it("holds the same evidence rule as the compact rail", () => {
+    state.signals = signals({
+      candidates: [
+        signal({ exemplarSessionIds: [], contrastSessionIds: ["s-9"] }),
+      ],
+    });
+    state.dto = completed();
+    state.findings = [finding()];
+    renderBannerAndRecommendations();
+
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.queryByTestId("run-insight-detail")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("run-insight-session-link")
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -392,7 +469,7 @@ describe("generation lifecycle", () => {
     await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
 
     expect(await screen.findByTestId("run-insights-error")).toHaveTextContent(
-      /Ask a workspace member/,
+      /Ask a workspace member/
     );
     expect(state.requestMock).toHaveBeenCalledTimes(1);
   });
@@ -408,14 +485,16 @@ describe("generation lifecycle", () => {
           swarmRunGroupId: "run-1",
         }}
         onOpenSession={vi.fn()}
-      />,
+      />
     );
     await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByTestId("run-insights-chip"));
     await screen.findByTestId("run-insights");
     fireEvent.keyDown(document.body, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByTestId("run-insights")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByTestId("run-insights")).toBeNull()
+    );
     fireEvent.click(screen.getByTestId("run-insights-chip"));
     await screen.findByTestId("run-insights");
 
@@ -441,13 +520,13 @@ describe("generation lifecycle", () => {
     };
     renderInsights();
     expect(screen.getByTestId("run-insights-error")).toHaveTextContent(
-      /spending cap/i,
+      /spending cap/i
     );
     // The deterministic rows survive a failed generation.
     expect(screen.getByTestId("run-insight")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("run-insights-retry"));
     expect(state.requestMock).toHaveBeenCalledWith(
-      expect.objectContaining({ force: true }),
+      expect.objectContaining({ force: true })
     );
   });
 
@@ -459,14 +538,14 @@ describe("generation lifecycle", () => {
       .fn()
       .mockRejectedValue(
         new Error(
-          'Server Error: Limit "insightsPerDay" reached on the free plan.',
-        ),
+          'Server Error: Limit "insightsPerDay" reached on the free plan.'
+        )
       );
     renderInsights();
     await waitFor(() =>
       expect(screen.getByTestId("run-insights-error")).toHaveTextContent(
-        /daily insights limit/i,
-      ),
+        /daily insights limit/i
+      )
     );
   });
 });
@@ -477,7 +556,7 @@ describe("registry lifecycle", () => {
     state.findings = [finding()];
     renderInsights();
     expect(screen.getByTestId("run-insight-status")).toHaveTextContent(
-      "Recurring ×3",
+      "Recurring ×3"
     );
   });
 
@@ -490,13 +569,13 @@ describe("registry lifecycle", () => {
     fireEvent.click(screen.getByTestId("run-insight-dismiss"));
     expect(screen.getByTestId("run-insight")).toHaveAttribute(
       "data-dismissed",
-      "true",
+      "true"
     );
     await waitFor(() =>
       expect(screen.getByTestId("run-insight")).toHaveAttribute(
         "data-dismissed",
-        "false",
-      ),
+        "false"
+      )
     );
   });
 });
@@ -512,7 +591,7 @@ describe("Lane B discovery", () => {
   };
 
   const withDiscovery = (
-    findings: SwarmWaveDiscoveryFinding[],
+    findings: SwarmWaveDiscoveryFinding[]
   ): SwarmWaveInsightsDto => ({
     ...completed(),
     discovery: {
@@ -528,15 +607,15 @@ describe("Lane B discovery", () => {
     state.dto = withDiscovery([observation]);
     renderInsights();
     expect(screen.getByTestId("run-discovery-toggle")).toHaveTextContent(
-      /not measured by any check/i,
+      /not measured by any check/i
     );
     expect(
-      screen.queryByTestId("run-discovery-finding"),
+      screen.queryByTestId("run-discovery-finding")
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("run-discovery-toggle"));
     expect(screen.getByTestId("run-discovery-finding")).toHaveTextContent(
-      /opaque error string/i,
+      /opaque error string/i
     );
   });
 
@@ -554,7 +633,7 @@ describe("Lane B discovery", () => {
     renderInsights();
     fireEvent.click(screen.getByTestId("run-discovery-toggle"));
     expect(screen.getByTestId("run-discovery-check")).toHaveTextContent(
-      "toolCalledAtLeastOnce(search_flights)",
+      "toolCalledAtLeastOnce(search_flights)"
     );
   });
 
@@ -573,8 +652,8 @@ describe("signalSentence", () => {
           detector: "hallucinated_tool",
           subjectLabel: "cancel_booking",
           affectedSessions: 1,
-        }),
-      ),
+        })
+      )
     ).toBe('Agents invented a tool named "cancel_booking" in 1 session');
   });
 
@@ -586,9 +665,26 @@ describe("signalSentence", () => {
           subjectLabel: "Reconcile payouts",
           metric: 10_000,
           waveMetric: 2_000,
-        }),
-      ),
+        })
+      )
     ).toContain("5.0×");
+  });
+
+  it("names SESSIONS as the unit for target failures", () => {
+    // The bare "(1 of 2)" this used to print was ambiguous, and while the
+    // detector still had an attempt-outcome fire path those numbers were
+    // launch attempts being read as sessions.
+    expect(
+      signalSentence(
+        signal({
+          detector: "target_failures",
+          subjectKind: "environment",
+          subjectLabel: "Prod stack",
+          affectedSessions: 3,
+          sliceTotal: 4,
+        })
+      )
+    ).toBe("Tool errors concentrate on Prod stack in 3 of 4 sessions");
   });
 
   it("never divides by a missing comparison", () => {
@@ -599,8 +695,8 @@ describe("signalSentence", () => {
           subjectLabel: "Cursor",
           metric: 30_000,
           waveMetric: undefined,
-        }),
-      ),
+        })
+      )
     ).toContain("well above");
   });
 });
@@ -612,16 +708,16 @@ describe("rail density", () => {
     state.dto = completed({ summary: "x".repeat(200) });
     renderInsights();
     fireEvent.click(screen.getByTestId("run-insights-summary-toggle"));
-    expect(
-      screen.getByTestId("run-insights-summary-toggle"),
-    ).toHaveTextContent("Less");
+    expect(screen.getByTestId("run-insights-summary-toggle")).toHaveTextContent(
+      "Less"
+    );
   });
 
   it("leaves a short summary unclamped", () => {
     state.dto = completed({ summary: "Fix the restore tool description." });
     renderInsights();
     expect(
-      screen.queryByTestId("run-insights-summary-toggle"),
+      screen.queryByTestId("run-insights-summary-toggle")
     ).not.toBeInTheDocument();
   });
 });

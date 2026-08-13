@@ -141,8 +141,7 @@ const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   },
   regressed: {
     label: "Regressed",
-    className:
-      "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400",
+    className: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400",
   },
   resolved: {
     label: "Resolved",
@@ -164,7 +163,7 @@ export function signalFingerprint(candidate: {
 }): string {
   const clean = (value: string) => value.replace(/[:\n]/g, "_");
   return `${clean(candidate.detector)}:${clean(candidate.subjectKind)}:${clean(
-    candidate.subjectId,
+    candidate.subjectId
   )}`.slice(0, 200);
 }
 
@@ -175,7 +174,7 @@ export function signalFingerprint(candidate: {
  */
 export function signalSentence(
   c: RailSignalCandidate,
-  opts?: { cohort?: "run" | "window" },
+  opts?: { cohort?: "run" | "window" }
 ): string {
   // Relative detectors compare a slice against everything else measured. On a
   // swarm that population is "the run"; on a hosted surface it is the window
@@ -184,45 +183,90 @@ export function signalSentence(
   const rest = opts?.cohort === "window" ? "these sessions" : "the run";
   switch (c.detector) {
     case "tool_errors":
-      return `${c.subjectLabel} failed ${c.metric ?? c.affectedSessions}× across ${c.affectedSessions} of ${c.sliceTotal} sessions`;
+      return `${c.subjectLabel} failed ${
+        c.metric ?? c.affectedSessions
+      }× across ${c.affectedSessions} of ${c.sliceTotal} sessions`;
     case "hallucinated_tool":
       // "Agents" is swarm vocabulary; a hosted visitor talked to one
       // assistant, and never called it an agent.
       return opts?.cohort === "window"
-        ? `The assistant called a tool named "${c.subjectLabel}" that does not exist, in ${c.affectedSessions} ${plural(c.affectedSessions, "session")}`
-        : `Agents invented a tool named "${c.subjectLabel}" in ${c.affectedSessions} ${plural(c.affectedSessions, "session")}`;
+        ? `The assistant called a tool named "${
+            c.subjectLabel
+          }" that does not exist, in ${c.affectedSessions} ${plural(
+            c.affectedSessions,
+            "session"
+          )}`
+        : `Agents invented a tool named "${c.subjectLabel}" in ${
+            c.affectedSessions
+          } ${plural(c.affectedSessions, "session")}`;
     // ── User Testing detectors ──
     case "negative_feedback":
-      return `${c.affectedSessions} of ${c.sliceTotal} rated ${plural(c.sliceTotal, "session")} left negative feedback${c.subjectKind === "route" || c.subjectKind === "path" ? ` on ${c.subjectLabel}` : ""}`;
+      return `${c.affectedSessions} of ${c.sliceTotal} rated ${plural(
+        c.sliceTotal,
+        "session"
+      )} left negative feedback${
+        c.subjectKind === "route" || c.subjectKind === "path"
+          ? ` on ${c.subjectLabel}`
+          : ""
+      }`;
     case "cohort_struggles":
       return `${c.subjectLabel} visitors struggled in ${c.affectedSessions} of ${c.sliceTotal} sessions`;
     case "terminal_error_concentration":
-      return `${c.affectedSessions} of ${c.sliceTotal} sessions ended on a tool error${c.subjectKind === "route" || c.subjectKind === "path" ? ` in ${c.subjectLabel}` : ""}`;
+      return `${c.affectedSessions} of ${
+        c.sliceTotal
+      } sessions ended on a tool error${
+        c.subjectKind === "route" || c.subjectKind === "path"
+          ? ` in ${c.subjectLabel}`
+          : ""
+      }`;
     case "criterion_fail":
       return `"${c.subjectLabel}" failed in ${c.affectedSessions} of ${c.sliceTotal} graded sessions`;
     case "target_failures":
-      return `Failures concentrate on ${c.subjectLabel} (${c.affectedSessions} of ${c.sliceTotal})`;
+      // UNITS ARE SESSIONS. The detector used to have a second fire path off
+      // launch attempts, where this pair counted attempts and the bare
+      // "(1 of 2)" read as sessions. That path is gone (launch outcomes are
+      // reported as target health, never mined), so the noun is stated.
+      return `Tool errors concentrate on ${c.subjectLabel} in ${
+        c.affectedSessions
+      } of ${c.sliceTotal} ${plural(c.sliceTotal, "session")}`;
     case "persona_struggles":
       return `${c.subjectLabel} struggled in ${c.affectedSessions} of ${c.sliceTotal} sessions`;
     case "marginal_pass":
-      return `${c.affectedSessions} ${plural(c.affectedSessions, "pass", "passes")} in "${c.subjectLabel}" barely cleared the judge threshold`;
+      return `${c.affectedSessions} ${plural(
+        c.affectedSessions,
+        "pass",
+        "passes"
+      )} in "${c.subjectLabel}" barely cleared the judge threshold`;
     case "turn_cap_grind":
-      return `${c.affectedSessions} ${plural(c.affectedSessions, "session")} in "${c.subjectLabel}" ran out the ${c.metric ?? "max"}-turn budget`;
+      return `${c.affectedSessions} ${plural(
+        c.affectedSessions,
+        "session"
+      )} in "${c.subjectLabel}" ran out the ${c.metric ?? "max"}-turn budget`;
     case "error_recovered_pass":
-      return `${c.affectedSessions} passing ${plural(c.affectedSessions, "session")} in "${c.subjectLabel}" recovered from tool errors first`;
+      return `${c.affectedSessions} passing ${plural(
+        c.affectedSessions,
+        "session"
+      )} in "${c.subjectLabel}" recovered from tool errors first`;
     case "token_outlier":
-      return `"${c.subjectLabel}" uses ~${ratioLabel(c)} the tokens of the rest of ${rest}`;
+      return `"${c.subjectLabel}" uses ~${ratioLabel(
+        c
+      )} the tokens of the rest of ${rest}`;
     case "latency_outlier":
-      return `${c.subjectLabel} p95 latency is ${ratioLabel(c)} the rest of ${rest}`;
+      return `${c.subjectLabel} p95 latency is ${ratioLabel(
+        c
+      )} the rest of ${rest}`;
     case "no_tools_used":
-      return `${c.affectedSessions} ${plural(c.affectedSessions, "session")} in "${c.subjectLabel}" never called a tool`;
+      return `${c.affectedSessions} ${plural(
+        c.affectedSessions,
+        "session"
+      )} in "${c.subjectLabel}" never called a tool`;
     default:
       return `${c.subjectLabel}: ${c.affectedSessions} of ${c.sliceTotal} sessions`;
   }
 }
 
 function plural(n: number, singular: string, pluralForm?: string): string {
-  return n === 1 ? singular : (pluralForm ?? `${singular}s`);
+  return n === 1 ? singular : pluralForm ?? `${singular}s`;
 }
 
 function ratioLabel(c: RailSignalCandidate): string {
@@ -239,6 +283,29 @@ function ratioLabel(c: RailSignalCandidate): string {
 /** Hallucinated tools and failing criteria are the load-bearing problems. */
 function isBlockingShaped(detector: string): boolean {
   return detector === "hallucinated_tool" || detector === "criterion_fail";
+}
+
+/**
+ * A row may open into Why/Fix ONLY when it names a session that exhibits the
+ * anomaly.
+ *
+ * Cause and recommendation are the model's words. Behind an expander with no
+ * failing session to open, they are an unfalsifiable claim: the reader cannot
+ * check them, and the row's authority comes entirely from the confident prose.
+ * A contrast ("Clean 1") does not count — it proves the anomaly did NOT happen
+ * somewhere, which points at nothing to look at.
+ *
+ * The backend now enforces the same rule at both ends (`isGroundedCandidate`
+ * in the miners, `partitionByLoadedEvidence` before narration). This is the
+ * client's own check, not a mirror of theirs: an older server, a cached
+ * payload, or a future detector can still hand this component a row without
+ * exemplars, and it must degrade to the deterministic sentence rather than
+ * offer prose it cannot back.
+ */
+function canExpand(
+  signal: Pick<RailSignalCandidate, "exemplarSessionIds">
+): boolean {
+  return signal.exemplarSessionIds.length > 0;
 }
 
 type Row = {
@@ -269,20 +336,20 @@ function useRailData(surface: RunInsightsSurface): {
           projectId: surface.projectId,
           swarmRunGroupId: surface.swarmRunGroupId,
         }
-      : "skip") as any,
+      : "skip") as any
   ) as SwarmWaveSignals | null | undefined;
   const swarmFindings = useQuery(
     SWARM_QUERIES.listSwarmFindings as any,
-    (isSwarm ? { projectId: surface.projectId } : "skip") as any,
+    (isSwarm ? { projectId: surface.projectId } : "skip") as any
   ) as SwarmFinding[] | undefined;
 
   const windowSignals = useQuery(
     CHATBOX_INSIGHTS_QUERIES.getWindowSignals as any,
-    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any,
+    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any
   ) as ChatboxWindowSignals | null | undefined;
   const windowFindings = useQuery(
     CHATBOX_INSIGHTS_QUERIES.listChatboxFindings as any,
-    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any,
+    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any
   ) as ChatboxFinding[] | undefined;
 
   if (isSwarm) {
@@ -342,7 +409,7 @@ function useRailData(surface: RunInsightsSurface): {
  */
 function useNarrationScope(
   surface: RunInsightsSurface,
-  latestGroupId: string | null | undefined,
+  latestGroupId: string | null | undefined
 ): RunInsightsScope | null {
   return useMemo<RunInsightsScope | null>(() => {
     if (surface.kind === "swarm") {
@@ -353,7 +420,11 @@ function useNarrationScope(
       };
     }
     return latestGroupId
-      ? { kind: "chatbox", chatboxId: surface.chatboxId, groupId: latestGroupId }
+      ? {
+          kind: "chatbox",
+          chatboxId: surface.chatboxId,
+          groupId: latestGroupId,
+        }
       : null;
   }, [surface, latestGroupId]);
 }
@@ -397,7 +468,7 @@ function RunInsightsBody({
   const rows: Row[] = useMemo(() => {
     if (!signals) return [];
     const insightBy = new Map(
-      (insights?.candidates ?? []).map((c) => [c.fingerprint, c]),
+      (insights?.candidates ?? []).map((c) => [c.fingerprint, c])
     );
     const findingBy = new Map((findings ?? []).map((f) => [f.fingerprint, f]));
     return signals.candidates.map((signal) => {
@@ -572,7 +643,7 @@ function RunInsightsBody({
 function useRail(
   surface: RunInsightsSurface,
   canRequestProp: boolean,
-  canDismissProp: boolean,
+  canDismissProp: boolean
 ): {
   rail: ReturnType<typeof useRailData>;
   lifecycle: UseRunInsightsResult;
@@ -608,7 +679,7 @@ function useRunInsightsRail(): RunInsightsRailContextValue {
   const ctx = useContext(RunInsightsRailContext);
   if (!ctx) {
     throw new Error(
-      "RunInsightsBanner / RunInsightsRecommendations require RunInsightsProvider",
+      "RunInsightsBanner / RunInsightsRecommendations require RunInsightsProvider"
     );
   }
   return ctx;
@@ -633,9 +704,7 @@ export function RunInsightsProvider({
 }) {
   const railState = useRail(surface, canRequest, canDismiss);
   return (
-    <RunInsightsRailContext.Provider
-      value={{ ...railState, onOpenSession }}
-    >
+    <RunInsightsRailContext.Provider value={{ ...railState, onOpenSession }}>
       {children}
     </RunInsightsRailContext.Provider>
   );
@@ -643,13 +712,13 @@ export function RunInsightsProvider({
 
 function buildInsightRows(
   rail: ReturnType<typeof useRailData>,
-  lifecycle: UseRunInsightsResult,
+  lifecycle: UseRunInsightsResult
 ): Row[] {
   const { signals, findings } = rail;
   const { insights } = lifecycle;
   if (!signals) return [];
   const insightBy = new Map(
-    (insights?.candidates ?? []).map((c) => [c.fingerprint, c]),
+    (insights?.candidates ?? []).map((c) => [c.fingerprint, c])
   );
   const findingBy = new Map((findings ?? []).map((f) => [f.fingerprint, f]));
   return signals.candidates.map((signal) => {
@@ -700,11 +769,11 @@ export function RunInsights({
 
 function countActivePatterns(
   signals: RailSignals | null | undefined,
-  findings: RailFinding[] | undefined,
+  findings: RailFinding[] | undefined
 ): number {
   if (!signals || !findings) return 0;
   const findingByFingerprint = new Map(
-    findings.map((finding) => [finding.fingerprint, finding]),
+    findings.map((finding) => [finding.fingerprint, finding])
   );
   return signals.candidates.reduce((count, candidate) => {
     const finding = findingByFingerprint.get(signalFingerprint(candidate));
@@ -718,17 +787,13 @@ function countActivePatterns(
  * {@link RunInsightsRecommendations} beside the scorecard.
  */
 export function RunInsightsBanner() {
-  const {
-    rail,
-    lifecycle,
-    canRequest: mayRequest,
-  } = useRunInsightsRail();
+  const { rail, lifecycle, canRequest: mayRequest } = useRunInsightsRail();
   const { signals, findings, cohort } = rail;
   const { insights, busy, unavailable, error, request } = lifecycle;
 
   const activeCount = useMemo(
     () => countActivePatterns(signals, findings),
-    [signals, findings],
+    [signals, findings]
   );
 
   if (!signals) return null;
@@ -816,7 +881,7 @@ export function RunInsightsRecommendations() {
 
   const rows = useMemo(
     () => buildInsightRows(rail, lifecycle),
-    [rail, lifecycle],
+    [rail, lifecycle]
   );
   const [showAll, setShowAll] = useState(false);
 
@@ -850,7 +915,9 @@ export function RunInsightsRecommendations() {
       data-testid="run-insights-recommendations"
     >
       <div className="mb-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <h3 className="text-sm font-semibold tracking-tight">Recommendations</h3>
+        <h3 className="text-sm font-semibold tracking-tight">
+          Recommendations
+        </h3>
         <span className="text-xs text-muted-foreground">
           Patterns to investigate across sessions
         </span>
@@ -944,12 +1011,15 @@ function RecommendationRow({
   const chip = finding ? STATUS_CHIP[finding.status] : undefined;
   const affected = signal.affectedSessions;
   const headline = signalSentence(signal, { cohort });
-  const hasDetail = Boolean(
-    insight?.rootCause ||
-      insight?.recommendation ||
-      signal.exemplarSessionIds.length ||
-      signal.contrastSessionIds.length,
-  );
+  // Gated on a failing exemplar — see `canExpand`. Prose and contrast links
+  // are never enough on their own.
+  const hasDetail =
+    canExpand(signal) &&
+    Boolean(
+      insight?.rootCause ||
+        insight?.recommendation ||
+        signal.exemplarSessionIds.length
+    );
 
   const toggleDismiss = () => {
     if (!finding) return;
@@ -980,7 +1050,7 @@ function RecommendationRow({
             "disabled:cursor-default",
             isBlockingShaped(signal.detector)
               ? "border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20"
-              : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20",
+              : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20"
           )}
           data-testid="run-insight-count"
         >
@@ -992,14 +1062,17 @@ function RecommendationRow({
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
           data-testid="run-insight-headline"
         >
-          <span className="min-w-0 flex-1 truncate text-xs font-medium" title={headline}>
+          <span
+            className="min-w-0 flex-1 truncate text-xs font-medium"
+            title={headline}
+          >
             {headline}
           </span>
           {hasDetail ? (
             <ChevronRight
               className={cn(
                 "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-90",
+                expanded && "rotate-90"
               )}
               aria-hidden="true"
             />
@@ -1010,7 +1083,7 @@ function RecommendationRow({
             <span
               className={cn(
                 "rounded border px-1 py-0 text-[10px] font-medium",
-                chip.className,
+                chip.className
               )}
               data-testid="run-insight-status"
             >
@@ -1057,14 +1130,19 @@ function RecommendationRow({
                 onClick={() => onOpenSession(sessionId)}
               />
             ))}
-            {signal.contrastSessionIds.map((sessionId, i) => (
-              <SessionChip
-                key={sessionId}
-                label={`Clean ${i + 1}`}
-                onClick={() => onOpenSession(sessionId)}
-                subtle
-              />
-            ))}
+            {/* Contrast chips ride ALONGSIDE failing ones, never alone. A
+                lone "Clean 1" reads as evidence for a claim while pointing at
+                a session where the problem did not happen. */}
+            {signal.exemplarSessionIds.length > 0
+              ? signal.contrastSessionIds.map((sessionId, i) => (
+                  <SessionChip
+                    key={sessionId}
+                    label={`Clean ${i + 1}`}
+                    onClick={() => onOpenSession(sessionId)}
+                    subtle
+                  />
+                ))
+              : null}
           </div>
         </div>
       ) : null}
@@ -1100,7 +1178,7 @@ export function RunInsightsChip({
 
   const activeCount = useMemo(
     () => countActivePatterns(signals, findings),
-    [signals, findings],
+    [signals, findings]
   );
 
   if (!signals) return null;
@@ -1110,7 +1188,9 @@ export function RunInsightsChip({
         className="inline-flex items-center rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs text-muted-foreground"
         data-testid="run-insights-chip"
       >
-        {cohort === "window" ? "Insights appear once sessions settle" : "Analyzing…"}
+        {cohort === "window"
+          ? "Insights appear once sessions settle"
+          : "Analyzing…"}
       </span>
     );
   }
@@ -1128,7 +1208,7 @@ export function RunInsightsChip({
             "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
             activeCount > 0
               ? STATUS_CHIP.new.className
-              : "border-border/50 bg-muted/25 text-muted-foreground hover:bg-muted/50",
+              : "border-border/50 bg-muted/25 text-muted-foreground hover:bg-muted/50"
           )}
           data-testid="run-insights-chip"
         >
@@ -1202,12 +1282,15 @@ function InsightRow({
   const dismissed =
     dismissedOptimistic ?? Boolean(finding && finding.dismissedAt !== null);
   const chip = finding ? STATUS_CHIP[finding.status] : undefined;
-  const hasDetail = Boolean(
-    insight?.rootCause ||
-      insight?.recommendation ||
-      signal.exemplarSessionIds.length ||
-      signal.contrastSessionIds.length,
-  );
+  // Gated on a failing exemplar — see `canExpand`. Prose and contrast links
+  // are never enough on their own.
+  const hasDetail =
+    canExpand(signal) &&
+    Boolean(
+      insight?.rootCause ||
+        insight?.recommendation ||
+        signal.exemplarSessionIds.length
+    );
 
   const toggleDismiss = () => {
     if (!finding) return;
@@ -1238,7 +1321,7 @@ function InsightRow({
               "mt-[7px] size-1.5 shrink-0 rounded-full",
               isBlockingShaped(signal.detector)
                 ? "bg-red-500/70"
-                : "bg-amber-500/60",
+                : "bg-amber-500/60"
             )}
             aria-hidden="true"
           />
@@ -1249,7 +1332,7 @@ function InsightRow({
             <ChevronRight
               className={cn(
                 "mt-1 size-3 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-90",
+                expanded && "rotate-90"
               )}
               aria-hidden="true"
             />
@@ -1259,7 +1342,7 @@ function InsightRow({
           <span
             className={cn(
               "mt-0.5 shrink-0 rounded border px-1 py-0 text-[10px] font-medium",
-              chip.className,
+              chip.className
             )}
             data-testid="run-insight-status"
           >
@@ -1282,10 +1365,7 @@ function InsightRow({
       </div>
 
       {expanded ? (
-        <div
-          className="mt-1 space-y-1 pl-3.5"
-          data-testid="run-insight-detail"
-        >
+        <div className="mt-1 space-y-1 pl-3.5" data-testid="run-insight-detail">
           {insight?.rootCause ? (
             <p className="text-xs text-muted-foreground">
               <span className="font-medium text-foreground/80">Why: </span>
@@ -1306,14 +1386,19 @@ function InsightRow({
                 onClick={() => onOpenSession(sessionId)}
               />
             ))}
-            {signal.contrastSessionIds.map((sessionId, i) => (
-              <SessionChip
-                key={sessionId}
-                label={`Clean ${i + 1}`}
-                onClick={() => onOpenSession(sessionId)}
-                subtle
-              />
-            ))}
+            {/* Contrast chips ride ALONGSIDE failing ones, never alone. A
+                lone "Clean 1" reads as evidence for a claim while pointing at
+                a session where the problem did not happen. */}
+            {signal.exemplarSessionIds.length > 0
+              ? signal.contrastSessionIds.map((sessionId, i) => (
+                  <SessionChip
+                    key={sessionId}
+                    label={`Clean ${i + 1}`}
+                    onClick={() => onOpenSession(sessionId)}
+                    subtle
+                  />
+                ))
+              : null}
           </div>
         </div>
       ) : null}
@@ -1440,7 +1525,7 @@ function SessionChip({
         "rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted",
         subtle
           ? "border-border/50 text-muted-foreground"
-          : "border-border text-foreground/80",
+          : "border-border text-foreground/80"
       )}
       data-testid="run-insight-session-link"
     >
