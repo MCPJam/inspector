@@ -282,6 +282,9 @@ function withStepFailureReporting(
     if (typeof error === "string" && error.startsWith("Warning: ")) {
       // Advisory only: the flow continues and the message is already on screen.
       // Reporting these buries real step failures under server-under-test nits.
+      // Still counts as replacing the previous message, so a failure that
+      // recurs after it is a new failure — same as an explicit clear below.
+      lastReportedError = undefined;
       updateState(updates);
       return;
     }
