@@ -168,6 +168,16 @@ function inspectorSentinelSlug(message: string): string | undefined {
   if (/PaginatedToolHeaderDiscoveryUnsupported/i.test(message)) {
     return "sdk/paginated_tool_header_discovery_unsupported";
   }
+  // `ProtocolVersionPinUnsupported`. Matched on the message clause rather than
+  // the class name because this error is thrown by the manager and read after
+  // crossing into the inspector's client bundle, where `instanceof` is already
+  // gone — and unlike the three above, its name never appears in its own text
+  // (`formatError` and `getErrorMessage` both read `.message` only). The
+  // clause is one MCPJam authors, not one a server can echo back at us. The
+  // class doc says to reword both together; a test holds them together.
+  if (/which this connection is pinned to/i.test(message)) {
+    return "sdk/protocol_version_pin_unsupported";
+  }
   return undefined;
 }
 

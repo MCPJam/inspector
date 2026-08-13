@@ -346,3 +346,48 @@ export class PaginatedToolHeaderDiscoveryUnsupported extends Error {
     this.name = "PaginatedToolHeaderDiscoveryUnsupported";
   }
 }
+
+/**
+ * Sentinel thrown when a connection pinned to a modern protocol version meets
+ * a server that does not offer it.
+ *
+ * In pin mode the upstream client requires `server/discover` to advertise the
+ * pinned revision and does NOT fall back — by design, because the pin exists
+ * to reproduce one specific client's wire behavior. The resulting
+ * `SdkError(EraNegotiationFailed)` names the version it wanted, but the
+ * manager then tries the SSE transport, that fails too (a modern-only server
+ * answers `405`), and both failures were folded into one generic "failed to
+ * connect using HTTP transports" message. What reached the user described the
+ * SYMPTOM of the second attempt and never mentioned the version — so the one
+ * fact that explains the failure, and the one setting that fixes it, were
+ * both absent.
+ *
+ * This class carries them instead. `protocolVersion` is read from the
+ * resolved config rather than parsed out of the upstream message: the manager
+ * already knows what it pinned, and a wording change upstream must not be
+ * able to silently empty this field.
+ *
+ * NOTE: the message wording is load-bearing. `describeError` matches
+ * "which this connection is pinned to" to resolve
+ * `sdk/protocol_version_pin_unsupported` — error identity does not survive
+ * the realm boundary between the SDK and the inspector's client bundle, so
+ * the text is the only stable carrier. A test pins that round trip; reword
+ * both sides together or not at all.
+ */
+export class ProtocolVersionPinUnsupported extends Error {
+  readonly serverId: string;
+  readonly protocolVersion: string;
+  constructor(
+    serverId: string,
+    protocolVersion: string,
+    options?: { cause?: unknown }
+  ) {
+    super(
+      `MCP server "${serverId}" doesn't support MCP protocol version ${protocolVersion}, which this connection is pinned to.`,
+      options
+    );
+    this.name = "ProtocolVersionPinUnsupported";
+    this.serverId = serverId;
+    this.protocolVersion = protocolVersion;
+  }
+}

@@ -460,6 +460,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
+  const protocolPin = summarizeProtocolVersionPin(errorString);
+  if (protocolPin) return protocolPin;
+
   const opaque = summarizeOpaquePayload(errorString);
   if (opaque) return opaque;
 
@@ -518,6 +521,53 @@ function looksLikeErrorPage(trimmed: string): boolean {
  * last message cannot help with.
  */
 export const UPSTREAM_ERROR_PAGE_CODE = "upstream_error_page";
+
+/**
+ * `code` for "this connection pins an MCP protocol version the server does not
+ * offer" — the SDK's `ProtocolVersionPinUnsupported`.
+ *
+ * Chat surfaces key the "Change protocol version" affordance off this. It is a
+ * separate code from `UPSTREAM_ERROR_PAGE_CODE` because the two want opposite
+ * actions: an error page is transient and wants a retry, a version pin is a
+ * SETTING and resending the same message will fail identically forever.
+ */
+export const PROTOCOL_VERSION_PIN_CODE = "protocol_version_pin_unsupported";
+
+/**
+ * The clause `ProtocolVersionPinUnsupported` authors into its own message.
+ *
+ * Matched as text because that is all that survives: the AI SDK turns a failed
+ * chat response into `new Error(await response.text())`, so the class, the
+ * `normalized` block and the response headers are gone by the time a chat
+ * surface sees anything. The SDK-side describer keys off the same clause and
+ * says so; reword one and the paired tests on both sides fail together.
+ */
+const PROTOCOL_VERSION_PIN_MARKER = /which this connection is pinned to/i;
+
+/** `2026-07-28` out of the sentence, for the banner's own wording. */
+const PROTOCOL_VERSION_PATTERN = /protocol version (\d{4}-\d{2}-\d{2})/i;
+
+/**
+ * Recognize a pinned-version refusal and hand the banner an actionable code.
+ *
+ * Returns `null` for everything else, so ordinary errors are untouched.
+ */
+function summarizeProtocolVersionPin(raw: string): FormattedError | null {
+  if (!PROTOCOL_VERSION_PIN_MARKER.test(raw)) return null;
+  const version = raw.match(PROTOCOL_VERSION_PATTERN)?.[1];
+  return {
+    // The SDK's sentence already names the server and the version, and it is
+    // the one place that wording lives. Passed through rather than rebuilt
+    // here, where the server id is not available.
+    message: raw.trim(),
+    code: PROTOCOL_VERSION_PIN_CODE,
+    // NOT retryable: the pin is a stored setting, so the identical turn fails
+    // identically until someone changes it. Offering a retry here would be
+    // offering a button that cannot work.
+    isRetryable: false,
+    ...(version ? { details: JSON.stringify({ protocolVersion: version }) } : {}),
+  };
+}
 
 /**
  * Pull the status out of an error page's `<title>` or `<h1>` — the two places

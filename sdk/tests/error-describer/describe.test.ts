@@ -8,6 +8,7 @@ import {
   type NormalizedError,
 } from "../../src/error-describer/index.js";
 import { MCPAuthError, MCPError } from "../../src/mcp-client-manager/errors.js";
+import { ProtocolVersionPinUnsupported } from "../../src/mcp-client-manager/managed-mcp-client.js";
 
 function makeError(message: string, extras: Record<string, unknown> = {}) {
   const err = new Error(message) as Error & Record<string, unknown>;
@@ -241,6 +242,15 @@ const CASES: Case[] = [
     name: "PaginatedToolHeaderDiscoveryUnsupported sentinel",
     build: () => new Error("PaginatedToolHeaderDiscoveryUnsupported"),
     expectSlug: "sdk/paginated_tool_header_discovery_unsupported",
+  },
+  {
+    // The REAL error, not a hand-written string: this class's message is the
+    // only thing that survives to the describer (name and identity are lost
+    // across the realm boundary), so the two must be tested together or the
+    // pairing can silently break on a reword.
+    name: "ProtocolVersionPinUnsupported sentinel",
+    build: () => new ProtocolVersionPinUnsupported("srv-1", "2026-07-28"),
+    expectSlug: "sdk/protocol_version_pin_unsupported",
   },
   // Provider
   {
@@ -592,5 +602,47 @@ describe("describeAsSlug — explicit catalog pinning", () => {
     const out = describeAsSlug("provider/quota");
     expect(out.slug).toBe("provider/quota");
     expect(out.rawMessage).toBe("");
+  });
+});
+
+describe("protocol version pin", () => {
+  it("names the server and the version it refused", () => {
+    const error = new ProtocolVersionPinUnsupported("github-mcp", "2026-07-28");
+    expect(error.message).toContain("github-mcp");
+    expect(error.message).toContain("2026-07-28");
+    // Structured too, so a consumer never has to parse the sentence.
+    expect(error.serverId).toBe("github-mcp");
+    expect(error.protocolVersion).toBe("2026-07-28");
+  });
+
+  it("is the user's configuration, not an MCPJam incident", () => {
+    // The pin is a setting MCPJam chose on the user's behalf, so unlike the
+    // transport symptom this failure used to be reported as, it must never
+    // land in a paging bucket.
+    const normalized = describeError(
+      new ProtocolVersionPinUnsupported("srv", "2026-07-28"),
+    );
+    expect(normalized.slug).toBe("sdk/protocol_version_pin_unsupported");
+    expect(ERROR_CATALOG[normalized.slug]?.origin).toBe("user_config");
+  });
+
+  it("tells the reader how to fix it", () => {
+    const entry = ERROR_CATALOG["sdk/protocol_version_pin_unsupported"];
+    expect(entry?.nextSteps.join(" ")).toMatch(/automatic/i);
+  });
+
+  it("keeps the clause the inspector's chat banner matches on", () => {
+    // Cross-package contract, guarded here because only this side can see the
+    // class. The inspector's chat surfaces receive this failure as a bare
+    // string (the AI SDK collapses a failed response into
+    // `new Error(await response.text())`), so `chat-helpers.ts` recognizes it
+    // by this clause to offer "Change protocol version" instead of a dead-end
+    // "MCPJam is unreachable" banner. Rewording the message means updating
+    // `PROTOCOL_VERSION_PIN_MARKER` in
+    // `mcpjam-inspector/client/src/components/chat-v2/shared/chat-helpers.ts`
+    // and the fixture in `chat-v2/__tests__/protocol-version-pin-banner.test.tsx`.
+    expect(new ProtocolVersionPinUnsupported("srv", "2026-07-28").message).toContain(
+      "which this connection is pinned to",
+    );
   });
 });

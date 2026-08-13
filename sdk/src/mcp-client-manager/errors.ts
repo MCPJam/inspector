@@ -110,7 +110,7 @@ function getNumericStatus(error: unknown): number | undefined {
 const ERA_NEGOTIATION_FAILED_CODE = "ERA_NEGOTIATION_FAILED";
 
 /** True when `error` is an `SdkError(EraNegotiationFailed)` wrapper. */
-function isEraNegotiationError(error: unknown): boolean {
+export function isEraNegotiationError(error: unknown): boolean {
   return (
     !!error &&
     typeof error === "object" &&

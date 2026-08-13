@@ -50,6 +50,8 @@ import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/rea
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { track } from "@/lib/analytics";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
@@ -71,6 +73,7 @@ import {
   cloneUiMessages,
   extractUserMessageText,
   UPSTREAM_ERROR_PAGE_CODE,
+  PROTOCOL_VERSION_PIN_CODE,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
@@ -323,6 +326,7 @@ export function ChatTabV2({
       ? sortedOrganizations.find((org) => org._id === organizationId)
       : null
   );
+  const navigate = useAppNavigate();
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
@@ -1949,6 +1953,25 @@ export function ChatTabV2({
     ? handleRetryLastMessage
     : undefined;
 
+  // A pinned protocol version the server doesn't offer is the opposite of the
+  // case above: nothing about resending changes the outcome, and the fix is one
+  // dropdown away. Send the user there instead of leaving them to find it.
+  //
+  // The host id comes from the turn's own hosted context, so the link lands on
+  // the client that actually holds the pin. It is absent on chatbox and
+  // environment surfaces, where `buildHostFocusTabPath` degrades to the clients
+  // list rather than building a path the `:hostId` route would reject.
+  const changeProtocolVersionHandler =
+    errorMessage?.code === PROTOCOL_VERSION_PIN_CODE
+      ? () => {
+          track("chat_error_change_protocol_clicked", {
+            location: "chat_tab",
+            has_host_id: Boolean(hostedContext?.hostId),
+          });
+          navigate(buildHostFocusTabPath(hostedContext?.hostId, "protocol"));
+        }
+      : undefined;
+
   useCreditTopupReturnFlow({ chatSessionId, sendMessage });
 
   const traceViewerTrace = liveTraceEnvelope ?? {
@@ -2411,6 +2434,7 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={changeProtocolVersionHandler}
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2677,6 +2701,7 @@ export function ChatTabV2({
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
                               onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={changeProtocolVersionHandler}
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2804,6 +2829,7 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={changeProtocolVersionHandler}
                             onResetChat={baseResetChat}
                           />
                         </div>
