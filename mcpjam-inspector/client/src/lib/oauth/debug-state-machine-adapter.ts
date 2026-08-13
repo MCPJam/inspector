@@ -1,4 +1,5 @@
 import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -255,6 +256,23 @@ function createHostedClientSecretResolver({
 }
 
 /**
+ * Step failures that stop the flow but carry no signal for us.
+ *
+ * The RFC 8414 `issuer` check rejects a metadata document the server under test
+ * built wrong. Every machine enforces it, yet only 2026-07-28 reads the field
+ * afterwards (it compares the issuer to the authorization-server URL and to the
+ * callback `iss`), so on the older three the report is another project's spec
+ * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
+ * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
+ *
+ * The SDK owns the message and exports it, so matching here cannot drift out of
+ * sync with what the machines actually throw.
+ */
+const UNREPORTED_STEP_FAILURES = new Set([
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+]);
+
+/**
  * Wrap the caller's `updateState` so every NEW step failure is reported.
  *
  * This is the only reliable hook: the SDK state machine catches its own step
@@ -271,20 +289,6 @@ function createHostedClientSecretResolver({
  * flow recovers from (an optional metadata field the server left out), not step
  * failures. So are the messages in `UNREPORTED_STEP_FAILURES`.
  */
-/**
- * Step failures that stop the flow but carry no signal for us.
- *
- * The RFC 8414 `issuer` check rejects a metadata document the server under test
- * built wrong. Every machine enforces it, yet only 2026-07-28 reads the field
- * afterwards (it compares the issuer to the authorization-server URL and to the
- * callback `iss`), so on the older three the report is another project's spec
- * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
- * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
- */
-const UNREPORTED_STEP_FAILURES = new Set([
-  "Authorization server metadata missing required 'issuer' field",
-]);
-
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
   context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
