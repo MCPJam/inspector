@@ -53,7 +53,7 @@ import {
 } from "../../services/slack-backend.js";
 import { getOrgAgentPolicyStrict } from "../../utils/org-agent-policy.js";
 import { getSelfFetch } from "../../utils/self-app.js";
-import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { getConvexBearerForApprovedAction } from "../../utils/v1-convex-token.js";
 import { IDEMPOTENCY_KEY_HEADER } from "../../utils/idempotency.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1Resource } from "./envelope.js";
@@ -268,7 +268,11 @@ proposedActions.post(
       // The CLICKER's delegated token. Minting re-verifies their membership of
       // the org, so approval by someone since removed fails right here rather
       // than spending.
-      convexJwt = await getConvexBearerForRequest(c);
+      //
+      // Minted UNCACHED so it can carry this action's id: every write the
+      // operation makes then lands an audit row that names the proposal a
+      // human approved, rather than looking like the clicker acting alone.
+      convexJwt = await getConvexBearerForApprovedAction(c, actionId);
     } catch (error) {
       await releaseProposedAction(actionId).catch(() => {});
       logger.warn("[v1/proposed-actions] could not mint a token for the clicker", {
