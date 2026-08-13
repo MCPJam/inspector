@@ -59,6 +59,47 @@ describe("internal-code -> public-code mapping", () => {
     }
   });
 
+  // The assertion above passes for an UNMAPPED code too: `mapInternalCode`
+  // defaults to INTERNAL_ERROR, which is a perfectly valid public code. That
+  // vacuum is how ENVIRONMENT_REVISION_CONFLICT once reached API callers as a
+  // 500, and how UPSTREAM_AUTH_FAILED shipped internally while the public
+  // surface kept reporting the user's own MCP server as an MCPJam fault.
+  //
+  // So pin the gap explicitly instead. Every internal code either has a public
+  // mapping or is listed here as a known, accepted 500 — adding a new
+  // ErrorCode without deciding fails this test rather than silently widening
+  // the INTERNAL_ERROR bucket on the public API.
+  const KNOWINGLY_UNMAPPED: readonly string[] = [
+    // No 402/billing member exists in the public union; picking one is a
+    // contract decision, not a mechanical mapping.
+    "BILLING_LIMIT_REACHED",
+    // Hosted-surface concepts. Reachability from `/api/v1` is unconfirmed, so
+    // they are left unmapped rather than guessed at.
+    "XAA_CONNECTION_NOT_CONFIGURED",
+    "TASK_NOT_FOUND",
+    "TASKS_UNSUPPORTED",
+    "CHATBOX_ACCESS_DENIED",
+    "CHATBOX_ACCESS_STALE",
+  ];
+
+  it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {
+    const unmapped = Object.values(ErrorCode).filter(
+      (code) =>
+        !Object.prototype.hasOwnProperty.call(INTERNAL_TO_V1_CODE, code),
+    );
+
+    expect([...unmapped].sort()).toEqual([...KNOWINGLY_UNMAPPED].sort());
+  });
+
+  it("maps an upstream auth rejection onto FORBIDDEN, never INTERNAL_ERROR", () => {
+    // The public twin of the hosted fix: the target server refused OUR
+    // credentials, so an API caller must not be told MCPJam broke.
+    expect(mapInternalCode(ErrorCode.UPSTREAM_AUTH_FAILED)).toBe("FORBIDDEN");
+    expect(mapInternalCode(ErrorCode.UPSTREAM_AUTH_FAILED)).not.toBe(
+      "INTERNAL_ERROR",
+    );
+  });
+
   it("collapses draft-only codes onto canonical equivalents", () => {
     expect(mapInternalCode("UPSTREAM_ERROR")).toBe("SERVER_UNREACHABLE");
     expect(mapInternalCode("TOOL_TIMEOUT")).toBe("TIMEOUT");
