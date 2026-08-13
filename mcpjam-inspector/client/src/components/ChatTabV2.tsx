@@ -1964,7 +1964,7 @@ export function ChatTabV2({
   const changeProtocolVersionHandler =
     errorMessage?.code === PROTOCOL_VERSION_PIN_CODE
       ? () => {
-          track("chat_error_change_protocol_clicked", {
+          track("change_protocol_version_clicked", {
             location: "chat_tab",
             has_host_id: Boolean(hostedContext?.hostId),
           });

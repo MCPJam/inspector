@@ -78,7 +78,7 @@ export const ANALYTICS_EVENTS = {
   // "Change protocol version" on the chat error banner, shown when a
   // connection pins an MCP protocol version the server doesn't offer; props:
   // location, has_host_id (false ⇒ the link fell back to the clients list).
-  chat_error_change_protocol_clicked: { source: "client" },
+  change_protocol_version_clicked: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
   chat_model_selector_manage_org_models_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
