@@ -7,6 +7,7 @@ import {
 } from "../resolve-stacks";
 import {
   composerStateFromEnvironments,
+  defaultComposerState,
   emptyEnvironmentStack,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
@@ -383,6 +384,121 @@ describe("resolveComposerEnvironments — backend skew", () => {
  * Seeding a persisted selection back into composer state, and the cases where it
  * cannot be done without losing something.
  */
+describe("defaultComposerState", () => {
+  it("seeds the preferred named environment when environments are on", () => {
+    const state = defaultComposerState({
+      environmentsEnabled: true,
+      environments: [
+        named({
+          environmentId: "env-a",
+          hostId: "h1",
+          serverAttachmentId: "grp-1",
+        }),
+        named({
+          environmentId: "env-b",
+          hostId: "h2",
+          serverAttachmentId: "grp-2",
+          skillSelection: { mode: "explicit", skillIds: ["s1"] },
+        }),
+      ],
+      hosts: [{ hostId: "h1" }, { hostId: "h2" }],
+      preferredEnvironmentId: "env-b",
+      serverAttachments: [{ _id: "grp-x" }],
+    });
+    expect(state).toEqual(
+      composerStateFromEnvironments([
+        named({
+          environmentId: "env-b",
+          hostId: "h2",
+          serverAttachmentId: "grp-2",
+          skillSelection: { mode: "explicit", skillIds: ["s1"] },
+        }),
+      ])
+    );
+  });
+
+  it("falls back to the first named environment when preference is missing", () => {
+    const state = defaultComposerState({
+      environmentsEnabled: true,
+      environments: [
+        named({ environmentId: "env-a", hostId: "h1" }),
+        named({ environmentId: "env-b", hostId: "h2" }),
+      ],
+      hosts: [{ hostId: "h1" }],
+      preferredEnvironmentId: "gone",
+      serverAttachments: [],
+    });
+    expect(state?.environmentIds).toEqual(["env-a"]);
+    expect(state?.stack.hostIds).toEqual(["h1"]);
+    expect(state?.customized).toBe(false);
+  });
+
+  it("skips archived and ad-hoc rows when looking for a named seed", () => {
+    const state = defaultComposerState({
+      environmentsEnabled: true,
+      environments: [
+        env({ environmentId: "adhoc-1", hostId: "h1", origin: "adhoc" }),
+        named({
+          environmentId: "archived",
+          hostId: "h2",
+          archivedAt: 99,
+        }),
+        named({ environmentId: "live", hostId: "h3" }),
+      ],
+      hosts: [{ hostId: "h9" }],
+      serverAttachments: [{ _id: "grp-1" }],
+    });
+    expect(state?.environmentIds).toEqual(["live"]);
+    expect(state?.stack.hostIds).toEqual(["h3"]);
+  });
+
+  it("composes on preferred host + first server group when no named envs", () => {
+    const state = defaultComposerState({
+      environmentsEnabled: true,
+      environments: [
+        env({ environmentId: "adhoc-1", hostId: "h1", origin: "adhoc" }),
+      ],
+      hosts: [{ hostId: "h1" }, { hostId: "h2" }],
+      preferredHostId: "h2",
+      serverAttachments: [{ _id: "grp-1" }, { _id: "grp-2" }],
+    });
+    expect(state).toEqual({
+      environmentIds: [],
+      stack: {
+        hostIds: ["h2"],
+        serverAttachmentId: "grp-1",
+        skillSelection: null,
+        computerEnvironmentId: null,
+      },
+      customized: true,
+    });
+  });
+
+  it("composes when environments flag is off even if named envs exist", () => {
+    const state = defaultComposerState({
+      environmentsEnabled: false,
+      environments: [named({ environmentId: "env-a", hostId: "h1" })],
+      hosts: [{ hostId: "h2" }],
+      serverAttachments: [{ _id: "grp-1" }],
+    });
+    expect(state?.environmentIds).toEqual([]);
+    expect(state?.stack.hostIds).toEqual(["h2"]);
+    expect(state?.stack.serverAttachmentId).toBe("grp-1");
+    expect(state?.customized).toBe(true);
+  });
+
+  it("returns null when nothing can be seeded", () => {
+    expect(
+      defaultComposerState({
+        environmentsEnabled: true,
+        environments: [],
+        hosts: [],
+        serverAttachments: [{ _id: "grp-1" }],
+      })
+    ).toBeNull();
+  });
+});
+
 describe("composerStateFromEnvironments", () => {
   it("keeps a named multi-env selection on the saved path", () => {
     const state = composerStateFromEnvironments([

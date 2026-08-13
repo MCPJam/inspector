@@ -17,7 +17,7 @@ Sentry.init({
     deployment: "self_hosted",
   }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
-  // Promotes crashed/oom/killed from breadcrumbs to captured events — see
+  // Promotes crashed/oom from breadcrumbs to captured events — see
   // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
   // already on by default in @sentry/electron 5.12 and is left alone.
   integrations: crashReportingIntegrations,
