@@ -31,6 +31,11 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   "../sdk/src/host-config/templates/index.ts",
 );
 const sdkPlatformEntry = path.resolve(rootDir, "../sdk/src/platform/index.ts");
+// Node-only SSRF guard + DNS-pinned transport. Needs its own alias for the
+// same reason every other subpath here does: the generic "@mcpjam/sdk" find is
+// a PREFIX replacement, so without this entry the specifier rewrites to
+// `sdk/src/index.ts/oauth/node` and fails to resolve.
+const sdkOAuthNodeEntry = path.resolve(rootDir, "../sdk/src/oauth/node.ts");
 const sdkHostCompatEntry = path.resolve(
   rootDir,
   "../sdk/src/host-compat/index.ts",
@@ -85,6 +90,7 @@ export default defineConfig({
           "@mcpjam/sdk/host-config/internal",
           "@mcpjam/sdk/host-config/templates",
           "@mcpjam/sdk/platform",
+          "@mcpjam/sdk/oauth/node",
           "@mcpjam/sdk/public-api",
           "@mcpjam/sdk/host-compat",
           "@mcpjam/sdk/plugin-bundle",
@@ -122,6 +128,7 @@ export default defineConfig({
         replacement: sdkHostConfigTemplatesEntry,
       },
       { find: "@mcpjam/sdk/platform", replacement: sdkPlatformEntry },
+      { find: "@mcpjam/sdk/oauth/node", replacement: sdkOAuthNodeEntry },
       { find: "@mcpjam/sdk/host-compat", replacement: sdkHostCompatEntry },
       { find: "@mcpjam/sdk/public-api", replacement: sdkPublicApiEntry },
       { find: "@mcpjam/sdk/plugin-bundle", replacement: sdkPluginBundleEntry },

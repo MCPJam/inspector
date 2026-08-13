@@ -134,10 +134,13 @@ MCPJam Inspector runs three ways: a hosted web app, a desktop app for Mac and Wi
 npx @mcpjam/inspector@latest
 ```
 
-**Docker**: Bound to localhost for security. Available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, reach host MCP servers via `http://host.docker.internal:PORT`.
+**Docker**: There is no published image, so build one from source first. Bound to localhost for security. Available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, reach host MCP servers via `http://host.docker.internal:PORT`.
 
 ```bash
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
+git clone https://github.com/MCPJam/inspector.git
+cd inspector
+docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
 # 👨‍💻 Contributing
