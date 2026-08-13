@@ -41,8 +41,9 @@ import type {
  * one server, published behind a share link; the product question it answers is
  * "what happened when real people used this?".
  *
- *   - `/user-testing`               — the project's scenarios
- *   - `/user-testing/:scenarioId`   — one scenario: Edit | Sessions | Insights
+ *   - `/user-testing`                    — the project's scenarios
+ *   - `/user-testing/:scenarioId`        — Insights | Sessions (+ share band)
+ *   - `/user-testing/:scenarioId/edit`   — setup, share, docked preview
  *
  * `:scenarioId` is the scenario's CHATBOX id. It used to be the host id, back
  * when every scenario was a client and the two were 1:1. Environment-backed
@@ -71,6 +72,8 @@ interface UserTestingTabProps {
   scenarioId?: string | null;
   /** From `/user-testing/new`. */
   createOpen?: boolean;
+  /** From `/user-testing/:scenarioId/edit`. */
+  editOpen?: boolean;
 }
 
 const AGENT_SNAPSHOT_MAX_SESSIONS = 30;
@@ -80,6 +83,7 @@ export function UserTestingTab({
   isAuthenticated,
   scenarioId = null,
   createOpen = false,
+  editOpen = false,
 }: UserTestingTabProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -276,7 +280,13 @@ export function UserTestingTab({
     );
   };
 
-  const activeView = createOpen ? "create" : scenarioId ? "detail" : "overview";
+  const activeView = createOpen
+    ? "create"
+    : editOpen && scenarioId
+      ? "edit"
+      : scenarioId
+        ? "detail"
+        : "overview";
 
   useSurfaceAgentBridge({
     surfaceId: "chatboxes",
@@ -410,7 +420,7 @@ export function UserTestingTab({
           published: rows.some((r) => r.environmentId === env.environmentId),
         })),
       };
-      if (activeView !== "detail") return base;
+      if (activeView !== "detail" && activeView !== "edit") return base;
       const sessions = (agentSessionThreads ?? [])
         .slice(0, AGENT_SNAPSHOT_MAX_SESSIONS)
         .map((t) => ({
@@ -425,9 +435,12 @@ export function UserTestingTab({
         }));
       return {
         ...base,
-        detailTab: parseUserTestingDetailTab(
-          typeof window === "undefined" ? "" : window.location.search,
-        ),
+        detailTab:
+          activeView === "edit"
+            ? "edit"
+            : parseUserTestingDetailTab(
+                typeof window === "undefined" ? "" : window.location.search,
+              ),
         selectedScenarioId: scenarioId ?? null,
         selectedHostId: chatbox?.namedHostId ?? null,
         selectedHostName: chatbox?.namedHostName ?? null,
@@ -586,6 +599,7 @@ export function UserTestingTab({
       <UserTestingScenarioDetail
         chatbox={chatbox}
         isAuthenticated={effectiveAuth}
+        editMode={editOpen}
         onBack={goOverview}
         onDeleted={goOverview}
       />
