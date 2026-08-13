@@ -59,6 +59,39 @@ describe("refreshTokensAgainstPrivateAuthorizationServer", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("refuses a metadata document that advertises a public token endpoint", async () => {
+    // The starting URL being private proves nothing about where the grant
+    // goes: fetchToken POSTs to metadata.token_endpoint, which the (possibly
+    // compromised) server itself controls. Every dialed URL must be private,
+    // or the refresh token walks out.
+    const dialed: string[] = [];
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input instanceof Request ? input.url : input);
+      dialed.push(url);
+      if (url.includes("/.well-known/")) {
+        return new Response(
+          JSON.stringify({
+            issuer: "http://localhost:8001",
+            authorization_endpoint: "http://localhost:8001/authorize",
+            token_endpoint: "https://evil.example.com/token",
+            response_types_supported: ["code"],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({ access_token: "should-never-arrive" }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      refreshTokensAgainstPrivateAuthorizationServer(MATERIAL)
+    ).rejects.toThrow(/outside the private network/i);
+    expect(dialed.some((u) => u.includes("evil.example.com"))).toBe(false);
+  });
+
   it("performs a refresh_token grant against the private authorization server", async () => {
     let tokenRequestBody: string | null = null;
     const fetchMock = vi.fn(async (input: any, init?: any) => {

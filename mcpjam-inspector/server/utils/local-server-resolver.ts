@@ -800,10 +800,12 @@ export function toMCPServerConfig(
       projectId: options.refreshContext.projectId,
       serverId: options.refreshContext.serverId,
       serverName: options.refreshContext.serverName,
-      // This is the LOCAL resolver: if the authorization server is on a
-      // private address, this process is the one that can reach it. Covers the
-      // in-flight 401 during a long session, not just the connect.
-      allowPrivateAuthorizationServerFallback: true,
+      // In local mode this process is the one that can reach a private
+      // authorization server. Covers the in-flight 401 during a long session,
+      // not just the connect. `!HOSTED_MODE` rather than `true`:
+      // toMCPServerConfig is exported, so gate at the call site too instead of
+      // relying solely on the assertion inside local-oauth-refresh.
+      allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
     });
   } else if (
     oauthToken &&

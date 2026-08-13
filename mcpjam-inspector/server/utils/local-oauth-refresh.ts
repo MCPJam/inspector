@@ -68,8 +68,27 @@ export async function refreshTokensAgainstPrivateAuthorizationServer(
     material.clientSecret
   );
 
-  const fetchFn: typeof fetch = (input, init) =>
-    fetch(input, { ...init, signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) });
+  // Gate 2 covers the URL we START from; this covers every URL actually
+  // DIALED. The token endpoint comes out of the well-known document that
+  // server returns, so a malicious metadata body could advertise a public
+  // `token_endpoint` — and a redirect could bounce the grant anywhere. Assert
+  // privacy per request and refuse redirects outright: a private AS that
+  // redirects its own token endpoint off the private network is
+  // indistinguishable from exfiltration, so both fail the same way.
+  const fetchFn: typeof fetch = (input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (!isPrivateNetworkUrl(url)) {
+      throw new Error(
+        `Refusing to send a request outside the private network during a ` +
+          `private-authorization-server refresh (${new URL(url).origin})`
+      );
+    }
+    return fetch(input, {
+      ...init,
+      redirect: "error",
+      signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+    });
+  };
 
   const metadata = await discoverAuthorizationServerMetadata(
     material.authorizationServerUrl,

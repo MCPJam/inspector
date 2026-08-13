@@ -217,6 +217,10 @@ async function importRefreshedTokens(
 
   const response = await fetch(`${convexUrl}/web/oauth/import-tokens`, {
     method: "POST",
+    // Bounded: a Convex that accepts the connection but never answers would
+    // otherwise hang the connect that already holds a working token. A
+    // timeout lands in the caller's warning path, which is the right outcome.
+    signal: AbortSignal.timeout(15_000),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${bearerToken}`,
