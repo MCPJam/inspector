@@ -401,6 +401,8 @@ export {
   type UpdateUserTestingScenarioResult,
   type ListUserTestingSessionsInput,
   type ListUserTestingSessionsResult,
+  type GetUserTestingScenarioInput,
+  type GetUserTestingScenarioResult,
   type GetUserTestingSessionInput,
   type GetUserTestingSessionResult,
   type GetUserTestingMetricsInput,

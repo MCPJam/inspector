@@ -1221,7 +1221,6 @@ export interface PlatformFindingDismissed {
   dismissed: boolean;
 }
 
-/** LLM analysis over a whole wave. Requested explicitly; produced async. */
 /**
  * The common actionable-insights envelope — one shape across Eval runs,
  * Swarm waves, and User Testing windows. Hand-mirrored from the backend's
@@ -1389,6 +1388,7 @@ export interface PlatformEvalRunInsightsRequested {
   status: "pending";
 }
 
+/** LLM analysis over a whole wave. Requested explicitly; produced async. */
 export interface PlatformWaveInsights {
   waveId: string;
   /** pending | completed | failed. Poll rather than re-requesting. */
@@ -1575,13 +1575,18 @@ export interface PlatformUserTestingScenario {
 
 /**
  * Scenario detail — the read shape, widened with the environment link and
- * the REQUIRED insights envelope (project members only; share-link guests
- * never reach this route).
+ * the insights envelope.
  */
 export interface PlatformUserTestingScenarioDetail
   extends PlatformUserTestingScenario {
   environmentId: string | null;
-  insights: PlatformInsightsEnvelope;
+  /**
+   * Present when the caller may have it. The envelope is gated on workspace
+   * MEMBERSHIP while the scenario itself is visible more widely, so a
+   * lower-privilege viewer gets the scenario without this field rather than
+   * an error — same degradation as an older server that cannot produce one.
+   */
+  insights?: PlatformInsightsEnvelope;
 }
 
 /** Guest execution caps — the spend dial for anonymous visitors. */

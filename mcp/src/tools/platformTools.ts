@@ -338,18 +338,21 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name)
+  ALL_OPERATIONS.map((operation) => operation.name),
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name)
+  (name) => !allOperationNames.has(name),
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
+    !Object.prototype.hasOwnProperty.call(
+      EXCLUDED_FROM_CATALOG,
+      operation.name,
+    ),
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -357,10 +360,10 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ","
+      ",",
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`
+      .join(",")}`,
   );
 }
 
@@ -393,8 +396,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   ALL_OPERATIONS.filter(
     (operation) =>
       operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
-  ).map((operation) => operation.name)
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
+  ).map((operation) => operation.name),
 );
 
 /**
@@ -437,7 +440,7 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext
+  context: PlatformToolContext,
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -450,7 +453,7 @@ export function registerPlatformCatalogTools(
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined
+      view ? platformWidgetUi(context, operation, view) : undefined,
     );
   }
 }
@@ -465,7 +468,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView
+  view: PlatformWidgetView,
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -478,13 +481,13 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload)
+        tagPlatformWidgetPayload(view, payload),
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>
+  operation: PlatformOperation<unknown, unknown>,
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
@@ -517,7 +520,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object
+  transformPayload?: (payload: TOutput) => object,
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -539,7 +542,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error)
+      errorStructuredContent(error),
     );
   }
 }
@@ -550,7 +553,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown
+  error: unknown,
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
     return { error: { code: error.code, message: error.message } };
@@ -598,12 +601,17 @@ type EnvelopeLike = {
 };
 
 function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as EnvelopeLike;
+  // `typeof null === "object"`, so the truncation check must reject null
+  // explicitly: a payload with `truncation: null` would otherwise pass as an
+  // envelope and throw while compaction read its counters, turning one
+  // malformed field into a failed tool call.
   return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as EnvelopeLike).schemaVersion === 1 &&
-    Array.isArray((value as EnvelopeLike).findings) &&
-    typeof (value as EnvelopeLike).truncation === "object"
+    candidate.schemaVersion === 1 &&
+    Array.isArray(candidate.findings) &&
+    typeof candidate.truncation === "object" &&
+    candidate.truncation !== null
   );
 }
 
@@ -612,35 +620,33 @@ function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
   let contractTruncated = false;
   // Findings arrive ready-first from the producer, so a head slice keeps
   // every server-ready finding before any investigation is dropped.
-  const kept = envelope.findings
-    .slice(0, MODEL_MAX_FINDINGS)
-    .map((finding) => {
-      const next = { ...finding };
-      const evidence = Array.isArray(finding.evidence)
-        ? (finding.evidence as unknown[])
-        : [];
-      if (evidence.length > MODEL_MAX_EVIDENCE_PER_FINDING) {
-        omittedEvidence += evidence.length - MODEL_MAX_EVIDENCE_PER_FINDING;
-        next.evidence = evidence.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING);
-      }
-      const target = finding.target as
-        | { currentDefinition?: Record<string, unknown> }
-        | undefined;
-      const def = target?.currentDefinition;
-      if (def) {
-        const clipped = { ...def };
-        for (const key of ["inputSchemaJson", "outputSchemaJson"] as const) {
-          const json = clipped[key];
-          if (typeof json === "string" && json.length > MODEL_CONTRACT_JSON_CAP) {
-            clipped[key] = json.slice(0, MODEL_CONTRACT_JSON_CAP);
-            clipped.truncated = true;
-            contractTruncated = true;
-          }
+  const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
+    const next = { ...finding };
+    const evidence = Array.isArray(finding.evidence)
+      ? (finding.evidence as unknown[])
+      : [];
+    if (evidence.length > MODEL_MAX_EVIDENCE_PER_FINDING) {
+      omittedEvidence += evidence.length - MODEL_MAX_EVIDENCE_PER_FINDING;
+      next.evidence = evidence.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING);
+    }
+    const target = finding.target as
+      | { currentDefinition?: Record<string, unknown> }
+      | undefined;
+    const def = target?.currentDefinition;
+    if (def) {
+      const clipped = { ...def };
+      for (const key of ["inputSchemaJson", "outputSchemaJson"] as const) {
+        const json = clipped[key];
+        if (typeof json === "string" && json.length > MODEL_CONTRACT_JSON_CAP) {
+          clipped[key] = json.slice(0, MODEL_CONTRACT_JSON_CAP);
+          clipped.truncated = true;
+          contractTruncated = true;
         }
-        next.target = { ...target, currentDefinition: clipped };
       }
-      return next;
-    });
+      next.target = { ...target, currentDefinition: clipped };
+    }
+    return next;
+  });
   const omittedFindings = envelope.findings.length - kept.length;
   if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
     return envelope;
@@ -662,7 +668,9 @@ function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
  * level down (`{ run: { insights } }`, `{ scenario: { insights } }`). */
 export function compactInsightsForModel<T extends object>(payload: T): T {
   let changed = false;
-  const out: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
+  const out: Record<string, unknown> = {
+    ...(payload as Record<string, unknown>),
+  };
   for (const [key, value] of Object.entries(out)) {
     if (isInsightsEnvelope(value)) {
       const compacted = compactEnvelope(value);
@@ -707,7 +715,7 @@ function toolSuccess(payload: object) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>
+  structuredContent?: Record<string, unknown>,
 ) {
   return {
     isError: true,
