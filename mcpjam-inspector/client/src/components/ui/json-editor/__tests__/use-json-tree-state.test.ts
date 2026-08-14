@@ -20,5 +20,11 @@ describe("useJsonTreeState", () => {
         result.current.initializeFromValue(deep);
       });
     }).not.toThrow();
+
+    // Asserts the actual collapse result (not just the absence of a throw):
+    // the defensive try/catch in initializeFromValue would otherwise swallow
+    // a reintroduced stack overflow and leave collapsedPaths empty, letting
+    // this test pass for the wrong reason.
+    expect(result.current.collapsedPaths).toEqual(new Set(["root.a.a"]));
   });
 });

@@ -143,16 +143,20 @@ export function useJsonTreeState({
       if (initialized || initialCollapsedPaths !== undefined) return;
 
       if (defaultExpandDepth !== undefined) {
+        let pathsToCollapse: string[];
         try {
-          const pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
-          const newCollapsed = new Set(pathsToCollapse);
-          setCollapsedPaths(newCollapsed);
-          onCollapseChange?.(newCollapsed);
-        } catch {
+          pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
+        } catch (error) {
           // Defensive fallback: if computing collapse paths fails on
           // pathological input, leave everything expanded instead of
           // crashing the surrounding view.
+          console.error("Failed to compute default collapsed paths", error);
+          setInitialized(true);
+          return;
         }
+        const newCollapsed = new Set(pathsToCollapse);
+        setCollapsedPaths(newCollapsed);
+        onCollapseChange?.(newCollapsed);
       }
       setInitialized(true);
     },
