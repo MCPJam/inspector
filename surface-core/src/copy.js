@@ -240,10 +240,7 @@ export function formatJourneyRunEvidenceLines(evidence, opts = {}) {
 			`• ${name}: ${pass} passed, ${fail} failed${pending > 0 ? `, ${pending} pending` : ""}`,
 		);
 	}
-	const sessions = (evidence?.sessions ?? []).slice(
-		0,
-		opts.maxSessions ?? 5,
-	);
+	const sessions = (evidence?.sessions ?? []).slice(0, opts.maxSessions ?? 5);
 	for (const session of sessions) {
 		const who = session.personaLabel || session.personaId || "session";
 		// Verdict from `outcome` (the attempt's end state) and the judge's
