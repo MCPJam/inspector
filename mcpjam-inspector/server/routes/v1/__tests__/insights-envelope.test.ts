@@ -197,6 +197,24 @@ describe("eval-run insights retry — body validation (it SPENDS)", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["null", JSON.stringify({ force: null })],
+    ["whitespace-only body", "   "],
+  ])("rejects %s rather than billing for it", async (_label, payload) => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
+      {
+        method: "POST",
+        body: payload,
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("accepts force: false without forwarding force", async () => {
     vi.clearAllMocks();
     answerQueries({ getTestSuiteRun: RUN_ROW });

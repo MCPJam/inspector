@@ -45,6 +45,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 
 const userTesting = new Hono();
 
@@ -316,17 +317,12 @@ userTesting.get(BASE, async (c) => {
   // makes this route behave exactly like the eval and journey-run details:
   // the resource always returns, `insights` is present when the caller may
   // have it, and absence reads as `not_available`.
-  let insights: Record<string, unknown> | undefined;
-  try {
-    const envelope = await client.query(
+  const insights = await loadInsightsEnvelope("v1.user-testing", () =>
+    client.query(
       "chatboxWindowInsights:getScenarioInsightsEnvelope" as never,
       { chatboxId: scenarioId } as never,
-    );
-    if (envelope) insights = envelope as Record<string, unknown>;
-  } catch (error) {
-    console.warn("[v1.user-testing] insights envelope unavailable", error);
-    insights = undefined;
-  }
+    ),
+  );
 
   return v1Resource(c, {
     id: scenarioId,
