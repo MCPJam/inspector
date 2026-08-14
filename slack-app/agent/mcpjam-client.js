@@ -149,5 +149,9 @@ export const {
   getEvalRun,
   listEvalRunIterations,
   getEvalRunSteps,
+  // Journey (Swarms) runs — the watcher's status poll and its evidence reads.
+  getJourneyRun,
+  listJourneyRunSessions,
+  getJourneyRunScorecard,
   listProjects,
 } = client;

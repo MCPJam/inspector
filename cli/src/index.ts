@@ -10,9 +10,12 @@ import { registerChatCommands } from "./commands/chat.js";
 import { registerEnvironmentsCommands } from "./commands/environments.js";
 import { registerJourneysCommands } from "./commands/journeys.js";
 import { registerScenariosCommands } from "./commands/scenarios.js";
+import { registerSwarmAuthoringCommands } from "./commands/swarms.js";
+import { registerUserTestingCommands } from "./commands/user-testing.js";
 import { registerEvalCommands } from "./commands/eval.js";
 import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
+import { registerOrganizationsCommands } from "./commands/organizations.js";
 import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
@@ -98,13 +101,18 @@ export async function main(
   registerXaaCommands(program);
   registerProtocolCommands(program);
   registerAuthCommands(program);
+  registerOrganizationsCommands(program);
   registerProjectsCommands(program);
   registerEvalCommands(program);
   registerChatCommands(program);
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
-  registerJourneysCommands(program);
+  const journeys = registerJourneysCommands(program);
   registerScenariosCommands(program);
+  // Authoring + insights hang off the same `journeys` group the run loop
+  // registered, plus their own `personas` / `swarms` / `capabilities` groups.
+  registerSwarmAuthoringCommands(program, journeys);
+  registerUserTestingCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   registerInspectorCommands(program);

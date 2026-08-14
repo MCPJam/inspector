@@ -23,6 +23,12 @@
  * bearer, following `./environments.ts`. Reads require project membership,
  * enforced inside Convex.
  *
+ * AUTHORING (`POST`/`PATCH`/`DELETE` on journeys) lives here alongside the
+ * launch it feeds. Before it existed the API could run a journey and read its
+ * results but could not make one, so the loop an agent needs — author, run,
+ * read — was open at the start. Personas, the other half of authoring, are in
+ * `./personas.ts`; swarm containers in `./swarms.ts`.
+ *
  * CROSS-PROJECT SCOPING is enforced HERE, not by Convex, and that is the one
  * thing to be careful about when extending this file. `journeyRuns:listJourneyRuns`
  * takes a `journeyRefId` alone and `journeyRuns:getJourneyRun` takes a `runId`
@@ -56,6 +62,11 @@ import { getConvexBearerThunkForRequest } from "../../utils/v1-convex-token.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { callerContextFromHono } from "../web/auth.js";
 import { HOSTED_MODE } from "../../config.js";
+// The two authoring preflights this file's create route needs. Imported rather
+// than re-implemented: a second copy of a scope rule is how the two spellings
+// drift, which is the failure this whole layer exists to prevent.
+import { requirePersonaInProject } from "./personas.js";
+import { requireSwarmInProject } from "./swarms.js";
 
 const journeys = new Hono();
 
@@ -273,7 +284,7 @@ function toJourneyRunDto(row: JourneyRunRow) {
   };
 }
 
-function toJourneySessionDto(row: JourneySessionRow) {
+function toJourneySessionDto(row: JourneySessionRow, outcome?: string | null) {
   return {
     /**
      * The `chatSessions` DOCUMENT id — the same value `GET /v1/chat-sessions`
@@ -298,7 +309,21 @@ function toJourneySessionDto(row: JourneySessionRow) {
     ...(row.personaLabel !== undefined
       ? { personaLabel: row.personaLabel }
       : {}),
+    /**
+     * ARCHIVAL state (`active` | `archived`), not a completion state — a
+     * run session stays `active` forever unless someone archives it, so this
+     * says nothing about how the conversation went. The per-session verdict
+     * is `outcome` below; the run-level verdict is the run's own status.
+     */
     status: row.status ?? null,
+    /**
+     * How this session's ATTEMPT ended, joined from the run row
+     * (`succeeded` | `failed` | `rate_limited` | `running` | `pending`), or
+     * null when the attempt cannot be matched (historical runs whose attempts
+     * predate `chatSessionId` stamping). This is the field a caller should
+     * read to rank or judge sessions — `status` above cannot answer it.
+     */
+    outcome: outcome ?? null,
     readiness: row.readiness ?? null,
     goalScore: row.goalScore ?? null,
     messageCount: row.messageCount ?? 0,
@@ -311,7 +336,6 @@ function toJourneySessionDto(row: JourneySessionRow) {
   };
 }
 
-
 /**
  * The launch body, which is entirely OPTIONAL — `POST .../runs` with no body
  * runs the journey as authored, and that is the common case.
@@ -320,6 +344,86 @@ function toJourneySessionDto(row: JourneySessionRow) {
  * `idempotency-key` header, where the rest of the platform's writes put it, so
  * a retry is a header change rather than a body edit.
  */
+// ── Authoring bodies ────────────────────────────────────────────────────────
+//
+// The public field names are the API's, and the mapper below is where they
+// become Convex's: `personaId` → `personaRefId`, `swarmId` → `swarmRefId`, and
+// the loose `sessionsPerTarget`/`maxTurns` pair → the nested `config` object.
+// Doing the rename HERE rather than exposing the upstream names keeps the two
+// vocabularies from leaking into each other — `personaRefId` means nothing to
+// someone who has never read the schema.
+
+/** Execution shape, shared by create and update. */
+const journeyConfigFields = {
+  /**
+   * Sessions run against EACH target. Total sessions = targets x this, which
+   * is what actually spends — a caller raising this from 1 to 10 on a journey
+   * with 4 environments has asked for 40 conversations.
+   */
+  sessionsPerTarget: z.number().int().min(1).max(100),
+  /** Cap on assistant turns per session. */
+  maxTurns: z.number().int().min(1).max(200),
+};
+
+const createJourneySchema = z.strictObject({
+  name: z.string().trim().min(1).max(200).optional(),
+  goal: z.string().trim().min(1).max(4000),
+  personaId: z.string().trim().min(1),
+  /** Authoring provenance only — which swarm container this was made in. */
+  swarmId: z.string().trim().min(1).optional(),
+  /**
+   * The environments to fan out across. Non-empty when present, for the same
+   * reason it is on launch: `[]` reads as "these, naming none", and the route
+   * would silently fall back to something else.
+   */
+  environmentIds: z.array(z.string().min(1)).min(1).optional(),
+  serverAttachmentId: z.string().trim().min(1).optional(),
+  hostIds: z.array(z.string().min(1)).optional(),
+  ...journeyConfigFields,
+});
+
+/**
+ * PATCH semantics, and the tri-state is the whole point:
+ *   - field absent  → leave it alone
+ *   - field present → set it
+ *   - field `null`  → CLEAR it
+ *
+ * `null` is a real value here rather than a rejected one because there is no
+ * other way to say "stop fanning this journey out across environments and go
+ * back to its host targets". Convex models the same tri-state upstream, so
+ * this is a passthrough rather than an invention.
+ */
+const updateJourneySchema = z
+  .strictObject({
+    name: z.string().trim().min(1).max(200).optional(),
+    goal: z.string().trim().min(1).max(4000).optional(),
+    environmentIds: z
+      .union([z.array(z.string().min(1)).min(1), z.null()])
+      .optional(),
+    serverAttachmentId: z
+      .union([z.string().trim().min(1), z.null()])
+      .optional(),
+    hostIds: z.array(z.string().min(1)).optional(),
+    sessionsPerTarget: journeyConfigFields.sessionsPerTarget.optional(),
+    maxTurns: journeyConfigFields.maxTurns.optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Provide at least one journey field to update.",
+  })
+  .refine(
+    (value) =>
+      (value.sessionsPerTarget === undefined) ===
+      (value.maxTurns === undefined),
+    {
+      // Convex takes `config` as one object, so a partial update would have to
+      // read-modify-write it — and a concurrent edit between the read and the
+      // write would be silently clobbered. Requiring both is a 400 the caller
+      // can fix, rather than a lost update they never see.
+      message:
+        "sessionsPerTarget and maxTurns must be updated together — they are one execution config upstream.",
+    },
+  );
+
 const launchBodySchema = z.object({
   /** Opaque id linking the sibling runs of one co-launched batch. */
   waveId: z.string().min(1).max(64).optional(),
@@ -357,9 +461,41 @@ async function readOptionalJsonBody(c: {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
+}
+
+/**
+ * A REQUIRED JSON body, parsed and validated.
+ *
+ * Distinct from `readOptionalJsonBody` above, which exists because a launch
+ * with no options is a bodyless POST. An authoring write with no body is
+ * simply malformed.
+ */
+async function parseJsonBody<T>(
+  c: { req: { json: () => Promise<unknown> } },
+  schema: z.ZodType<T>,
+): Promise<T> {
+  let raw: unknown;
+  try {
+    raw = await c.req.json();
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Request body must be JSON",
+    );
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      parsed.error.issues[0]?.message ?? "Invalid request body",
+    );
+  }
+  return parsed.data;
 }
 
 // ── Scoping preflights ──────────────────────────────────────────────────────
@@ -381,7 +517,7 @@ async function readOptionalJsonBody(c: {
 async function requireJourneyInProject(
   client: ConvexHttpClient,
   projectId: string,
-  journeyId: string
+  journeyId: string,
 ): Promise<JourneyRow> {
   let row: JourneyRow | null;
   try {
@@ -390,7 +526,7 @@ async function requireJourneyInProject(
       {
         projectId,
         journeyRefId: journeyId,
-      } as never
+      } as never,
     )) as JourneyRow | null;
   } catch (error) {
     throw translateReadError(error);
@@ -405,7 +541,7 @@ async function requireJourneyInProject(
 async function requireRunInProject(
   client: ConvexHttpClient,
   projectId: string,
-  runId: string
+  runId: string,
 ): Promise<JourneyRunRow> {
   let run: JourneyRunRow | null;
   try {
@@ -413,7 +549,7 @@ async function requireRunInProject(
       "journeyRuns:getJourneyRun" as never,
       {
         runId,
-      } as never
+      } as never,
     )) as JourneyRunRow | null;
   } catch (error) {
     throw translateReadError(error);
@@ -436,13 +572,174 @@ journeys.get("/projects/:projectId/journeys", async (c) => {
       "journeys:listJourneysByProject" as never,
       {
         projectId,
-      } as never
+      } as never,
     )) as JourneyRow[] | null;
   } catch (error) {
     throw translateReadError(error);
   }
   // Archived journeys are filtered backend-side; this list is live ones only.
   return v1PageJson(c, (rows ?? []).map(toJourneyDto));
+});
+
+// GET /v1/projects/:projectId/journeys/:journeyId
+//
+// The scoping preflight every other by-id route already runs, exposed as the
+// route it always was. `requireJourneyInProject` asks Convex for exactly this,
+// so there is no extra read.
+journeys.get("/projects/:projectId/journeys/:journeyId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+  return v1Resource(
+    c,
+    toJourneyDto(
+      await requireJourneyInProject(
+        client,
+        projectId,
+        c.req.param("journeyId"),
+      ),
+    ),
+  );
+});
+
+// POST /v1/projects/:projectId/journeys
+//
+// IDEMPOTENT on the `idempotency-key` header, and the key is forwarded to
+// Convex UNTRANSFORMED — the backend fingerprints a replay as sha256 of the
+// mutation args minus the key, so a field this layer injected or defaulted
+// differently between the original and the retry would make the retry look
+// like key REUSE and be rejected. Every optional below is forwarded only when
+// the caller sent it, for that reason.
+//
+// Behind the beta gate: an unflagged organization gets FEATURE_UNAVAILABLE
+// through as a 403 with a real message rather than a 404.
+journeys.post("/projects/:projectId/journeys", async (c) => {
+  const projectId = c.req.param("projectId");
+  const body = await parseJsonBody(c, createJourneySchema);
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+  const idempotencyKey = c.req.header("idempotency-key")?.trim();
+
+  // SCOPE THE REFERENCES, not just the path. `journeys:createJourney` resolves
+  // `personaRefId` and `swarmRefId` on its own and checks membership of
+  // whatever project they turn out to live in — so without this a member of
+  // two projects could create a journey in A that runs B's persona, and the
+  // header of this file promises the gateway does exactly this check.
+  await requirePersonaInProject(client, projectId, body.personaId);
+  if (body.swarmId !== undefined) {
+    await requireSwarmInProject(client, projectId, body.swarmId);
+  }
+
+  let row: JourneyRow;
+  try {
+    row = (await client.mutation(
+      "journeys:createJourney" as never,
+      {
+        projectId,
+        personaRefId: body.personaId,
+        goal: body.goal,
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.swarmId !== undefined ? { swarmRefId: body.swarmId } : {}),
+        // `hostIds` is REQUIRED upstream (legacy compatibility data, unread by
+        // environment-based resolution) and an empty array is the honest value
+        // for an environment-based journey, which is how everything authored
+        // through this API is expected to run.
+        hostIds: body.hostIds ?? [],
+        ...(body.serverAttachmentId !== undefined
+          ? { serverAttachmentId: body.serverAttachmentId }
+          : {}),
+        ...(body.environmentIds !== undefined
+          ? { environmentIds: body.environmentIds }
+          : {}),
+        config: {
+          sessionsPerTarget: body.sessionsPerTarget,
+          maxTurns: body.maxTurns,
+        },
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      } as never,
+    )) as JourneyRow;
+  } catch (error) {
+    throw translateConvexWriteError(error, { resource: "Journey" });
+  }
+
+  return v1Resource(c, toJourneyDto(row), 201);
+});
+
+// PATCH /v1/projects/:projectId/journeys/:journeyId
+//
+// `null` CLEARS a field (see `updateJourneySchema`); an absent field is left
+// alone. Editing a journey does not touch runs already in flight — the launch
+// pins its config onto the run snapshot, so a mid-run edit cannot re-key
+// results.
+journeys.patch("/projects/:projectId/journeys/:journeyId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const journeyId = c.req.param("journeyId");
+  const body = await parseJsonBody(c, updateJourneySchema);
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+  await requireJourneyInProject(client, projectId, journeyId);
+
+  let row: JourneyRow;
+  try {
+    row = (await client.mutation(
+      "journeys:updateJourney" as never,
+      {
+        journeyRefId: journeyId,
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.goal !== undefined ? { goal: body.goal } : {}),
+        ...(body.hostIds !== undefined ? { hostIds: body.hostIds } : {}),
+        // `null` is forwarded VERBATIM — it is the clear signal upstream too,
+        // so collapsing it to `undefined` here would turn "stop using
+        // environments" into "change nothing".
+        ...(body.serverAttachmentId !== undefined
+          ? { serverAttachmentId: body.serverAttachmentId }
+          : {}),
+        ...(body.environmentIds !== undefined
+          ? { environmentIds: body.environmentIds }
+          : {}),
+        ...(body.sessionsPerTarget !== undefined && body.maxTurns !== undefined
+          ? {
+              config: {
+                sessionsPerTarget: body.sessionsPerTarget,
+                maxTurns: body.maxTurns,
+              },
+            }
+          : {}),
+      } as never,
+    )) as JourneyRow;
+  } catch (error) {
+    throw translateConvexWriteError(error, { resource: "Journey" });
+  }
+
+  return v1Resource(c, toJourneyDto(row));
+});
+
+// DELETE /v1/projects/:projectId/journeys/:journeyId
+//
+// ARCHIVES the journey. It leaves the roster and cannot be launched again, but
+// its runs, sessions and transcripts stay readable — deleting the results of
+// work that already happened is not what anyone means by "remove this journey
+// from my list", and a scorecard that vanished with its journey would take the
+// evidence for a decision with it.
+//
+// Second call answers 404: an archived journey is filtered out of the project's
+// journeys, so the scoping preflight can no longer place it. Cleanup scripts
+// should read 404 here as success.
+//
+// NOT flag-gated — archiving reduces exposure.
+journeys.delete("/projects/:projectId/journeys/:journeyId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const journeyId = c.req.param("journeyId");
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+  await requireJourneyInProject(client, projectId, journeyId);
+
+  try {
+    await client.mutation(
+      "journeys:archiveJourney" as never,
+      { journeyRefId: journeyId } as never,
+    );
+  } catch (error) {
+    throw translateConvexWriteError(error, { resource: "Journey" });
+  }
+
+  return v1Resource(c, { id: journeyId, projectId, archived: true });
 });
 
 // GET /v1/projects/:projectId/journeys/:journeyId/runs
@@ -465,7 +762,7 @@ journeys.get("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
       {
         journeyRefId: journeyId,
         paginationOpts: paginationOptsFrom(c),
-      } as never
+      } as never,
     )) as typeof result;
   } catch (error) {
     throw translateReadError(error);
@@ -473,7 +770,7 @@ journeys.get("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
   return v1PageJson(
     c,
     result.page.map(toJourneyRunDto),
-    nextCursorFrom(result)
+    nextCursorFrom(result),
   );
 });
 
@@ -482,10 +779,29 @@ journeys.get("/projects/:projectId/journey-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const client = createConvexClient(await getConvexBearerForRequest(c));
-  return v1Resource(
-    c,
-    toJourneyRunDto(await requireRunInProject(client, projectId, runId))
-  );
+  const run = await requireRunInProject(client, projectId, runId);
+
+  // The common insights envelope, DETAIL only (lists stay compact) —
+  // resolved through the run's wave; runHealth rides beside findings, never
+  // inside them. Load failure omits the field rather than failing the read.
+  let insights: Record<string, unknown> | undefined;
+  try {
+    const envelope = await client.query(
+      "swarmWaveInsights:getJourneyRunInsightsEnvelope" as never,
+      { projectId, runId } as never,
+    );
+    if (envelope) insights = envelope as Record<string, unknown>;
+  } catch (error) {
+    // See the eval twin: omission is the documented degradation, logging is
+    // what keeps a real breakage from being indistinguishable from it.
+    console.warn("[v1.journeys] insights envelope unavailable", error);
+    insights = undefined;
+  }
+
+  return v1Resource(c, {
+    ...toJourneyRunDto(run),
+    ...(insights ? { insights } : {}),
+  });
 });
 
 // GET /v1/projects/:projectId/journey-runs/:runId/sessions
@@ -493,7 +809,17 @@ journeys.get("/projects/:projectId/journey-runs/:runId/sessions", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const client = createConvexClient(await getConvexBearerForRequest(c));
-  await requireRunInProject(client, projectId, runId);
+  const run = await requireRunInProject(client, projectId, runId);
+  // Per-session verdicts live on the RUN row (`attempts[].status`), keyed by
+  // `chatSessionId` — the session row's own `status` is only active/archived.
+  // Joined here so the sessions a caller ranks or judges carry how their
+  // attempt actually ended.
+  const outcomeByChatSessionId = new Map<string, string>();
+  for (const attempt of run.attempts ?? []) {
+    if (attempt.chatSessionId) {
+      outcomeByChatSessionId.set(attempt.chatSessionId, attempt.status);
+    }
+  }
 
   let result: {
     page: JourneySessionRow[];
@@ -506,15 +832,17 @@ journeys.get("/projects/:projectId/journey-runs/:runId/sessions", async (c) => {
       {
         journeyRunId: runId,
         paginationOpts: paginationOptsFrom(c),
-      } as never
+      } as never,
     )) as typeof result;
   } catch (error) {
     throw translateReadError(error);
   }
   return v1PageJson(
     c,
-    result.page.map(toJourneySessionDto),
-    nextCursorFrom(result)
+    result.page.map((row) =>
+      toJourneySessionDto(row, outcomeByChatSessionId.get(row.chatSessionId)),
+    ),
+    nextCursorFrom(result),
   );
 });
 
@@ -549,7 +877,7 @@ journeys.post("/projects/:projectId/journey-runs/:runId/cancel", async (c) => {
       "journeyRuns:cancelJourneyRun" as never,
       {
         journeyRunId: runId,
-      } as never
+      } as never,
     )) as typeof result;
   } catch (error) {
     // CONFLICT (the run already settled on its own) becomes 409 here rather
@@ -609,7 +937,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
 
@@ -628,13 +956,12 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
       {
         projectId,
         journeyRefId: journeyId,
-        launchKey:
-          c.req.header("idempotency-key")?.trim() || randomUUID(),
+        launchKey: c.req.header("idempotency-key")?.trim() || randomUUID(),
         ...(parsed.data.waveId ? { waveId: parsed.data.waveId } : {}),
         ...(parsed.data.environmentIds?.length
           ? { environmentIds: parsed.data.environmentIds }
           : {}),
-      }
+      },
     );
   } catch (error) {
     // `launchJourneyRun` already throws `WebRouteError` for the caller-facing
@@ -661,7 +988,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
        */
       deduped: result.deduped === true,
     },
-    202
+    202,
   );
 });
 

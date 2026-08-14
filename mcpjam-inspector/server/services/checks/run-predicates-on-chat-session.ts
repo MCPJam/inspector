@@ -202,6 +202,9 @@ export async function runPredicatesOnChatSession(
     "chatSessionChecks:startCheckRun" as any,
     {
       chatSessionId,
+      // Deterministic predicate evaluation, never a judge — the per-session
+      // Checks panel keys on this to decide which rows it owns.
+      runKind: "checks",
       definitionSnapshot,
       ...(triggeredBy !== undefined ? { triggeredBy } : {}),
     },

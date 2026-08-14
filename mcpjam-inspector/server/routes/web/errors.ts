@@ -12,6 +12,7 @@ import {
   markOriginCaptureHandled,
   maybeCaptureOriginError,
 } from "../../utils/error-origin-capture.js";
+import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -363,6 +364,111 @@ export function mapRuntimeError(error: unknown): WebRouteError {
 }
 
 /**
+ * Did this failure come from an attempt to reach a NAMED MCP server?
+ *
+ * Every connect failure the SDK's `MCPClientManager` raises quotes the server
+ * it was reaching — `Failed to connect to MCP server "<id>" …`,
+ * `Authentication failed for MCP server "<id>" …`. Nothing else in a hosted
+ * turn produces that phrase: a Convex `fetch` that dies at the socket surfaces
+ * as undici's bare `TypeError("fetch failed")`, with no server in it.
+ *
+ * Matching MCPJam's OWN wording, not a server's. The text is authored in our
+ * SDK, so a third party cannot make their error look like this one — which is
+ * the property that makes a message check safe here, where the usual objection
+ * (servers can say anything) would otherwise apply.
+ *
+ * Errs toward 502. A target-server failure raised somewhere that does not name
+ * the server keeps the old status and pages us — a false page, which is the
+ * direction to be wrong in: the alternative is silence during our own outage.
+ */
+function namesAnMcpServer(message: string): boolean {
+  return /\bMCP server "/i.test(message);
+}
+
+/**
+ * `mapRuntimeError` for a catch site whose failing outbound hop can only have
+ * been the user's own MCP server.
+ *
+ * Connection-class failures leave the shared mapper as `502
+ * SERVER_UNREACHABLE`, and on hosted that status is the only part of the
+ * verdict that survives: Cloudflare replaces an origin 5xx with its own error
+ * page, discarding the JSON envelope AND the `x-mcpjam-error-origin` header
+ * `webError` attaches. The chat client is then left with a bare 5xx and falls
+ * back to its documented rule — a 5xx from our own route is ours — so a user's
+ * unreachable MCP server is reported as an MCPJam outage. It pages us, and it
+ * tells the user MCPJam was down when their server was the thing that refused.
+ *
+ * `424 Failed Dependency` states what actually happened (the request was
+ * well-formed; something it depends on failed) and, being a 4xx, reaches the
+ * browser untouched. Any 4xx would clear the edge; 424 is the honest one.
+ *
+ * DECLARED, never inferred. This is deliberately a separate entry point rather
+ * than a change to `mapRuntimeError`: that mapper is a shared envelope with no
+ * hop information — the same connection-class branch also catches a failed
+ * fetch to MCPJam's own Convex deployment (`/api/web/server-secrets` reaches
+ * nothing else) and the router-wide `web.onError`, where the hop is unknown.
+ * Downgrading those to a 4xx would stop paging us during our OWN outage, which
+ * is a strictly worse failure than the one this fixes. So the status follows
+ * the same rule the origin does: the catch site that knows the hop says so.
+ *
+ * The catch site declaring it is NOT sufficient on its own, though. A route's
+ * outer catch spans more than its MCP work: the hosted chat turn also calls
+ * `/stream/org/resolve`, which is MCPJam's own Convex deployment reached with
+ * a bare `fetch` that throws a plain `TypeError("fetch failed")`. That is
+ * indistinguishable, to the shared mapper, from the user's server refusing —
+ * and mislabelling it would silence a page during a Convex outage AND tell the
+ * user their MCP server was down. So the downgrade needs the hop to be
+ * POSITIVELY identified as well as declared; see {@link namesAnMcpServer}.
+ */
+export function mapTargetServerError(error: unknown): WebRouteError {
+  const routeError = mapRuntimeError(error);
+  // Only a status this mapper CLASSIFIED. A `WebRouteError` that arrived
+  // pre-built carries a status some other call site chose on purpose — and a
+  // deliberate `502 SERVER_UNREACHABLE` is how a caller that knew its hop was
+  // internal says so. Relabelling that as the user's dependency would undo the
+  // one signal this function is trying to preserve.
+  if (error instanceof WebRouteError) return routeError;
+  // Mutated rather than rebuilt: `mapRuntimeError` has already stamped
+  // `origin`, backfilled `normalized`, and attached the cause link the capture
+  // dedupe walks. A fresh `WebRouteError` would drop all three.
+  if (isTargetDependencyFailure(routeError)) {
+    routeError.status = 424;
+  }
+  return routeError;
+}
+
+/**
+ * The two classifications that mean "we could not get an answer out of the
+ * user's MCP server", both of which the edge would otherwise eat.
+ *
+ * `504 TIMEOUT` is here for the same reason `502 SERVER_UNREACHABLE` is, and
+ * leaving it out was an oversight rather than a decision: `classifyRuntimeError`
+ * checks "timed out" BEFORE the connection patterns, so a target that accepts
+ * the connection and then goes quiet — the commonest shape for an overloaded or
+ * half-deployed server — exits as a 504 and never reaches the 502 branch.
+ * Cloudflare replaces a 504 exactly as it replaces a 502, so those failures kept
+ * arriving as MCPJam outages and kept paging us.
+ *
+ * A timeout IS weaker evidence than a refusal — silence can be our own container
+ * starving or our network stalling, where `ECONNREFUSED` is the far side
+ * actively saying no. `namesAnMcpServer` is what makes it safe anyway: only a
+ * timeout raised while connecting to a named MCP server is downgraded, and a
+ * timeout from our own hops (Convex, the backend) carries no such name, keeps
+ * 504, and keeps paging. And a downgraded failure is not an invisible one — it
+ * still emits `http.request.failed` with `origin` and `slug`, so if this class
+ * ever turns out to be ours, that is a decision to make from the volume rather
+ * than from the fear of missing it.
+ */
+function isTargetDependencyFailure(routeError: WebRouteError): boolean {
+  if (!namesAnMcpServer(routeError.message)) return false;
+  return (
+    (routeError.status === 502 &&
+      routeError.code === ErrorCode.SERVER_UNREACHABLE) ||
+    (routeError.status === 504 && routeError.code === ErrorCode.TIMEOUT)
+  );
+}
+
+/**
  * Status/code/message mapping only. Split out from `mapRuntimeError` so the
  * capture decision happens exactly once, on whichever `WebRouteError` the
  * branches below produce, instead of being duplicated down five return paths.
@@ -440,6 +546,32 @@ function classifyRuntimeError(error: unknown): WebRouteError {
       // already turns it into `X-MCP-Auth-Required: oauth`, which is exactly
       // the retry suppression this classification wants.
       { upstreamAuthRequired: true },
+      normalized
+    );
+  }
+
+  // A pinned protocol version the server does not offer. Classified from the
+  // SLUG, not from the wording — the describer already resolved it, and it is
+  // the one signal here that cannot drift as the sentence is edited.
+  //
+  // 424, and ahead of every branch below, because this failure has no words
+  // any of them look for: no errno, no "fetch failed", no "refused". Left to
+  // fall through it lands on the 500 catch-all, and a 5xx is precisely what
+  // Cloudflare replaces with its own error page — discarding the message that
+  // names the version AND the `x-mcpjam-error-origin` header, so the browser
+  // sees a bare 5xx and reports the user's own configuration as an MCPJam
+  // outage. Writing a clearer message is what moved this class out of the
+  // connection branch in the first place; the status has to follow it.
+  //
+  // `SERVER_UNREACHABLE` is the closest existing code — we could not use this
+  // server — and the chat formatter recognizes the pinned-version case ahead
+  // of the generic "may be offline" copy, so the specific message still wins.
+  if (normalized.slug === PROTOCOL_VERSION_PIN_SLUG) {
+    return new WebRouteError(
+      424,
+      ErrorCode.SERVER_UNREACHABLE,
+      message,
+      undefined,
       normalized
     );
   }

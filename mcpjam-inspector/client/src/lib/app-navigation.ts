@@ -87,6 +87,7 @@ export const routePaths = {
   userTesting: "/user-testing",
   swarms: "/swarms",
   environments: "/environments",
+  sessions: "/sessions",
   playground: "/playground",
   support: "/support",
   settings: "/settings",
@@ -118,7 +119,6 @@ export function buildHostComparePath(
   const search = new URLSearchParams({ hosts: param.join(",") });
   return `${routePaths.hostCompare}?${search.toString()}`;
 }
-
 
 /** The create route. A static segment, so it outranks `:scenarioId`. */
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
@@ -215,7 +215,7 @@ export function buildSwarmPath(
     tab?: SwarmDetailTab;
     session?: string;
     sel?: string;
-  } = {},
+  } = {}
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
@@ -587,7 +587,8 @@ export function useCurrentSearchParam(name: string): string | null {
   // and leave the component rendering the previous tab.
   useLayoutEffect(() => {
     if (locationContext || typeof window === "undefined") return;
-    const syncFallbackSearch = () => setFallbackSearch(getWindowFallbackSearch());
+    const syncFallbackSearch = () =>
+      setFallbackSearch(getWindowFallbackSearch());
     window.addEventListener("popstate", syncFallbackSearch);
     return () => {
       window.removeEventListener("popstate", syncFallbackSearch);

@@ -1057,7 +1057,10 @@ describe("v1 eval-edit routes", () => {
     // `deriveProvider` returns early and never inspects the model — so this is
     // the case that used to persist `{ model: "", provider: "openai" }`: a case
     // that passes validation and then has no model to run.
-    ["whitespace-only, with an explicit provider", { model: "   ", provider: "openai" }],
+    [
+      "whitespace-only, with an explicit provider",
+      { model: "   ", provider: "openai" },
+    ],
     ["whitespace-only, without a provider", { model: "   " }],
     // These two never reached the route helper — `z.string().min(1)` rejects
     // them at the schema. Pinned anyway so the endpoint's contract is one

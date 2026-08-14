@@ -49,6 +49,11 @@ const BODYLESS_WRITES = new Set([
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
+  // Insights envelope surfaces (actionable-insights program, pre-GA): the
+  // scenario detail + eval-run insights retry ship behind the staged rollout
+  // and get documented at GA together with the envelope schema.
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "post /projects/{projectId}/eval-runs/{runId}/insights",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
@@ -75,9 +80,66 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/journey-runs/{runId}/sessions",
   "post /projects/{projectId}/journeys/{journeyId}/runs",
   "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  // Authoring — personas, journeys, swarm containers — and the generation that
+  // drafts them. Same flag, same reason: these are the WRITES the gate exists
+  // for, so they cannot be advertised in a document the flag cannot reach.
+  "get /projects/{projectId}/personas",
+  "post /projects/{projectId}/personas",
+  "get /projects/{projectId}/personas/{personaId}",
+  "patch /projects/{projectId}/personas/{personaId}",
+  "delete /projects/{projectId}/personas/{personaId}",
+  "post /projects/{projectId}/personas/generate",
+  "get /projects/{projectId}/journeys/{journeyId}",
+  "post /projects/{projectId}/journeys",
+  "patch /projects/{projectId}/journeys/{journeyId}",
+  "delete /projects/{projectId}/journeys/{journeyId}",
+  "post /projects/{projectId}/journeys/generate",
+  "get /projects/{projectId}/swarms",
+  "post /projects/{projectId}/swarms",
+  "get /projects/{projectId}/swarms/{swarmId}",
+  "patch /projects/{projectId}/swarms/{swarmId}",
+  "delete /projects/{projectId}/swarms/{swarmId}",
+  // The insights layer. Reads are ungated at the API like every other swarm
+  // read, but they describe a beta product and belong with it in the spec.
+  "get /projects/{projectId}/journeys-overview",
+  "get /projects/{projectId}/journey-runs/{runId}/scorecard",
+  "get /projects/{projectId}/journey-findings",
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  "get /projects/{projectId}/waves/{waveId}/insights",
+  "post /projects/{projectId}/waves/{waveId}/insights",
+  "delete /projects/{projectId}/waves/{waveId}/insights",
   // Same flag, same reason (`sandboxes-enabled` gates both products).
   "put /projects/{projectId}/environments/{environmentId}/scenario",
   "delete /projects/{projectId}/environments/{environmentId}/scenario",
+  // The rest of user testing: what a published scenario produced, and who may
+  // reach it. Same beta, and the exposure controls want their own security
+  // review in the docs before they are advertised publicly.
+  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
+
+  // A PLANNING read, not a product surface: it reports the caller's own role,
+  // the beta gate's state and their plan limits so an agent on a static
+  // surface can check before it acts. Undocumented for now because half of
+  // what it describes is the beta above — documenting the shape would
+  // advertise the flag-gated capability names to everyone. Moves into the spec
+  // with the rest of this surface at GA.
+  "get /projects/{projectId}/capabilities",
 ]);
 
 /**

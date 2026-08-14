@@ -198,6 +198,18 @@ export function ServerDetailModal({
     target: McpProtocolVersion | undefined;
   } | null>(null);
   const [pendingReconnectTick, setPendingReconnectTick] = useState(0);
+  const fallbackReconnectTimerRef = useRef<number | null>(null);
+  // The safety-net timer below outlives the modal: closing it a moment after
+  // the toggle otherwise still fires a reconnect 1.5s later, against a server
+  // the user has navigated away from.
+  useEffect(
+    () => () => {
+      if (fallbackReconnectTimerRef.current !== null) {
+        window.clearTimeout(fallbackReconnectTimerRef.current);
+      }
+    },
+    []
+  );
   useEffect(() => {
     const pending = pendingReconnectRef.current;
     if (!pending) return;
@@ -276,7 +288,8 @@ export function ServerDetailModal({
       // Fallback: if the reactive refetch is delayed (network blip,
       // backend slow), trigger reconnect after 1.5s anyway. The watcher
       // effect short-circuits if it already fired.
-      window.setTimeout(() => {
+      fallbackReconnectTimerRef.current = window.setTimeout(() => {
+        fallbackReconnectTimerRef.current = null;
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
           void onReconnect(server.name, {
