@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
@@ -356,9 +356,17 @@ export function UserTestingScenarioDetail({
     insightsEmptyReport?.chatboxId === chatbox.chatboxId
       ? insightsEmptyReport.empty
       : true;
-  const handleInsightsEmptyChange = (empty: boolean) => {
-    setInsightsEmptyReport({ chatboxId: chatbox.chatboxId, empty });
-  };
+  // Stable ref: a new one each render loops InsightsWorkbench's report effect.
+  const handleInsightsEmptyChange = useCallback(
+    (empty: boolean) => {
+      setInsightsEmptyReport((prev) =>
+        prev?.chatboxId === chatbox.chatboxId && prev.empty === empty
+          ? prev
+          : { chatboxId: chatbox.chatboxId, empty },
+      );
+    },
+    [chatbox.chatboxId],
+  );
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;

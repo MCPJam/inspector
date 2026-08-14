@@ -306,6 +306,19 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.getByTestId("stub-share-banner")).toBeInTheDocument();
   });
 
+  it("keeps onEmptyChange stable across the render it triggers", async () => {
+    // Regression for INSPECTOR-CLIENT-236 (infinite render loop).
+    renderDetail();
+
+    const before = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
+    await act(async () => {
+      (before as (empty: boolean) => void)?.(false);
+    });
+    const after = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
+
+    expect(after).toBe(before);
+  });
+
   it("shows setup and share controls on the Edit route", () => {
     renderEdit();
 
