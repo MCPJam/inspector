@@ -1967,8 +1967,10 @@ export class PlatformApiClient {
   // exist yet); everything here is keyed by the scenario.
   //
   // AUTHORIZATION DIFFERS from the rest of this client: these gate on the
-  // WORKSPACE role rather than the project role, and the exposure controls
-  // (guest execution, link rotation, rebinding) need project ADMIN. A legacy
+  // WORKSPACE role rather than the project role, and workspace MEMBERSHIP is
+  // enough for most of them — mode changes, renames, member edits and link
+  // rotation included. Only guest execution and rebinding need project
+  // ADMIN. A legacy
   // workspace with no organization hard-denies delegated (`sk_`) callers
   // entirely — a documented limitation, not a bug you can grant your way out
   // of.

@@ -78,6 +78,17 @@ const ROLE_RANK: Record<string, number> = {
  * `unpublishScenario` stay true for an org that has just lost the flag. An
  * agent that inferred "no flag ⇒ nothing works" would refuse to stop a run
  * precisely when stopping it matters most.
+ *
+ * User testing splits FINER than "admin publishes, members read". The chatbox
+ * mutations behind the day-to-day controls — `setChatboxMode`,
+ * `updateChatbox`, `rotateChatboxLink`, `upsertChatboxMember`,
+ * `removeChatboxMember` — gate at `requireWorkspaceRole(..., 'guest')`
+ * upstream: an ordinary member CAN do all of them, and none sit behind the
+ * beta flag. Only `publishEnvironmentChatbox`, `rebindEnvironmentChatbox` and
+ * `setChatboxGuestExecution` require project admin, and of those only
+ * publish/rebind are flag-gated. Reporting the member-level controls as
+ * admin-gated would DENY capabilities callers actually hold — this endpoint's
+ * own failure mode, delivered by the endpoint itself.
  */
 /** The gate state, or the permissive default when the projection lacks it. */
 function sandboxesOf(row: CapabilitiesRow) {
@@ -134,8 +145,23 @@ function deriveCapabilities(row: CapabilitiesRow) {
     publishUserTestingScenario: isAdmin && !gated,
     /** Taking a live scenario down. Ungated by design. */
     unpublishUserTestingScenario: isAdmin,
-    /** Widening exposure: mode changes, guest execution, member invites. */
-    changeUserTestingExposure: isAdmin && !gated,
+    /**
+     * Mode changes, member invites/removals, link rotation, renames. These
+     * gate at WORKSPACE membership upstream (`requireWorkspaceRole(...,
+     * 'guest')` on every one of the chatbox mutations) — an ordinary member
+     * can do all of them — and none of them check the beta flag. Guest
+     * execution is NOT here: it is the one exposure control that genuinely
+     * needs admin, split out below.
+     */
+    changeUserTestingExposure: isMember,
+    /**
+     * The guest-execution spend caps (`setChatboxGuestExecution`), which are
+     * genuinely project-ADMIN upstream (`canManageProjectMembers`, same bar
+     * as publishing). Kept separate from `changeUserTestingExposure` so the
+     * membership-level controls above are not misreported as admin-only.
+     * Ungated: the beta flag covers publish/rebind, not this.
+     */
+    manageUserTestingGuestExecution: isAdmin,
     /** Requesting an LLM insight pass over a wave or window. */
     requestInsights: isMember,
   };

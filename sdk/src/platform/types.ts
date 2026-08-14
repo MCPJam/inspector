@@ -1274,7 +1274,15 @@ export interface PlatformCapabilities {
     cancelJourneyRun: boolean;
     publishUserTestingScenario: boolean;
     unpublishUserTestingScenario: boolean;
+    /**
+     * Mode changes, member invites/removals, link rotation, renames — the
+     * scenario controls an ordinary MEMBER can use. Guest execution is not
+     * covered here; it is the one exposure control that needs admin, and it
+     * has its own key below.
+     */
     changeUserTestingExposure: boolean;
+    /** The guest-execution spend caps. Genuinely project-admin upstream. */
+    manageUserTestingGuestExecution: boolean;
     requestInsights: boolean;
   };
 }
@@ -1362,14 +1370,20 @@ export interface PlatformUserTestingSessionDetail {
   nextCursor?: string;
 }
 
-/** Scenario metadata after an update. */
+/**
+ * Scenario metadata after an update.
+ *
+ * NO `accessVersion`, deliberately: a mode change bumps it upstream, but the
+ * envelope the route re-reads does not carry the new value, so the field was
+ * null on every response while documenting itself as the revocation signal.
+ * The publish response (`PlatformScenario`) carries the real one.
+ */
 export interface PlatformUserTestingScenario {
   id: string;
   projectId: string;
   name: string | null;
   description: string | null;
   mode: string | null;
-  accessVersion: number | null;
 }
 
 /** Guest execution caps — the spend dial for anonymous visitors. */
