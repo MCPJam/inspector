@@ -256,6 +256,7 @@ const openSetup = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  workbenchMock.mockReset();
   // `clearAllMocks` clears calls but NOT implementations — reinstate the
   // resolved defaults so a per-test rejection can't leak into later cases.
   deleteChatboxMock.mockResolvedValue(undefined);
@@ -325,6 +326,26 @@ describe("UserTestingScenarioDetail", () => {
         cohortKey: "cb-1",
       }),
     );
+  });
+
+  it("shows the share empty panel when Insights throw, not a blank pane", () => {
+    // The window-insights rail used to wrap the whole tab in
+    // `fallback={null}`. An undeployed `getWindowSignals` then left the
+    // Insights `absolute inset-0` with no children — no empty state, no
+    // retry. The workbench must stay reachable; if it itself blows up, the
+    // share empty panel is the recovery UI.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    workbenchMock.mockImplementation(() => {
+      throw new Error(
+        "Could not find public function: chatboxWindowInsights:getWindowSignals",
+      );
+    });
+
+    renderDetail();
+
+    expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
+    consoleError.mockRestore();
   });
 
   it("switches tabs by replacing the URL, not pushing onto history", () => {
