@@ -112,6 +112,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import { attributeToServer } from "@/lib/server-error-copy";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
@@ -4536,7 +4537,15 @@ export function useServerState({
           });
           return;
         }
-        toast.error(errorMessage);
+        // Name the server for everything else. The route stopped prefixing its
+        // payload with "Connection failed for server X:" — that preamble
+        // buried the sentence and repeated the name against errors that
+        // already carry it — but a generic failure ("Connection refused") then
+        // says nothing about WHICH server, and several can fail at once.
+        //
+        // So it is added here, in the copy layer, and only when the message
+        // does not already name the server: attribution without the stutter.
+        toast.error(attributeToServer(serverName, errorMessage));
       };
 
       if (isClientConfigSyncPending) {
