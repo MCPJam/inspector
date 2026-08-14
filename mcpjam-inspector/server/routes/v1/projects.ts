@@ -78,12 +78,17 @@ async function readProject(token: string, projectId: string) {
 /**
  * Refuse to touch a project outside a delegated caller's organization.
  *
- * The mutations address a project by id, and the backend resolves access from
- * the acting USER (`resolveProjectAccess`), never from the delegated token's
- * org — so an `sk_` key bound to org A, minted by someone who also belongs to
- * org B, can otherwise rename or delete B's projects. `getMyProjects` returns
- * the user's projects across ALL their orgs, which is exactly why the id
- * resolves at all and exactly why this check is needed.
+ * DEFENSE-IN-DEPTH, not the only barrier. The backend enforces the delegated
+ * token's org claim inside membership resolution itself
+ * (`delegatedScopeAllowsOrganization` in mcpjam-backend
+ * `convex/lib/authorization.ts`, applied by `getOrgMembership` and therefore
+ * by `resolveProjectAccess`/`requireProjectRole`), so a cross-org mutation
+ * already fails there. What the chokepoint does NOT cover is
+ * `projects:getMyProjects`, which enumerates the user's memberships directly
+ * — `readProject` resolves ids across ALL the user's orgs, and this guard is
+ * what keeps that resolver from widening the gateway's answer. It also pins
+ * the status: a clean 404 here, instead of whatever the backend's rejection
+ * translates to.
  *
  * 404, not 403: the existing miss for an unknown id is already 404, and
  * answering 403 here would confirm that a project the key may not see exists.
@@ -117,20 +122,18 @@ projects.post("/projects", async (c) => {
   }
   const body = parseWithSchema(createProjectSchema, raw);
 
-  // Org clamp for delegated (`sk_` / service) callers, applied HERE because
-  // the backend mutation does not: `projects:createProject` checks the acting
-  // USER's membership in the requested org (`requireOrgRole`), and
-  // `userMutation` never reads the delegated-org claim. So a key bound to org
-  // A, minted by someone who also belongs to org B, could otherwise create in
-  // B. This mirrors the clamp the Convex `/v1/projects` READ route already
-  // applies (convex/publicApi/routes.ts).
+  // Org clamp for delegated (`sk_` / service) callers.
   //
-  // Two cases, and the SECOND is the common one: an explicit mismatch is
-  // rejected, and an ABSENT organizationId is filled in rather than left to
-  // the backend's "the user's default org" fallback — which for a delegated
-  // key is not necessarily the org the key is bound to. An agent calling
-  // create_project with just a name is the likely path, and it must land in
-  // the key's org.
+  // Two cases, and the SECOND is the load-bearing one. An explicit mismatch
+  // is rejected with a clean 403 — the backend's own org chokepoint
+  // (`delegatedScopeAllowsOrganization` inside membership resolution) would
+  // refuse it anyway, but as a translated backend error rather than this
+  // deliberate copy. An ABSENT organizationId is filled in with the key's
+  // org: left alone, the backend falls back to the acting user's DEFAULT
+  // org, which need not be the key's — and since the chokepoint then rejects
+  // the mismatch, `create_project` with just a name (the likely agent call)
+  // would ERROR instead of landing in the key's org. The fill-in is what
+  // makes the bare call work.
   //
   // Session-JWT callers are untouched: they are confined to nothing and may
   // still create in any org they belong to.

@@ -160,12 +160,16 @@ function usesDelegatedToken(c: Context): boolean {
  * The organization this request is CONFINED TO, or `undefined` for a caller
  * who is confined to nothing.
  *
- * The backend applies this itself for everything reached through a delegated
- * JWT — the token is minted for one org and Convex re-checks membership in it.
- * What the backend cannot clamp is a query that is not org-scoped at all:
- * `organizations:getMyOrganizations` answers "every org this HUMAN belongs to",
- * which for an `sk_` key bound to one org is strictly more than the key may
- * see. A route serving such a query must intersect the result with this.
+ * The backend applies this itself for anything that resolves MEMBERSHIP: the
+ * token's org claim is enforced by `delegatedScopeAllowsOrganization` inside
+ * `getOrgMembership` (mcpjam-backend `convex/lib/authorization.ts`), which
+ * every `resolveProjectAccess`/`requireOrgRole`/`requireProjectRole` path
+ * runs through. What the backend cannot clamp is a query that ENUMERATES
+ * memberships without naming an org: `organizations:getMyOrganizations` and
+ * `projects:getMyProjects` walk the user's membership rows directly and
+ * answer for the acting HUMAN across every org they belong to — strictly more
+ * than an org-bound `sk_` key may see. A route serving such a query must
+ * intersect the result with this.
  *
  * Read the AUTH METHOD, not the presence of `mcpjamOrganizationId`: a session
  * JWT caller can carry the var too (it is the org their UI is looking at), and
@@ -175,10 +179,10 @@ function usesDelegatedToken(c: Context): boolean {
  * FAILS CLOSED. A delegated caller whose org cannot be resolved throws rather
  * than returning `undefined`, because `undefined` here means "confined to
  * nothing" — the caller would skip the clamp entirely and receive everything.
- * The two states are opposites and must not share a return value. Today this
- * is also unreachable, since `getConvexBearerForRequest` mints first and
- * `delegationContext` rejects the same broken state (with this same code); the
- * throw is here so the clamp does not depend on that ordering holding.
+ * The two states are opposites and must not share a return value. Routes are
+ * free to call this before OR after the token mint (`POST /projects` clamps
+ * before minting), so this throw cannot lean on `delegationContext` having
+ * already rejected the same broken state.
  */
 export function getDelegatedOrganizationId(c: Context): string | undefined {
   if (!usesDelegatedToken(c)) return undefined;
