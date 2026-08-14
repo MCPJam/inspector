@@ -79,13 +79,16 @@ function call(
   });
 }
 
+// Mirrors the `getChatbox` SETTINGS ENVELOPE, which deliberately carries no
+// `accessVersion` — that field only travels on the publish/rebind projection.
+// A stub that invented one here would let the routes appear to serve a value
+// the real upstream never sends.
 const scenarioRow = (projectId = PROJECT) => ({
   _id: SCENARIO,
   projectId,
   workspaceId: "ws_1",
   name: "Checkout",
   mode: "invited_only",
-  accessVersion: 3,
 });
 
 /**
@@ -335,9 +338,16 @@ describe("scenario update", () => {
 
   it("routes a mode change to setChatboxMode and nothing else", async () => {
     mutationMock.mockResolvedValue(null);
-    await call(userTesting, "PATCH", BASE, { mode: "invited_only" });
+    const res = await call(userTesting, "PATCH", BASE, {
+      mode: "invited_only",
+    });
     expect(mutationMock).toHaveBeenCalledTimes(1);
     expect(mutationMock.mock.calls[0]?.[0]).toBe("chatboxes:setChatboxMode");
+    // No `accessVersion` in the response. The mutation bumps it upstream, but
+    // the settings envelope the route re-reads does not carry the value — an
+    // always-null field would document a revocation signal never delivered.
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("accessVersion");
   });
 
   it("routes a rename to updateChatbox and nothing else", async () => {
@@ -631,16 +641,57 @@ describe("exposure controls", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
-  it("surfaces the admin gate as 403, not a 404", async () => {
-    // The caller is already a workspace member (Convex confirmed it to serve
-    // the preflight), so "requires admin" is actionable and reveals nothing.
-    mutationMock.mockRejectedValue(
-      Object.assign(new Error("Requires admin"), {
-        data: { code: "FORBIDDEN", message: "Requires admin" },
-      })
-    );
+  it("rotates the link without minting an accessVersion it never had", async () => {
+    // The mutation returns the settings envelope: a `link` object and NO
+    // `accessVersion` (only publish/rebind return one). The old response
+    // reported `accessVersion: null` forever while documenting it as the
+    // revocation signal.
+    mutationMock.mockResolvedValue({
+      link: { token: "tok", path: "/s/tok", url: "https://app.test/s/tok" },
+      members: [],
+    });
     const res = await call(userTesting, "POST", `${BASE}/rotate-link`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.rotated).toBe(true);
+    expect(body).not.toHaveProperty("accessVersion");
+  });
+
+  it("404s rotate's REAL insufficient-role refusal — it is not an admin gate", async () => {
+    // `rotateChatboxLink` gates at `requireWorkspaceRole(..., 'guest')` and
+    // throws PLAIN errors ("Not a member of this workspace"), never a
+    // ConvexError with a FORBIDDEN code — a previous version of this test
+    // mocked that fictional shape and asserted a 403 the mutation can never
+    // produce. The real refusal means the caller cannot see the workspace at
+    // all, so the translator's prose fallback collapses it to the same
+    // neutral 404 as a missing scenario. (In production Convex redacts the
+    // plain error to "Server Error" before it reaches us; the preflight
+    // normally answers first with its own 404 either way.)
+    mutationMock.mockRejectedValue(new Error("Not a member of this workspace"));
+    const res = await call(userTesting, "POST", `${BASE}/rotate-link`);
+    expect(res.status).toBe(404);
+  });
+
+  it("surfaces guest-execution's REAL admin refusal as 403, not a 404", async () => {
+    // `setChatboxGuestExecution` is the exposure control that genuinely
+    // requires project admin, and its refusal is a plain error naming the
+    // requirement. The caller is already a workspace member (Convex confirmed
+    // it to serve the preflight), so "only project admins" is actionable and
+    // reveals nothing new.
+    mutationMock.mockRejectedValue(
+      new Error("Only project admins can configure guest execution")
+    );
+    const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, {
+      enabled: true,
+      computerEnabled: false,
+      sharedSkillsEnabled: false,
+      dailyCreditCap: 100,
+      dailyComputerStartCap: 0,
+      maxConcurrentComputers: 0,
+    });
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/project admins/i);
   });
 });
 

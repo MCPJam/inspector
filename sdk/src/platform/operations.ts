@@ -6089,7 +6089,7 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
   name: "update_user_testing_scenario",
   title: "Update a user-testing scenario",
   description:
-    "Rename a scenario, or change who may open its share link. SINGLE-CONCERN: send `mode` alone, or name/description together — never both, because they are separate operations upstream and applying them in sequence could leave the scenario live in a mode nobody asked for. Widening to anyone_with_link exposes it to anyone holding the URL. Project admin.",
+    "Rename a scenario, or change who may open its share link. SINGLE-CONCERN: send `mode` alone, or name/description together — never both, because they are separate operations upstream and applying them in sequence could leave the scenario live in a mode nobody asked for. Widening to anyone_with_link exposes it to anyone holding the URL. Workspace membership is enough — no admin needed.",
   readOnly: false,
   risk: "exposure",
   inputSchema: updateUserTestingScenarioInput,
@@ -6633,7 +6633,7 @@ export const rotateUserTestingLinkOperation: PlatformOperation<
   name: "rotate_user_testing_link",
   title: "Rotate a user-testing scenario's share link",
   description:
-    "Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked, not routine hygiene. Project admin.",
+    "Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked, not routine hygiene. Workspace membership is enough — no admin needed.",
   readOnly: false,
   risk: "destructive",
   inputSchema: userTestingScenarioSelectorInput,

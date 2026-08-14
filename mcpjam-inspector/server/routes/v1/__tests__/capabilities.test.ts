@@ -96,6 +96,18 @@ describe("capability derivation", () => {
     expect(body.can.publishUserTestingScenario).toBe(false);
   });
 
+  it("gives a member the exposure controls but not guest execution", async () => {
+    // The chatbox mutations behind mode changes, member edits and link
+    // rotation gate at workspace MEMBERSHIP upstream — reporting them as
+    // admin-only denied capabilities the caller actually held, this
+    // endpoint's own failure mode. Guest execution is the one exposure
+    // control that genuinely needs admin, and it is a separate key.
+    queryMock.mockResolvedValue(row());
+    const body = (await (await get()).json()) as Body;
+    expect(body.can.changeUserTestingExposure).toBe(true);
+    expect(body.can.manageUserTestingGuestExecution).toBe(false);
+  });
+
   it("does not let a project GRANT stand in for org membership", async () => {
     // `requireProjectRole` ranks the ORG role and ignores the grant, so a
     // guest holding one cannot author. Claiming otherwise would be this
@@ -117,6 +129,11 @@ describe("capability derivation", () => {
     );
     const body = (await (await get()).json()) as Body;
     expect(body.can.publishUserTestingScenario).toBe(true);
+    // Guest execution follows the same `canManageProjectMembers` bar as
+    // publishing, so the grant satisfies it too…
+    expect(body.can.manageUserTestingGuestExecution).toBe(true);
+    // …while the membership-level keys keep ranking the org role alone.
+    expect(body.can.changeUserTestingExposure).toBe(false);
     expect(body.can.writeSwarms).toBe(false);
   });
 
@@ -128,6 +145,7 @@ describe("capability derivation", () => {
     expect(body.can.publishUserTestingScenario).toBe(true);
     expect(body.can.unpublishUserTestingScenario).toBe(true);
     expect(body.can.changeUserTestingExposure).toBe(true);
+    expect(body.can.manageUserTestingGuestExecution).toBe(true);
     expect(body.can.requestInsights).toBe(true);
   });
 
@@ -156,6 +174,12 @@ describe("capability derivation", () => {
     const body = (await (await get()).json()) as Body;
     expect(body.can.cancelJourneyRun).toBe(true);
     expect(body.can.unpublishUserTestingScenario).toBe(true);
+    // The scenario controls stay true too: none of the chatbox mutations
+    // behind them (mode, members, rotate, guest execution) check the beta
+    // flag — only publish/rebind do. Claiming otherwise would deny writes
+    // the backend accepts.
+    expect(body.can.changeUserTestingExposure).toBe(true);
+    expect(body.can.manageUserTestingGuestExecution).toBe(true);
     // …while the exposure-creating half is refused.
     expect(body.can.writeSwarms).toBe(false);
     expect(body.can.publishUserTestingScenario).toBe(false);
