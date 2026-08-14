@@ -58,6 +58,23 @@ describe("PlatformApiClient", () => {
     expect(second.url.searchParams.get("organizationId")).toBe("org-1");
   });
 
+  it("reads organizations from the bare collection route", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ items: [{ id: "org-1", name: "Alpha" }] })
+    );
+    const client = makeClient(fetchMock);
+
+    const page = await client.listOrganizations();
+
+    const { url, init } = requestOf(fetchMock);
+    // No query params and no body: the scope of the answer is the credential's,
+    // never the caller's to widen.
+    expect(url.href).toBe("https://api.example.com/api/v1/organizations");
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    expect(page.items[0]?.id).toBe("org-1");
+  });
+
   it("resolves auth lazily per request", async () => {
     const tokens = ["token-a", "token-b"];
     const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));

@@ -51,6 +51,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
   "get /me": "getMe",
   "get /models": "listModels",
+  "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
 
   // Server connections

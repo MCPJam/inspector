@@ -157,6 +157,30 @@ function usesDelegatedToken(c: Context): boolean {
 }
 
 /**
+ * The organization this request is CONFINED TO, or `undefined` for a caller
+ * who is confined to nothing.
+ *
+ * The backend applies this itself for everything reached through a delegated
+ * JWT — the token is minted for one org and Convex re-checks membership in it.
+ * What the backend cannot clamp is a query that is not org-scoped at all:
+ * `organizations:getMyOrganizations` answers "every org this HUMAN belongs to",
+ * which for an `sk_` key bound to one org is strictly more than the key may
+ * see. A route serving such a query must intersect the result with this.
+ *
+ * Read the AUTH METHOD, not the presence of `mcpjamOrganizationId`: a session
+ * JWT caller can carry the var too (it is the org their UI is looking at), and
+ * clamping them to it would hide the other orgs they legitimately belong to —
+ * the exact list this endpoint exists to return.
+ */
+export function getDelegatedOrganizationId(c: Context): string | undefined {
+  if (!usesDelegatedToken(c)) return undefined;
+  const organizationId = c.get("mcpjamOrganizationId");
+  return typeof organizationId === "string" && organizationId.length > 0
+    ? organizationId
+    : undefined;
+}
+
+/**
  * Resolve the bearer to use against Convex for this request:
  *   - JWT callers (WorkOS session, guest): the original bearer, verbatim.
  *   - WorkOS API-key callers: a cached short-lived delegated JWT.

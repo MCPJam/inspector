@@ -26,7 +26,10 @@ so results respect the caller's project access.
 | --- | --- | --- |
 | `get_me` | Return the account associated with the current API credential. | — |
 | `list_models` | List the public hosted model catalog available to MCPJam callers. | — |
+| `list_organizations` | List the organizations the caller belongs to — where project `organizationId`s come from. | — |
 | `list_projects` | List the MCPJam projects the caller can access, most recently updated first. | — |
+| `create_project` | Create an empty project in one of the caller's organizations. | — |
+| `update_project` | Rename a project or change its description, icon or visibility. Never touches server configs. | — |
 | `list_project_servers` | List the MCP servers saved in an MCPJam project. | — |
 | `create_project_server` | Save a new MCP server in a project, including optional credentials. | — |
 | `get_project_server` | Read one saved MCP server by project and server id. | — |

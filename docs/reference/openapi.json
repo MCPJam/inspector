@@ -2445,6 +2445,43 @@
         }
       }
     },
+    "/organizations": {
+      "get": {
+        "operationId": "listOrganizations",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "List organizations",
+        "description": "The organizations the caller belongs to — the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.",
+        "responses": {
+          "200": {
+            "description": "The caller's organizations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects": {
       "get": {
         "operationId": "listProjects",
@@ -7426,6 +7463,67 @@
               "number",
               "null"
             ]
+          }
+        }
+      },
+      "Organization": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Pass as `organizationId` to the project routes."
+          },
+          "name": {
+            "type": "string"
+          },
+          "plan": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Billing plan slug: `free`, `team` or `enterprise`."
+          },
+          "myRole": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The caller's role in the organization."
+          },
+          "isCreator": {
+            "type": "boolean",
+            "description": "Whether the caller created the organization."
+          },
+          "logoUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "OrganizationPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Organization"
+            }
           }
         }
       },

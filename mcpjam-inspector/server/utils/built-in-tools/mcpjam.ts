@@ -134,6 +134,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   // wander out of the surface the person is looking at.
   get_me: "The chat surface already knows who is signed in.",
   list_models: "Model choice is the chat UI's own control, not a tool call.",
+  list_organizations:
+    "Chat runs inside an organization the app shell already names in its switcher; listing the others would only invite the model to reference a scope this window is not in.",
 
   // Project and org lifecycle. The UI has dedicated flows with confirmations,
   // and these reshape what the rest of the app is showing.

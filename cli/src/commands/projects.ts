@@ -162,14 +162,29 @@ export function registerProjectsCommands(program: Command): void {
     );
 
   addPlatformOptions(
-    projects.command("list").description("List the projects you can access")
+    projects
+      .command("list")
+      .description("List the projects you can access")
+      // The operation has always taken this filter; the CLI had no way to pass
+      // it, and no way to learn an id to pass either. `organizations list`
+      // supplies the id, so the flag is finally usable end to end.
+      .option(
+        "--organization <id>",
+        "Restrict the listing to one organization (see `mcpjam organizations list`)"
+      )
   ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const organizationId = (
+      command.opts() as { organization?: string }
+    ).organization?.trim();
     const result = await runPlatformCommand(
       platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
-        listProjectsOperation.execute({}, { client, signal })
+        listProjectsOperation.execute(
+          organizationId ? { organizationId } : {},
+          { client, signal }
+        )
     );
 
     if (globalOptions.format === "human") {
