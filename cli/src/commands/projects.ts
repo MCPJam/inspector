@@ -1,5 +1,9 @@
 import type { Command } from "commander";
 import {
+  addPlatformOptions,
+  runPlatformCommand,
+} from "../lib/platform-command.js";
+import {
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
   createProjectOperation,
@@ -10,7 +14,6 @@ import {
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
-  PlatformApiError,
   showServersOperation,
   updateProjectOperation,
 } from "@mcpjam/sdk/platform";
@@ -20,7 +23,6 @@ import {
   formatShowServersHuman,
 } from "../lib/projects-render.js";
 import { writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { openUrlInBrowser } from "@mcpjam/sdk";
 
@@ -29,15 +31,6 @@ type PlatformOptions = {
   apiUrl?: string;
   project?: string;
 };
-
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
 
 /**
  * The one place `--api-key`, `--api-url` and `--project` are resolved.
@@ -99,59 +92,6 @@ function requireProject(command: Command, options: PlatformOptions): string {
     command.error("error: required option '--project <id-or-name>' not specified");
   }
   return project;
-}
-
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>,
-  /**
-   * Cancels the request from outside its own deadline — today that is Ctrl-C
-   * during a poll. Without it the only way out of an in-flight request is the
-   * timeout, so a user who interrupted a watch still waits the better part of
-   * `timeoutMs` for the terminal to come back.
-   */
-  externalSignal?: AbortSignal
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  const onExternalAbort = () => controller.abort(externalSignal?.reason);
-  if (externalSignal?.aborted) onExternalAbort();
-  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    // When OUR deadline fired, surface the armed TIMEOUT error: depending
-    // on the fetch implementation, the rejection may be a bare AbortError
-    // that would otherwise map to INTERNAL_ERROR.
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-    externalSignal?.removeEventListener("abort", onExternalAbort);
-  }
 }
 
 export function registerProjectsCommands(program: Command): void {

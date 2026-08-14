@@ -8,6 +8,11 @@ import {
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import {
+  addPlatformOptions,
+  runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
+import {
   createEvalCaseOperation,
   createEvalSuiteOperation,
   deleteEvalCaseOperation,
@@ -23,7 +28,6 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
-  PlatformApiError,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -42,21 +46,11 @@ import {
 } from "../lib/eval-screenshots.js";
 import { operationalError, usageError, writeResult } from "../lib/output.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
-import {
-  buildPlatformClient,
-  toCliError,
-  webOriginForApiBaseUrl,
-} from "../lib/platform-client.js";
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import {
   detectInlineImageProtocol,
   encodeInlineImage,
 } from "../lib/terminal-image.js";
-
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
 type CreateOptions = PlatformOptions & {
   project?: string;
@@ -67,15 +61,6 @@ type CreateOptions = PlatformOptions & {
   provider?: string;
   server?: string[];
 };
-
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
 
 /**
  * Print a deep link to a run, after the command's own machine-readable
@@ -107,50 +92,6 @@ function writeRunLink(
       suiteId
     )}/runs/${encodeURIComponent(runId)}${query}\n`
   );
-}
-
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-    /** App origin matching the API base this call went to. */
-    webOrigin: string;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client, baseUrl } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({
-      client,
-      signal: controller.signal,
-      webOrigin: webOriginForApiBaseUrl(baseUrl),
-    });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
 }
 
 /**
