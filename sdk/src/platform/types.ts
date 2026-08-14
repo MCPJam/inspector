@@ -948,7 +948,18 @@ export interface PlatformJourneyRunSession {
   journeyId?: string;
   personaId?: string;
   personaLabel?: string;
+  /**
+   * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
+   * forever unless archived, so this says nothing about how it went. Read
+   * `outcome` for the verdict.
+   */
   status: string | null;
+  /**
+   * How this session's run attempt ended: `succeeded` | `failed` |
+   * `rate_limited` | `running` | `pending`, or null when the attempt cannot
+   * be matched (historical runs). Absent on servers that predate the field.
+   */
+  outcome?: string | null;
   readiness: unknown;
   goalScore: unknown;
   messageCount: number;
