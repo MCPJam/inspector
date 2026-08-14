@@ -20,11 +20,7 @@ import {
   journeyOutcomeWantsEvidence,
   watchJourneyRunUntilDone,
 } from '@mcpjam/surface-core';
-import {
-  getJourneyRun,
-  getJourneyRunScorecard,
-  listJourneyRunSessions,
-} from '../../agent/mcpjam-client.js';
+import { getJourneyRun, getJourneyRunScorecard, listJourneyRunSessions } from '../../agent/mcpjam-client.js';
 
 const POLL_INTERVAL_MS = 15_000;
 // An hour, not the eval watcher's fifteen minutes: a fan-out across four
@@ -47,10 +43,7 @@ const EVIDENCE_SESSION_LIMIT = 5;
  * @param {string} userId
  */
 export function formatJourneyRunOutcome(run, outcome, url, userId) {
-  const counts =
-    outcome.total > 0
-      ? ` (${outcome.succeeded}/${outcome.total} sessions reached their goal)`
-      : '';
+  const counts = outcome.total > 0 ? ` (${outcome.succeeded}/${outcome.total} sessions reached their goal)` : '';
   const who = ` — approved by <@${userId}>`;
   switch (outcome.kind) {
     case 'passed':
@@ -131,9 +124,7 @@ export async function announceAndWatchJourneyRun(client, args) {
   const posted = await client.chat.postMessage({
     channel: args.channelId,
     thread_ts: args.threadTs,
-    text:
-      args.text ??
-      `:rocket: Approved by <@${args.userId}> — swarm running… <${args.url}|watch it here>.`,
+    text: args.text ?? `:rocket: Approved by <@${args.userId}> — swarm running… <${args.url}|watch it here>.`,
   });
   if (!posted.ts) return;
   const statusTs = /** @type {string} */ (posted.ts);
@@ -147,8 +138,7 @@ export async function announceAndWatchJourneyRun(client, args) {
       pollIntervalMs: POLL_INTERVAL_MS,
       maxMs: POLL_MAX_MS,
       statusHandle: { id: statusTs, channelId: args.channelId },
-      formatOutcome: (run, outcome, url, actorId) =>
-        formatJourneyRunOutcome(run, outcome, url, actorId),
+      formatOutcome: (run, outcome, url, actorId) => formatJourneyRunOutcome(run, outcome, url, actorId),
       logger: args.logger,
       onTerminal: async (_run, outcome) => {
         if (!journeyOutcomeWantsEvidence(outcome)) return;
@@ -181,9 +171,7 @@ export async function announceAndWatchJourneyRun(client, args) {
           text: `:hourglass_flowing_sand: Swarm run is still going after an hour — <${args.url}|follow the rest in the app>.`,
         });
       } catch (error) {
-        args.logger.warn(
-          `Journey run ${args.runId} still-running edit failed: ${error}`
-        );
+        args.logger.warn(`Journey run ${args.runId} still-running edit failed: ${error}`);
       }
     }
   })();

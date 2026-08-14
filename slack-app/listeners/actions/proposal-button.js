@@ -22,9 +22,9 @@ import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { escapeSlackText } from '../views/agent-reply-builder.js';
+import { announceAndWatchJourneyRun } from './journey-run-watcher.js';
 import { postRunEvidence } from './run-evidence.js';
 import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';
-import { announceAndWatchJourneyRun } from './journey-run-watcher.js';
 
 /**
  * What to say once the action has actually run.
@@ -228,11 +228,7 @@ export async function handleProposalButton({ ack, body, client, context, logger,
     // eval runs (see surface-core's journey-run-watcher header), so routing it
     // into the eval watcher would report a rate-limited fan-out as a pass.
     // Same recognition rule as above: the server-sent resource TYPE.
-    if (
-      outcome.resource?.type === 'journey_run' &&
-      outcome.resource.id &&
-      outcome.resource.url
-    ) {
+    if (outcome.resource?.type === 'journey_run' && outcome.resource.id && outcome.resource.url) {
       await announceAndWatchJourneyRun(client, {
         runId: outcome.resource.id,
         url: outcome.resource.url,
