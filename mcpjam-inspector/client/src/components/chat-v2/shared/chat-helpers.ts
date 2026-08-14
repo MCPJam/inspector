@@ -421,6 +421,24 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
 
       // Connection failures get human copy; the server's own wording stays
       // reachable under "More details" rather than leading the banner. Copy
+      // A hosted chat failure arrives as a JSON envelope, and this branch
+      // returns before the string-shaped checks below ever run — so the
+      // pinned-version recognition has to happen HERE too, or it only ever
+      // fires for the bare-sentence case a test can construct by hand and a
+      // real turn never produces.
+      const envelopePin = summarizeProtocolVersionPin(message);
+      if (envelopePin) {
+        return {
+          ...envelopePin,
+          // Keep the server's own envelope fields where they exist: `details`
+          // carries the normalized block the card renders, and the status is
+          // worth surfacing even though the action does not depend on it.
+          details: details ?? envelopePin.details,
+          ...(parsed.statusCode !== undefined
+            ? { statusCode: parsed.statusCode }
+            : {}),
+        };
+      }
       // only — `isRetryable` and every other field keep whatever the server
       // sent, so the banner's affordances are unchanged.
       const humanized = humanizeConnectionError(code, parsed.details);

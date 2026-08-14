@@ -75,7 +75,7 @@ import {
   isInsufficientScopeError,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
-  isEraNegotiationError,
+  readUnsupportedVersionFailure,
 } from "./errors.js";
 import {
   type RetryPolicy,
@@ -2790,6 +2790,28 @@ export class MCPClientManager {
       }
     }
 
+    // A modern pin ends the attempt here — it does NOT downgrade to SSE.
+    //
+    // Pin mode means "negotiate exactly this revision, no fallback", and the
+    // upstream client honors that inside its own negotiation. This manager
+    // then layered a SECOND fallback underneath it, which quietly defeated the
+    // first: SSE is the legacy transport and carries no pinned version, so a
+    // connection that reached it was never speaking the pinned revision. Two
+    // outcomes, both wrong. A server whose SSE endpoint works came up on a
+    // 2025-era handshake while the UI said the pin was in force. A server that
+    // opens an SSE stream and never completes the handshake — a common shape
+    // for a modern-only server, which answers `GET /mcp` 200 `text/event-stream`
+    // and then has nothing to say on it — left the connect hanging until a
+    // caller's timeout fired, reporting "the server may not exist or is not
+    // responding" for a server that was answering perfectly well.
+    //
+    // Failing here turns both into the honest, immediate answer: this server
+    // does not offer the version this connection pins.
+    const pinFailureBeforeSse = this.protocolPinFailure(serverId, config, [
+      streamableError,
+    ]);
+    if (pinFailureBeforeSse) throw pinFailureBeforeSse;
+
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
       fetch: this.buildTransportFetch(serverId, config),
@@ -2900,16 +2922,23 @@ export class MCPClientManager {
     // `undefined` is a legacy pin (exact `initialize`, no discover probe) and
     // `"auto"` falls back on its own. Only an explicit modern pin refuses.
     if (!negotiation || negotiation.mode === "auto") return undefined;
-    const negotiationError = errors.find((error) =>
-      isEraNegotiationError(error)
-    );
-    if (!negotiationError) return undefined;
-    // `cause` is the negotiation error itself, not the transport failure that
-    // happened to be last: it is the one that names what `server/discover`
-    // answered, and it is what a support thread needs quoted.
-    return new ProtocolVersionPinUnsupported(serverId, pin, {
-      cause: negotiationError,
-    });
+    for (const error of errors) {
+      // NOT "is this an era-negotiation error": that code also covers a probe
+      // that hit an HTTP status, a network failure, or a closed transport —
+      // outages, which must keep their transport slug and keep paging rather
+      // than being relabelled as the user's version setting.
+      const verdict = readUnsupportedVersionFailure(error);
+      if (!verdict) continue;
+      // `cause` is the negotiation error itself, not the transport failure
+      // that happened to be last: it is the one that names what
+      // `server/discover` answered, and it is what a support thread needs
+      // quoted.
+      return new ProtocolVersionPinUnsupported(serverId, pin, {
+        cause: error,
+        supportedVersions: verdict.supported,
+      });
+    }
+    return undefined;
   }
 
   private async safeCloseTransport(transport: Transport): Promise<void> {

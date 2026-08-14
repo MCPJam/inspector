@@ -104,3 +104,33 @@ describe("protocol version pin — banner", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("protocol version pin — real envelope shape", () => {
+  it("recognizes it inside the JSON envelope a hosted turn actually sends", () => {
+    // The bare-sentence case above is the one a test constructs by hand; a
+    // real hosted failure arrives as the route's JSON envelope, and the
+    // formatter returns from that branch before any string-shaped check runs.
+    const envelope = JSON.stringify({
+      code: "SERVER_UNREACHABLE",
+      message: PIN_FAILURE_MESSAGE,
+      statusCode: 424,
+    });
+
+    const formatted = formatErrorMessage(new Error(envelope));
+
+    expect(formatted?.code).toBe(PROTOCOL_VERSION_PIN_CODE);
+    expect(formatted?.isRetryable).toBe(false);
+    expect(formatted?.statusCode).toBe(424);
+  });
+
+  it("leaves other envelopes on their existing path", () => {
+    const envelope = JSON.stringify({
+      code: "SERVER_UNREACHABLE",
+      message: "Couldn't reach the MCP server (read ECONNRESET)",
+    });
+
+    expect(formatErrorMessage(new Error(envelope))?.code).toBe(
+      "SERVER_UNREACHABLE",
+    );
+  });
+});

@@ -119,6 +119,82 @@ export function isEraNegotiationError(error: unknown): boolean {
 }
 
 /**
+ * The server told us, in so many words, that it does not speak the version we
+ * asked for — as distinct from the probe merely not working.
+ *
+ * `EraNegotiationFailed` is NOT that signal on its own. The upstream client
+ * raises it for every way a `server/discover` probe can end badly: an HTTP
+ * status on the probe, a network failure ("Version negotiation probe failed:
+ * …"), a transport closed mid-probe, a stdio sibling-probe restriction. Only
+ * one of its messages means "the version is the problem", so treating the code
+ * alone as a version verdict would relabel real outages — an origin down, a
+ * 5xx, a dropped connection — as somebody's dropdown setting, and (because
+ * that slug is `user_config`) stop them paging anyone.
+ *
+ * The other, unrelated shape is `UnsupportedProtocolVersionError`: raised when
+ * `server/discover` PARSED fine and simply listed no version this client can
+ * use. It is the more informative of the two — it carries the server's own
+ * `supported` list — and it never has the era-negotiation code, so a check for
+ * that code alone misses the very case this exists to name.
+ *
+ * Matching is by class NAME and by shape, not `instanceof`: the SDK routinely
+ * resolves `@modelcontextprotocol/client` to a different copy than the app
+ * does, and the whole point of these helpers is to survive that.
+ *
+ * Returns the server's advertised versions when they are known (they are only
+ * present on the `UnsupportedProtocolVersionError` shape), or an empty array
+ * when the failure was a pin refusal that carried no list.
+ */
+export function readUnsupportedVersionFailure(
+  error: unknown
+): { supported: string[] } | undefined {
+  for (const candidate of causeChain(error)) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const named = candidate as {
+      name?: unknown;
+      supported?: unknown;
+      requested?: unknown;
+      message?: unknown;
+    };
+    if (
+      named.name === "UnsupportedProtocolVersionError" ||
+      (Array.isArray(named.supported) && typeof named.requested === "string")
+    ) {
+      return {
+        supported: Array.isArray(named.supported)
+          ? named.supported.filter(
+              (version): version is string => typeof version === "string"
+            )
+          : [],
+      };
+    }
+    // The pin-mode refusal. Deliberately the SPECIFIC wording rather than the
+    // code: see above — its siblings are outages, not version verdicts.
+    if (
+      isEraNegotiationError(candidate) &&
+      typeof named.message === "string" &&
+      /did not offer pinned protocol version/i.test(named.message)
+    ) {
+      return { supported: [] };
+    }
+  }
+  return undefined;
+}
+
+/** The error and its `cause` links, bounded so a cycle cannot hang a connect. */
+function causeChain(error: unknown): unknown[] {
+  const chain: unknown[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && !seen.has(current) && chain.length < 8) {
+    seen.add(current);
+    chain.push(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return chain;
+}
+
+/**
  * Unwrap the underlying transport error carried by an auto-negotiation probe
  * failure.
  *
