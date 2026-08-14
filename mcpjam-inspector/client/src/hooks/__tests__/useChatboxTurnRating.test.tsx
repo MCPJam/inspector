@@ -141,6 +141,67 @@ describe("useChatboxTurnRating", () => {
     );
   });
 
+  it("a superseded not_ready retry never overwrites a newer rating", async () => {
+    // The exact ingest-race window: rate 3★ right as the turn ends →
+    // not_ready arms a retry for the OLD value; the tester revises to 5★,
+    // which lands. The armed retry must self-cancel — before the generation
+    // guard it would re-enter and quietly persist 3★ over the 5★.
+    vi.useFakeTimers();
+    mockSubmitScore
+      .mockResolvedValueOnce({ status: "not_ready" })
+      .mockResolvedValue({ status: "ok" });
+
+    const { result } = renderHook(() =>
+      useChatboxTurnRating({
+        enabled: true,
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 3,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+
+    // Revision lands while the 3★ retry timer is still armed.
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 5,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+
+    // Burn through every backoff tier: the superseded retry must neither hit
+    // the server nor touch the key's state.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+    const values = mockSubmitScore.mock.calls.map(
+      (call) => (call[0] as { value: number }).value
+    );
+    expect(values).toEqual([3, 5]);
+  });
+
   it("queues on stale access, asks for a re-redeem, and replays on the new version", async () => {
     mockSubmitScore.mockRejectedValueOnce(staleError());
     const onStaleHostedAccess = vi.fn();

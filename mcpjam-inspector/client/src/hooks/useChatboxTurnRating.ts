@@ -48,6 +48,15 @@ type PendingSubmission = {
    * screen is worse than dropping it.
    */
   chatboxId: string;
+  /**
+   * Which click this submission belongs to. Every `submit` bumps the key's
+   * generation; a retry (not_ready backoff, stale replay, backoff abandon)
+   * that wakes up carrying an older generation is superseded and must do
+   * NOTHING. Without this, the exact ingest-race window arms a timer for the
+   * OLD rating: rate 3★ → not_ready → revise to 5★ → 5★ lands → the old
+   * timer fires and quietly persists 3★ over it.
+   */
+  generation: number;
 };
 
 interface UseChatboxTurnRatingOptions {
@@ -105,6 +114,8 @@ export function useChatboxTurnRating({
   // `states` so a second rating on the same turn replaces the first rather
   // than replaying both.
   const staleQueueRef = useRef(new Map<string, PendingSubmission>());
+  // Latest submission generation per key — see `PendingSubmission.generation`.
+  const generationRef = useRef(new Map<string, number>());
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staleAttemptRef = useRef(0);
   const scheduleStaleRefreshRef = useRef<(() => void) | null>(null);
@@ -207,6 +218,10 @@ export function useChatboxTurnRating({
   const runSubmit = useCallback(
     async (pending: PendingSubmission, attempt: number): Promise<void> => {
       const key = stateKey(pending.chatSessionId, pending.turnId);
+      // A retry waking up on a dead page, or carrying a superseded
+      // generation, must do nothing — not touch state, not hit the server.
+      if (unmountedRef.current) return;
+      if (generationRef.current.get(key) !== pending.generation) return;
       const { chatboxId: liveChatboxId, accessVersion: liveAccessVersion } =
         accessRef.current;
       if (!liveChatboxId) {
@@ -251,6 +266,12 @@ export function useChatboxTurnRating({
           // messages for rendering.
         })) as { status?: string } | undefined;
 
+        // Superseded while in flight: a newer click owns this key's state now
+        // (and its own mutation is the one whose outcome matters). The server
+        // write above already landed and upserts are idempotent per turn, so
+        // there is nothing to undo — just don't report on it.
+        if (generationRef.current.get(key) !== pending.generation) return;
+
         if (result?.status === "ok") {
           setState(key, {
             value: pending.value,
@@ -281,6 +302,8 @@ export function useChatboxTurnRating({
         // to re-redeem is the same mistake as re-arming its timers, just one
         // frame earlier.
         if (unmountedRef.current) return;
+        // Superseded while in flight — same rule as the success path.
+        if (generationRef.current.get(key) !== pending.generation) return;
         if (isStaleHostedAccessError(error)) {
           // The share link rotated mid-session. Queue for replay and ask the
           // owner to re-redeem; the effect below drains the queue when a fresh
@@ -323,7 +346,11 @@ export function useChatboxTurnRating({
         staleQueueRef.current.clear();
         staleAttemptRef.current = 0;
         for (const pending of abandoned) {
-          setState(stateKey(pending.chatSessionId, pending.turnId), {
+          const key = stateKey(pending.chatSessionId, pending.turnId);
+          // A superseded queue entry no longer owns its key's state —
+          // erroring it here would clobber a newer click's outcome.
+          if (generationRef.current.get(key) !== pending.generation) continue;
+          setState(key, {
             value: pending.value,
             comment: pending.comment,
             status: "error",
@@ -380,7 +407,12 @@ export function useChatboxTurnRating({
     }) => {
       const chatboxId = accessRef.current.chatboxId;
       if (!enabled || !chatboxId) return;
-      void runSubmit({ ...args, chatboxId }, 0);
+      const key = stateKey(args.chatSessionId, args.turnId);
+      // Claim the key: every retry path spawned by an EARLIER click now
+      // carries a stale generation and self-cancels.
+      const generation = (generationRef.current.get(key) ?? 0) + 1;
+      generationRef.current.set(key, generation);
+      void runSubmit({ ...args, chatboxId, generation }, 0);
     },
     [enabled, runSubmit]
   );
