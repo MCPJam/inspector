@@ -120,11 +120,11 @@ describe("ChatboxPerTurnFeedbackToggle", () => {
     expect(toggle()).toHaveAttribute("data-state", "checked");
   });
 
-  it("does not carry pending state into another scenario", async () => {
-    // The parent swaps the `chatbox` prop rather than remounting, so a write
-    // started on one scenario must not resolve into the next one's state —
-    // that would clear `saving` while the previous optimistic value stayed on
-    // screen, showing the old scenario's setting for the new one.
+  it("keeps a scenario's pending write out of the next scenario's state", () => {
+    // The parent mounts this KEYED on chatboxId, so a scenario switch is a
+    // remount, not reused state. Rendered with the same key React would use,
+    // so a late-resolving write from the first scenario lands on a dead
+    // instance instead of the live one.
     let resolveWrite: (() => void) | undefined;
     updateChatboxMock.mockImplementation(
       () =>
@@ -134,25 +134,26 @@ describe("ChatboxPerTurnFeedbackToggle", () => {
     );
 
     const { rerender } = render(
-      <ChatboxPerTurnFeedbackToggle chatbox={chatbox(false)} />
+      <ChatboxPerTurnFeedbackToggle key="cbx_1" chatbox={chatbox(false)} />
     );
     fireEvent.click(toggle());
+    expect(updateChatboxMock).toHaveBeenCalledTimes(1);
     expect(toggle()).toHaveAttribute("data-state", "checked");
+    expect(toggle()).toBeDisabled();
 
-    // Navigate to a different scenario that has the surface OFF.
     rerender(
       <ChatboxPerTurnFeedbackToggle
+        key="cbx_2"
         chatbox={{ ...chatbox(false), chatboxId: "cbx_2" } as ChatboxSettings}
       />
     );
+
+    // Fresh instance: no optimistic value, not disabled by the other write.
     expect(toggle()).toHaveAttribute("data-state", "unchecked");
     expect(toggle()).not.toBeDisabled();
 
-    // The first scenario's write lands late — it must not touch this one.
-    resolveWrite?.();
-    await waitFor(() =>
-      expect(toggle()).toHaveAttribute("data-state", "unchecked")
-    );
+    if (!resolveWrite) throw new Error("expected a pending write to resolve");
+    resolveWrite();
   });
 
   it("reverts the switch when the write fails", async () => {

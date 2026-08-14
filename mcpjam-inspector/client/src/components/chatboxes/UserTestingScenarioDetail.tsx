@@ -538,7 +538,13 @@ export function UserTestingScenarioDetail({
 
                 <ChatboxShareSection chatbox={chatbox} />
 
-                <ChatboxPerTurnFeedbackToggle chatbox={chatbox} />
+                {/* Keyed per scenario: the toggle holds optimistic state
+                    across an await, and reusing one instance would let a
+                    write started on one scenario resolve into another's. */}
+                <ChatboxPerTurnFeedbackToggle
+                  key={chatbox.chatboxId}
+                  chatbox={chatbox}
+                />
 
                 <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
                   {composerActive ? (
