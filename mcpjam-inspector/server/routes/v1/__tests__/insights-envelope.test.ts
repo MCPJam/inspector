@@ -102,7 +102,7 @@ describe("eval-run detail — insights embed", () => {
       getEvalRunInsightsEnvelope: ENVELOPE,
     });
     const res = await makeApp(evals).request(
-      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -119,7 +119,7 @@ describe("eval-run detail — insights embed", () => {
       return Promise.reject(new Error("Not a member"));
     });
     const res = await makeApp(evals).request(
-      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -138,7 +138,7 @@ describe("eval-run insights retry", () => {
         method: "POST",
         body: JSON.stringify({ force: true }),
         headers: { "content-type": "application/json" },
-      }
+      },
     );
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({
@@ -148,7 +148,7 @@ describe("eval-run insights retry", () => {
     });
     expect(mutationMock).toHaveBeenCalledWith(
       "serverQuality:requestServerQuality",
-      { suiteRunId: RUN, force: true }
+      { suiteRunId: RUN, force: true },
     );
   });
 
@@ -157,10 +157,74 @@ describe("eval-run insights retry", () => {
     answerQueries({ getTestSuiteRun: { ...RUN_ROW, projectId: "proj_b" } });
     const res = await makeApp(evals).request(
       `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
-      { method: "POST" }
+      { method: "POST" },
     );
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("eval-run insights retry — body validation (it SPENDS)", () => {
+  it("400s on malformed JSON instead of billing for an empty body", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
+      {
+        method: "POST",
+        body: "{not json",
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a truthy non-boolean force rather than paying for it", async () => {
+    // `{"force":"false"}` is a truthy STRING — coercing it would charge for a
+    // regeneration the caller was trying to decline.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
+      {
+        method: "POST",
+        body: JSON.stringify({ force: "false" }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts force: false without forwarding force", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
+      {
+        method: "POST",
+        body: JSON.stringify({ force: false }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "serverQuality:requestServerQuality",
+      { suiteRunId: RUN },
+    );
+  });
+
+  it("accepts a bodyless POST", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
+      { method: "POST" },
+    );
+    expect(res.status).toBe(202);
   });
 });
 
@@ -183,13 +247,38 @@ describe("journey-run detail — insights embed", () => {
       },
     });
     const res = await makeApp(journeys).request(
-      `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`
+      `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect((body.insights as Record<string, unknown>).runHealth).toEqual({
       targets: [],
     });
+  });
+});
+
+describe("journey-run detail — envelope failure degrades", () => {
+  it("returns the run without insights when the envelope query rejects", async () => {
+    vi.clearAllMocks();
+    queryMock.mockImplementation((name: string) => {
+      const fn = String(name).split(":").pop() ?? "";
+      if (fn === "getJourneyRun") {
+        return Promise.resolve({
+          _id: RUN,
+          projectId: PROJECT,
+          journeyRefId: "j_1",
+          status: "completed",
+          createdAt: 1,
+          snapshot: { hosts: [], personaSnapshot: { name: "P" }, goal: "g" },
+        });
+      }
+      return Promise.reject(new Error("Server Error"));
+    });
+    const res = await makeApp(journeys).request(
+      `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).insights).toBeUndefined();
   });
 });
 
@@ -201,26 +290,26 @@ describe("guest boundary (default-deny allowlist)", () => {
     expect(
       isGuestAllowedV1Request(
         "POST",
-        `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`
-      )
+        `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
+      ),
     ).toBe(false);
     expect(
       isGuestAllowedV1Request(
         "GET",
-        `/api/v1/projects/${PROJECT}/user-testing/scenarios/cb_1`
-      )
+        `/api/v1/projects/${PROJECT}/user-testing/scenarios/cb_1`,
+      ),
     ).toBe(false);
     expect(
       isGuestAllowedV1Request(
         "POST",
-        `/api/v1/projects/${PROJECT}/user-testing/scenarios/cb_1/insights`
-      )
+        `/api/v1/projects/${PROJECT}/user-testing/scenarios/cb_1/insights`,
+      ),
     ).toBe(false);
     expect(
       isGuestAllowedV1Request(
         "GET",
-        `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`
-      )
+        `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
+      ),
     ).toBe(false);
   });
 });
