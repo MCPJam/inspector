@@ -2475,12 +2475,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Find trash icon button
-      const buttons = screen.getAllByRole("button");
-      const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null
-      );
-      expect(clearButton).toBeDefined();
+      // Find the "Clear chat" restart-session button
+      const clearButton = screen.queryByRole("button", { name: "Clear chat" });
+      expect(clearButton).not.toBeNull();
     });
 
     it("does not show clear button when thread is empty", () => {
@@ -2488,12 +2485,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Should not have trash button
-      const buttons = screen.getAllByRole("button");
-      const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null
-      );
-      expect(clearButton).toBeUndefined();
+      // Should not have the "Clear chat" button
+      const clearButton = screen.queryByRole("button", { name: "Clear chat" });
+      expect(clearButton).toBeNull();
     });
 
     /**
@@ -2549,10 +2543,8 @@ describe("PlaygroundMain", () => {
         ).toBe(savedSession._id);
       });
 
-      const clearButton = screen
-        .getAllByRole("button")
-        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
-      fireEvent.click(clearButton!);
+      const clearButton = screen.getByRole("button", { name: "Clear chat" });
+      fireEvent.click(clearButton);
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
@@ -2668,10 +2660,8 @@ describe("PlaygroundMain", () => {
       // Guard against a vacuous pass: the param has to be there to be dropped.
       expect(window.location.search).toContain(savedSession.chatSessionId);
 
-      const clearButton = screen
-        .getAllByRole("button")
-        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
-      fireEvent.click(clearButton!);
+      const clearButton = screen.getByRole("button", { name: "Clear chat" });
+      fireEvent.click(clearButton);
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",

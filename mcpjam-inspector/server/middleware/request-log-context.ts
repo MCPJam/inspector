@@ -128,7 +128,17 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       : 500
     : status;
 
-  if (effectiveStatus >= 500) {
+  // 424 joins the 5xx range as a FAILURE for logging purposes. It is the one
+  // 4xx this server emits for "we could not reach the dependency the request
+  // named" (`mapTargetServerError`), which is a failed request in every sense
+  // except whose fault it was. Without this it would log as
+  // `http.request.completed` and lose the `errorCode` / `origin` / `slug` /
+  // `errorMessage` breakdown below — and that Axiom slice is exactly what
+  // makes an unpaged `ambiguous` bucket measurable, i.e. what lets the bucket
+  // be promoted later as a data decision rather than a guess. Moving these
+  // failures out of the 5xx range to stop them paging us must not also move
+  // them out of the record that says how often they happen.
+  if (effectiveStatus >= 500 || effectiveStatus === 424) {
     // Prefer the route's own error code/message over a classifier bucket. A
     // route that *returns* a `webError` response (the hosted connect paths do)
     // never reaches the `thrown` branch, so both of these used to collapse to a

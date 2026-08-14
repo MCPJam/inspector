@@ -302,6 +302,42 @@ export function resolveEnvironment(): Environment {
   return "dev";
 }
 
+/**
+ * Baked into the bundle by `server/tsup.config.ts` (`define`). MUST stay a
+ * literal `process.env.X` member expression — esbuild's `define` is a
+ * syntactic substitution and cannot see through a dynamic
+ * `process.env[name]` lookup. Under tsx in dev the define is absent and this
+ * reads the real environment, where npm provides `npm_package_version`.
+ *
+ * This is the canonical copy; `server/sentry.ts` (release tag) and
+ * `server/utils/health-payload.ts` (`/health` version) resolve through it so
+ * the three surfaces can never disagree about what build is running.
+ */
+const BAKED_VERSION = process.env.MCPJAM_INSPECTOR_VERSION;
+
+function blankToNull(value: string | undefined): string | null {
+  // Container platforms materialize a declared-but-unset variable as "",
+  // which ?? does not catch.
+  return value === undefined || value.trim() === "" ? null : value;
+}
+
+export function resolveAppVersion(): string | null {
+  return blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version);
+}
+
+/**
+ * The git-sha vars only exist on repo-connected builds. Production deploys
+ * via `railway up` (a directory upload with no git metadata), so neither is
+ * set there and every prod row carried `release: null` — which made the
+ * "did a deploy cause this?" triage step in the alert runbooks impossible.
+ * The baked package version is the fallback: prod deploys are releases, so
+ * version boundaries ARE deploy boundaries, and it matches what `/health`
+ * reports, so log rows and the canary correlate directly.
+ */
 export function resolveRelease(): string | null {
-  return process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_SHA ?? null;
+  return (
+    blankToNull(process.env.RAILWAY_GIT_COMMIT_SHA) ??
+    blankToNull(process.env.GIT_SHA) ??
+    resolveAppVersion()
+  );
 }
