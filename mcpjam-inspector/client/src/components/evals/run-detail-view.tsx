@@ -26,6 +26,8 @@ import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
+import { useGroundedness } from "./use-groundedness";
+import { GroundednessCard } from "./groundedness-card";
 import { AiTriageCard } from "./ai-triage-card";
 import {
   computeRunPassRatePercent,
@@ -503,6 +505,16 @@ export function RunDetailView({
     unavailable: goalCompletionUnavailable,
   } = useGoalCompletion(selectedRunDetails);
 
+  const {
+    result: groundednessResult,
+    pending: groundednessPending,
+    requested: groundednessRequested,
+    failedGeneration: groundednessFailedGeneration,
+    error: groundednessError,
+    requestGroundedness,
+    unavailable: groundednessUnavailable,
+  } = useGroundedness(selectedRunDetails);
+
   const runDashboardKpis = useMemo(
     () =>
       kpiPlacement === "body"
@@ -656,15 +668,34 @@ export function RunDetailView({
     />
   ) : null;
 
+  // Second named judge, same gating discipline as goal completion: shown once
+  // the run completes, never auto-spends, hidden against an older backend.
+  const groundednessPanel =
+    selectedRunDetails.status === "completed" && !groundednessUnavailable ? (
+      <GroundednessCard
+        key={`groundedness-${selectedRunDetails._id}`}
+        run={selectedRunDetails}
+        groundedness={groundednessResult ?? null}
+        pending={groundednessPending}
+        requested={groundednessRequested}
+        failedGeneration={groundednessFailedGeneration}
+        error={groundednessError}
+        onRun={(force) => requestGroundedness(force)}
+      />
+    ) : null;
+
   const insightRail = (
     <RunInsightRail
       triageCard={serverQualityTriage}
       goalCompletionCard={goalCompletionPanel}
+      groundednessCard={groundednessPanel}
       embedded={embeddedInResultsSplit}
     />
   );
 
-  const hasInsightContent = Boolean(serverQualityTriage || goalCompletionPanel);
+  const hasInsightContent = Boolean(
+    serverQualityTriage || goalCompletionPanel || groundednessPanel,
+  );
 
   const triageFixCount = useMemo(
     () =>
