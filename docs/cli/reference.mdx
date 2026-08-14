@@ -513,6 +513,60 @@ Provide either `--template` or `--file`/`--json`, not both.
 
 ---
 
+## `scenarios` commands
+
+Publish project environments for user testing and take them down again. A scenario is a project environment published as a share link that people outside the project can open.
+
+All `scenarios` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`. Publishing requires project admin.
+
+<Note>
+  Scenarios are in beta. Publishing is behind a per-organization flag; when it is off for your organization the server says so plainly. Unpublishing is not gated — taking a live scenario down keeps working even if the flag is removed.
+</Note>
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `scenarios publish`
+
+Publish an environment as a scenario and print its share link. Idempotent — re-publishing an already-published environment returns the existing scenario with `created: false`.
+
+`--name`, `--description`, and `--mode` are **create-time only**: they are applied atomically in the same call that creates the scenario, so the scenario is never briefly live in a wider mode than you asked for. On a re-publish they are ignored and the result includes `overridesIgnored: true`. To change an existing scenario's name or mode, use `mcpjam user-testing update`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id>` | Yes | Project environment ID to publish |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--name <name>` | No | Scenario name (create time only) |
+| `--description <text>` | No | Scenario description (create time only) |
+| `--mode <mode>` | No | Who may open the share link (create time only): `project_members`, `invited_only`, or `anyone_with_link`. Invalid values are rejected locally before any request. |
+
+```bash
+# Publish with default access (project members only)
+mcpjam scenarios publish --environment env-123 --api-key $MCPJAM_API_KEY
+
+# Publish with a name and restricted access, atomically
+mcpjam scenarios publish --environment env-123 \
+  --name "Beta checkout flow" \
+  --description "Invited testers only" \
+  --mode invited_only \
+  --api-key $MCPJAM_API_KEY
+```
+
+### `scenarios unpublish`
+
+Take an environment's scenario down, invalidating its share link and any live guest sessions. Idempotent.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id>` | Yes | Project environment ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
 ## `environments` commands
 
 Manage **project environments** in your hosted MCPJam projects. A project environment is a named, live-editable execution bundle — one host, optionally a standalone server group, optionally a pinned skill selection and pinned plugin versions — that eval suites and journeys run against.
