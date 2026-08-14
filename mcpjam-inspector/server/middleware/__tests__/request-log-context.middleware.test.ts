@@ -214,6 +214,39 @@ describe("requestLogContextMiddleware", () => {
     );
   });
 
+  // The same regression, one status down. `mapTargetServerError` moves a
+  // connection failure to 424 so the edge stops eating the response — and that
+  // must not also drop the failure out of this event, which is where the
+  // `origin`/`slug` slice that makes the bucket measurable lives.
+  it("logs a returned 424 as a failure, not a completed request", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/chat-v2", (c) => {
+      c.set("webErrorMeta", {
+        status: 424,
+        code: "SERVER_UNREACHABLE",
+        message: "Couldn't reach the MCP server (fetch failed)",
+        origin: "ambiguous",
+        slug: "transport/fetch_failed",
+      });
+      return c.json({ code: "SERVER_UNREACHABLE" }, 424);
+    });
+
+    await app.request("/api/web/chat-v2");
+
+    const events = vi.mocked(logger.event).mock.calls;
+    expect(events.filter(([name]) => name === "http.request.completed")).toHaveLength(
+      0,
+    );
+    const failed = events.filter(([name]) => name === "http.request.failed");
+    expect(failed).toHaveLength(1);
+    const payload = failed[0][2] as any;
+    expect(payload.statusCode).toBe(424);
+    expect(payload.errorCode).toBe("SERVER_UNREACHABLE");
+    expect(payload.origin).toBe("ambiguous");
+    expect(payload.slug).toBe("transport/fetch_failed");
+  });
+
   it("ignores stale webErrorMeta from a different status", async () => {
     // A route may emit a 4xx webError and then fail with an unrelated 500;
     // attributing the earlier code to the later failure would be a lie.
