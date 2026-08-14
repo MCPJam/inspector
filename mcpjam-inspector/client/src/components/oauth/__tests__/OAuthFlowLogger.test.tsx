@@ -200,30 +200,48 @@ describe("OAuthFlowLogger request/response card split", () => {
     expect(copied).not.toContain("401 Unauthorized");
   });
 
-  it("copies a shift-selected range of steps together, in flow order", async () => {
+  it("copies a shift-selected range of steps together, in flow order, regardless of click order", async () => {
     const user = userEvent.setup();
     copyToClipboard.mockClear();
     renderLogger({
-      currentStep: "received_401_unauthorized",
+      currentStep: "discovery_start",
       httpHistory: [INITIAL_EXCHANGE],
+      infoLogs: [
+        {
+          id: "discovery-start",
+          step: "discovery_start",
+          label: "Starting discovery",
+          data: {},
+          timestamp: 40,
+          level: "info",
+        },
+      ],
     });
 
-    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByRole("button", { name: "Select step" }));
 
     const firstCheckbox = screen.getByRole("checkbox", {
       name: /Initial MCP Request/i,
     });
-    const secondCheckbox = screen.getByRole("checkbox", {
+    const middleCheckbox = screen.getByRole("checkbox", {
       name: /401 Unauthorized Received/i,
     });
+    const lastCheckbox = screen.getByRole("checkbox", {
+      name: /Start Discovery/i,
+    });
 
-    await user.click(firstCheckbox);
+    // Click the last step first, then shift-click the first step: proves the
+    // middle step gets pulled into the range and the copy still comes out in
+    // flow order, regardless of the order the steps were clicked in.
+    await user.click(lastCheckbox);
     await user.keyboard("{Shift>}");
-    await user.click(secondCheckbox);
+    await user.click(firstCheckbox);
     await user.keyboard("{/Shift}");
 
+    expect(middleCheckbox).toBeChecked();
+
     const copyRangeButton = screen.getByRole("button", {
-      name: "Copy 2 steps",
+      name: "Copy 3 steps",
     });
     await user.click(copyRangeButton);
 
@@ -231,7 +249,9 @@ describe("OAuthFlowLogger request/response card split", () => {
     const copied = copyToClipboard.mock.calls[0][0];
     const requestIndex = copied.indexOf("Initial MCP Request");
     const receivedIndex = copied.indexOf("401 Unauthorized Received");
+    const discoveryIndex = copied.indexOf("Start Discovery");
     expect(requestIndex).toBeGreaterThan(-1);
     expect(receivedIndex).toBeGreaterThan(requestIndex);
+    expect(discoveryIndex).toBeGreaterThan(receivedIndex);
   });
 });

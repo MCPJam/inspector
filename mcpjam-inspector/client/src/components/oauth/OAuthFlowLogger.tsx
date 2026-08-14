@@ -408,6 +408,20 @@ export function OAuthFlowLogger({
     setRangeSelectMode(false);
     setSelectedSteps(new Set());
     setLastToggledStepIndex(null);
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+    setCopyRangeState("idle");
+  };
+
+  const handleEnterRangeSelect = () => {
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+    setCopyRangeState("idle");
+    setRangeSelectMode(true);
   };
 
   useEffect(() => {
@@ -649,10 +663,10 @@ export function OAuthFlowLogger({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setRangeSelectMode(true)}
+                    onClick={handleEnterRangeSelect}
                     className="h-8"
                   >
-                    Select
+                    Select step
                   </Button>
                 )}
                 <Button
@@ -661,7 +675,7 @@ export function OAuthFlowLogger({
                   onClick={handleCopyLogs}
                   className="h-8"
                 >
-                  {copySuccess ? "Copied!" : "Copy"}
+                  {copySuccess ? "Copied!" : "Copy all"}
                 </Button>
               </>
             )}
