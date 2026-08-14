@@ -740,9 +740,15 @@ describe("tier derives from operation.risk", () => {
    *
    * These are exempt from the derivation because "not yet classified" is a
    * real state, distinct from `risk: none` (delete_project sits here, and it
-   * is anything but). The pin makes the exemption a ratchet: this list may
-   * only SHRINK. A new write cannot join it — it must declare `risk` in the
-   * SDK catalog, which is what puts it under the derivation above.
+   * is anything but).
+   *
+   * HONEST LIMITS OF THE PIN: like every in-repo allowlist (the EXCLUDED_*
+   * maps, KNOWN_UNDOCUMENTED, this file's TIER_EXCEPTIONS), it can be edited
+   * by the same PR that adds an unclassified write — no in-repo test can
+   * stop that. What it guarantees is REVIEWER VISIBILITY: joining the list
+   * means adding a name here AND raising the ceiling below, two diff lines
+   * whose comments say "don't". The convention is shrink-only; the
+   * enforcement is review.
    */
   const UNCLASSIFIED_WRITES: ReadonlySet<string> = new Set([
     "archive_project_environment",
@@ -785,10 +791,25 @@ describe("tier derives from operation.risk", () => {
     "use_sandbox_image",
   ]);
 
+  /**
+   * The 38 writes above predate `risk`. This number may only go DOWN — if
+   * you are raising it to admit a new unclassified write, classify the write
+   * instead; that is one field in the SDK catalog.
+   */
+  const UNCLASSIFIED_WRITES_CEILING = 38;
+
   it("pins the unclassified legacy writes — the list only shrinks", () => {
     const unclassified = ALL_OPERATIONS.filter(
       (op) => !op.readOnly && op.risk === undefined
     ).map((op) => op.name);
+
+    expect(
+      UNCLASSIFIED_WRITES.size,
+      `The unclassified-writes pin grew. Classifying the new write (one ` +
+        `\`risk\` field in the SDK catalog) is the intended fix; growing the ` +
+        `pin needs a reviewer to accept both this ceiling bump and the new ` +
+        `name above.`
+    ).toBeLessThanOrEqual(UNCLASSIFIED_WRITES_CEILING);
 
     const newcomers = unclassified
       .filter((name) => !UNCLASSIFIED_WRITES.has(name))
