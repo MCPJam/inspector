@@ -80,7 +80,16 @@ Three things are true of that button, each on purpose:
   second click is told it lost, not billed.
 
 Approved runs post a status message that updates in place as the run
-progresses. If a run fails, the bot attaches screenshots of what broke.
+progresses. What the bot reports when the run settles depends on the run type:
+
+- **Eval runs** — the status message updates to the verdict. If the run fails,
+  the bot attaches screenshots of what broke.
+- **Swarm (journey) runs** — the status message updates to the verdict with
+  session counts (for example, "8/10 sessions reached their goal"). If the
+  outcome shows failures, mixed results, or a rate-limited fan-out, the bot
+  posts a follow-up with the scorecard and the worst sessions as text. A
+  deliberate stop is reported as stopped, not failed. If the run is still going
+  after an hour, the message updates to say so with a link to the app.
 
 ## Removing it
 
