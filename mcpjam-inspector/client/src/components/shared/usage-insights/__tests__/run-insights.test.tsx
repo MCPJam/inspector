@@ -331,11 +331,14 @@ describe("evidence integrity", () => {
     fireEvent.click(headline());
     expect(headline()).toHaveAttribute("aria-expanded", "true");
 
-    // Evidence pulled out from under an open row: the panel closes, and the
-    // announced state has to close with it.
+    // Evidence pulled out from under an open row. The attribute goes AWAY
+    // rather than reading "false": with nothing to expand, the click is a
+    // no-op and there is no chevron, so this button is not a disclosure
+    // control at all — and announcing it as a collapsed one describes a
+    // control that does not exist.
     state.signals = unevidenced();
     refresh();
-    expect(headline()).toHaveAttribute("aria-expanded", "false");
+    expect(headline()).not.toHaveAttribute("aria-expanded");
 
     state.signals = signals();
     refresh();

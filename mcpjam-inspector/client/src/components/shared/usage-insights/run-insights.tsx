@@ -1003,7 +1003,7 @@ function RecommendationRow({
           type="button"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
           disabled={!hasDetail}
-          aria-expanded={isExpanded}
+          aria-expanded={hasDetail ? isExpanded : undefined}
           aria-label={headline}
           className={cn(
             "flex h-6 min-w-7 shrink-0 items-center justify-center rounded border px-1 font-mono text-xs font-semibold tabular-nums transition-colors",
@@ -1020,7 +1020,7 @@ function RecommendationRow({
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
-          aria-expanded={isExpanded}
+          aria-expanded={hasDetail ? isExpanded : undefined}
           data-testid="run-insight-headline"
         >
           <span className="min-w-0 flex-1 truncate text-xs font-medium" title={headline}>
@@ -1270,7 +1270,7 @@ function InsightRow({
           type="button"
           className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
-          aria-expanded={isExpanded}
+          aria-expanded={hasDetail ? isExpanded : undefined}
           data-testid="run-insight-headline"
         >
           <span
