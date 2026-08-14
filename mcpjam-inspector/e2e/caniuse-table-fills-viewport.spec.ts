@@ -85,7 +85,11 @@ test("caniuse compare table fills the viewport and keeps its header pinned", asy
     });
     await scroller.hover();
     const scrollTopBefore = await scroller.evaluate((el) => el.scrollTop);
-    const positions: number[] = [];
+    // Seed with the pre-scroll position: without it, a header that jumps on
+    // the very first wheel step but then holds still for the rest would show
+    // a small spread across the 4 post-scroll samples alone and pass despite
+    // that initial jump.
+    const positions: number[] = [(await headerCell.boundingBox())!.y];
     for (let i = 0; i < 4; i++) {
       await page.mouse.wheel(0, 300);
       await page.waitForTimeout(200);
@@ -133,8 +137,11 @@ test("caniuse compare table hugs its content instead of stretching when filtered
     const cardBox = (await card.boundingBox())!;
     const tableBox = (await page.locator("table").boundingBox())!;
     const slack = cardBox.height - tableBox.height;
+    // Absolute value: a card noticeably *shorter* than its own table content
+    // would mean rows are being clipped (the card has overflow-hidden), which
+    // is just as wrong as a card stretched far past its content.
     expect(
-      slack,
+      Math.abs(slack),
       `card should hug its filtered-down content instead of stretching to fill the viewport; card=${Math.round(cardBox.height)}px table=${Math.round(tableBox.height)}px slack=${Math.round(slack)}px`
     ).toBeLessThan(120);
   }).toPass({ timeout: 30_000 });
