@@ -100,10 +100,37 @@ const scenarioRow = (projectId = PROJECT) => ({
  */
 function answerQueries(answers: Record<string, unknown>) {
   queryMock.mockImplementation((name: string) => {
-    for (const [key, value] of Object.entries(answers)) {
-      if (String(name).includes(key)) return Promise.resolve(value);
+    // Matched on the FUNCTION NAME exactly — the segment after the colon in
+    // `module:function` — not as a substring. Substring matching would let
+    // `getSession` answer a `getSessionScorecard` read as soon as one existed,
+    // and the test would keep passing while asserting the wrong thing.
+    const fn = String(name).split(":").pop() ?? "";
+    if (Object.prototype.hasOwnProperty.call(answers, fn)) {
+      return Promise.resolve(answers[fn]);
     }
     return Promise.resolve(null);
+  });
+}
+
+/**
+ * A body that exceeds the route's 8MB ceiling, delivered in chunks.
+ *
+ * A stream rather than one big string so the assertion is about bytes
+ * ARRIVING: the route is supposed to stop mid-transfer, which a fully
+ * materialized body cannot demonstrate.
+ */
+function oversizedTranscriptStream(): ReadableStream<Uint8Array> {
+  const chunk = new TextEncoder().encode("x".repeat(1024 * 1024));
+  let sent = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (sent >= 16) {
+        controller.close();
+        return;
+      }
+      sent += 1;
+      controller.enqueue(chunk);
+    },
   });
 }
 
@@ -287,10 +314,13 @@ describe("scenario update", () => {
 
 describe("session transcript", () => {
   it("NEVER returns the stored blob URL", async () => {
-    queryMock.mockResolvedValueOnce(scenarioRow()).mockResolvedValueOnce({
-      chatboxId: SCENARIO,
-      chatSessionId: "cs_1",
-      messagesBlobUrl: "https://storage.test/secret-blob",
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: {
+        chatboxId: SCENARIO,
+        chatSessionId: "cs_1",
+        messagesBlobUrl: "https://storage.test/secret-blob",
+      },
     });
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify([{ role: "user", content: "hello" }]), {
@@ -390,6 +420,11 @@ describe("session transcript", () => {
   it("refuses to buffer a transcript past the size ceiling", async () => {
     // The timeout caps latency, not bytes. Without this the whole conversation
     // lands in memory on a request thread, once per concurrent reader.
+    //
+    // The body really is oversized rather than merely CLAIMING to be: an
+    // earlier version of this test set a 64MB `content-length` on a two-byte
+    // body, which passed against a route that never read past the header — so
+    // it would have passed against the bug as well.
     answerQueries({
       getChatbox: scenarioRow(),
       getSession: {
@@ -399,7 +434,7 @@ describe("session transcript", () => {
       },
     });
     fetchMock.mockResolvedValue(
-      new Response("[]", {
+      new Response(oversizedTranscriptStream(), {
         status: 200,
         headers: { "content-length": String(64 * 1024 * 1024) },
       })
@@ -407,6 +442,64 @@ describe("session transcript", () => {
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as { transcriptUnavailable?: boolean };
     expect(body.transcriptUnavailable).toBe(true);
+  });
+
+  it("still refuses when the blob declares NO content-length", async () => {
+    // The case the header check could never cover. A chunked response has no
+    // `content-length`, and `Number(null)` is 0 — which passes any `> MAX`
+    // test and hands an unbounded body straight to the parser. Storage that
+    // streams is the normal case, not an exotic one.
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: {
+        chatboxId: SCENARIO,
+        chatSessionId: "cs_1",
+        messagesBlobUrl: "https://storage.test/chunked",
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(oversizedTranscriptStream(), { status: 200 })
+    );
+    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const body = (await res.json()) as {
+      transcriptUnavailable?: boolean;
+      messageCount: number | null;
+    };
+    expect(body.transcriptUnavailable).toBe(true);
+    expect(body.messageCount).toBeNull();
+  });
+
+  it("does not refuse a large-but-allowed transcript", async () => {
+    // The other half of the ceiling: a cap that also rejected ordinary
+    // conversations would report `transcriptUnavailable` for sessions that are
+    // perfectly readable, and every one of them would look like a storage
+    // fault to whoever was reading the results.
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: {
+        chatboxId: SCENARIO,
+        chatSessionId: "cs_1",
+        messagesBlobUrl: "https://storage.test/big",
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          Array.from({ length: 200 }, (_, index) => ({
+            role: "user",
+            content: "x".repeat(1024) + index,
+          }))
+        ),
+        { status: 200 }
+      )
+    );
+    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const body = (await res.json()) as {
+      transcriptUnavailable?: boolean;
+      messageCount: number | null;
+    };
+    expect(body.transcriptUnavailable).toBeUndefined();
+    expect(body.messageCount).toBe(200);
   });
 
   it("reports an unreadable blob rather than an empty conversation", async () => {
@@ -441,6 +534,13 @@ describe("exposure controls", () => {
       dailyCreditCap: 100,
       dailyComputerStartCap: 0,
       maxConcurrentComputers: 0,
+      // The harness half of the set. Optional upstream, so it is the half most
+      // likely to be dropped in transit without anyone noticing — and a
+      // spend cap that silently fails to arrive is the one worth pinning.
+      harnessEnabled: true,
+      dailyHarnessSpendCapMicros: 5_000_000,
+      dailyHarnessCallCap: 250,
+      maxConcurrentHarnessRuns: 2,
     };
     const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, caps);
     expect(res.status).toBe(200);
@@ -468,7 +568,10 @@ describe("exposure controls", () => {
     // The Convex mutation resolves the environment itself, so without the
     // preflight a member of two projects could rebind onto the other's
     // environment and expose it under this project's link.
-    queryMock.mockResolvedValueOnce(scenarioRow()).mockResolvedValueOnce(null);
+    // Keyed rather than ordered: the default `beforeEach` already answers
+    // `getChatbox`, and `null` for the environment read is what makes this a
+    // cross-project miss.
+    answerQueries({ getChatbox: scenarioRow(), getEnvironment: null });
     const res = await call(userTesting, "POST", `${BASE}/rebind`, {
       environmentId: "env_in_b",
     });

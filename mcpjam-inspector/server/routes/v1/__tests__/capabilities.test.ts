@@ -96,15 +96,47 @@ describe("capability derivation", () => {
     expect(body.can.publishUserTestingScenario).toBe(false);
   });
 
-  it("counts a PROJECT grant as membership on its own", async () => {
-    // An org role this gateway does not rank should not erase a project the
-    // backend already said the caller belongs to.
+  it("does not let a project GRANT stand in for org membership", async () => {
+    // `requireProjectRole` ranks the ORG role and ignores the grant, so a
+    // guest holding one cannot author. Claiming otherwise would be this
+    // endpoint causing the failure it exists to prevent.
     queryMock.mockResolvedValue(
-      row({ role: "billing_only", projectRole: "member" })
+      row({ role: "guest", projectRole: "editor", isProjectAdmin: false })
     );
     const body = (await (await get()).json()) as Body;
-    expect(body.can.readSwarms).toBe(true);
-    expect(body.can.writeSwarms).toBe(true);
+    expect(body.can.readSwarms).toBe(false);
+    expect(body.can.writeSwarms).toBe(false);
+  });
+
+  it("still grants PUBLISHING to a project-admin grant held by a guest", async () => {
+    // The asymmetry is the backend's, mirrored rather than smoothed over:
+    // publishing checks `canManageProjectMembers`, which an `admin` project
+    // grant satisfies on its own, while reads and authoring do not.
+    queryMock.mockResolvedValue(
+      row({ role: "guest", projectRole: "admin", isProjectAdmin: true })
+    );
+    const body = (await (await get()).json()) as Body;
+    expect(body.can.publishUserTestingScenario).toBe(true);
+    expect(body.can.writeSwarms).toBe(false);
+  });
+
+  it("lets an ungated ADMIN publish and widen exposure", async () => {
+    // The positive half of the admin gate. Without it, a derivation pinned to
+    // `false` would pass every other case in this file.
+    queryMock.mockResolvedValue(row({ role: "admin", isProjectAdmin: true }));
+    const body = (await (await get()).json()) as Body;
+    expect(body.can.publishUserTestingScenario).toBe(true);
+    expect(body.can.unpublishUserTestingScenario).toBe(true);
+    expect(body.can.changeUserTestingExposure).toBe(true);
+    expect(body.can.requestInsights).toBe(true);
+  });
+
+  it("does not answer 200 when the safety read itself fails", async () => {
+    // The degrade-to-ungated path is for a projection that is PRESENT but
+    // lagging. A read that failed outright knows nothing, and answering it
+    // with a permissive body would invent capabilities from an error.
+    queryMock.mockRejectedValue(new Error("fetch failed"));
+    expect((await get()).status).toBeGreaterThanOrEqual(500);
   });
 
   it("keeps the STOPPING capabilities true for a gated org", async () => {

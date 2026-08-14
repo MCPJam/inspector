@@ -4883,7 +4883,7 @@ function requireExactlyOneGrounding(input: {
     (input.environmentId === undefined) ===
     (input.serverAttachmentId === undefined)
   ) {
-    throw new Error(
+    throw operationInputError(
       "Provide exactly one of environmentId or serverAttachmentId to ground the drafts."
     );
   }
@@ -4897,7 +4897,7 @@ function requireConfigPair(input: {
     (input.sessionsPerTarget === undefined) !==
     (input.maxTurns === undefined)
   ) {
-    throw new Error(
+    throw operationInputError(
       "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream."
     );
   }
@@ -6076,7 +6076,7 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
       input.mode !== undefined &&
       (input.name !== undefined || input.description !== undefined)
     ) {
-      throw new Error(
+      throw operationInputError(
         "Send `mode` on its own: identity and exposure are separate operations upstream."
       );
     }

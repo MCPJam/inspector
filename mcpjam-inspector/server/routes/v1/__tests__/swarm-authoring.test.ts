@@ -457,6 +457,59 @@ describe("swarm insights routes", () => {
     expect(res.status).toBe(429);
   });
 
+  it("maps a missing PLAN FEATURE onto 403, and carries what to do about it", async () => {
+    // The other half of the split. 429 says wait; this says waiting will never
+    // help. A caller that saw both as one status would either retry forever or
+    // go shopping for a plan they already have.
+    mutationMock.mockRejectedValue(
+      Object.assign(new Error("Swarms are not included in the free plan."), {
+        data: {
+          code: "billing_feature_not_included",
+          message: "Swarms are not included in the free plan.",
+          gateKey: "swarms",
+          plan: "free",
+          upgradePlan: "pro",
+        },
+      })
+    );
+    const res = await call(
+      swarmInsights,
+      "POST",
+      `/projects/${PROJECT}/waves/wave_1/insights`
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      code: string;
+      message: string;
+      details?: Record<string, unknown>;
+    };
+    expect(body.code).toBe("FORBIDDEN");
+    expect(body.message).toBe("Swarms are not included in the free plan.");
+    // Without the allow-listed payload the caller is left with a refusal and
+    // no way to name WHICH feature or which plan restores it.
+    expect(body.details).toMatchObject({
+      gateKey: "swarms",
+      plan: "free",
+      upgradePlan: "pro",
+    });
+  });
+
+  it("falls back to a usable message when the gate sends none", async () => {
+    mutationMock.mockRejectedValue(
+      Object.assign(new Error("boom"), {
+        data: { code: "billing_feature_not_included" },
+      })
+    );
+    const res = await call(
+      swarmInsights,
+      "POST",
+      `/projects/${PROJECT}/waves/wave_1/insights`
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("This feature is not included in your plan.");
+  });
+
   it("404s wave insights nobody has requested", async () => {
     // Distinct from `pending`: a caller polling in a loop must be able to tell
     // "nobody asked for this" from "asked and still working".

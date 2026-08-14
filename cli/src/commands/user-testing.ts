@@ -46,8 +46,10 @@ import {
   addProjectOption,
   bindOperation,
   parseIntegerOption,
+  parseRequiredIntegerOption,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { usageError } from "../lib/output.js";
 
 type ScenarioOptions = PlatformOptions & {
   project?: string;
@@ -324,63 +326,79 @@ export function registerUserTestingCommands(program: Command): void {
         dailyHarnessCallCap?: string;
         maxConcurrentHarnessRuns?: string;
       }
-    ) => ({
-      project: options.project,
-      scenario: options.scenario,
-      enabled: parseBooleanFlag(options.enabled, "--enabled"),
-      computerEnabled: parseBooleanFlag(
-        options.computerEnabled,
-        "--computer-enabled"
-      ),
-      sharedSkillsEnabled: parseBooleanFlag(
-        options.sharedSkillsEnabled,
-        "--shared-skills-enabled"
-      ),
-      dailyCreditCap: parseNumberFlag(
-        options.dailyCreditCap,
-        "--daily-credit-cap"
-      ),
-      dailyComputerStartCap: parseIntegerOption(
-        options.dailyComputerStartCap,
-        "--daily-computer-start-cap"
-      ) as number,
-      maxConcurrentComputers: parseIntegerOption(
-        options.maxConcurrentComputers,
-        "--max-concurrent-computers"
-      ) as number,
-      ...(options.harnessEnabled !== undefined
-        ? {
-            harnessEnabled: parseBooleanFlag(
-              options.harnessEnabled,
-              "--harness-enabled"
-            ),
-          }
-        : {}),
-      ...(options.dailyHarnessSpendCapMicros !== undefined
-        ? {
-            dailyHarnessSpendCapMicros: parseIntegerOption(
-              options.dailyHarnessSpendCapMicros,
-              "--daily-harness-spend-cap-micros"
-            ),
-          }
-        : {}),
-      ...(options.dailyHarnessCallCap !== undefined
-        ? {
-            dailyHarnessCallCap: parseIntegerOption(
-              options.dailyHarnessCallCap,
-              "--daily-harness-call-cap"
-            ),
-          }
-        : {}),
-      ...(options.maxConcurrentHarnessRuns !== undefined
-        ? {
-            maxConcurrentHarnessRuns: parseIntegerOption(
-              options.maxConcurrentHarnessRuns,
-              "--max-concurrent-harness-runs"
-            ),
-          }
-        : {}),
-    })
+    ) => {
+      // Caps without `--harness-enabled` would send limits for a harness the
+      // SAME request disables — the "combination nobody chose" this command's
+      // own description warns about, and one the caller clearly did not mean,
+      // since they took the trouble to name a cap.
+      if (
+        options.harnessEnabled === undefined &&
+        (options.dailyHarnessSpendCapMicros !== undefined ||
+          options.dailyHarnessCallCap !== undefined ||
+          options.maxConcurrentHarnessRuns !== undefined)
+      ) {
+        throw usageError(
+          "--harness-enabled is required when any harness cap is given: omitting it disables the harness, so the caps would land on nothing."
+        );
+      }
+      return {
+        project: options.project,
+        scenario: options.scenario,
+        enabled: parseBooleanFlag(options.enabled, "--enabled"),
+        computerEnabled: parseBooleanFlag(
+          options.computerEnabled,
+          "--computer-enabled"
+        ),
+        sharedSkillsEnabled: parseBooleanFlag(
+          options.sharedSkillsEnabled,
+          "--shared-skills-enabled"
+        ),
+        dailyCreditCap: parseNumberFlag(
+          options.dailyCreditCap,
+          "--daily-credit-cap"
+        ),
+        dailyComputerStartCap: parseRequiredIntegerOption(
+          options.dailyComputerStartCap,
+          "--daily-computer-start-cap"
+        ),
+        maxConcurrentComputers: parseRequiredIntegerOption(
+          options.maxConcurrentComputers,
+          "--max-concurrent-computers"
+        ),
+        ...(options.harnessEnabled !== undefined
+          ? {
+              harnessEnabled: parseBooleanFlag(
+                options.harnessEnabled,
+                "--harness-enabled"
+              ),
+            }
+          : {}),
+        ...(options.dailyHarnessSpendCapMicros !== undefined
+          ? {
+              dailyHarnessSpendCapMicros: parseIntegerOption(
+                options.dailyHarnessSpendCapMicros,
+                "--daily-harness-spend-cap-micros"
+              ),
+            }
+          : {}),
+        ...(options.dailyHarnessCallCap !== undefined
+          ? {
+              dailyHarnessCallCap: parseIntegerOption(
+                options.dailyHarnessCallCap,
+                "--daily-harness-call-cap"
+              ),
+            }
+          : {}),
+        ...(options.maxConcurrentHarnessRuns !== undefined
+          ? {
+              maxConcurrentHarnessRuns: parseIntegerOption(
+                options.maxConcurrentHarnessRuns,
+                "--max-concurrent-harness-runs"
+              ),
+            }
+          : {}),
+      };
+    }
   );
 
   bindOperation(

@@ -52,6 +52,7 @@ import {
   addProjectOption,
   bindOperation,
   parseIntegerOption,
+  parseRequiredIntegerOption,
   requireExactlyOne,
   requireTogether,
   type PlatformOptions,
@@ -354,16 +355,16 @@ export function registerSwarmAuthoringCommands(
       project: options.project,
       goal: options.goal,
       persona: options.persona,
-      sessionsPerTarget: parseIntegerOption(
+      sessionsPerTarget: parseRequiredIntegerOption(
         options.sessionsPerTarget,
         "--sessions-per-target",
         SESSIONS_BOUNDS
-      ) as number,
-      maxTurns: parseIntegerOption(
+      ),
+      maxTurns: parseRequiredIntegerOption(
         options.maxTurns,
         "--max-turns",
         TURNS_BOUNDS
-      ) as number,
+      ),
       ...(options.name !== undefined ? { name: options.name } : {}),
       ...(options.swarm !== undefined ? { swarm: options.swarm } : {}),
       ...(options.environment?.length
@@ -694,16 +695,16 @@ export function registerSwarmAuthoringCommands(
     ) => ({
       project: options.project,
       name: options.name,
-      sessionsPerTarget: parseIntegerOption(
+      sessionsPerTarget: parseRequiredIntegerOption(
         options.sessionsPerTarget,
         "--sessions-per-target",
         SESSIONS_BOUNDS
-      ) as number,
-      maxTurns: parseIntegerOption(
+      ),
+      maxTurns: parseRequiredIntegerOption(
         options.maxTurns,
         "--max-turns",
         TURNS_BOUNDS
-      ) as number,
+      ),
       ...(options.description !== undefined
         ? { description: options.description }
         : {}),

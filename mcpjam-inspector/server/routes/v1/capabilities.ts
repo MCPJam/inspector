@@ -94,16 +94,26 @@ function sandboxesOf(row: CapabilitiesRow) {
 }
 
 function deriveCapabilities(row: CapabilitiesRow) {
-  // A PROJECT-level grant can raise an org member to project admin, and the
-  // backend already folded that into `isProjectAdmin`. Membership itself comes
-  // from either side: an unranked org role with a project grant is still a
-  // member of this project.
+  /**
+   * MIRRORS `requireProjectRole`, which ranks the ORGANIZATION role and
+   * nothing else — a project grant does not raise it. So membership here is
+   * the org rank alone.
+   *
+   * Deliberately NOT folded in: `projectRole`, whose only values are `admin`
+   * and `editor`. Counting `editor` as membership would tell a guest holding a
+   * project grant they may author swarms, and every such write would then be
+   * refused by the mutation — the exact "claim a capability the caller lacks"
+   * failure this endpoint exists to prevent, delivered by the endpoint itself.
+   */
   const rank = ROLE_RANK[row.role] ?? 0;
-  const isMember =
-    rank >= ROLE_RANK.member ||
-    row.isProjectAdmin ||
-    row.projectRole === "member" ||
-    row.projectRole === "admin";
+  const isMember = rank >= ROLE_RANK.member;
+  /**
+   * Publishing checks `canManageProjectMembers`, which IS satisfied by a
+   * project `admin` grant on its own — so this is the one capability a
+   * non-member can hold, and the backend already folded both sources into
+   * `isProjectAdmin`. The org-rank clause is redundant against today's
+   * backend and kept as a floor in case that folding ever moves.
+   */
   const isAdmin = row.isProjectAdmin || rank >= ROLE_RANK.admin;
   // `enforced` already folds in the gate MODE: in `dark` the flag is evaluated
   // and logged but not applied, so a would-be denial is not a denial and an

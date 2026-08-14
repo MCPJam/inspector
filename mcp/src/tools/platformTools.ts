@@ -342,14 +342,10 @@ if (
 }
 
 /**
- * Operations that PERMANENTLY destroy a known resource. They carry an
- * explicit `destructiveHint: true` (unlike `mayBeDestructive` ops, whose
- * effects are merely unknowable). Kept here rather than on the SDK operation
- * so the wire contract stays surface-agnostic.
- */
-/**
  * Operations that PERMANENTLY destroy a known resource, DERIVED from the
- * catalog's own `risk` metadata rather than listed here.
+ * catalog's own `risk` metadata rather than listed here. They advertise an
+ * explicit `destructiveHint: true`, unlike `mayBeDestructive` operations,
+ * whose effects are merely unknowable to us.
  *
  * Deriving is the whole point of that field: it exists so five surfaces make
  * one decision from one place instead of each re-deriving it, and a hand-kept

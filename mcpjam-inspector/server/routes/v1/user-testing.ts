@@ -371,6 +371,47 @@ const TRANSCRIPT_FETCH_TIMEOUT_MS = 10_000;
  */
 const TRANSCRIPT_MAX_BLOB_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Read a response body as text, giving up once `maxBytes` have arrived.
+ *
+ * Returns `null` when the body is over the ceiling or cannot be streamed, so
+ * the caller reports `transcriptUnavailable` rather than a silent truncation —
+ * a transcript cut mid-array would either fail to parse or, worse, parse into a
+ * conversation that stops early with no sign that it did.
+ *
+ * The counting is on RECEIVED bytes. Checking `content-length` instead would
+ * miss the two cases that matter: a chunked response has no such header, and a
+ * present one is a claim, not a measurement.
+ */
+async function readCapped(
+  response: Response,
+  maxBytes: number
+): Promise<string | null> {
+  const body = response.body;
+  if (!body) return null;
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        // Stop the transfer rather than draining a body we have already
+        // decided not to use.
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 type RawMessage = {
   role?: unknown;
   content?: unknown;
@@ -470,24 +511,29 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
       const response = await fetch(session.messagesBlobUrl, {
         signal: AbortSignal.timeout(TRANSCRIPT_FETCH_TIMEOUT_MS),
       });
-      // BOUNDED BEFORE PARSING. The timeout caps latency, not bytes, and
-      // `response.json()` materializes the whole conversation on a request
-      // thread — so without this, memory scales with transcript size times
-      // concurrent readers and nothing stops it.
-      const declaredBytes = Number(response.headers.get("content-length"));
-      if (
-        Number.isFinite(declaredBytes) &&
-        declaredBytes > TRANSCRIPT_MAX_BLOB_BYTES
-      ) {
+      // BOUNDED WHILE READING, not from the header. The timeout caps latency,
+      // not bytes, and `response.json()` materializes the whole conversation on
+      // a request thread — so without a ceiling, memory scales with transcript
+      // size times concurrent readers and nothing stops it.
+      //
+      // `content-length` cannot be that ceiling. It is absent on a chunked
+      // response and merely a claim when present, and the absent case is the
+      // dangerous one: `Number(null)` is 0, which passes any `> MAX` test and
+      // hands an unbounded body to the parser. So the cap is enforced against
+      // bytes actually received, and the header is not consulted at all.
+      if (!response.ok) {
         transcriptUnavailable = true;
-      } else if (response.ok) {
-        const parsed = (await response.json()) as unknown;
-        const candidate = Array.isArray(parsed)
-          ? parsed
-          : (parsed as { messages?: unknown })?.messages;
-        if (Array.isArray(candidate)) messages = candidate as RawMessage[];
       } else {
-        transcriptUnavailable = true;
+        const text = await readCapped(response, TRANSCRIPT_MAX_BLOB_BYTES);
+        if (text === null) {
+          transcriptUnavailable = true;
+        } else {
+          const parsed = JSON.parse(text) as unknown;
+          const candidate = Array.isArray(parsed)
+            ? parsed
+            : (parsed as { messages?: unknown })?.messages;
+          if (Array.isArray(candidate)) messages = candidate as RawMessage[];
+        }
       }
     } catch {
       // A blob we cannot read is reported as such rather than as an empty

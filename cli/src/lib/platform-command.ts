@@ -159,6 +159,22 @@ export function parseIntegerOption(
 }
 
 /**
+ * The `requiredOption` counterpart, with the same parsing and bounds.
+ *
+ * Exists only for the return type. Commander guarantees a required option is
+ * present, so call sites were writing `parseIntegerOption(...) as number` — and
+ * an assertion is a claim the compiler cannot check, repeated once per flag.
+ * This keeps the one unchecked narrowing in a single place.
+ */
+export function parseRequiredIntegerOption(
+  value: string,
+  flag: string,
+  bounds?: { min?: number; max?: number }
+): number {
+  return parseIntegerOption(value, flag, bounds) as number;
+}
+
+/**
  * Exactly one of two mutually exclusive flags, both optional individually.
  *
  * The generation endpoints ground a model in either an environment or a legacy

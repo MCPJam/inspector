@@ -1324,7 +1324,13 @@ export interface PlatformUserTestingSessionDetail {
   modelId: string | null;
   startedAt: number | null;
   lastActivityAt: number | null;
-  messageCount: number;
+  /**
+   * `null` — never 0 — when the transcript could not be read, which is why
+   * this is nullable and the list DTO's is not. Zero would be a claim the
+   * visitor said nothing, the opposite of what an unreadable blob means, and a
+   * caller that only checked `messageCount` would act on it.
+   */
+  messageCount: number | null;
   /**
    * True when the stored conversation could not be read. Distinct from an
    * empty `messages`, which means the visitor genuinely said nothing.
