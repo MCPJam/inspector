@@ -14,6 +14,7 @@
  *   - the wire error chunk shape is unchanged (client contract)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { originOf } from "@mcpjam/sdk";
 import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
@@ -176,6 +177,35 @@ describe("engine failure telemetry", () => {
       hop: "user_server_hop",
       errorCode: "user_rate_limit",
     });
+  });
+
+  it("owns a 401 whose body names MCPJam's own managed key", async () => {
+    // End-to-end guard for the blind spot: the backend's `categorizeError`
+    // mirrors the UPSTREAM provider's 401 onto its own response when MCPJam's
+    // managed Gateway/OpenRouter key is revoked. Classified by status alone
+    // that is `provider/auth_error` → `user_config`, and `mcpjam_internal`
+    // promotes only `ambiguous` — so a total hosted-chat outage reached the
+    // reporter labelled as the user's expired key and could never page.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "mcpjam_api_error",
+          error: "MCPJam is experiencing a configuration issue.",
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].errorCode).toBe("mcpjam_api_error");
+    // Not a recognized user-owned denial, so the internal hop still applies —
+    // but the verdict no longer depends on it.
+    expect(calls[0].hop).toBe("mcpjam_internal");
+    expect(originOf(calls[0].normalized)).toBe("mcpjam");
   });
 
   it("stays completely silent on abort — no report, no error chunk", async () => {
