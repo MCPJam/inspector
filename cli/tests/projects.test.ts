@@ -165,14 +165,20 @@ const READY_DOCTOR = {
 async function startPlatformFixture(): Promise<{
   baseUrl: string;
   authHeaders: string[];
+  requestUrls: string[];
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
+  // Recorded so a test can assert what a flag actually put ON THE WIRE. The
+  // auth header alone cannot distinguish "sent the filter" from "quietly sent
+  // no filter and listed everything".
+  const requestUrls: string[] = [];
   const server: Server = createServer(async (req, res) => {
     for await (const _chunk of req) {
       // drain body
     }
     authHeaders.push(req.headers.authorization ?? "");
+    requestUrls.push(req.url ?? "");
     const url = new URL(req.url ?? "/", "http://fixture");
     res.setHeader("content-type", "application/json");
 
@@ -232,6 +238,7 @@ async function startPlatformFixture(): Promise<{
   return {
     baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
     authHeaders,
+    requestUrls,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -405,6 +412,57 @@ test("projects list emits items as JSON and a table as human output", async () =
     assert.match(humanRun.stdout, /ID\s+NAME\s+UPDATED/);
     assert.match(humanRun.stdout, /proj-alpha\s+Alpha/);
     assert.match(humanRun.stdout, /2 project\(s\)\./);
+
+    // No flag: no filter on the wire, not an empty one.
+    assert.ok(
+      fixture.requestUrls.every((url) => !url.includes("organizationId")),
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("projects list --organization-id sends the filter, and refuses a blank one", async () => {
+  const fixture = await startPlatformFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(fixture.baseUrl, "list"),
+          "--organization-id",
+          "org-1",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 0);
+    // The point of the flag: it must reach the query string. Asserting on
+    // stdout would pass even if the filter were silently dropped, since the
+    // fixture answers the same list either way.
+    assert.ok(
+      fixture.requestUrls.some((url) =>
+        url.includes("organizationId=org-1"),
+      ),
+      `expected organizationId on the wire, saw: ${fixture.requestUrls.join(", ")}`,
+    );
+
+    // A supplied-but-blank value is a typo. Widening it to "every project"
+    // answers the opposite of what was asked, so it must fail instead.
+    const blankRun = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(fixture.baseUrl, "list"),
+          "--organization-id",
+          "   ",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.notEqual(blankRun.result.exitCode, 0);
   } finally {
     await fixture.close();
   }

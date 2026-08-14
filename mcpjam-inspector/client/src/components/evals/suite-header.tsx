@@ -974,7 +974,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       {overviewHasRightActions ? (
         <div
           data-testid="suite-overview-actions"
-          className="ml-auto flex shrink-0 flex-nowrap items-center gap-2"
+          className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
         >
           {overviewSetupSdkButton}
           {overviewLegacyRunActions}

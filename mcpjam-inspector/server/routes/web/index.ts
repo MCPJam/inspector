@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { webError, mapRuntimeError } from "./errors.js";
+import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
@@ -176,15 +176,13 @@ web.get("/guest-jwks", async (c) => {
 });
 
 web.onError((error, c) => {
+  // `webErrorFromRoute`, not a hand-rolled `webError` call: the mapped error
+  // carries the EFFECTIVE origin (post internal-boundary promotion), and
+  // passing only `normalized` here discarded it at the very last step — for
+  // every handler on /api/web/* that throws rather than returns. That drop
+  // was the single largest reason `origin=mcpjam` never appeared in Axiom.
   const routeError = mapRuntimeError(error);
-  return webError(
-    c,
-    routeError.status,
-    routeError.code,
-    routeError.message,
-    routeError.details,
-    routeError.normalized ? { normalized: routeError.normalized } : undefined
-  );
+  return webErrorFromRoute(c, routeError);
 });
 
 export default web;

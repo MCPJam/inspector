@@ -47,7 +47,7 @@ function requireConvexHttpUrl(): string {
  * refine a both-or-neither body would sail through to the backend and come
  * back with its (correct but less local) 400 copy.
  */
-const generateBaseSchema = z.object({
+export const generateBaseSchema = z.object({
   projectId: z.string().min(1),
   // `.trim()` so a whitespace-only "id" fails HERE (the point of validating
   // grounding locally) instead of reaching the backend as a non-empty string.
@@ -69,7 +69,7 @@ const generateBaseSchema = z.object({
     .optional(),
 });
 
-const exactlyOneGroundingSource = {
+export const exactlyOneGroundingSource = {
   check: (body: { serverAttachmentId?: string; environmentId?: string }) =>
     (body.serverAttachmentId === undefined) !==
     (body.environmentId === undefined),
@@ -77,6 +77,14 @@ const exactlyOneGroundingSource = {
     message: "Exactly one of serverAttachmentId or environmentId is required",
   },
 };
+
+/**
+ * Exported for the `/api/v1` generation routes, which forward to the same
+ * backend endpoints under project-scoped paths (`./v1/swarm-generate.ts`).
+ * Shared rather than re-declared so the two surfaces cannot drift on what a
+ * valid grounding source is — the XOR below is the rule most likely to be
+ * copied wrong.
+ */
 
 /**
  * `personaCount` selects the batch response shape (a slate of N personas, each
@@ -158,7 +166,7 @@ function upstreamErrorCode(bodyText: string): string | undefined {
  * carries the same `requestId`. Absent only when the middleware did not run,
  * in which case there is nothing to correlate and the copy stays bare.
  */
-function rethrowAsRouteError(c: Context, err: unknown): never {
+export function rethrowAsRouteError(c: Context, err: unknown): never {
   if (err instanceof SwarmAgentError && err.status >= 400 && err.status < 500) {
     throw new WebRouteError(
       err.status,

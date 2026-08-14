@@ -43,6 +43,7 @@ import type { Predicate } from "@/shared/eval-matching";
 import {
   isWidgetAssertion,
   stepTurnIndices,
+  WIDGET_ASSERTION_LABELS,
   type AssertStep,
   type InteractAction,
   type InteractStep,
@@ -359,14 +360,6 @@ const WIDGET_ASSERTION_KINDS: ReadonlyArray<WidgetAssertion["kind"]> = [
   "inputValue",
   "widgetToolCalled",
 ];
-
-const WIDGET_ASSERTION_LABELS: Record<WidgetAssertion["kind"], string> = {
-  textVisible: "Text visible",
-  elementVisible: "Element visible",
-  elementHidden: "Element hidden",
-  inputValue: "Input value equals",
-  widgetToolCalled: "View called tool",
-};
 
 function defaultWidgetAssertion(
   kind: WidgetAssertion["kind"],

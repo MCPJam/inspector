@@ -35,6 +35,38 @@ describe("tester-link-path", () => {
     }
   });
 
+  it("does not read the scenario Edit screen as a tester link", () => {
+    // `/user-testing/<scenarioId>/edit` has a tester link's three segments.
+    // Matching it handed the whole page to the public runtime, which redeemed
+    // "edit" as a token and rendered "Link Unavailable" — the Edit button in
+    // the scenario header looked like it did nothing.
+    for (const editPath of [
+      "/user-testing/t97b0ae1gqfg5faczettv0zk7n8cem4j/edit",
+      "/user-testing/t97b0ae1gqfg5faczettv0zk7n8cem4j/edit/",
+      "/chatbox/host_123/edit",
+    ]) {
+      expect(extractTesterLinkToken(editPath)).toBeNull();
+      expect(TESTER_LINK_RUNTIME_PATH_PATTERN.test(editPath)).toBe(false);
+    }
+    // The token reader is the looser of the two — it also sees pathnames that
+    // still carry a query or hash, and must refuse those too.
+    expect(extractTesterLinkToken("/user-testing/host_123/edit?tab=share")).toBe(
+      null
+    );
+    expect(extractTesterLinkToken("/user-testing/host_123/edit#top")).toBe(null);
+  });
+
+  it("still reads a token that merely starts with the reserved word", () => {
+    // The exclusion is the whole segment, not a prefix — a real token is a
+    // random id and may legitimately begin with these letters.
+    expect(extractTesterLinkToken("/user-testing/demo/edit_tok_1")).toBe(
+      "edit_tok_1"
+    );
+    expect(
+      TESTER_LINK_RUNTIME_PATH_PATTERN.test("/user-testing/demo/edit_tok_1")
+    ).toBe(true);
+  });
+
   it("reads the token through a preview query or a slug bookmark", () => {
     expect(
       extractTesterLinkToken("/user-testing/demo/tok_1?surface=preview")
