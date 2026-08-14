@@ -116,13 +116,22 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
         if (closedEmitted) return;
         closedEmitted = true;
         const durationMs = Date.now() - startedAt;
-        const errorMessage =
-          outcome === "errored" && error !== undefined
-            ? (error instanceof Error ? error.message : String(error)).slice(
-                0,
-                500,
-              )
-            : undefined;
+        // Guarded extraction: a rejection reason can be a value whose
+        // message getter or string coercion throws (Proxy trap, null-proto
+        // object). Letting that escape here would swallow the closed row AND
+        // replace the stream error with a secondary failure from the
+        // telemetry code — same precedent as reportRouteFailure's
+        // "[unreadable error value]" handling.
+        let errorMessage: string | undefined;
+        if (outcome === "errored" && error !== undefined) {
+          try {
+            errorMessage = (
+              error instanceof Error ? error.message : String(error)
+            ).slice(0, 500);
+          } catch {
+            errorMessage = "[unreadable error value]";
+          }
+        }
         logger.event(
           "http.stream.closed",
           { ...closedCtx, durationMs },

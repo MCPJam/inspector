@@ -595,6 +595,33 @@ describe("requestLogContextMiddleware", () => {
     );
   });
 
+  it("still emits the closed row when the error value cannot be stringified", async () => {
+    // A rejection reason can be a value whose string coercion throws (a
+    // null-prototype object here). The closed row must survive with a
+    // fallback instead of the telemetry code throwing and eating the row.
+    const app = createTestApp();
+    app.get("/api/web/stream", (c) => {
+      c.header("Content-Type", "text/event-stream");
+      const dying = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(Object.create(null));
+        },
+      });
+      return c.body(dying);
+    });
+
+    const res = await app.request("/api/web/stream");
+    const reader = res.body!.getReader();
+    await reader.read().catch(() => undefined);
+
+    const closed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.stream.closed");
+    expect(closed).toHaveLength(1);
+    expect((closed[0][2] as any).outcome).toBe("errored");
+    expect((closed[0][2] as any).errorMessage).toBe("[unreadable error value]");
+  });
+
   it("caps the errored stream message at 500 chars", async () => {
     const app = createTestApp();
     app.get("/api/web/stream", (c) => {
