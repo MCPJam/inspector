@@ -284,7 +284,7 @@ function toJourneyRunDto(row: JourneyRunRow) {
   };
 }
 
-function toJourneySessionDto(row: JourneySessionRow) {
+function toJourneySessionDto(row: JourneySessionRow, outcome?: string | null) {
   return {
     /**
      * The `chatSessions` DOCUMENT id — the same value `GET /v1/chat-sessions`
@@ -309,7 +309,21 @@ function toJourneySessionDto(row: JourneySessionRow) {
     ...(row.personaLabel !== undefined
       ? { personaLabel: row.personaLabel }
       : {}),
+    /**
+     * ARCHIVAL state (`active` | `archived`), not a completion state — a
+     * run session stays `active` forever unless someone archives it, so this
+     * says nothing about how the conversation went. The per-session verdict
+     * is `outcome` below; the run-level verdict is the run's own status.
+     */
     status: row.status ?? null,
+    /**
+     * How this session's ATTEMPT ended, joined from the run row
+     * (`succeeded` | `failed` | `rate_limited` | `running` | `pending`), or
+     * null when the attempt cannot be matched (historical runs whose attempts
+     * predate `chatSessionId` stamping). This is the field a caller should
+     * read to rank or judge sessions — `status` above cannot answer it.
+     */
+    outcome: outcome ?? null,
     readiness: row.readiness ?? null,
     goalScore: row.goalScore ?? null,
     messageCount: row.messageCount ?? 0,
@@ -788,7 +802,17 @@ journeys.get("/projects/:projectId/journey-runs/:runId/sessions", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const client = createConvexClient(await getConvexBearerForRequest(c));
-  await requireRunInProject(client, projectId, runId);
+  const run = await requireRunInProject(client, projectId, runId);
+  // Per-session verdicts live on the RUN row (`attempts[].status`), keyed by
+  // `chatSessionId` — the session row's own `status` is only active/archived.
+  // Joined here so the sessions a caller ranks or judges carry how their
+  // attempt actually ended.
+  const outcomeByChatSessionId = new Map<string, string>();
+  for (const attempt of run.attempts ?? []) {
+    if (attempt.chatSessionId) {
+      outcomeByChatSessionId.set(attempt.chatSessionId, attempt.status);
+    }
+  }
 
   let result: {
     page: JourneySessionRow[];
@@ -808,7 +832,9 @@ journeys.get("/projects/:projectId/journey-runs/:runId/sessions", async (c) => {
   }
   return v1PageJson(
     c,
-    result.page.map(toJourneySessionDto),
+    result.page.map((row) =>
+      toJourneySessionDto(row, outcomeByChatSessionId.get(row.chatSessionId))
+    ),
     nextCursorFrom(result)
   );
 });

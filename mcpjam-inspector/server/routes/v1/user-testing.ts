@@ -23,9 +23,12 @@
  *     write to one at all, and no amount of role granting changes that. The
  *     backend's 403 copy is forwarded verbatim rather than reworded, because
  *     it is the only place that knows why.
- *   - Publishing, guest execution, link rotation and rebinding need project
- *     ADMIN. An API key acting as an ordinary member gets a 403, and that is
- *     the intended answer.
+ *   - Only PUBLISHING, GUEST EXECUTION and REBINDING need project ADMIN
+ *     upstream (`canManageProjectMembers`). Everything else here — mode
+ *     changes, renames, member edits, link rotation — gates at
+ *     `requireWorkspaceRole(..., 'guest')`: an ordinary member can do all of
+ *     it. For the admin trio, an API key acting as an ordinary member gets a
+ *     403, and that is the intended answer.
  *
  * CROSS-PROJECT SCOPING is enforced HERE. Every `chatboxes:*` mutation takes a
  * `chatboxId` alone and authorizes against whatever workspace the row turns out
@@ -83,6 +86,14 @@ function translateWriteError(error: unknown): WebRouteError {
 
 // ── Convex row shapes (hand-mirrored) ───────────────────────────────────────
 
+/**
+ * The `chatboxes:getChatbox` settings envelope, hand-mirrored down to the
+ * fields this module reads. NO `accessVersion`: the envelope
+ * (`assembleChatboxSettingsResponse` upstream) does not carry it — the value
+ * lives on the `chatboxes` row and only the publish/rebind projection
+ * (`projectEnvironmentChatbox`) returns it. Reintroducing it on the update or
+ * rotate responses needs the backend envelope to carry it first.
+ */
 type ChatboxRow = {
   _id: string;
   projectId?: string;
@@ -90,7 +101,6 @@ type ChatboxRow = {
   name?: string;
   description?: string;
   mode?: "project_members" | "invited_only" | "anyone_with_link";
-  accessVersion?: number;
   environmentId?: string;
 };
 
@@ -350,13 +360,17 @@ userTesting.patch(BASE, async (c) => {
   }
 
   const updated = await requireScenarioInProject(client, projectId, scenarioId);
+  // No `accessVersion` here, deliberately: a mode change does bump it
+  // upstream, but the settings envelope this re-read returns does not carry
+  // the new value (see `ChatboxRow`), and a field that is null on every
+  // response is worse than no field. The publish response
+  // (`scenarios.ts`) carries the real one.
   return v1Resource(c, {
     id: scenarioId,
     projectId,
     name: updated.name ?? null,
     description: updated.description ?? null,
     mode: updated.mode ?? null,
-    accessVersion: updated.accessVersion ?? null,
   });
 });
 
@@ -922,8 +936,13 @@ for (const action of ["dismiss", "undismiss"] as const) {
 // ── Exposure controls ───────────────────────────────────────────────────────
 //
 // Everything below changes WHO CAN REACH the scenario or WHAT IT MAY SPEND on
-// their behalf. All need project admin upstream; an API key acting as an
-// ordinary member gets a 403, which is the intended answer.
+// their behalf — but the upstream gates differ, and the difference matters:
+// guest execution and rebinding need project admin
+// (`canManageProjectMembers`), while link rotation and member edits gate at
+// workspace membership (`requireWorkspaceRole(..., 'guest')`) like the mode
+// change above — an ordinary member can do them. For the admin-gated pair, an
+// API key acting as an ordinary member gets a 403, which is the intended
+// answer.
 
 const guestExecutionSchema = z.strictObject({
   enabled: z.boolean(),
@@ -966,24 +985,28 @@ userTesting.put(`${BASE}/guest-execution`, async (c) => {
 // link has leaked — but it means a caller cannot undo this by rotating back.
 userTesting.post(`${BASE}/rotate-link`, async (c) => {
   const { client, projectId, scenarioId } = await scopedScenario(c);
-  let result: { link?: string; accessVersion?: number } | null;
+  let result: { link?: unknown } | null;
   try {
     result = (await client.mutation(
       "chatboxes:rotateChatboxLink" as never,
       { chatboxId: scenarioId } as never
-    )) as { link?: string; accessVersion?: number } | null;
+    )) as { link?: unknown } | null;
   } catch (error) {
     throw translateWriteError(error);
   }
   // PROJECTED, not spread. Spreading an unread mutation result makes every
   // field upstream adds part of the public contract without review — and on
   // THIS route the fields in question are share secrets.
+  //
+  // No `accessVersion`: the mutation returns the settings envelope, which
+  // does not carry it (see `ChatboxRow`) — the value only travels on the
+  // publish/rebind projection. Reporting `null` forever documented a
+  // revocation signal this response never actually delivered.
   return v1Resource(c, {
     id: scenarioId,
     projectId,
     rotated: true,
     link: result?.link ?? null,
-    accessVersion: result?.accessVersion ?? null,
   });
 });
 

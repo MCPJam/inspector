@@ -680,14 +680,16 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
 
   // ── SWARMS ────────────────────────────────────────────────────────────
   //
-  // The tiers below are NOT a fresh per-operation judgement — they are read
-  // off `operation.risk` in the SDK catalog:
-  //
-  //   risk: none        → direct   (persists, reversible, costs nothing)
-  //   risk: spend       → gated    (a person approves the money)
-  //   risk: exposure    → gated    (a person approves who can reach it)
-  //   risk: destructive → excluded (an approval makes spend deliberate; it
-  //                                 does not make a deletion recoverable)
+  // The tiers below are NOT a fresh per-operation judgement — they follow
+  // from `operation.risk` in the SDK catalog (none → direct, spend/exposure
+  // → gated, destructive → excluded), and the rule is ENFORCED, not prose:
+  // the "tier derives from operation.risk" suite in agent-op-registry.test.ts
+  // runs the derivation over every risk-classified operation. The only
+  // lawful deviations are the ones NAMED in that suite's `TIER_EXCEPTIONS`
+  // map, each with a written reason (`cancel_journey_run` stays gated so
+  // stopping spend is approvable; `publish_scenario` stays excluded because
+  // who may talk to your servers is a human call). Re-tiering an entry
+  // against its risk fails CI until the exception is written down there.
   //
   // Deriving from shared metadata rather than re-deciding here is the fix for
   // a real failure: `cancel_journey_run` was once excluded from this surface
