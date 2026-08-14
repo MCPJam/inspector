@@ -241,8 +241,12 @@ function journeyRunResource(
   return {
     type: "journey_run",
     id: runId,
+    // `/swarms/<runId>` — the client routes on the FIRST segment after
+    // `/swarms/` (App.tsx takes `.split("/")[0]` as the run id), so a
+    // `/swarms/runs/<id>` link resolves to a run named literally "runs" and
+    // dead-links the approver.
     url:
-      `${MCPJAM_HOSTED_ORIGIN}/swarms/runs/${encodeURIComponent(runId)}` +
+      `${MCPJAM_HOSTED_ORIGIN}/swarms/${encodeURIComponent(runId)}` +
       `?project=${encodeURIComponent(projectId)}`,
   };
 }
