@@ -614,6 +614,204 @@ describe("agent op registry", () => {
   });
 });
 
+describe("tier derives from operation.risk", () => {
+  // The registry's own policy, made mechanical. The comments used to state
+  // the rule as prose while every `tier:` stayed a hand-placed literal, so a
+  // deviation was silent. Now the rule runs over the real catalog: every
+  // operation that declares `risk` must land on the tier its risk derives —
+  // or be NAMED in TIER_EXCEPTIONS below, with the reason a reviewer should
+  // read. The next silent deviation fails here instead of shipping.
+
+  type Placement = "direct" | "gated" | "excluded";
+  type Risk = NonNullable<(typeof ALL_OPERATIONS)[number]["risk"]>;
+
+  /** What each risk class means on this surface. */
+  const TIER_BY_RISK: Readonly<Record<Risk, Placement>> = {
+    none: "direct", // persists, reversible, costs nothing
+    spend: "gated", // a person approves the money
+    exposure: "gated", // a person approves who can reach it
+    destructive: "excluded", // an approval makes spend deliberate; it does
+    //                          not make a removal recoverable
+  };
+
+  /**
+   * The ONLY lawful deviations from the derivation, each with its reason.
+   *
+   * An entry here is a product decision, not an escape hatch: adding one is
+   * exactly the review the derivation exists to force. Neither entry changes
+   * behavior — both document tiers the registry already shipped.
+   */
+  const TIER_EXCEPTIONS: Readonly<
+    Record<string, { tier: Placement; reason: string }>
+  > = {
+    cancel_journey_run: {
+      tier: "gated",
+      reason:
+        "Destructive would derive excluded, but this is the spend-STOPPER: " +
+        "excluding it would let the agent propose launching a run while " +
+        "having no way to propose stopping one. Stopping spend must be " +
+        "approvable, even though cancellation kills in-flight sessions " +
+        "irreversibly.",
+    },
+    publish_scenario: {
+      tier: "excluded",
+      reason:
+        "Exposure would derive gated, but publishing decides who outside " +
+        "the project may talk to your servers. That is a human decision the " +
+        "agent should not even propose.",
+    },
+  };
+
+  const placementOf = (name: string): Placement | "unregistered" => {
+    const entry = AGENT_OP_REGISTRY.find((e) => e.operation.name === name);
+    if (entry) return entry.tier;
+    return name in EXCLUDED_FROM_AGENT ? "excluded" : "unregistered";
+  };
+
+  const classified = ALL_OPERATIONS.filter((op) => op.risk !== undefined);
+
+  it("classifies enough of the catalog for the derivation to mean anything", () => {
+    // Guards the derivation itself: if `risk` were ever dropped from the SDK
+    // catalog, `classified` would be empty and every assertion below would
+    // pass vacuously.
+    expect(classified.length).toBeGreaterThan(20);
+  });
+
+  it("places every risk-classified operation where its risk derives — or where TIER_EXCEPTIONS says", () => {
+    for (const op of classified) {
+      const exception = TIER_EXCEPTIONS[op.name];
+      const expected = exception?.tier ?? TIER_BY_RISK[op.risk!];
+      expect(
+        placementOf(op.name),
+        exception
+          ? `${op.name} (risk: ${op.risk}) is a named exception and must stay ` +
+              `${expected} — TIER_EXCEPTIONS: ${exception.reason}`
+          : `${op.name} (risk: ${op.risk}) must be ${expected}. If this ` +
+              `deviation is deliberate, add ${op.name} to TIER_EXCEPTIONS in ` +
+              `this file with the reason a reviewer should read.`
+      ).toBe(expected);
+    }
+  });
+
+  it("keeps every exception live: a real op, risk-classified, actually deviating", () => {
+    // A vestigial exception is the map lying about the surface: if the SDK's
+    // risk class or the registry's tier moves so the entry no longer
+    // deviates, it must be deleted, or it pre-excuses a FUTURE deviation.
+    for (const [name, exception] of Object.entries(TIER_EXCEPTIONS)) {
+      const op = ALL_OPERATIONS.find((candidate) => candidate.name === name);
+      expect(
+        op,
+        `${name} is not an SDK operation; remove it from TIER_EXCEPTIONS`
+      ).toBeDefined();
+      expect(
+        op!.risk,
+        `${name} declares no risk, so no derivation applies; remove it from TIER_EXCEPTIONS`
+      ).toBeDefined();
+      expect(
+        TIER_BY_RISK[op!.risk!],
+        `${name} no longer deviates — risk "${op!.risk}" already derives ` +
+          `"${exception.tier}"; remove it from TIER_EXCEPTIONS`
+      ).not.toBe(exception.tier);
+      expect(
+        exception.reason.length,
+        `${name} needs a substantive reason`
+      ).toBeGreaterThan(20);
+    }
+  });
+
+  it("finds risk only on writes — the derivation never governs a read", () => {
+    // The SDK's own contract: risk "is meaningless on a read". Reads are
+    // tiered by other concerns entirely (privacy, turn scope), so if one ever
+    // grew a risk field the derivation would start mis-governing it. Checked
+    // against reality: today no read-only operation declares risk, and many
+    // reads are excluded for reasons no risk class describes
+    // (list_chat_sessions is privacy, list_projects is turn scope).
+    for (const op of ALL_OPERATIONS.filter((candidate) => candidate.readOnly)) {
+      expect(
+        op.risk,
+        `${op.name} is read-only; risk is meaningless on a read and would ` +
+          `put it under a derivation that does not govern reads`
+      ).toBeUndefined();
+    }
+  });
+
+  /**
+   * Writes that predate the `risk` field — the legacy catalog, pinned.
+   *
+   * These are exempt from the derivation because "not yet classified" is a
+   * real state, distinct from `risk: none` (delete_project sits here, and it
+   * is anything but). The pin makes the exemption a ratchet: this list may
+   * only SHRINK. A new write cannot join it — it must declare `risk` in the
+   * SDK catalog, which is what puts it under the derivation above.
+   */
+  const UNCLASSIFIED_WRITES: ReadonlySet<string> = new Set([
+    "archive_project_environment",
+    "build_sandbox_image",
+    "call_server_tool",
+    "cancel_eval_run",
+    "close_tunnel",
+    "connect_project_server",
+    "create_eval_case",
+    "create_eval_suite",
+    "create_host",
+    "create_project",
+    "create_project_environment",
+    "create_project_server",
+    "create_sandbox_image",
+    "create_tunnel",
+    "delete_eval_case",
+    "delete_eval_suite",
+    "delete_host",
+    "delete_project",
+    "delete_project_server",
+    "delete_sandbox_image",
+    "duplicate_host",
+    "generate_eval_cases",
+    "promote_sandbox_image",
+    "reset_computer",
+    "restore_project_environment",
+    "run_eval_case",
+    "run_eval_suite",
+    "set_eval_suite_environments",
+    "set_eval_suite_schedule",
+    "set_host_servers",
+    "update_eval_case",
+    "update_eval_suite",
+    "update_host",
+    "update_project",
+    "update_project_environment",
+    "update_project_server",
+    "update_sandbox_image",
+    "use_sandbox_image",
+  ]);
+
+  it("pins the unclassified legacy writes — the list only shrinks", () => {
+    const unclassified = ALL_OPERATIONS.filter(
+      (op) => !op.readOnly && op.risk === undefined
+    ).map((op) => op.name);
+
+    const newcomers = unclassified
+      .filter((name) => !UNCLASSIFIED_WRITES.has(name))
+      .sort();
+    expect(
+      newcomers,
+      `New write operations must declare \`risk\` in the SDK catalog ` +
+        `(none | spend | exposure | destructive) — that classification is ` +
+        `what derives their agent tier. Do not add names to ` +
+        `UNCLASSIFIED_WRITES; it is a legacy pin and only shrinks.`
+    ).toEqual([]);
+
+    const departed = [...UNCLASSIFIED_WRITES]
+      .filter((name) => !unclassified.includes(name))
+      .sort();
+    expect(
+      departed,
+      `These writes were classified (or removed from the catalog) — delete ` +
+        `them from UNCLASSIFIED_WRITES so the derivation above governs them.`
+    ).toEqual([]);
+  });
+});
+
 /**
  * The prompt as it stood before assembly replaced the literal. Kept verbatim,
  * so the refactor is provably a no-op for the model and any future change to
