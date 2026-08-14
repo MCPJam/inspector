@@ -40,6 +40,16 @@ export interface TranscriptProps {
   renderTool?: (ctx: ToolRenderContext) => ReactNode;
   /** Host override for widget rendering (inspector `WidgetReplay`). */
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
+  /**
+   * Host slot under each assistant message (per-turn ratings).
+   *
+   * `index` is the position in the VISIBLE array — what
+   * `getRenderableConversationMessages` returns, not the raw `messages` prop.
+   * Hosts join scores to turns by counting user messages in that same filtered
+   * array, so handing them the raw index would offset every rating by however
+   * many internal messages the thread happens to carry.
+   */
+  renderTurnFooter?: (message: UIMessage, index: number) => ReactNode;
 }
 
 /**
@@ -61,6 +71,7 @@ export function Transcript({
   renderAvatar,
   renderTool,
   renderWidget,
+  renderTurnFooter,
 }: TranscriptProps) {
   const visible = getRenderableConversationMessages(messages);
   return (
@@ -80,6 +91,11 @@ export function Transcript({
             renderAvatar={renderAvatar}
             renderTool={renderTool}
             renderWidget={renderWidget}
+            renderTurnFooter={
+              renderTurnFooter
+                ? (msg) => renderTurnFooter(msg, index)
+                : undefined
+            }
           />
         ))}
       </div>

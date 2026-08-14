@@ -32,11 +32,24 @@ export interface MessageViewProps {
   showAssistantAvatar?: boolean;
   /** Host override for the assistant avatar (e.g. provider logos). */
   renderAvatar?: (model: ChatUiModel | undefined) => ReactNode;
+  /**
+   * Host slot rendered under an ASSISTANT message's parts — the per-turn
+   * rating widget, today. Assistant-only because the thing being judged is the
+   * response; a footer under the user's own message has nothing to rate.
+   */
+  renderTurnFooter?: (message: UIMessage) => ReactNode;
 }
 
 function getPartKey(part: AnyPart, stepIndex: number, partIndex: number) {
-  const candidate = part as { type?: string; toolCallId?: unknown; id?: unknown };
-  if (typeof candidate.toolCallId === "string" && candidate.toolCallId.length > 0) {
+  const candidate = part as {
+    type?: string;
+    toolCallId?: unknown;
+    id?: unknown;
+  };
+  if (
+    typeof candidate.toolCallId === "string" &&
+    candidate.toolCallId.length > 0
+  ) {
     return `tool-${candidate.toolCallId}`;
   }
   if (typeof candidate.id === "string" && candidate.id.length > 0) {
@@ -57,6 +70,7 @@ function MessageViewImpl({
   renderWidget,
   showAssistantAvatar = true,
   renderAvatar,
+  renderTurnFooter,
 }: MessageViewProps) {
   if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
@@ -134,6 +148,7 @@ function MessageViewImpl({
             </div>
           ))}
         </div>
+        {renderTurnFooter?.(message)}
       </div>
     </article>
   );

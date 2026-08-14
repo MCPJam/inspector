@@ -162,6 +162,24 @@ interface ChatTabProps {
   onEnableChatboxOptionalServer?: (serverId: string) => void;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /**
+   * Slot under each assistant message — the per-turn rating widget on the
+   * hosted User Testing page.
+   *
+   * The host gets the turn's identity resolved for it. `turnId` is minted
+   * SERVER-side (`generateLiveTraceTurnId`) and reaches the client through
+   * `turn_start` trace events (live) or the persisted `turnTraces` (rehydrated
+   * sessions), so it is the same id the backend recorded — which is what lets
+   * `sessionScores:submitScore` validate the anchor instead of trusting an
+   * ordinal. It is `null` until that event lands; the host renders nothing in
+   * that window rather than offering a rating that cannot be saved.
+   */
+  renderAssistantTurnActions?: (ctx: {
+    message: UIMessage;
+    chatSessionId: string;
+    promptIndex: number;
+    turnId: string | null;
+  }) => React.ReactNode;
 }
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
@@ -193,6 +211,7 @@ export function ChatTabV2({
   onEnableChatboxOptionalServer,
   evalChatHandoff,
   onEvalChatHandoffConsumed,
+  renderAssistantTurnActions,
 }: ChatTabProps) {
   const { signUp } = useAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -552,6 +571,37 @@ export function ChatTabV2({
     }
     return map;
   }, [messages]);
+
+  // Same ordinal, addressed from the ASSISTANT side: a response belongs to the
+  // turn its preceding prompt opened, which is exactly what the backend
+  // records on `chatSessionTurnTraces`. Assistant messages before any user
+  // message (a seeded greeting) belong to no turn and are absent from the map,
+  // so a rating widget never renders under them.
+  const assistantPromptIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    let userOrdinal = -1;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        userOrdinal += 1;
+        continue;
+      }
+      if (msg.role === "assistant" && userOrdinal >= 0) {
+        map.set(msg.id, userOrdinal);
+      }
+    }
+    return map;
+  }, [messages]);
+
+  // promptIndex → server-minted turnId. Live turns arrive via `turn_start`
+  // trace events; rehydrated sessions get theirs from the persisted
+  // `turnTraces`. Either way the id is the backend's, never the client's.
+  const turnIdByPromptIndex = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const turn of liveTraceEnvelope?.turns ?? []) {
+      map.set(turn.promptIndex, turn.turnId);
+    }
+    return map;
+  }, [liveTraceEnvelope]);
 
   const hasUnsavedDraft =
     !!input.trim() ||
@@ -2752,6 +2802,23 @@ export function ChatTabV2({
                                       projectId={effectiveHostedProjectId}
                                     />
                                   );
+                                }
+                              : undefined
+                          }
+                          renderAssistantTurnFooter={
+                            renderAssistantTurnActions && chatSessionId
+                              ? (message) => {
+                                  const promptIndex =
+                                    assistantPromptIndexById.get(message.id);
+                                  if (promptIndex === undefined) return null;
+                                  return renderAssistantTurnActions({
+                                    message,
+                                    chatSessionId,
+                                    promptIndex,
+                                    turnId:
+                                      turnIdByPromptIndex.get(promptIndex) ??
+                                      null,
+                                  });
                                 }
                               : undefined
                           }

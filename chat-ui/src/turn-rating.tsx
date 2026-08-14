@@ -1,0 +1,179 @@
+import { useEffect, useState } from "react";
+import { Star } from "lucide-react";
+
+import { cn } from "./internal/cn";
+
+const STARS = [1, 2, 3, 4, 5] as const;
+
+export type TurnRatingStatus = "idle" | "pending" | "submitted" | "error";
+
+export interface TurnRatingProps {
+  /** Current rating, 1–5. Absent ⇒ nothing rated yet. */
+  value?: number;
+  comment?: string;
+  status?: TurnRatingStatus;
+  /** Display-only (session detail view): no inputs, no submit. */
+  readOnly?: boolean;
+  /** Label above the stars. Falsy ⇒ the default copy. */
+  title?: string;
+  commentPlaceholder?: string;
+  submitLabel?: string;
+  /** Shown once a rating has landed. Falsy ⇒ the default copy. */
+  thanksMessage?: string;
+  onSubmit?: (next: { value: number; comment?: string }) => void;
+  className?: string;
+}
+
+/**
+ * Per-turn rating widget: five stars plus an optional comment.
+ *
+ * PRESENTATIONAL ONLY — no mutation, no store, no network. The host owns
+ * submission and passes `status` back in, which is what lets the same
+ * component serve the interactive tester page and the read-only session
+ * detail view without a second implementation.
+ *
+ * `submitted` is a resting state, not a terminal one: a tester can revise a
+ * rating, so the stars stay interactive and re-clicking one opens the comment
+ * row again. The host's mutation upserts, so a revision replaces rather than
+ * accumulates.
+ */
+export function TurnRating({
+  value,
+  comment,
+  status = "idle",
+  readOnly = false,
+  title,
+  commentPlaceholder,
+  submitLabel,
+  thanksMessage,
+  onSubmit,
+  className,
+}: TurnRatingProps) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const [draftValue, setDraftValue] = useState<number | undefined>(value);
+  const [draftComment, setDraftComment] = useState(comment ?? "");
+  // Whether the comment row is open. Opening on the first star click keeps the
+  // resting transcript quiet — a row of stars under every response is already
+  // a lot of chrome, and a text input under every response is too much.
+  const [expanded, setExpanded] = useState(false);
+
+  // Follow the host when it rehydrates a stored rating (page reload) or a
+  // submission resolves. Guarded on identity so it never clobbers a draft the
+  // user is mid-way through typing.
+  useEffect(() => {
+    setDraftValue(value);
+  }, [value]);
+  useEffect(() => {
+    setDraftComment(comment ?? "");
+  }, [comment]);
+
+  const effective = hovered ?? draftValue ?? 0;
+  const disabled = readOnly || status === "pending";
+
+  function selectStar(next: number) {
+    if (disabled) return;
+    setDraftValue(next);
+    setExpanded(true);
+    // Submit the stars immediately. A rating that only counts once someone
+    // also writes a comment is a rating most testers never leave; the comment
+    // is a second, optional submit on top.
+    onSubmit?.({ value: next });
+  }
+
+  function submitComment() {
+    if (disabled || draftValue === undefined) return;
+    onSubmit?.({ value: draftValue, comment: draftComment });
+    setExpanded(false);
+  }
+
+  return (
+    <div
+      className={cn(
+        "mcpjam-chat-turn-rating mt-2 flex flex-col gap-2 text-xs",
+        className
+      )}
+      data-status={status}
+    >
+      <div className="flex items-center gap-2">
+        {title !== "" ? (
+          <span className="text-muted-foreground">
+            {title || (readOnly ? "Tester rating" : "Rate this response")}
+          </span>
+        ) : null}
+        <div
+          role="radiogroup"
+          aria-label={title || "Rate this response"}
+          className="flex items-center gap-0.5"
+          onMouseLeave={() => setHovered(null)}
+        >
+          {STARS.map((star) => (
+            <button
+              key={star}
+              type="button"
+              role="radio"
+              aria-checked={draftValue === star}
+              aria-label={`${star} of 5`}
+              disabled={disabled}
+              className={cn(
+                "rounded-sm p-0.5 text-muted-foreground transition-colors",
+                !disabled &&
+                  "hover:text-amber-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                star <= effective && "text-amber-500",
+                disabled && "cursor-default"
+              )}
+              onMouseEnter={() => !disabled && setHovered(star)}
+              onClick={() => selectStar(star)}
+            >
+              <Star
+                className="h-4 w-4"
+                // Fill tracks hover as well as selection, so the row reads as
+                // "clicking here gives 3 stars" before the click.
+                fill={star <= effective ? "currentColor" : "none"}
+                aria-hidden
+              />
+            </button>
+          ))}
+        </div>
+        {status === "pending" ? (
+          <span className="text-muted-foreground">Saving…</span>
+        ) : null}
+        {status === "error" ? (
+          <span className="text-destructive">Could not save — try again</span>
+        ) : null}
+        {status === "submitted" && !expanded ? (
+          <span className="text-muted-foreground">
+            {thanksMessage || "Thanks"}
+          </span>
+        ) : null}
+      </div>
+
+      {readOnly ? (
+        comment ? (
+          <p className="text-muted-foreground italic">“{comment}”</p>
+        ) : null
+      ) : expanded ? (
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={draftComment}
+            disabled={disabled}
+            placeholder={commentPlaceholder || "Add a comment (optional)"}
+            className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onChange={(event) => setDraftComment(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submitComment();
+            }}
+          />
+          <button
+            type="button"
+            disabled={disabled}
+            className="shrink-0 rounded-md border border-border px-2 py-1 text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={submitComment}
+          >
+            {submitLabel || "Send"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}

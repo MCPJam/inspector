@@ -31,6 +31,8 @@ import {
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
@@ -506,7 +508,9 @@ export function ShareUsageThreadDetail({
   const isChatboxThread = thread.sourceType === "chatbox";
   const reasoningDisplayMode = isChatboxThread ? "collapsible" : "collapsed";
 
+  const feedbackSummary = thread.feedback ?? null;
   const hasFeedback =
+    feedbackSummary != null ||
     thread.feedbackRating != null ||
     (thread.feedbackComment && thread.feedbackComment.trim().length > 0);
 
@@ -520,14 +524,34 @@ export function ShareUsageThreadDetail({
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Feedback
             </p>
-            {thread.feedbackRating != null ? (
+            {feedbackSummary ? (
+              <p className="mt-1 text-sm font-medium">
+                {feedbackSummary.avg.toFixed(1)}/5
+                <span className="ml-1 font-normal text-muted-foreground">
+                  across {feedbackSummary.count}{" "}
+                  {feedbackSummary.count === 1 ? "rating" : "ratings"}
+                  {/* The worst turn is what the filters and the list row's
+                      amber tint key on, so name it here rather than leaving
+                      the average to imply a uniformly mediocre session. */}
+                  {feedbackSummary.count > 1
+                    ? ` · worst ${feedbackSummary.min}/5`
+                    : ""}
+                </span>
+              </p>
+            ) : thread.feedbackRating != null ? (
               <p className="mt-1 text-sm font-medium">
                 {thread.feedbackRating}/5
               </p>
             ) : null}
-            {thread.feedbackComment ? (
+            {/* Per-turn comments render inline on the Chat tab, next to the
+                response they are about. This card keeps the worst one so the
+                header still says something when the transcript is scrolled
+                away. */}
+            {feedbackSummary?.worstComment ?? thread.feedbackComment ? (
               <p className="mt-1 text-sm text-muted-foreground">
-                &ldquo;{thread.feedbackComment}&rdquo;
+                &ldquo;
+                {feedbackSummary?.worstComment ?? thread.feedbackComment}
+                &rdquo;
               </p>
             ) : null}
           </div>
@@ -623,16 +647,37 @@ export function ShareUsageThreadDetail({
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <ReadOnlyTranscript
-              messages={adaptedTrace.messages}
-              model={resolvedModel}
-              toolRenderOverrides={bridgeToolRenderOverrides(
-                adaptedTrace.toolRenderOverrides
-              )}
-              reasoningDisplayMode={reasoningDisplayMode}
-              widgetPolicy="placeholder"
-              className="mx-auto max-w-4xl px-4 py-4"
-            />
+            {/* Ships dark: `sessionScores:listBySession` reaches production
+                only on the next release promotion, and `useQuery` against an
+                undeployed function throws. The fallback is the transcript
+                itself — losing the conversation to a missing ratings query
+                would be a far worse failure than losing the ratings. */}
+            <ErrorBoundary
+              fallback={
+                <ReadOnlyTranscript
+                  messages={adaptedTrace.messages}
+                  model={resolvedModel}
+                  toolRenderOverrides={bridgeToolRenderOverrides(
+                    adaptedTrace.toolRenderOverrides
+                  )}
+                  reasoningDisplayMode={reasoningDisplayMode}
+                  widgetPolicy="placeholder"
+                  className="mx-auto max-w-4xl px-4 py-4"
+                />
+              }
+            >
+              <SessionScoredTranscript
+                threadId={threadId}
+                messages={adaptedTrace.messages}
+                model={resolvedModel}
+                toolRenderOverrides={bridgeToolRenderOverrides(
+                  adaptedTrace.toolRenderOverrides
+                )}
+                reasoningDisplayMode={reasoningDisplayMode}
+                widgetPolicy="placeholder"
+                className="mx-auto max-w-4xl px-4 py-4"
+              />
+            </ErrorBoundary>
           </div>
         ) : (
           <TraceViewer
