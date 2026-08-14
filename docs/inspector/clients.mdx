@@ -155,6 +155,23 @@ The **Servers** section on the chatbox Publish tab shows which project servers t
 - If no servers are picked, the chatbox displays an amber warning. Chat sessions started from that chatbox will have no tools until at least one server is selected.
 - The server pick is sticky — editing the client's model or system prompt does not change it.
 
+#### Per-turn ratings
+
+Each chatbox scenario can ask testers to rate every assistant response. The **Per-turn ratings** toggle in the chatbox settings enables the widget; when on, a rating control appears below each assistant turn in the hosted chat.
+
+**Widget style** — shown only while per-turn ratings are on. Choose between two styles:
+
+- **Stars** (default) — testers rate each response 1–5 stars and can leave an optional comment.
+- **Thumbs** — testers give a 👍 or 👎 and can leave an optional comment.
+
+The style picker appears as a segmented control below the toggle. Switching style only affects new ratings — ratings already left under the previous style still count on the Sessions tab.
+
+Ratings appear on the **Sessions** tab, where the list can be filtered by them. The display adapts to the style used:
+
+- **Stars sessions** — show the average rating (e.g. `4.2/5`) and a worst-turn indicator.
+- **Thumbs sessions** — show 👍/👎 tallies (e.g. `👍 3 · 👎 1`) instead of an average, since a 1–5 scale was never shown to the tester.
+- **Mixed sessions** (rated under both styles after a mid-session style switch) — show the blended average alongside the thumb tallies.
+
 ## Managing Clients
 
 From the Clients index page:
