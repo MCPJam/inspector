@@ -85,6 +85,23 @@ describe("normalizeStepFailureMessage", () => {
     expect(forEndpoint("[::1]:443")).toBe("proxy target resolves to <ip>");
   });
 
+  it("does not treat an arbitrary bracketed colon run as IPv6", () => {
+    // Every group in `(?:[0-9a-f]{0,4}:)+[0-9a-f]{0,4}` could once match zero
+    // hex digits, so `[:]`, `[::]`'s malformed neighbors, and a two-group span
+    // with no `::` all collapsed as if they were addresses. Only a genuine
+    // zero-compressed IPv6 literal should.
+    const forBracketed = (text: string) =>
+      normalizeStepFailureMessage(`saw ${text} in the response`);
+
+    expect(forBracketed("[:]")).toBe("saw [:] in the response");
+    expect(forBracketed("[:::]")).toBe("saw [:::] in the response");
+    // Falls to the host:port rule instead — still normalized, just not
+    // mislabeled as an IP address.
+    expect(forBracketed("[1234:5678]")).toBe("saw [<host>] in the response");
+    // The all-zero address is a real (if unusual) IPv6 literal.
+    expect(forBracketed("[::]")).toBe("saw <ip> in the response");
+  });
+
   it("collapses a whole UUID, not just its long segments", () => {
     const forId = (id: string) =>
       normalizeStepFailureMessage(`Unknown client ${id}`);
