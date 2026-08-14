@@ -3537,6 +3537,9 @@ export function useServerState({
             serverName: formData.name,
             error: result.error,
           });
+          // Which client held the pin AT THE MOMENT OF FAILURE — see the
+          // handler below.
+          const hostIdAtFailure = previewedHostIdRef.current;
           toast.error(
             `Failed to connect to ${formData.name}${
               result.error ? `: ${result.error}` : ""
@@ -3550,16 +3553,17 @@ export function useServerState({
               ? {
                   action: {
                     label: "Change protocol version",
+                    // `hostIdAtFailure`, bound above when the toast was built:
+                    // reading the ref here would follow the user's CURRENT
+                    // client, and an 8-second toast easily outlives a client
+                    // switch.
                     onClick: () => {
                       track("change_protocol_version_clicked", {
                         location: "connect_failure_toast",
-                        has_host_id: Boolean(previewedHostIdRef.current),
+                        has_host_id: Boolean(hostIdAtFailure),
                       });
                       navigateApp(
-                        buildHostFocusTabPath(
-                          previewedHostIdRef.current,
-                          "protocol"
-                        )
+                        buildHostFocusTabPath(hostIdAtFailure, "protocol")
                       );
                     },
                   },
@@ -4506,16 +4510,22 @@ export function useServerState({
         // action of its own. Matched on the message because that is all this
         // helper receives; the clause is MCPJam's own wording.
         if (isProtocolVersionPinFailure(undefined, errorMessage)) {
+          // Bound NOW, not read at click time. An error toast lives ~8s and
+          // the client picker is one click away, so reading the ref in the
+          // handler can open whichever client the user happened to switch to
+          // while reading — the one client guaranteed NOT to hold the pin that
+          // just failed.
+          const hostIdAtFailure = previewedHostIdRef.current;
           toast.error(errorMessage, {
             action: {
               label: "Change protocol version",
               onClick: () => {
                 track("change_protocol_version_clicked", {
                   location: "reconnect_failure_toast",
-                  has_host_id: Boolean(previewedHostIdRef.current),
+                  has_host_id: Boolean(hostIdAtFailure),
                 });
                 navigateApp(
-                  buildHostFocusTabPath(previewedHostIdRef.current, "protocol")
+                  buildHostFocusTabPath(hostIdAtFailure, "protocol")
                 );
               },
             },
