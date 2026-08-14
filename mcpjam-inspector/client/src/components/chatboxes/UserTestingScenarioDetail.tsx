@@ -28,15 +28,6 @@ import {
 } from "@/components/shared/usage-insights/run-insights";
 import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
 import {
-  ChatboxOutcomeCalibration,
-  hasOutcomeFeedbackCalibration,
-} from "@/components/chatboxes/ChatboxOutcomeCalibration";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
-import {
   parseSelectionParam,
   serializeSelectionParam,
 } from "@/hooks/chatbox-usage-filters";
@@ -745,14 +736,48 @@ export function UserTestingScenarioDetail({
         ) : null}
         {tab === "insights" ? (
           <div className="absolute inset-0">
-            {/* Ships dark and guest-tolerant: `useQuery` against an undeployed
-                query throws, and a guest hitting the member-only request
-                mutation would too. Keyed per scenario across route reuse. */}
-            <ErrorBoundary key={chatbox.chatboxId} fallback={null}>
-              <RunInsightsProvider
-                surface={{
-                  kind: "chatbox",
-                  chatboxId: chatbox.chatboxId,
+            {/* The workbench (empty state, Sankey, sessions) must stay up
+                even when the window-insights rail is missing: those queries
+                throw against an undeployed backend, and wrapping THIS whole
+                tree in `fallback={null}` left a blank `absolute inset-0`.
+                Isolate the rail; if the workbench itself blows up, show the
+                share empty panel rather than nothing. */}
+            <ErrorBoundary
+              key={chatbox.chatboxId}
+              name="user-testing-insights"
+              fallback={<ChatboxShareEmptyPanel chatbox={chatbox} />}
+            >
+              <InsightsWorkbench
+                scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
+                cohortKey={chatbox.chatboxId}
+                // Scenarios carry real-user traffic; the retired simulation
+                // flow's rows are still in the database and stay hidden.
+                augmentFilter={withHideSynthetic}
+                urlSelection={urlSelection}
+                onSelectionChange={(themes) => {
+                  navigate(
+                    buildUserTestingScenarioPath(chatbox.chatboxId, {
+                      tab: "insights",
+                      session: sessionParam ?? undefined,
+                      sel: themes
+                        ? serializeSelectionParam(themes)
+                        : undefined,
+                      view,
+                    }),
+                    { replace: true },
+                  );
+                }}
+                initialView={view}
+                onViewChange={(nextView) => {
+                  navigate(
+                    buildUserTestingScenarioPath(chatbox.chatboxId, {
+                      tab: "insights",
+                      session: sessionParam ?? undefined,
+                      sel: selParam ?? undefined,
+                      view: nextView,
+                    }),
+                    { replace: true },
+                  );
                 }}
                 onOpenSession={(threadId) => {
                   navigate(
@@ -765,92 +790,49 @@ export function UserTestingScenarioDetail({
                     { replace: true },
                   );
                 }}
-              >
-                <InsightsWorkbench
-                  scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
-                  cohortKey={chatbox.chatboxId}
-                  // Scenarios carry real-user traffic; the retired simulation
-                  // flow's rows are still in the database and stay hidden.
-                  augmentFilter={withHideSynthetic}
-                  urlSelection={urlSelection}
-                  onSelectionChange={(themes) => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "insights",
-                        session: sessionParam ?? undefined,
-                        sel: themes
-                          ? serializeSelectionParam(themes)
-                          : undefined,
-                        view,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  initialView={view}
-                  onViewChange={(nextView) => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "insights",
-                        session: sessionParam ?? undefined,
-                        sel: selParam ?? undefined,
-                        view: nextView,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  onOpenSession={(threadId) => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "sessions",
-                        session: threadId,
-                        sel: selParam ?? undefined,
-                        view,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  onOpenSessionsTab={() => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "sessions",
-                        session: sessionParam ?? undefined,
-                        sel: selParam ?? undefined,
-                        view,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  recommendationsSlot={<RunInsightsRecommendations />}
-                  strugglesSlot={(breakdown) =>
-                    hasOutcomeFeedbackCalibration(breakdown) ? (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button
-                            type="button"
-                            className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium tabular-nums transition-colors hover:bg-muted/50"
-                            data-testid="chatbox-insights-feedback-chip"
-                          >
-                            Feedback
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          align="start"
-                          className="w-[28rem] max-w-[90vw] p-0"
-                        >
-                          <div className="flex max-h-[60vh] min-h-0 flex-col overflow-y-auto">
-                            <ChatboxOutcomeCalibration breakdown={breakdown} />
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    ) : null
-                  }
-                  autoBackfillTopicMap
-                  emptyState={<ChatboxShareEmptyPanel chatbox={chatbox} />}
-                  onEmptyChange={handleInsightsEmptyChange}
-                  className="px-8 py-4"
-                  testIdPrefix="chatbox-insights"
-                />
-              </RunInsightsProvider>
+                onOpenSessionsTab={() => {
+                  navigate(
+                    buildUserTestingScenarioPath(chatbox.chatboxId, {
+                      tab: "sessions",
+                      session: sessionParam ?? undefined,
+                      sel: selParam ?? undefined,
+                      view,
+                    }),
+                    { replace: true },
+                  );
+                }}
+                recommendationsSlot={
+                  <ErrorBoundary
+                    name="user-testing-insights-rail"
+                    fallback={null}
+                  >
+                    <RunInsightsProvider
+                      surface={{
+                        kind: "chatbox",
+                        chatboxId: chatbox.chatboxId,
+                      }}
+                      onOpenSession={(threadId) => {
+                        navigate(
+                          buildUserTestingScenarioPath(chatbox.chatboxId, {
+                            tab: "sessions",
+                            session: threadId,
+                            sel: selParam ?? undefined,
+                            view,
+                          }),
+                          { replace: true },
+                        );
+                      }}
+                    >
+                      <RunInsightsRecommendations />
+                    </RunInsightsProvider>
+                  </ErrorBoundary>
+                }
+                autoBackfillTopicMap
+                emptyState={<ChatboxShareEmptyPanel chatbox={chatbox} />}
+                onEmptyChange={handleInsightsEmptyChange}
+                className="px-8 py-4"
+                testIdPrefix="chatbox-insights"
+              />
             </ErrorBoundary>
           </div>
         ) : null}
