@@ -146,9 +146,10 @@ describe("InsightsWorkbench — criterion scorecard", () => {
     expect(screen.getByText("Score 65%")).toBeInTheDocument();
     // Neither criterion has a clean sheet (6 fails and 1 fail respectively).
     expect(
-      screen.getByText(
-        /0 \/ 2 checks passing · 7\/20 failed in graded sessions/
-      ),
+      // Two denominators, two nouns: 2 is the number of CHECKS, 20 is the
+      // number of VERDICTS (pass+fail summed across both checks). Calling the
+      // second one "sessions" would overstate the sample by the rubric's size.
+      screen.getByText(/0 \/ 2 checks passing · 7\/20 graded checks failed/),
     ).toBeInTheDocument();
   });
 

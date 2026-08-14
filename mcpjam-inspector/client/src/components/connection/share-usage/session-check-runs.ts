@@ -9,7 +9,7 @@
  */
 
 import type { Predicate } from "@/shared/eval-matching";
-import { formatCriterion } from "@/shared/predicate-kinds";
+import { formatCriterion, isKnownPredicateKind } from "@/shared/predicate-kinds";
 
 /** Which grader produced a row. Mirrors the backend `runKind` column. */
 export type CheckRunKind = "checks" | "judge";
@@ -155,15 +155,23 @@ function criterionName(
   criteria?: Array<{ id?: string; label?: string; predicate?: Predicate }>
 ): string {
   const entry = criteria?.find((c) => c?.id === criterionId);
-  if (!entry?.predicate) return criterionId;
-  const formatted = formatCriterion({
-    ...(entry.label !== undefined ? { label: entry.label } : {}),
-    predicate: entry.predicate,
-  });
-  // `formatCriterion` returns the kind's label, which is `undefined` for a
-  // predicate type newer than this build. Name the row by its id rather than
-  // render a blank cell.
-  return formatted || criterionId;
+
+  // The author's own words win, and they win BEFORE the predicate is
+  // consulted — a snapshot entry can carry a label without a readable
+  // predicate, and falling through to the raw id there would throw away the
+  // one human-written name we have.
+  const label = entry?.label?.trim();
+  if (label) return label;
+
+  // An unknown kind must not reach `formatCriterion`: it indexes
+  // `PREDICATE_KIND_LABELS` directly, so a prototype-key discriminator would
+  // come back as an inherited object and throw when rendered.
+  if (!entry?.predicate || !isKnownPredicateKind(entry.predicate.type)) {
+    return criterionId;
+  }
+  // Still guarded: `formatCriterion` can return an empty string for a
+  // malformed payload, and a blank cell names nothing.
+  return formatCriterion({ predicate: entry.predicate }) || criterionId;
 }
 
 /**
@@ -178,13 +186,21 @@ function criterionName(
 export function toCheckVerdicts(run: SessionCheckRun): CheckVerdict[] {
   const criteria = run.definitionSnapshot?.criteria;
 
-  if (Array.isArray(run.criterionResults)) {
+  // Gated on LENGTH, not presence: a row carrying `criterionResults: []`
+  // alongside populated `predicateResults` would otherwise claim this branch
+  // and report no verdicts at all, rendering a completed run as empty. No
+  // producer writes that shape today, but this module reads wire data and the
+  // fallback costs nothing to keep reachable.
+  if (Array.isArray(run.criterionResults) && run.criterionResults.length > 0) {
     return run.criterionResults.flatMap((result, index) => {
       if (typeof result?.passed !== "boolean") return [];
       const criterionId = result.criterionId ?? "";
       return [
         {
-          key: criterionId || `criterion-${index}`,
+          // Index-prefixed so the key stays unique even if two results share a
+          // criterionId. Rubric ids are validated unique at the write
+          // boundary, so this is belt-and-braces against malformed rows.
+          key: `${index}-${criterionId || "criterion"}`,
           name: criterionName(criterionId, criteria),
           passed: result.passed,
           reason: result.reason ?? "",
@@ -193,15 +209,18 @@ export function toCheckVerdicts(run: SessionCheckRun): CheckVerdict[] {
     });
   }
 
-  if (Array.isArray(run.predicateResults)) {
+  if (Array.isArray(run.predicateResults) && run.predicateResults.length > 0) {
     return run.predicateResults.flatMap((result, index) => {
       if (typeof result?.passed !== "boolean" || !result.predicate) return [];
+      const type = result.predicate.type;
       return [
         {
           key: `predicate-${index}`,
-          name:
-            formatCriterion({ predicate: result.predicate }) ||
-            result.predicate.type,
+          // Same guard as `criterionName`: an unknown kind degrades to its raw
+          // discriminator rather than to whatever the prototype chain returns.
+          name: isKnownPredicateKind(type)
+            ? formatCriterion({ predicate: result.predicate }) || type
+            : type,
           passed: result.passed,
           reason: result.reason ?? "",
         },

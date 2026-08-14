@@ -98,8 +98,15 @@ export function SessionChecksSection({
       className="shrink-0 space-y-1.5 px-4 pt-2"
     >
       <CheckRunGroup run={current} defaultOpen />
-      {olderFailed.map((run) => (
-        <CheckRunGroup key={run._id ?? run.checkRunId} run={run} defaultOpen />
+      {/* Index is the last-resort key: both id fields are optional on the
+          deliberately-loose wire type, and `key={undefined}` is a missing key
+          as far as React is concerned. */}
+      {olderFailed.map((run, index) => (
+        <CheckRunGroup
+          key={run._id ?? run.checkRunId ?? `failed-${index}`}
+          run={run}
+          defaultOpen
+        />
       ))}
       {olderRest.length > 0 ? (
         <details className="group rounded-lg border border-border/50 bg-muted/10">
@@ -109,8 +116,11 @@ export function SessionChecksSection({
             Previous runs ({olderRest.length})
           </summary>
           <div className="space-y-1.5 px-1.5 pb-1.5">
-            {olderRest.map((run) => (
-              <CheckRunGroup key={run._id ?? run.checkRunId} run={run} />
+            {olderRest.map((run, index) => (
+              <CheckRunGroup
+                key={run._id ?? run.checkRunId ?? `older-${index}`}
+                run={run}
+              />
             ))}
           </div>
         </details>

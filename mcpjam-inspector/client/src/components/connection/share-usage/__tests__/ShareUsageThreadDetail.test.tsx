@@ -9,6 +9,7 @@ const {
   mockAdaptTraceToUiMessages,
   mockRequestJudge,
   mockNavigateApp,
+  mockUseQuery,
   mockThreadState,
   mockBrowserArtifactsState,
 } = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const {
   mockAdaptTraceToUiMessages: vi.fn(),
   mockRequestJudge: vi.fn().mockResolvedValue(null),
   mockNavigateApp: vi.fn(),
+  mockUseQuery: vi.fn(() => undefined),
   mockThreadState: {
     sourceType: "chatbox",
     synthetic: false as boolean,
@@ -31,10 +33,12 @@ const {
 // `useQuery` is here for SessionChecksSection, which subscribes to
 // `chatSessionChecks:getCheckRunsForSession`. Undefined = still loading, which
 // is the state that keeps the panel out of every assertion in this file; the
-// panel's own behavior is covered in SessionChecksSection.test.tsx.
+// panel's own behavior is covered in SessionChecksSection.test.tsx. The args
+// are captured so the id WIRING can be asserted here — that is the one thing
+// the panel's own suite cannot check, since it is handed the id directly.
 vi.mock("convex/react", () => ({
   useAction: () => mockRequestJudge,
-  useQuery: () => undefined,
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
@@ -202,6 +206,20 @@ describe("ShareUsageThreadDetail", () => {
 
     await user.click(await screen.findByRole("button", { name: /run judge/i }));
     expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
+  });
+
+  it("keys the Checks panel on the thread's own doc id, not the threadId prop", async () => {
+    // `threadId` and `thread._id` happen to coincide in production today, so
+    // substituting one for the other would keep every other test green while
+    // querying the wrong session the moment they diverge.
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() =>
+      expect(mockUseQuery).toHaveBeenCalledWith(
+        "chatSessionChecks:getCheckRunsForSession",
+        { chatSessionId: "session-doc-1" }
+      )
+    );
   });
 
   it("hides the Replay tab when the session has no browser artifacts", async () => {

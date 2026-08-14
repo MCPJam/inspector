@@ -1642,6 +1642,14 @@ export function CaseChecksSection({
           onChange={setList}
           availableTools={availableTools}
           title={mode === "extend" ? "Additional checks for this case" : "Checks for this case"}
+          // In extend mode the inherited suite checks still run, so the
+          // default "every case passes by default" would be false — an empty
+          // list here means no EXTRA checks, not no checks.
+          emptyStateText={
+            mode === "extend" && suiteDefaults.length > 0
+              ? "No additional checks on this case."
+              : undefined
+          }
         />
       ) : null}
     </div>

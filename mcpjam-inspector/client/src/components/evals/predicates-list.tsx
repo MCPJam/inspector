@@ -1,6 +1,10 @@
 import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
-import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import {
+  PREDICATE_KIND_LABELS,
+  isKnownPredicateKind,
+  labelForInlineAssert,
+} from "@/shared/predicate-kinds";
 import type { EvalTraceWidgetRenderObservationView } from "@/shared/eval-trace";
 import { RenderObservationCard } from "./browser-artifacts-view";
 import {
@@ -215,7 +219,7 @@ function PredicateRow({
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <span className="text-xs font-medium">
-                {predicateRowTitle(row.predicate)}
+                {predicateRowTitle(row)}
               </span>
               <span className="truncate text-[11px] text-muted-foreground">
                 {summarizePredicate(row.predicate)}
@@ -265,12 +269,23 @@ function PredicateRow({
  * Insights. `summarizePredicate` still renders beside it as the args detail
  * line; it carries argument specifics the kind label does not.
  *
+ * SCOPE-AWARE. A step-scoped row was evaluated at one point in the flow, not
+ * over the finished transcript, and two kinds say something weaker there:
+ * `noToolErrors` means "no tool errors SO FAR". `labelForInlineAssert` holds
+ * those variants and falls through to the canonical label for every other
+ * kind, so a turn-scoped row never borrows a whole-run claim.
+ *
  * Total by construction, for the same reason `summarizePredicate` is: a
  * predicate type newer than this build must degrade to its raw type rather
- * than render `undefined`.
+ * than render `undefined` — or, for a prototype-key discriminator, an
+ * inherited object that would throw on render.
  */
-function predicateRowTitle(predicate: Predicate): string {
-  return PREDICATE_KIND_LABELS[predicate.type] ?? predicate.type;
+function predicateRowTitle(row: PredicateResult): string {
+  const type = row.predicate.type;
+  if (!isKnownPredicateKind(type)) return type;
+  return row.scope?.kind === "turn"
+    ? labelForInlineAssert(type)
+    : PREDICATE_KIND_LABELS[type];
 }
 
 /**

@@ -165,19 +165,51 @@ describe("toCheckVerdicts", () => {
 
     expect(verdicts).toEqual([
       {
-        key: "crit-1",
+        key: "0-crit-1",
         name: "Finds the refund",
         passed: true,
         reason: 'called "refund" 1x',
       },
       {
-        key: "crit-2",
+        key: "1-crit-2",
         // No author label ⇒ the formatted predicate, argument inlined.
         name: "Tool was called at least once search",
         passed: false,
         reason: 'tool "search" was never called',
       },
     ]);
+  });
+
+  it("keeps the author's label even when the snapshot entry has no predicate", () => {
+    // The label is the one human-written name available. Consulting the
+    // predicate first and bailing to the raw id would discard it.
+    const verdicts = toCheckVerdicts({
+      definitionSnapshot: {
+        setKind: "journey_rubric",
+        predicates: [],
+        criteria: [{ id: "crit-1", label: "Finds the refund" }],
+      },
+      criterionResults: [
+        { criterionId: "crit-1", passed: false, reason: "did not hold" },
+      ],
+    });
+    expect(verdicts[0].name).toBe("Finds the refund");
+  });
+
+  it("names an unknown predicate kind by its raw type, never a prototype object", () => {
+    // `PREDICATE_KIND_LABELS["__proto__"]` resolves through the prototype
+    // chain to an object, which survives `??`/`||` and then throws when React
+    // renders it. Wire data is untrusted, so this must degrade to text.
+    const verdicts = toCheckVerdicts({
+      predicateResults: [
+        {
+          predicate: { type: "__proto__" } as never,
+          passed: false,
+          reason: "irrelevant",
+        },
+      ],
+    });
+    expect(verdicts[0].name).toBe("__proto__");
   });
 
   it("falls back to the raw id when the check left the snapshot", () => {
@@ -191,7 +223,7 @@ describe("toCheckVerdicts", () => {
     });
     expect(verdicts).toEqual([
       {
-        key: "crit-orphan",
+        key: "0-crit-orphan",
         name: "crit-orphan",
         passed: false,
         reason: "did not hold",
@@ -223,6 +255,23 @@ describe("toCheckVerdicts", () => {
     ]);
   });
 
+  it("falls through to predicateResults when criterionResults is present but empty", () => {
+    // Gating on `Array.isArray` alone would claim the rubric branch here and
+    // report a completed run as having no verdicts at all.
+    const verdicts = toCheckVerdicts({
+      criterionResults: [],
+      predicateResults: [
+        {
+          predicate: { type: "noToolErrors" },
+          passed: true,
+          reason: "no tool errors",
+        },
+      ],
+    });
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0].name).toBe("No tool errors");
+  });
+
   it("yields nothing for a run with no results yet", () => {
     expect(toCheckVerdicts({ status: "running" })).toEqual([]);
     expect(toCheckVerdicts({ status: "failed", error: "boom" })).toEqual([]);
@@ -237,7 +286,7 @@ describe("toCheckVerdicts", () => {
       ],
     });
     expect(verdicts).toHaveLength(1);
-    expect(verdicts[0].key).toBe("ok");
+    expect(verdicts[0].key).toBe("0-ok");
   });
 });
 

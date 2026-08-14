@@ -152,6 +152,21 @@ export const GLOBAL_GATE_CATALOG: GlobalGateCatalogEntry[] = [
   },
 ];
 
+/**
+ * True iff `kind` is a predicate kind THIS BUILD knows, checked as an own
+ * property rather than with `in` or a truthiness test on the lookup.
+ *
+ * Both of the lazier forms walk the prototype chain, so a persisted
+ * discriminator of `"__proto__"` or `"constructor"` — reachable, because
+ * `parseIterationPredicates` validates only that `type` is a string — resolves
+ * to an inherited object. That object is truthy, survives `??`, and then
+ * throws when React tries to render it as a text child. An unknown kind must
+ * degrade to its raw string, never to whatever `Object.prototype` has.
+ */
+export function isKnownPredicateKind(kind: string): kind is PredicateKind {
+  return Object.prototype.hasOwnProperty.call(PREDICATE_KIND_LABELS, kind);
+}
+
 export function isGlobalPolicyKind(kind: PredicateKind): boolean {
   return (GLOBAL_POLICY_MENU_KINDS as readonly string[]).includes(kind);
 }

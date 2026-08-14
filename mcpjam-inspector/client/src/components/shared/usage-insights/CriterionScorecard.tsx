@@ -200,7 +200,13 @@ export function CriterionScorecard({
         <div className="border-t bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground">
           {totalGraded === 0
             ? "No completed grades yet"
-            : `${cleanCount} / ${facets.length} checks passing · ${totalFail}/${totalGraded} failed in graded sessions`}
+            : /* Two different denominators, so they need two different nouns.
+                 The first is per-CHECK (how many checks have a clean sheet);
+                 the second is per-VERDICT — `totalGraded` sums pass+fail
+                 across every check on every session, so with 3 checks over 10
+                 sessions it is 30, not 10. Calling that "sessions" would
+                 overstate the sample by the rubric's size. */
+              `${cleanCount} / ${facets.length} checks passing · ${totalFail}/${totalGraded} graded checks failed`}
         </div>
       </div>
     </div>
