@@ -199,6 +199,26 @@ describe("engine failure telemetry", () => {
     expect(errorChunks()).toHaveLength(0);
   });
 
+  it("stays silent when a NON-abort error lands after the signal fired", async () => {
+    // Exercises the `abortSignal?.aborted` arm, not the error-shape arm: the
+    // rejection is a plain TypeError, so only the engine actually consulting
+    // the signal keeps this silent. Catches a regression where the engine
+    // stops listening to abortSignal entirely.
+    const controller = new AbortController();
+    global.fetch = vi.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new TypeError("socket hang up"));
+    });
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({
+      failureReporter: reporter,
+      abortSignal: controller.signal,
+    });
+
+    expect(calls).toHaveLength(0);
+  });
+
   it("reports an unexpected engine throw via the agentic-loop site", async () => {
     global.fetch = vi
       .fn()
