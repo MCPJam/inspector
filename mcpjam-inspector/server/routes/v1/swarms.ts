@@ -144,7 +144,7 @@ async function parseBody<T>(
  * alike, and this 404s on a project mismatch too — so the route is never an
  * existence oracle for a project the caller cannot see.
  */
-async function requireSwarmInProject(
+export async function requireSwarmInProject(
   client: ConvexHttpClient,
   projectId: string,
   swarmId: string

@@ -103,6 +103,52 @@ describe("JOURNEY_TERMINAL_STATUSES", () => {
 });
 
 describe("collectJourneyRunEvidence", () => {
+	test("ranks a failure that started after the shown set", async () => {
+		// The API pages in START order. Requesting exactly `limit` would mean a
+		// failure occurring later could never be selected as evidence, however
+		// bad — so the pool asked for is wider than the set shown.
+		let requestedLimit = 0;
+		const evidence = await collectJourneyRunEvidence({
+			apiClient: {
+				getJourneyRunScorecard: async () => ({ criteria: [] }),
+				listJourneyRunSessions: async (_runId, _ctx, opts) => {
+					requestedLimit = opts.limit;
+					return [
+						...Array.from({ length: 20 }, (_, index) => ({
+							id: `ok_${index}`,
+							status: "completed",
+						})),
+						{ id: "late_failure", status: "failed" },
+					];
+				},
+			},
+			ctx: {},
+			runId: "run_1",
+			limit: 2,
+		});
+		assert.ok(requestedLimit > 2);
+		assert.equal(evidence.sessions[0]?.id, "late_failure");
+	});
+
+	test("treats a rate-limited session as worth showing", async () => {
+		// On a rate-limited run these ARE the relevant sessions; ranking them
+		// below ordinary completions attaches the least useful evidence to
+		// exactly the run that needs it.
+		const evidence = await collectJourneyRunEvidence({
+			apiClient: {
+				getJourneyRunScorecard: async () => null,
+				listJourneyRunSessions: async () => [
+					{ id: "ok_1", status: "completed" },
+					{ id: "limited", status: "rate_limited" },
+				],
+			},
+			ctx: {},
+			runId: "run_1",
+			limit: 1,
+		});
+		assert.equal(evidence.sessions[0]?.id, "limited");
+	});
+
 	test("puts failed sessions first, whatever order they started in", async () => {
 		// A run's first N sessions are whichever started first, which correlates
 		// with nothing worth reading.
@@ -259,6 +305,76 @@ describe("watchJourneyRunUntilDone", () => {
 		);
 		assert.equal(result.status, "partial");
 		assert.equal(calls, 2);
+	});
+
+	test("settles a STALE run whose status never moved", async () => {
+		// The sweep marks a run stale because its runner went silent, so nothing
+		// will advance the status. Waiting on status alone polls for the whole
+		// window and then reports "still running" about something long dead.
+		const edits = [];
+		const result = await withLoopAlive(() =>
+			watchJourneyRunUntilDone({
+				apiClient: {
+					getJourneyRun: async () => ({
+						status: "running",
+						stale: true,
+						summary: { total: 4, succeeded: 1, failed: 0, rateLimited: 0 },
+					}),
+				},
+				delivery: { edit: async (_handle, body) => edits.push(body) },
+				statusHandle: "handle",
+				ctx: {},
+				runId: "run_1",
+				url: "u",
+				actorId: "U1",
+				pollIntervalMs: 1,
+				maxMs: 500,
+				formatOutcome: (_run, outcome) => outcome.kind,
+			}),
+		);
+		assert.equal(result.stale, true);
+		assert.deepEqual(edits, ["stalled"]);
+	});
+
+	test("returns a settled run even when the status edit throws", async () => {
+		// The edit used to sit inside the poll's try/catch, so a failing edit
+		// re-polled a run that was already over — and on a persistent failure the
+		// watcher ran out its window and reported "still running" about a
+		// finished run, never attaching evidence.
+		let polls = 0;
+		const followUps = [];
+		const result = await withLoopAlive(() =>
+			watchJourneyRunUntilDone({
+				apiClient: {
+					getJourneyRun: async () => {
+						polls += 1;
+						return {
+							status: "completed",
+							summary: { total: 1, succeeded: 1, failed: 0, rateLimited: 0 },
+						};
+					},
+				},
+				delivery: {
+					edit: async () => {
+						throw new Error("slack is down");
+					},
+				},
+				statusHandle: "handle",
+				ctx: {},
+				runId: "run_1",
+				url: "u",
+				actorId: "U1",
+				pollIntervalMs: 1,
+				maxMs: 500,
+				formatOutcome: () => "unused",
+				onTerminal: async (_run, outcome) => followUps.push(outcome.kind),
+				logger: { warn() {} },
+			}),
+		);
+		assert.equal(result.status, "completed");
+		assert.equal(polls, 1);
+		// The evidence follow-up still runs: it does not depend on the edit.
+		assert.deepEqual(followUps, ["passed"]);
 	});
 
 	test("still edits the status when the follow-up throws", async () => {

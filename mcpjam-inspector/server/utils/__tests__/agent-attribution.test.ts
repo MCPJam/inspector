@@ -32,8 +32,9 @@ function ctx(options: {
 }
 
 describe("resolveAgentSurface", () => {
-  it("takes the VERIFIED auth method over anything the caller typed", () => {
-    // A Slack service token IS the Slack bot, whatever its UA claims.
+  it("takes the VERIFIED auth method, whatever the caller typed", () => {
+    // A Slack service token IS the Slack bot: the credential that
+    // authenticated is not something a caller can choose.
     expect(
       resolveAgentSurface(
         ctx({ authMethod: "slack_service", userAgent: "mcpjam-cli/9.9.9" })
@@ -44,24 +45,23 @@ describe("resolveAgentSurface", () => {
     );
   });
 
-  it("labels first-party clients from their product token", () => {
+  it("refuses to believe an EXACT first-party user agent", () => {
+    // The attack this guards is impersonation, not appending: `user-agent` is
+    // entirely caller-controlled, so any API-key holder can send exactly
+    // `mcpjam-cli/1.4.0`. A forgeable label in an audit trail is worse than no
+    // label, because it gets believed.
+    //
+    // The cost is that a GENUINE CLI call also reads `rest` today. That is the
+    // honest answer until a server-established channel marker exists.
     expect(resolveAgentSurface(ctx({ userAgent: "mcpjam-cli/1.4.0" }))).toBe(
-      "cli"
+      "rest"
     );
     expect(
       resolveAgentSurface(ctx({ userAgent: "mcpjam-mcp-worker/0.2.0" }))
-    ).toBe("mcp");
-  });
-
-  it("does not let a caller relabel itself by appending our token", () => {
-    // Substring matching would make `surface` forgeable by anyone with an
-    // API key, which is worse than no label — a wrong attribution is believed.
-    expect(
-      resolveAgentSurface(ctx({ userAgent: "evil/1.0 mcpjam-cli/1.4.0" }))
     ).toBe("rest");
-    expect(resolveAgentSurface(ctx({ userAgent: "xmcpjam-cli/1.0" }))).toBe(
-      "rest"
-    );
+    expect(
+      resolveAgentSurface(ctx({ userAgent: "mcpjam-workspace/1.0" }))
+    ).toBe("rest");
   });
 
   it("falls back to rest, the honest label for a direct API call", () => {
@@ -78,12 +78,12 @@ describe("stableAgentAttribution", () => {
     expect(
       stableAgentAttribution(
         ctx({
-          userAgent: "mcpjam-cli/1.4.0",
+          authMethod: "slack_service",
           apiKeyId: "key_1",
           requestId: "r1",
         })
       )
-    ).toEqual({ surface: "cli", apiKeyId: "key_1" });
+    ).toEqual({ surface: "slack", apiKeyId: "key_1" });
   });
 
   it("omits the key id for a caller that has none", () => {
@@ -111,8 +111,10 @@ describe("agentAttributionCacheKey", () => {
     // Same user, same org, different surface: they must not share a token, or
     // whichever minted first labels the other's writes.
     expect(
-      agentAttributionCacheKey({ surface: "cli", apiKeyId: "key_1" })
-    ).not.toBe(agentAttributionCacheKey({ surface: "mcp", apiKeyId: "key_1" }));
+      agentAttributionCacheKey({ surface: "slack", apiKeyId: "key_1" })
+    ).not.toBe(
+      agentAttributionCacheKey({ surface: "discord", apiKeyId: "key_1" })
+    );
   });
 
   it("separates two api keys on one surface", () => {

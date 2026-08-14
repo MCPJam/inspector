@@ -6,13 +6,24 @@
  * holder of the Inspector service token can set (see the backend's
  * `lib/agentAttribution.ts`). This module decides what those headers say.
  *
- * THE SURFACE IS INFERRED HERE, NOT TRUSTED FROM THE CALLER. An `sk_` key
- * holder can put anything in `user-agent`, and a caller who could stamp
- * `surface: "workspace"` onto their own writes would make the trail actively
- * misleading — worse than the unlabelled state this replaces. So the value is
- * derived from things the gateway knows: the authentication method it just
- * resolved, and a small allowlist of first-party user agents. Anything else is
- * `rest`, which is the honest label for "someone called the API directly".
+ * THE SURFACE COMES ONLY FROM WHAT THE GATEWAY VERIFIED. Concretely: the
+ * authentication method it just resolved. Nothing else.
+ *
+ * An earlier version of this file also derived `cli`, `mcp` and `workspace`
+ * from a small allowlist of first-party `user-agent` product tokens, matched
+ * exactly so a caller could not relabel itself by APPENDING our token to its
+ * own UA. That defence was aimed at the wrong attack. `user-agent` is entirely
+ * caller-controlled, so any API-key holder could send exactly
+ * `mcpjam-cli/1.4.0` and have their direct API writes recorded as first-party
+ * CLI traffic — impersonation, not appending. A forgeable label in an audit
+ * trail is worse than no label, because it gets believed.
+ *
+ * The cost is real and accepted: a genuine CLI or MCP call is currently
+ * recorded as `rest`, because the gateway has no verified way to tell it from
+ * a script. That is the honest answer. Restoring those labels needs a
+ * server-established channel marker (a per-surface credential, or a signed
+ * marker the gateway mints rather than the client sends) — until one exists,
+ * `rest` is what we actually know.
  */
 import type { Context } from "hono";
 
@@ -49,40 +60,21 @@ export const AGENT_ATTRIBUTION_HEADERS = {
 } as const;
 
 /**
- * First-party user agents, by exact product token. Prefix-matched on the
- * `product/version` head so a version bump does not silently drop a surface's
- * label, but NOT substring-matched: `contains("mcpjam-cli")` would let any
- * caller relabel itself by appending our token to their own UA.
- */
-const USER_AGENT_SURFACES: ReadonlyArray<[string, AgentSurface]> = [
-  ["mcpjam-cli", "cli"],
-  ["mcpjam-mcp-worker", "mcp"],
-  ["mcpjam-workspace", "workspace"],
-];
-
-function surfaceFromUserAgent(
-  userAgent: string | undefined
-): AgentSurface | null {
-  if (!userAgent) return null;
-  const product = userAgent.trim().split(/[\s/]/, 1)[0]?.toLowerCase() ?? "";
-  for (const [token, surface] of USER_AGENT_SURFACES) {
-    if (product === token) return surface;
-  }
-  return null;
-}
-
-/**
- * The surface for this request.
+ * The surface for this request, from the credential the gateway VERIFIED.
  *
- * `authMethod` wins over the user agent because it is the thing the gateway
- * verified rather than the thing the caller typed: a Slack service token IS
- * the Slack bot, whatever its UA claims.
+ * A Slack service token IS the Slack bot: nothing the caller can type changes
+ * which credential authenticated them, which is exactly the property
+ * `user-agent` lacks. Everything else is `rest`.
+ *
+ * `cli`, `mcp` and `workspace` remain in `AGENT_SURFACES` because the backend
+ * vocabulary is shared and those channels are real — this function simply has
+ * no verified way to recognize them yet, and will not guess.
  */
 export function resolveAgentSurface(c: Context): AgentSurface {
   const authMethod = c.get("authMethod");
   if (authMethod === "slack_service") return "slack";
   if (authMethod === "discord_service") return "discord";
-  return surfaceFromUserAgent(c.req.header("user-agent")) ?? "rest";
+  return "rest";
 }
 
 /**
@@ -124,10 +116,11 @@ export function volatileAgentAttribution(
   c: Context,
   agentActionId: string
 ): AgentAttribution {
+  const requestId = requestIdOf(c);
   return {
     ...stableAgentAttribution(c),
     agentActionId,
-    ...(requestIdOf(c) ? { requestId: requestIdOf(c) } : {}),
+    ...(requestId ? { requestId } : {}),
   };
 }
 

@@ -39,8 +39,14 @@ type CapabilitiesRow = {
   role: "guest" | "member" | "admin" | "owner";
   projectRole: string;
   isProjectAdmin: boolean;
-  features: {
-    sandboxes: {
+  /**
+   * OPTIONAL in this hand-mirror, though the backend always sends it today.
+   * This route's entire job is to let a caller plan safely; if the projection
+   * ever lags the mirror, degrading to "no gated features" beats throwing an
+   * opaque 500 at the one endpoint someone calls to avoid surprises.
+   */
+  features?: {
+    sandboxes?: {
       flagEnabled: boolean;
       reason?: string;
       mode: "off" | "dark" | "enforce";
@@ -73,14 +79,36 @@ const ROLE_RANK: Record<string, number> = {
  * agent that inferred "no flag ⇒ nothing works" would refuse to stop a run
  * precisely when stopping it matters most.
  */
+/** The gate state, or the permissive default when the projection lacks it. */
+function sandboxesOf(row: CapabilitiesRow) {
+  return (
+    row.features?.sandboxes ?? {
+      flagEnabled: false,
+      mode: "off" as const,
+      // Not `true`. An absent projection means we do not know, and claiming a
+      // caller is gated would make an agent refuse work the platform allows —
+      // the write still enforces for real either way.
+      enforced: false,
+    }
+  );
+}
+
 function deriveCapabilities(row: CapabilitiesRow) {
+  // A PROJECT-level grant can raise an org member to project admin, and the
+  // backend already folded that into `isProjectAdmin`. Membership itself comes
+  // from either side: an unranked org role with a project grant is still a
+  // member of this project.
   const rank = ROLE_RANK[row.role] ?? 0;
-  const isMember = rank >= ROLE_RANK.member;
+  const isMember =
+    rank >= ROLE_RANK.member ||
+    row.isProjectAdmin ||
+    row.projectRole === "member" ||
+    row.projectRole === "admin";
   const isAdmin = row.isProjectAdmin || rank >= ROLE_RANK.admin;
   // `enforced` already folds in the gate MODE: in `dark` the flag is evaluated
   // and logged but not applied, so a would-be denial is not a denial and an
   // agent must not plan around one.
-  const gated = row.features.sandboxes.enforced;
+  const gated = sandboxesOf(row).enforced;
 
   return {
     /** Reads across swarms and user testing. Never flag-gated. */
@@ -135,16 +163,16 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
     surface: resolveAgentSurface(c),
     features: {
       sandboxes: {
-        enabled: row.features.sandboxes.flagEnabled,
+        enabled: sandboxesOf(row).flagEnabled,
         /**
          * `off` | `dark` | `enforce`. Only `enforce` turns a disabled flag
          * into a refusal; in `dark` the platform logs what it would have
          * blocked and lets the write through.
          */
-        mode: row.features.sandboxes.mode,
-        enforced: row.features.sandboxes.enforced,
-        ...(row.features.sandboxes.reason !== undefined
-          ? { reason: row.features.sandboxes.reason }
+        mode: sandboxesOf(row).mode,
+        enforced: sandboxesOf(row).enforced,
+        ...(sandboxesOf(row).reason !== undefined
+          ? { reason: sandboxesOf(row).reason }
           : {}),
       },
     },

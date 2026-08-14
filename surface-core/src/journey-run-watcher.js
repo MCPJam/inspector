@@ -103,6 +103,17 @@ export function journeyOutcomeWantsEvidence(outcome) {
 }
 
 /**
+ * How much wider than the shown set we scan when ranking evidence.
+ *
+ * A compromise, stated as one: paging an entire run would be exact and can mean
+ * hundreds of requests on a large fan-out, while ranking only what we display
+ * picks by start order. This looks at a bounded multiple, which covers the
+ * realistic case where failures are scattered rather than clustered at the end.
+ */
+const RANKING_POOL_FACTOR = 10;
+const MIN_RANKING_POOL = 50;
+
+/**
  * Evidence for a journey run: its scorecard, and the sessions most worth
  * looking at.
  *
@@ -141,10 +152,14 @@ export async function collectJourneyRunEvidence(args) {
 	}
 
 	try {
+		// Ask for MORE than we will show. The API pages in start order, which
+		// correlates with nothing; requesting exactly `limit` would mean a
+		// failure occurring after the first few sessions could never be picked
+		// as evidence, however bad it was.
 		const page = await args.apiClient.listJourneyRunSessions(
 			args.runId,
 			args.ctx,
-			{ limit },
+			{ limit: Math.max(limit * RANKING_POOL_FACTOR, MIN_RANKING_POOL) },
 		);
 		// FAILED SESSIONS FIRST. A run's first N sessions are whichever started
 		// first, which correlates with nothing; the ones worth reading are the
@@ -165,7 +180,12 @@ export async function collectJourneyRunEvidence(args) {
 
 /** @param {Record<string, any>} session */
 function isFailedSession(session) {
-	if (session?.status === "failed") return true;
+	// `rate_limited` counts: on a rate-limited run those ARE the sessions worth
+	// reading, and ranking them below ordinary completions would attach the
+	// least relevant evidence to exactly the run that needs it.
+	if (session?.status === "failed" || session?.status === "rate_limited") {
+		return true;
+	}
 	// `goalScore` is the judge's verdict; `readiness` is the transport-level
 	// one. Either being negative is enough to make a session interesting.
 	const goalPassed = session?.goalScore?.passed;
@@ -201,27 +221,46 @@ export async function watchJourneyRunUntilDone(args) {
 			const timer = setTimeout(resolve, interval);
 			timer.unref?.();
 		});
+		/** @type {any} */
+		let run;
 		try {
-			const run = await args.apiClient.getJourneyRun(args.runId, args.ctx);
-			if (!JOURNEY_TERMINAL_STATUSES.has(run?.status)) continue;
+			run = await args.apiClient.getJourneyRun(args.runId, args.ctx);
+		} catch (error) {
+			args.logger?.warn?.(`Journey run status poll failed: ${error}`);
+			continue;
+		}
 
-			const outcome = journeyRunOutcome(run);
+		// A STALE run is over even when its status has not moved: the sweep
+		// marks it because the runner went silent, so nothing will advance the
+		// status. Waiting on `status` alone would poll it for the whole hour and
+		// then report "still running" about something that stopped long ago —
+		// and `journeyRunOutcome` already classifies it.
+		const settled =
+			run?.stale === true || JOURNEY_TERMINAL_STATUSES.has(run?.status);
+		if (!settled) continue;
+
+		// THE RUN IS OVER FROM HERE. Everything below is reporting, and none of
+		// it may put the loop back to polling: an edit that threw inside the
+		// poll's catch would re-poll a settled run, run out the window, and make
+		// the surface say "still running" about a finished one.
+		const outcome = journeyRunOutcome(run);
+		try {
 			await args.delivery.edit(
 				args.statusHandle,
 				formatOutcome(run, outcome, args.url, args.actorId),
 			);
-			try {
-				await args.onTerminal?.(run, outcome);
-			} catch (error) {
-				// The follow-up is evidence and side effects. Failing it must not
-				// make the run look unfinished — the status message is already
-				// correct at this point.
-				args.logger?.warn?.(`Journey run follow-up failed: ${error}`);
-			}
-			return run;
 		} catch (error) {
-			args.logger?.warn?.(`Journey run status poll failed: ${error}`);
+			args.logger?.warn?.(`Journey run status edit failed: ${error}`);
 		}
+		try {
+			await args.onTerminal?.(run, outcome);
+		} catch (error) {
+			// The follow-up is evidence and side effects. Failing it must not
+			// make the run look unfinished — the status message is already
+			// correct at this point.
+			args.logger?.warn?.(`Journey run follow-up failed: ${error}`);
+		}
+		return run;
 	}
 
 	args.logger?.warn?.(

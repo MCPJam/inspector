@@ -71,11 +71,10 @@ function addPageOptions(command: Command): Command {
 }
 
 function pageArgs(options: { cursor?: string; limit?: string }) {
+  const limit = parseIntegerOption(options.limit, "--limit");
   return {
     ...(options.cursor ? { cursor: options.cursor } : {}),
-    ...(parseIntegerOption(options.limit, "--limit") !== undefined
-      ? { limit: parseIntegerOption(options.limit, "--limit") }
-      : {}),
+    ...(limit !== undefined ? { limit } : {}),
   };
 }
 
@@ -298,7 +297,19 @@ export function registerUserTestingCommands(program: Command): void {
         "Hard ceiling on visitor spend per day, in credits"
       )
       .requiredOption("--daily-computer-start-cap <n>")
-      .requiredOption("--max-concurrent-computers <n>"),
+      .requiredOption("--max-concurrent-computers <n>")
+      // The harness caps are OPTIONAL upstream (absent ⇒ harness disabled),
+      // so they are optional here — but they are part of the same replacement,
+      // and omitting them when the scenario has them set clears them. The help
+      // text says so, because a silent reset of a limit someone chose is the
+      // worst outcome this command can produce.
+      .option(
+        "--harness-enabled <bool>",
+        "true | false. Omitting this REPLACES any existing harness setting with 'disabled'."
+      )
+      .option("--daily-harness-spend-cap-micros <n>")
+      .option("--daily-harness-call-cap <n>")
+      .option("--max-concurrent-harness-runs <n>"),
     setUserTestingGuestExecutionOperation,
     (
       options: ScenarioOptions & {
@@ -308,6 +319,10 @@ export function registerUserTestingCommands(program: Command): void {
         dailyCreditCap: string;
         dailyComputerStartCap: string;
         maxConcurrentComputers: string;
+        harnessEnabled?: string;
+        dailyHarnessSpendCapMicros?: string;
+        dailyHarnessCallCap?: string;
+        maxConcurrentHarnessRuns?: string;
       }
     ) => ({
       project: options.project,
@@ -333,6 +348,38 @@ export function registerUserTestingCommands(program: Command): void {
         options.maxConcurrentComputers,
         "--max-concurrent-computers"
       ) as number,
+      ...(options.harnessEnabled !== undefined
+        ? {
+            harnessEnabled: parseBooleanFlag(
+              options.harnessEnabled,
+              "--harness-enabled"
+            ),
+          }
+        : {}),
+      ...(options.dailyHarnessSpendCapMicros !== undefined
+        ? {
+            dailyHarnessSpendCapMicros: parseIntegerOption(
+              options.dailyHarnessSpendCapMicros,
+              "--daily-harness-spend-cap-micros"
+            ),
+          }
+        : {}),
+      ...(options.dailyHarnessCallCap !== undefined
+        ? {
+            dailyHarnessCallCap: parseIntegerOption(
+              options.dailyHarnessCallCap,
+              "--daily-harness-call-cap"
+            ),
+          }
+        : {}),
+      ...(options.maxConcurrentHarnessRuns !== undefined
+        ? {
+            maxConcurrentHarnessRuns: parseIntegerOption(
+              options.maxConcurrentHarnessRuns,
+              "--max-concurrent-harness-runs"
+            ),
+          }
+        : {}),
     })
   );
 

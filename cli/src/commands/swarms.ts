@@ -52,8 +52,47 @@ import {
   addProjectOption,
   bindOperation,
   parseIntegerOption,
+  requireExactlyOne,
+  requireTogether,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+
+/** Bounds mirrored from the operation schemas, so a typo fails locally. */
+const SESSIONS_BOUNDS = { min: 1, max: 100 };
+const TURNS_BOUNDS = { min: 1, max: 200 };
+const JOURNEY_COUNT_BOUNDS = { min: 1, max: 5 };
+const PERSONA_COUNT_BOUNDS = { min: 1, max: 12 };
+
+/**
+ * The grounding half of a generation request, validated and normalized.
+ *
+ * Shared because both generate commands have the same exactly-one rule and the
+ * same optional count, and duplicating it is how the two would drift.
+ */
+function groundingArgs(options: {
+  environment?: string;
+  serverAttachment?: string;
+  description?: string;
+  journeyCount?: string;
+}) {
+  requireExactlyOne({
+    "--environment": options.environment,
+    "--server-attachment": options.serverAttachment,
+  });
+  const journeyCount = parseIntegerOption(
+    options.journeyCount,
+    "--journey-count",
+    JOURNEY_COUNT_BOUNDS
+  );
+  return {
+    ...(options.environment ? { environmentId: options.environment } : {}),
+    ...(options.serverAttachment
+      ? { serverAttachmentId: options.serverAttachment }
+      : {}),
+    ...(options.description ? { description: options.description } : {}),
+    ...(journeyCount !== undefined ? { journeyCount } : {}),
+  };
+}
 
 type ProjectOptions = PlatformOptions & { project?: string };
 
@@ -243,32 +282,18 @@ export function registerSwarmAuthoringCommands(
         journeyCount?: string;
         personaCount?: string;
       }
-    ) => ({
-      project: options.project,
-      ...(options.environment ? { environmentId: options.environment } : {}),
-      ...(options.serverAttachment
-        ? { serverAttachmentId: options.serverAttachment }
-        : {}),
-      ...(options.description ? { description: options.description } : {}),
-      ...(parseIntegerOption(options.journeyCount, "--journey-count") !==
-      undefined
-        ? {
-            journeyCount: parseIntegerOption(
-              options.journeyCount,
-              "--journey-count"
-            ),
-          }
-        : {}),
-      ...(parseIntegerOption(options.personaCount, "--persona-count") !==
-      undefined
-        ? {
-            personaCount: parseIntegerOption(
-              options.personaCount,
-              "--persona-count"
-            ),
-          }
-        : {}),
-    })
+    ) => {
+      const personaCount = parseIntegerOption(
+        options.personaCount,
+        "--persona-count",
+        PERSONA_COUNT_BOUNDS
+      );
+      return {
+        project: options.project,
+        ...groundingArgs(options),
+        ...(personaCount !== undefined ? { personaCount } : {}),
+      };
+    }
   );
 
   // ── journeys: authoring + insights, added to the existing group ──────────
@@ -320,7 +345,7 @@ export function registerSwarmAuthoringCommands(
         persona: string;
         name?: string;
         swarm?: string;
-        environments?: string[];
+        environment?: string[];
         sessionsPerTarget: string;
         maxTurns: string;
         idempotencyKey?: string;
@@ -331,13 +356,18 @@ export function registerSwarmAuthoringCommands(
       persona: options.persona,
       sessionsPerTarget: parseIntegerOption(
         options.sessionsPerTarget,
-        "--sessions-per-target"
+        "--sessions-per-target",
+        SESSIONS_BOUNDS
       ) as number,
-      maxTurns: parseIntegerOption(options.maxTurns, "--max-turns") as number,
+      maxTurns: parseIntegerOption(
+        options.maxTurns,
+        "--max-turns",
+        TURNS_BOUNDS
+      ) as number,
       ...(options.name !== undefined ? { name: options.name } : {}),
       ...(options.swarm !== undefined ? { swarm: options.swarm } : {}),
-      ...(options.environments?.length
-        ? { environmentIds: options.environments }
+      ...(options.environment?.length
+        ? { environmentIds: options.environment }
         : {}),
       ...(options.idempotencyKey !== undefined
         ? { idempotencyKey: options.idempotencyKey }
@@ -374,13 +404,13 @@ export function registerSwarmAuthoringCommands(
         journey: string;
         name?: string;
         goal?: string;
-        environments?: string[];
+        environment?: string[];
         clearEnvironments?: boolean;
         sessionsPerTarget?: string;
         maxTurns?: string;
       }
     ) => {
-      if (options.clearEnvironments && options.environments?.length) {
+      if (options.clearEnvironments && options.environment?.length) {
         // Both would mean "set these, and also unset them". Failing here is
         // better than picking one, which would silently do half of what was
         // asked on a field that decides where the journey runs.
@@ -388,6 +418,13 @@ export function registerSwarmAuthoringCommands(
           "--clear-environments and --environment cannot be used together"
         );
       }
+      // One `config` object upstream, so the server rejects a one-sided edit.
+      // Saying so here names both flags; the server's message names a nested
+      // field the user never typed.
+      requireTogether(
+        { flag: "--sessions-per-target", value: options.sessionsPerTarget },
+        { flag: "--max-turns", value: options.maxTurns }
+      );
       return {
         project: options.project,
         journey: options.journey,
@@ -395,20 +432,25 @@ export function registerSwarmAuthoringCommands(
         ...(options.goal !== undefined ? { goal: options.goal } : {}),
         ...(options.clearEnvironments
           ? { environmentIds: null }
-          : options.environments?.length
-          ? { environmentIds: options.environments }
+          : options.environment?.length
+          ? { environmentIds: options.environment }
           : {}),
         ...(options.sessionsPerTarget !== undefined
           ? {
               sessionsPerTarget: parseIntegerOption(
                 options.sessionsPerTarget,
-                "--sessions-per-target"
+                "--sessions-per-target",
+                SESSIONS_BOUNDS
               ),
             }
           : {}),
         ...(options.maxTurns !== undefined
           ? {
-              maxTurns: parseIntegerOption(options.maxTurns, "--max-turns"),
+              maxTurns: parseIntegerOption(
+                options.maxTurns,
+                "--max-turns",
+                TURNS_BOUNDS
+              ),
             }
           : {}),
       };
@@ -464,20 +506,7 @@ export function registerSwarmAuthoringCommands(
           ? { notes: options.personaNotes }
           : {}),
       },
-      ...(options.environment ? { environmentId: options.environment } : {}),
-      ...(options.serverAttachment
-        ? { serverAttachmentId: options.serverAttachment }
-        : {}),
-      ...(options.description ? { description: options.description } : {}),
-      ...(parseIntegerOption(options.journeyCount, "--journey-count") !==
-      undefined
-        ? {
-            journeyCount: parseIntegerOption(
-              options.journeyCount,
-              "--journey-count"
-            ),
-          }
-        : {}),
+      ...groundingArgs(options),
     })
   );
 
@@ -657,7 +686,7 @@ export function registerSwarmAuthoringCommands(
       options: ProjectOptions & {
         name: string;
         description?: string;
-        environments?: string[];
+        environment?: string[];
         sessionsPerTarget: string;
         maxTurns: string;
         idempotencyKey?: string;
@@ -667,14 +696,19 @@ export function registerSwarmAuthoringCommands(
       name: options.name,
       sessionsPerTarget: parseIntegerOption(
         options.sessionsPerTarget,
-        "--sessions-per-target"
+        "--sessions-per-target",
+        SESSIONS_BOUNDS
       ) as number,
-      maxTurns: parseIntegerOption(options.maxTurns, "--max-turns") as number,
+      maxTurns: parseIntegerOption(
+        options.maxTurns,
+        "--max-turns",
+        TURNS_BOUNDS
+      ) as number,
       ...(options.description !== undefined
         ? { description: options.description }
         : {}),
-      ...(options.environments?.length
-        ? { environmentIds: options.environments }
+      ...(options.environment?.length
+        ? { environmentIds: options.environment }
         : {}),
       ...(options.idempotencyKey !== undefined
         ? { idempotencyKey: options.idempotencyKey }
@@ -707,7 +741,7 @@ export function registerSwarmAuthoringCommands(
         swarm: string;
         name?: string;
         description?: string;
-        environments?: string[];
+        environment?: string[];
         sessionsPerTarget?: string;
         maxTurns?: string;
       }
@@ -718,8 +752,8 @@ export function registerSwarmAuthoringCommands(
       ...(options.description !== undefined
         ? { description: options.description }
         : {}),
-      ...(options.environments?.length
-        ? { environmentIds: options.environments }
+      ...(options.environment?.length
+        ? { environmentIds: options.environment }
         : {}),
       ...(options.sessionsPerTarget !== undefined
         ? {

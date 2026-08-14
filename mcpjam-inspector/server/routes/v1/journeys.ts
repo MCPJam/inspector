@@ -62,6 +62,11 @@ import { getConvexBearerThunkForRequest } from "../../utils/v1-convex-token.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { callerContextFromHono } from "../web/auth.js";
 import { HOSTED_MODE } from "../../config.js";
+// The two authoring preflights this file's create route needs. Imported rather
+// than re-implemented: a second copy of a scope rule is how the two spellings
+// drift, which is the failure this whole layer exists to prevent.
+import { requirePersonaInProject } from "./personas.js";
+import { requireSwarmInProject } from "./swarms.js";
 
 const journeys = new Hono();
 
@@ -594,6 +599,16 @@ journeys.post("/projects/:projectId/journeys", async (c) => {
   const body = await parseJsonBody(c, createJourneySchema);
   const client = createConvexClient(await getConvexBearerForRequest(c));
   const idempotencyKey = c.req.header("idempotency-key")?.trim();
+
+  // SCOPE THE REFERENCES, not just the path. `journeys:createJourney` resolves
+  // `personaRefId` and `swarmRefId` on its own and checks membership of
+  // whatever project they turn out to live in — so without this a member of
+  // two projects could create a journey in A that runs B's persona, and the
+  // header of this file promises the gateway does exactly this check.
+  await requirePersonaInProject(client, projectId, body.personaId);
+  if (body.swarmId !== undefined) {
+    await requireSwarmInProject(client, projectId, body.swarmId);
+  }
 
   let row: JourneyRow;
   try {

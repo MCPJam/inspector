@@ -4865,6 +4865,43 @@ export const unpublishScenarioOperation: PlatformOperation<
  * agent, and in-app chat) partition this list and their tests fail when an
  * operation is neither exposed nor explicitly excluded.
  */
+/**
+ * Cross-field rules the ROUTES enforce, checked here so a caller is told by the
+ * operation that validated their input rather than by a 400 two hops later.
+ *
+ * Deliberately NOT `.refine()` on the input schemas. Every surface that builds
+ * a tool from the catalog extends those schemas — Zod 4 refuses to overwrite
+ * keys on a refined object, so a refinement here silently breaks the agent and
+ * MCP tool builders for the whole catalog, not just the refined operation.
+ */
+function requireExactlyOneGrounding(input: {
+  environmentId?: string;
+  serverAttachmentId?: string;
+}): void {
+  if (
+    (input.environmentId === undefined) ===
+    (input.serverAttachmentId === undefined)
+  ) {
+    throw new Error(
+      "Provide exactly one of environmentId or serverAttachmentId to ground the drafts."
+    );
+  }
+}
+
+function requireConfigPair(input: {
+  sessionsPerTarget?: number;
+  maxTurns?: number;
+}): void {
+  if (
+    (input.sessionsPerTarget === undefined) !==
+    (input.maxTurns === undefined)
+  ) {
+    throw new Error(
+      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream."
+    );
+  }
+}
+
 // ── Swarms authoring ────────────────────────────────────────────────────────
 //
 // The half of the loop that did not exist. Everything below resolves the
@@ -5247,6 +5284,7 @@ export const updateJourneyOperation: PlatformOperation<
   risk: "none",
   inputSchema: updateJourneyInput,
   async execute(input, { client, signal }) {
+    requireConfigPair(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -5456,6 +5494,7 @@ export const updateSwarmOperation: PlatformOperation<
   risk: "none",
   inputSchema: updateSwarmInput,
   async execute(input, { client, signal }) {
+    requireConfigPair(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -5576,6 +5615,7 @@ export const generatePersonasOperation: PlatformOperation<
   risk: "spend",
   inputSchema: generatePersonasInput,
   async execute(input, { client, signal }) {
+    requireExactlyOneGrounding(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -5635,6 +5675,7 @@ export const generateJourneysOperation: PlatformOperation<
   risk: "spend",
   inputSchema: generateJourneysInput,
   async execute(input, { client, signal }) {
+    requireExactlyOneGrounding(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -6027,6 +6068,17 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
   risk: "exposure",
   inputSchema: updateUserTestingScenarioInput,
   async execute(input, { client, signal }) {
+    // Identity and exposure are separate mutations upstream, so the route
+    // refuses to chain them: a failure between the two would leave the
+    // scenario half-updated on the half that decides who can reach it.
+    if (
+      input.mode !== undefined &&
+      (input.name !== undefined || input.description !== undefined)
+    ) {
+      throw new Error(
+        "Send `mode` on its own: identity and exposure are separate operations upstream."
+      );
+    }
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -6639,9 +6691,13 @@ export const removeUserTestingMemberOperation: PlatformOperation<
   name: "remove_user_testing_member",
   title: "Remove someone from a user-testing scenario",
   description:
-    "Revoke one person's access. NARROWS exposure, so it keeps working for an organization that has lost the beta — losing access to a feature is exactly when revoking matters most.",
+    "Revoke one person's access. Narrowing exposure is the safe direction, so this is never blocked by the beta gate — losing access to a feature is exactly when revoking matters most. It is still a REMOVAL: the person loses a scenario they could reach, and getting it back means inviting them again.",
   readOnly: false,
-  risk: "none",
+  // `destructive` is about HARM, not about gating. Revoking access removes
+  // something a named person had, which is what a client should be able to
+  // confirm before it fires; that it is also ungated by the beta flag is a
+  // separate property, decided by direction of exposure rather than by risk.
+  risk: "destructive",
   inputSchema: removeUserTestingMemberInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(

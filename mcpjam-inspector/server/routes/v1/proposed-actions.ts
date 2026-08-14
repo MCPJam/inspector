@@ -275,9 +275,12 @@ proposedActions.post(
       convexJwt = await getConvexBearerForApprovedAction(c, actionId);
     } catch (error) {
       await releaseProposedAction(actionId).catch(() => {});
-      logger.warn("[v1/proposed-actions] could not mint a token for the clicker", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "[v1/proposed-actions] could not mint a token for the clicker",
+        {
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return v1Error(
         c,
         "UNAUTHORIZED",
@@ -357,17 +360,15 @@ proposedActions.post(
         status: "succeeded",
         ...(resource?.id ? { resourceId: resource.id } : {}),
         ...(resource?.url ? { resourceUrl: resource.url } : {}),
-      }).catch(
-        (error) => {
-          // The work is DONE. A failed bookkeeping write only costs a stale
-          // row; failing the response would tell the user their approved
-          // action did not happen, which is false.
-          logger.warn(
-            "[v1/proposed-actions] action succeeded but recording it failed",
-            { error: error instanceof Error ? error.message : String(error) }
-          );
-        }
-      );
+      }).catch((error) => {
+        // The work is DONE. A failed bookkeeping write only costs a stale
+        // row; failing the response would tell the user their approved
+        // action did not happen, which is false.
+        logger.warn(
+          "[v1/proposed-actions] action succeeded but recording it failed",
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+      });
 
       const response: ExecuteProposedActionResponse = {
         actionId,

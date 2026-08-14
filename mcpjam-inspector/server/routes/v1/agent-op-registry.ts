@@ -825,11 +825,16 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       },
       buttonLabel: "Apply it",
       kind: "schedule",
-      // A rename costs nothing and exposes nothing; widening access is the
-      // whole risk. Severity is computed rather than fixed so the host's copy
-      // does not warn about exposure on a rename.
-      confirmSeverity: (input) =>
-        named(input, "mode") === "anyone_with_link" ? "external" : "none",
+      // A rename costs nothing and exposes nothing. ANY mode change does:
+      // `project_members` → `invited_only` also puts the scenario in front of
+      // people outside the project, and only a change TO `project_members` is
+      // a narrowing. Singling out `anyone_with_link` gave the mildest possible
+      // prompt to a genuine widening.
+      confirmSeverity: (input) => {
+        const mode = named(input, "mode");
+        if (mode === undefined || mode === "project_members") return "none";
+        return "external";
+      },
     },
   },
   {
@@ -842,7 +847,10 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         }`,
       buttonLabel: "Invite them",
       kind: "schedule",
-      confirmSeverity: "none",
+      // Granting a named outsider access to a live scenario is the exposure
+      // change this operation's own `risk: "exposure"` describes. `none` would
+      // have the host render its neutral prompt for it.
+      confirmSeverity: "external",
     },
   },
   {

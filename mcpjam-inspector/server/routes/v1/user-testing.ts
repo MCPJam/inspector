@@ -362,6 +362,14 @@ userTesting.get(`${BASE}/sessions`, async (c) => {
 const TRANSCRIPT_PAGE_SIZE = 50;
 const TRANSCRIPT_MAX_PAGE_SIZE = 200;
 const TRANSCRIPT_FETCH_TIMEOUT_MS = 10_000;
+/**
+ * Ceiling on a transcript we will buffer to serve a page.
+ *
+ * Above this the session reports `transcriptUnavailable` rather than being
+ * pulled into memory — a conversation too large to hold is a capacity fact
+ * about us, not a reason to take the process down.
+ */
+const TRANSCRIPT_MAX_BLOB_BYTES = 8 * 1024 * 1024;
 
 type RawMessage = {
   role?: unknown;
@@ -420,9 +428,23 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
     Number.isFinite(rawLimit) && rawLimit > 0
       ? Math.min(Math.floor(rawLimit), TRANSCRIPT_MAX_PAGE_SIZE)
       : TRANSCRIPT_PAGE_SIZE;
-  const rawOffset = Number(c.req.query("cursor") ?? 0);
-  const offset =
-    Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+  // Validated, not coerced. `Number("oops")` is NaN and silently became page
+  // 1 — so a caller paging with a mistyped or stale cursor got already-seen
+  // messages back with a fresh `nextCursor` and no signal, and could act on
+  // the same conversation twice. The sibling sessions route already 400s here.
+  const rawCursor = c.req.query("cursor");
+  let offset = 0;
+  if (rawCursor !== undefined) {
+    const parsedCursor = Number(rawCursor);
+    if (!Number.isInteger(parsedCursor) || parsedCursor < 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "cursor must be a value returned as nextCursor by this endpoint"
+      );
+    }
+    offset = parsedCursor;
+  }
 
   let session: (Record<string, unknown> & { messagesBlobUrl?: string }) | null;
   try {
@@ -448,7 +470,17 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
       const response = await fetch(session.messagesBlobUrl, {
         signal: AbortSignal.timeout(TRANSCRIPT_FETCH_TIMEOUT_MS),
       });
-      if (response.ok) {
+      // BOUNDED BEFORE PARSING. The timeout caps latency, not bytes, and
+      // `response.json()` materializes the whole conversation on a request
+      // thread — so without this, memory scales with transcript size times
+      // concurrent readers and nothing stops it.
+      const declaredBytes = Number(response.headers.get("content-length"));
+      if (
+        Number.isFinite(declaredBytes) &&
+        declaredBytes > TRANSCRIPT_MAX_BLOB_BYTES
+      ) {
+        transcriptUnavailable = true;
+      } else if (response.ok) {
         const parsed = (await response.json()) as unknown;
         const candidate = Array.isArray(parsed)
           ? parsed
@@ -473,7 +505,13 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
     modelId: session.modelId ?? null,
     startedAt: session.startedAt ?? null,
     lastActivityAt: session.lastActivityAt ?? null,
-    messageCount: messages.length,
+    /**
+     * `null` — never 0 — when the transcript could not be read. Zero is a
+     * claim that the visitor said nothing, which is the opposite of what an
+     * unreadable blob means, and a consumer reading only this field would act
+     * on it.
+     */
+    messageCount: transcriptUnavailable ? null : messages.length,
     /**
      * True when the stored conversation could not be read. Distinct from an
      * empty `messages` array, which means the visitor genuinely said nothing.
@@ -725,16 +763,19 @@ for (const action of ["dismiss", "undismiss"] as const) {
     const findingId = c.req.param("findingId");
     // The finding must belong to THIS scenario, or a member of two scenarios
     // could dismiss the other's finding through this URL.
-    let findings: Array<{ findingId?: string }>;
+    // `_id`, NOT `findingId`. The swarm findings DTO names the same column
+    // `findingId` and this one does not, so matching on the swarm spelling
+    // made every chatbox dismissal 404 — the scope check could never pass.
+    let findings: Array<{ _id?: string }>;
     try {
       findings = ((await client.query(
         "chatboxWindowInsights:listChatboxFindings" as never,
         { chatboxId: scenarioId } as never
-      )) ?? []) as Array<{ findingId?: string }>;
+      )) ?? []) as Array<{ _id?: string }>;
     } catch (error) {
       throw translateReadError(error);
     }
-    if (!findings.some((row) => String(row.findingId) === findingId)) {
+    if (!findings.some((row) => String(row._id) === findingId)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Finding not found");
     }
 
@@ -802,20 +843,24 @@ userTesting.put(`${BASE}/guest-execution`, async (c) => {
 // link has leaked — but it means a caller cannot undo this by rotating back.
 userTesting.post(`${BASE}/rotate-link`, async (c) => {
   const { client, projectId, scenarioId } = await scopedScenario(c);
-  let result: unknown;
+  let result: { link?: string; accessVersion?: number } | null;
   try {
-    result = await client.mutation(
+    result = (await client.mutation(
       "chatboxes:rotateChatboxLink" as never,
       { chatboxId: scenarioId } as never
-    );
+    )) as { link?: string; accessVersion?: number } | null;
   } catch (error) {
     throw translateWriteError(error);
   }
+  // PROJECTED, not spread. Spreading an unread mutation result makes every
+  // field upstream adds part of the public contract without review — and on
+  // THIS route the fields in question are share secrets.
   return v1Resource(c, {
     id: scenarioId,
     projectId,
     rotated: true,
-    ...(result && typeof result === "object" ? result : {}),
+    link: result?.link ?? null,
+    accessVersion: result?.accessVersion ?? null,
   });
 });
 
@@ -829,9 +874,9 @@ const upsertMemberSchema = z.strictObject({
 userTesting.put(`${BASE}/members`, async (c) => {
   const body = await parseBody(c, upsertMemberSchema);
   const { client, projectId, scenarioId } = await scopedScenario(c);
-  let result: unknown;
+  let result: { memberId?: string; invited?: boolean } | null;
   try {
-    result = await client.mutation(
+    result = (await client.mutation(
       "chatboxes:upsertChatboxMember" as never,
       {
         chatboxId: scenarioId,
@@ -840,7 +885,7 @@ userTesting.put(`${BASE}/members`, async (c) => {
           ? { sendInviteEmail: body.sendInviteEmail }
           : {}),
       } as never
-    );
+    )) as { memberId?: string; invited?: boolean } | null;
   } catch (error) {
     throw translateWriteError(error);
   }
@@ -848,7 +893,8 @@ userTesting.put(`${BASE}/members`, async (c) => {
     scenarioId,
     projectId,
     email: body.email,
-    ...(result && typeof result === "object" ? result : {}),
+    ...(result?.memberId !== undefined ? { memberId: result.memberId } : {}),
+    ...(result?.invited !== undefined ? { invited: result.invited } : {}),
   });
 });
 
@@ -901,12 +947,12 @@ userTesting.post(`${BASE}/rebind`, async (c) => {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found");
   }
 
-  let result: unknown;
+  let result: { accessVersion?: number } | null;
   try {
-    result = await client.mutation(
+    result = (await client.mutation(
       "chatboxes:rebindEnvironmentChatbox" as never,
       { chatboxId: scenarioId, environmentId: body.environmentId } as never
-    );
+    )) as { accessVersion?: number } | null;
   } catch (error) {
     throw translateWriteError(error);
   }
@@ -914,7 +960,7 @@ userTesting.post(`${BASE}/rebind`, async (c) => {
     id: scenarioId,
     projectId,
     environmentId: body.environmentId,
-    ...(result && typeof result === "object" ? result : {}),
+    accessVersion: result?.accessVersion ?? null,
   });
 });
 

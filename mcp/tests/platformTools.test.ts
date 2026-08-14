@@ -443,6 +443,15 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "rebind_user_testing_scenario",
     ]);
+    // Destructive AND not safe to repeat — for opposite reasons: the soft
+    // deletes 404 on a retry, the rotation mints another link.
+    const NON_IDEMPOTENT_DESTRUCTIVE = new Set([
+      "delete_persona",
+      "archive_journey",
+      "archive_swarm",
+      "remove_user_testing_member",
+      "rotate_user_testing_link",
+    ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
       "delete_eval_case",
@@ -471,11 +480,14 @@ describe("platform tool registration", () => {
           idempotentHint: false,
         });
       } else if (DESTRUCTIVE_OPS.has(registration.name)) {
-        // Known-destructive ops (deletes + cancel) announce it explicitly.
+        // Known-destructive ops announce it explicitly. Whether they also
+        // announce IDEMPOTENCY is a separate claim: a soft delete answers
+        // not-found on a second call and a link rotation mints a new link, so
+        // an auto-retrying client would get a spurious error or a broken link.
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: true,
-          idempotentHint: true,
+          idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
         });
       } else if (registration.name === "call_server_tool") {
         // Arbitrary third-party tool execution: destructive/idempotent hints

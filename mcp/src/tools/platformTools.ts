@@ -340,7 +340,20 @@ if (
  * effects are merely unknowable). Kept here rather than on the SDK operation
  * so the wire contract stays surface-agnostic.
  */
-const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
+/**
+ * Operations that PERMANENTLY destroy a known resource, DERIVED from the
+ * catalog's own `risk` metadata rather than listed here.
+ *
+ * Deriving is the whole point of that field: it exists so five surfaces make
+ * one decision from one place instead of each re-deriving it, and a hand-kept
+ * copy here reinstates exactly the drift it was added to remove — the next
+ * operation shipped with `risk: "destructive"` and forgotten in this list would
+ * silently advertise `destructiveHint: false`.
+ *
+ * `LEGACY_DESTRUCTIVE_NAMES` covers the operations that predate `risk`. It
+ * shrinks to nothing as those are backfilled; it does not grow.
+ */
+const LEGACY_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
   deleteProjectServerOperation.name,
@@ -348,20 +361,32 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   // Cancelling a run terminates in-flight work — state-changing, so clients
   // should be able to confirm before it fires.
   cancelEvalRunOperation.name,
-  // Swarms. The soft deletes leave history intact, but they take a persona,
-  // journey or container off the roster and a second call answers not-found —
-  // from the caller's side that is a removal, and a client should be able to
-  // confirm before it fires.
+]);
+
+const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  ALL_OPERATIONS.filter(
+    (operation) =>
+      operation.risk === "destructive" ||
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
+  ).map((operation) => operation.name)
+);
+
+/**
+ * Destructive operations a client must NOT auto-retry.
+ *
+ * `idempotentHint: true` is a promise that repeating the call is safe after a
+ * dropped response. It is false for both kinds below, in opposite ways: the
+ * soft deletes answer not-found on a second call, so an auto-retrying client
+ * surfaces a spurious error for work that succeeded; and rotating a share link
+ * MINTS A NEW ONE each time, so a retry invalidates the link the first call
+ * just handed back.
+ */
+const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   deletePersonaOperation.name,
   archiveJourneyOperation.name,
   archiveSwarmOperation.name,
-  cancelJourneyRunOperation.name,
-  // Unpublishing kills every live guest session on a scenario.
-  unpublishScenarioOperation.name,
-  // Rotating a share link is immediate and irreversible: everyone holding the
-  // old URL loses access and every live session on it dies.
-  rotateUserTestingLinkOperation.name,
   removeUserTestingMemberOperation.name,
+  rotateUserTestingLinkOperation.name,
 ]);
 
 /**
@@ -440,7 +465,15 @@ export function operationAnnotations(
   }
   // Known-destructive deletes: announce it explicitly so clients can confirm.
   if (DESTRUCTIVE_OPERATION_NAMES.has(operation.name)) {
-    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true };
+    return {
+      readOnlyHint: false,
+      destructiveHint: true,
+      // Only claim idempotent when a repeat is genuinely safe. A soft delete
+      // answers not-found on the second call and a link rotation mints a new
+      // link, so promising idempotency for those turns a dropped response into
+      // either a spurious error or an invalidated link.
+      idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE_NAMES.has(operation.name),
+    };
   }
   // Operations whose effects are unknowable upstream (call_server_tool runs
   // arbitrary third-party tools) omit destructive/idempotent hints on

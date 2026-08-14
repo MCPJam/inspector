@@ -88,11 +88,31 @@ const scenarioRow = (projectId = PROJECT) => ({
   accessVersion: 3,
 });
 
+/**
+ * Queries answered BY NAME, not by call order.
+ *
+ * `vi.clearAllMocks()` drains recorded calls but not queued
+ * `mockResolvedValueOnce` implementations, so an order-driven stub leaks its
+ * unconsumed queue into the next test — which is how two of these tests
+ * initially failed with each other's answers. Keying on the Convex function
+ * name is also simply more readable: a test says what `getSession` returns,
+ * not what "the second query" returns.
+ */
+function answerQueries(answers: Record<string, unknown>) {
+  queryMock.mockImplementation((name: string) => {
+    for (const [key, value] of Object.entries(answers)) {
+      if (String(name).includes(key)) return Promise.resolve(value);
+    }
+    return Promise.resolve(null);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("CONVEX_URL", "https://convex.test");
   vi.stubGlobal("fetch", fetchMock);
-  queryMock.mockResolvedValue(scenarioRow());
+  queryMock.mockReset();
+  answerQueries({ getChatbox: scenarioRow() });
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -105,7 +125,9 @@ describe("publish (scenarios.ts)", () => {
     // The whole point of the backend accepting these atomically: without them
     // "publish restricted" is two operations, and between them the scenario is
     // live in the default mode.
-    queryMock.mockResolvedValue({ environmentId: "env_1", projectId: PROJECT });
+    answerQueries({
+      getEnvironment: { environmentId: "env_1", projectId: PROJECT },
+    });
     mutationMock.mockResolvedValue({
       chatboxId: SCENARIO,
       environmentId: "env_1",
@@ -137,7 +159,9 @@ describe("publish (scenarios.ts)", () => {
   it("says so when a republish DISCARDED the overrides", async () => {
     // They are create-time only upstream. Silence would let a caller who asked
     // for `invited_only` conclude the link is restricted when it is not.
-    queryMock.mockResolvedValue({ environmentId: "env_1", projectId: PROJECT });
+    answerQueries({
+      getEnvironment: { environmentId: "env_1", projectId: PROJECT },
+    });
     mutationMock.mockResolvedValue({
       chatboxId: SCENARIO,
       environmentId: "env_1",
@@ -160,8 +184,44 @@ describe("publish (scenarios.ts)", () => {
     expect(body.mode).toBe("anyone_with_link");
   });
 
+  it("rejects a body that is not JSON", async () => {
+    answerQueries({
+      getEnvironment: { environmentId: "env_1", projectId: PROJECT },
+    });
+    const res = await makeApp(scenarios).request(
+      `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
+      {
+        method: "PUT",
+        body: "not json",
+        headers: { "content-type": "application/json" },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown field and an invalid mode", async () => {
+    // `strictObject`, so a typo'd key is a 400 rather than a silently dropped
+    // intention — on a route where the dropped intention could be `mode`.
+    answerQueries({
+      getEnvironment: { environmentId: "env_1", projectId: PROJECT },
+    });
+    for (const body of [{ nmae: "typo" }, { mode: "public" }]) {
+      const res = await call(
+        scenarios,
+        "PUT",
+        `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
+        body
+      );
+      expect(res.status).toBe(400);
+    }
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("still publishes with no body at all", async () => {
-    queryMock.mockResolvedValue({ environmentId: "env_1", projectId: PROJECT });
+    answerQueries({
+      getEnvironment: { environmentId: "env_1", projectId: PROJECT },
+    });
     mutationMock.mockResolvedValue({
       chatboxId: SCENARIO,
       environmentId: "env_1",
@@ -209,7 +269,16 @@ describe("scenario update", () => {
   });
 
   it("404s a scenario that resolves into another project", async () => {
-    queryMock.mockResolvedValue(scenarioRow(OTHER_PROJECT));
+    answerQueries({ getChatbox: scenarioRow(OTHER_PROJECT) });
+    const res = await call(userTesting, "PATCH", BASE, { name: "Renamed" });
+    expect(res.status).toBe(404);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("404s a scenario that does not resolve at all", async () => {
+    // A separate branch from the project mismatch above: this one guards the
+    // absent row, and a regression that dereferenced it would pass the other.
+    answerQueries({});
     const res = await call(userTesting, "PATCH", BASE, { name: "Renamed" });
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -243,18 +312,22 @@ describe("session transcript", () => {
     // `getSession` authorizes broadly — a project member can read swarm
     // sessions — so without this check any session in the project would be
     // readable through a scenario's URL.
-    queryMock
-      .mockResolvedValueOnce(scenarioRow())
-      .mockResolvedValueOnce({ chatboxId: "cb_other", chatSessionId: "cs_1" });
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: { chatboxId: "cb_other", chatSessionId: "cs_1" },
+    });
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     expect(res.status).toBe(404);
   });
 
   it("pages long transcripts instead of returning the whole thing", async () => {
-    queryMock.mockResolvedValueOnce(scenarioRow()).mockResolvedValueOnce({
-      chatboxId: SCENARIO,
-      chatSessionId: "cs_1",
-      messagesBlobUrl: "https://storage.test/blob",
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: {
+        chatboxId: SCENARIO,
+        chatSessionId: "cs_1",
+        messagesBlobUrl: "https://storage.test/blob",
+      },
     });
     fetchMock.mockResolvedValue(
       new Response(
@@ -282,13 +355,70 @@ describe("session transcript", () => {
     expect(body.nextCursor).toBe("50");
   });
 
+  it("400s an unparseable cursor instead of re-serving page one", async () => {
+    // Coercing to 0 handed back already-seen messages with a fresh cursor and
+    // no signal, so a paging caller could act on the same conversation twice.
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: { chatboxId: SCENARIO, chatSessionId: "cs_1" },
+    });
+    const res = await call(
+      userTesting,
+      "GET",
+      `${BASE}/sessions/sess_1?cursor=oops`
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("reports a null messageCount when the transcript is unreadable", async () => {
+    // 0 is a claim the visitor said nothing — the opposite of what an
+    // unreadable blob means, and a consumer reading only the count acts on it.
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: {
+        chatboxId: SCENARIO,
+        chatSessionId: "cs_1",
+        messagesBlobUrl: "https://storage.test/blob",
+      },
+    });
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const body = (await res.json()) as { messageCount: number | null };
+    expect(body.messageCount).toBeNull();
+  });
+
+  it("refuses to buffer a transcript past the size ceiling", async () => {
+    // The timeout caps latency, not bytes. Without this the whole conversation
+    // lands in memory on a request thread, once per concurrent reader.
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: {
+        chatboxId: SCENARIO,
+        chatSessionId: "cs_1",
+        messagesBlobUrl: "https://storage.test/huge",
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response("[]", {
+        status: 200,
+        headers: { "content-length": String(64 * 1024 * 1024) },
+      })
+    );
+    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const body = (await res.json()) as { transcriptUnavailable?: boolean };
+    expect(body.transcriptUnavailable).toBe(true);
+  });
+
   it("reports an unreadable blob rather than an empty conversation", async () => {
     // "They said nothing" and "we could not fetch it" lead to opposite
     // conclusions about a user test.
-    queryMock.mockResolvedValueOnce(scenarioRow()).mockResolvedValueOnce({
-      chatboxId: SCENARIO,
-      chatSessionId: "cs_1",
-      messagesBlobUrl: "https://storage.test/blob",
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: {
+        chatboxId: SCENARIO,
+        chatSessionId: "cs_1",
+        messagesBlobUrl: "https://storage.test/blob",
+      },
     });
     fetchMock.mockRejectedValue(new Error("network down"));
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
@@ -312,7 +442,11 @@ describe("exposure controls", () => {
       dailyComputerStartCap: 0,
       maxConcurrentComputers: 0,
     };
-    await call(userTesting, "PUT", `${BASE}/guest-execution`, caps);
+    const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, caps);
+    expect(res.status).toBe(200);
+    // Asserted BEFORE the destructure: a rejected body would otherwise fail
+    // with "undefined is not iterable" instead of naming the real problem.
+    expect(mutationMock).toHaveBeenCalledTimes(1);
     const [, args] = mutationMock.mock.calls[0] as [
       string,
       { guestExecution: Record<string, unknown> }
@@ -352,6 +486,40 @@ describe("exposure controls", () => {
     );
     const res = await call(userTesting, "POST", `${BASE}/rotate-link`);
     expect(res.status).toBe(403);
+  });
+});
+
+describe("findings", () => {
+  it("matches a chatbox finding on `_id`, the column it actually has", async () => {
+    // The swarm findings DTO names this column `findingId` and this one does
+    // not. Matching on the swarm spelling made the scope check impossible to
+    // pass, so every chatbox dismissal answered 404.
+    answerQueries({
+      getChatbox: scenarioRow(),
+      listChatboxFindings: [{ _id: "finding_1" }],
+    });
+    mutationMock.mockResolvedValue(null);
+    const res = await call(
+      userTesting,
+      "POST",
+      `${BASE}/findings/finding_1/dismiss`
+    );
+    expect(res.status).toBe(200);
+    expect(mutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("404s a finding belonging to a different scenario", async () => {
+    answerQueries({
+      getChatbox: scenarioRow(),
+      listChatboxFindings: [{ _id: "finding_elsewhere" }],
+    });
+    const res = await call(
+      userTesting,
+      "POST",
+      `${BASE}/findings/finding_1/dismiss`
+    );
+    expect(res.status).toBe(404);
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 });
 

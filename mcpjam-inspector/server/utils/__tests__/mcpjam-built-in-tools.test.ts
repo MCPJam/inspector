@@ -188,7 +188,6 @@ describe("workspace tool catalog", () => {
       "get_user_testing_insights",
       "dismiss_user_testing_finding",
       "undismiss_user_testing_finding",
-      "cancel_user_testing_insights",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);

@@ -45,6 +45,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerThunkForRequest: () => async () => "convex-jwt",
 }));
 
+import journeys from "../journeys.js";
 import personas from "../personas.js";
 import swarms from "../swarms.js";
 import swarmInsights from "../swarm-insights.js";
@@ -215,6 +216,46 @@ describe("persona routes", () => {
       { body: {} }
     );
     expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("journey authoring", () => {
+  it("404s a persona from ANOTHER project instead of running it", async () => {
+    // `journeys:createJourney` resolves `personaRefId` on its own and checks
+    // membership of whatever project it lives in — so without the preflight a
+    // member of both could author a journey in A that runs B's persona.
+    queryMock.mockResolvedValue([personaRow({ _id: "persona_in_a" })]);
+    const res = await call(journeys, "POST", `/projects/${PROJECT}/journeys`, {
+      body: {
+        goal: "buy a thing",
+        personaId: "persona_in_b",
+        sessionsPerTarget: 1,
+        maxTurns: 8,
+      },
+    });
+    expect(res.status).toBe(404);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("404s a swarm container from another project", async () => {
+    queryMock.mockImplementation((name: string) =>
+      Promise.resolve(
+        String(name).includes("listPersonas")
+          ? [personaRow()]
+          : { _id: "swarm_1", projectId: OTHER_PROJECT }
+      )
+    );
+    const res = await call(journeys, "POST", `/projects/${PROJECT}/journeys`, {
+      body: {
+        goal: "buy a thing",
+        personaId: "persona_1",
+        swarmId: "swarm_in_b",
+        sessionsPerTarget: 1,
+        maxTurns: 8,
+      },
+    });
+    expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
   });
 });

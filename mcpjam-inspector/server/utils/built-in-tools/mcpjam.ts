@@ -84,7 +84,6 @@ import {
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
-  cancelUserTestingInsightsOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -170,7 +169,6 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
-  cancelUserTestingInsightsOperation,
 ];
 
 /**
@@ -236,6 +234,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Changes what visitors are talking to, under a link they already hold.",
   request_user_testing_insights:
     "Spends against the organization's shared daily insights budget. The tab has the button, next to the window it applies to.",
+  cancel_user_testing_insights:
+    "Paired with the request above. The wave pair is excluded on the same rule — offering a cancel for a request this surface cannot make is a half-surface, and the tab owns both halves.",
 
   // Identity and catalogs the surrounding UI already owns. Chat runs inside a
   // chosen project; re-offering the pickers as tools invites the model to

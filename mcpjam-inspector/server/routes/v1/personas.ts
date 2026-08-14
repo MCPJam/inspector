@@ -95,13 +95,30 @@ function toPersonaDto(row: PersonaRow, projectId: string) {
   };
 }
 
+/**
+ * Highest valid avatar index. Mirrors the backend's
+ * `PERSONA_AVATAR_SHAPE_COUNT` / `PERSONA_AVATAR_PALETTE_COUNT` (both 6), which
+ * the app's own constants mirror in the other direction.
+ */
+const PERSONA_AVATAR_MAX_INDEX = 5;
+
 const createPersonaSchema = z.strictObject({
   name: z.string().trim().min(1).max(120),
   role: z.string().trim().min(1).max(120),
   notes: z.string().max(2000).optional(),
-  /** Look, as indices into the app's fixed shape/palette sets. */
-  avatarShape: z.number().int().min(0).optional(),
-  avatarPalette: z.number().int().min(0).optional(),
+  /**
+   * Look, as indices into the app's fixed shape/palette sets. Bounded HERE as
+   * well as upstream so an out-of-range index fails at the API boundary with a
+   * field name, rather than as a Convex error about a constant the caller has
+   * never seen.
+   */
+  avatarShape: z.number().int().min(0).max(PERSONA_AVATAR_MAX_INDEX).optional(),
+  avatarPalette: z
+    .number()
+    .int()
+    .min(0)
+    .max(PERSONA_AVATAR_MAX_INDEX)
+    .optional(),
 });
 
 const updatePersonaSchema = z
@@ -109,8 +126,18 @@ const updatePersonaSchema = z
     name: z.string().trim().min(1).max(120).optional(),
     role: z.string().trim().min(1).max(120).optional(),
     notes: z.string().max(2000).optional(),
-    avatarShape: z.number().int().min(0).optional(),
-    avatarPalette: z.number().int().min(0).optional(),
+    avatarShape: z
+      .number()
+      .int()
+      .min(0)
+      .max(PERSONA_AVATAR_MAX_INDEX)
+      .optional(),
+    avatarPalette: z
+      .number()
+      .int()
+      .min(0)
+      .max(PERSONA_AVATAR_MAX_INDEX)
+      .optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Provide at least one persona field to update.",
@@ -162,7 +189,7 @@ async function listPersonaRows(
  * A persona in another project is simply absent from this list, so the 404 is
  * indistinguishable from one that never existed — no existence oracle.
  */
-async function requirePersonaInProject(
+export async function requirePersonaInProject(
   client: ConvexHttpClient,
   projectId: string,
   personaId: string

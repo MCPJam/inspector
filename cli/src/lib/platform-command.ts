@@ -14,7 +14,7 @@ import type { Command } from "commander";
 import { PlatformApiError } from "@mcpjam/sdk/platform";
 import { buildPlatformClient, toCliError } from "./platform-client.js";
 import { getGlobalOptions } from "./server-config.js";
-import { writeResult } from "./output.js";
+import { usageError, writeResult } from "./output.js";
 
 export type PlatformOptions = {
   apiKey?: string;
@@ -131,12 +131,66 @@ export function addProjectOption(command: Command): Command {
  */
 export function parseIntegerOption(
   value: string | undefined,
-  flag: string
+  flag: string,
+  bounds?: { min?: number; max?: number }
 ): number | undefined {
   if (value === undefined) return undefined;
-  const parsed = Number(value);
+  // `Number("")` is 0 and `Number.isInteger(0)` is true, so an empty flag value
+  // would sail through this guard and be rejected by a zod bound two hops
+  // later — with a field name the user never typed.
+  const trimmed = value.trim();
+  const parsed = trimmed === "" ? Number.NaN : Number(trimmed);
+  // `usageError`, not a bare Error: a bare one surfaces as INTERNAL_ERROR with
+  // exit code 1, which tells a script the CLI broke when in fact the flag was
+  // mistyped. Malformed input is exit code 2.
   if (!Number.isInteger(parsed)) {
-    throw new Error(`${flag} must be a whole number`);
+    throw usageError(`${flag} must be a whole number`);
+  }
+  // Bounds are checked HERE rather than left to the API so a typo fails
+  // locally and instantly, instead of after a round trip that reports a field
+  // name the user never typed.
+  if (bounds?.min !== undefined && parsed < bounds.min) {
+    throw usageError(`${flag} must be at least ${bounds.min}`);
+  }
+  if (bounds?.max !== undefined && parsed > bounds.max) {
+    throw usageError(`${flag} must be at most ${bounds.max}`);
   }
   return parsed;
+}
+
+/**
+ * Exactly one of two mutually exclusive flags, both optional individually.
+ *
+ * The generation endpoints ground a model in either an environment or a legacy
+ * server attachment, and reject neither/both with a 400. Checking here means
+ * the user finds out before a model call is made rather than after.
+ */
+export function requireExactlyOne(flags: Record<string, unknown>): void {
+  const supplied = Object.entries(flags).filter(
+    ([, value]) => value !== undefined && value !== ""
+  );
+  if (supplied.length === 1) return;
+  const names = Object.keys(flags).join(" or ");
+  throw usageError(
+    supplied.length === 0
+      ? `Provide ${names}.`
+      : `Provide only one of ${names}.`
+  );
+}
+
+/**
+ * Two flags that must be supplied together or not at all.
+ *
+ * The execution knobs are one `config` object upstream, so a one-sided update
+ * is rejected server-side. Failing locally names both flags, which the server's
+ * message about a nested field cannot.
+ */
+export function requireTogether(
+  first: { flag: string; value: unknown },
+  second: { flag: string; value: unknown }
+): void {
+  if ((first.value === undefined) === (second.value === undefined)) return;
+  throw usageError(
+    `${first.flag} and ${second.flag} must be given together — they are one execution config upstream.`
+  );
 }

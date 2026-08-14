@@ -73,6 +73,36 @@ export interface TranslateConvexWriteErrorOptions {
   adminFailureIsForbidden?: boolean;
 }
 
+/**
+ * The actionable fields off a billing ConvexError, forwarded as `details`.
+ *
+ * `limit` says WHICH cap, `plan` and `upgradePlan` say what would lift it, and
+ * `currentValue`/`allowedValue` say by how much. Without them a caller gets
+ * "Plan limit reached" and has to guess — and an agent has nothing to tell a
+ * human beyond that something is capped.
+ *
+ * Copied field by field rather than passed through: the payload is the
+ * backend's internal error shape, and spreading it would publish whatever it
+ * gains next without anyone deciding to.
+ */
+function billingDetails(
+  data: Record<string, unknown> | null | undefined
+): Record<string, unknown> | undefined {
+  if (!data) return undefined;
+  const details: Record<string, unknown> = {};
+  for (const key of [
+    "limit",
+    "gateKey",
+    "plan",
+    "upgradePlan",
+    "currentValue",
+    "allowedValue",
+  ]) {
+    if (data[key] !== undefined) details[key] = data[key];
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
 export function translateConvexWriteError(
   error: unknown,
   options: TranslateConvexWriteErrorOptions
@@ -126,6 +156,8 @@ export function translateConvexWriteError(
 
   // ── Billing gates (mcpjam-backend lib/entitlements.ts) ──────────────────
   //
+  // See `billingDetails` below for what travels with them.
+  //
   // These arrive as ConvexErrors whose `code` is one of the `billing_*`
   // literals, and without these branches every one of them falls through to
   // the generic 400 at the bottom — a plan limit reported as a malformed
@@ -141,14 +173,19 @@ export function translateConvexWriteError(
     return new WebRouteError(
       429,
       ErrorCode.RATE_LIMITED,
-      structuredMessage ?? "Plan limit reached."
+      structuredMessage ?? "Plan limit reached.",
+      // The backend's payload names the cap, the plan and the upgrade target.
+      // Dropping it leaves a caller with "Plan limit reached" and no way to
+      // say WHICH limit or what to do about it.
+      billingDetails(data as Record<string, unknown> | null)
     );
   }
   if (code === "billing_feature_not_included") {
     return new WebRouteError(
       403,
       ErrorCode.FORBIDDEN,
-      structuredMessage ?? "This feature is not included in your plan."
+      structuredMessage ?? "This feature is not included in your plan.",
+      billingDetails(data as Record<string, unknown> | null)
     );
   }
 
