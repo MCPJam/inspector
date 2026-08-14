@@ -128,11 +128,16 @@ export function ThreadCard({
   isSelected: boolean;
   onSelect: () => void;
 }) {
-  const rating = thread.feedbackRating;
+  // The session's rating is its WORST turn (see `chatbox-usage-filters.ts`),
+  // so the amber treatment fires on "one turn went badly", not "the average
+  // was low" — which is the cohort a PM opens this list to find.
+  const summary = thread.feedback ?? null;
+  const rating = summary?.min ?? thread.feedbackRating ?? null;
+  const ratingCount = summary?.count ?? thread.feedbackCount ?? 0;
+  const hasComment =
+    summary?.hasComment ?? (thread.feedbackComment?.trim().length ?? 0) > 0;
   const needsReview =
-    rating === 1 ||
-    rating === 2 ||
-    (rating === 3 && (thread.feedbackComment?.trim().length ?? 0) > 0);
+    (rating != null && rating <= 2) || (rating === 3 && hasComment);
 
   return (
     <button
@@ -177,7 +182,12 @@ export function ThreadCard({
                 : "text-muted-foreground"
             }`}
           >
-            {rating}/5
+            {/* Average for the headline number, `n×` for how many turns it
+                covers — the worst turn is what the amber tint already says,
+                so repeating it here would spend the row's one number on a
+                fact the color carries. */}
+            {summary ? summary.avg.toFixed(1) : rating}/5
+            {ratingCount > 1 ? ` · ${ratingCount}×` : ""}
           </span>
         ) : (
           <span className="text-xs text-muted-foreground">No feedback</span>
