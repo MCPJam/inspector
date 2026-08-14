@@ -1105,11 +1105,9 @@ function CompareSearchBar({
     [fields]
   );
   const filteredFieldGroups = useMemo(() => {
-    // Not lowercased here: normalizeFieldSearchText splits camelCase by its
-    // lowercase-then-uppercase boundary, so a pre-lowered "toolcancelled"
-    // would never split back into "tool cancelled" and fail to match its own
-    // field — which the autocomplete list hits directly, since selecting a
-    // suggestion inserts the field's own camelCase label as the query.
+    // Deliberately not lowercased — see fieldMatchesQuery. Selecting a
+    // suggestion feeds that field's own camelCase label back in as the query,
+    // so this list is the first thing a pre-lowered query breaks.
     const trimmedQuery = query.trim();
     return fieldGroups
       .map((group) => ({

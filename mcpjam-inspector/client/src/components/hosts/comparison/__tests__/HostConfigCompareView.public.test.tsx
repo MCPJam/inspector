@@ -262,15 +262,14 @@ describe("HostConfigCompareView public mode", () => {
     expect(filterButton).not.toBeDisabled();
   });
 
-  it("matches a field whose label is itself camelCase (regression: search query must not be lowercased)", async () => {
-    // appsCap.toolCancelled's label is literally "toolCancelled" — some MCP
-    // Apps capability rows use their raw camelCase key as the label. If the
-    // query were lowercased before matching (the original bug), typing this
-    // exact label would produce "No fields match" instead of the row itself.
-    // This exercises the matrix's own row-filtering path (computeVisibleFieldIds,
-    // fed the raw `fieldSearchQuery` state directly) — not the search bar's
-    // internal autocomplete-suggestion filtering, which has its own coverage
-    // in support-level.test.ts.
+  it("matches a camelCase field label in both the matrix rows and the autocomplete list", async () => {
+    // appsCap.toolCancelled's label is literally "toolCancelled" — the MCP Apps
+    // capability rows use their raw camelCase key as the label. Lowercasing the
+    // query before matching (the original bug) collapses the camelCase boundary
+    // the tokenizer needs, so typing this exact label showed "No fields match".
+    // Both filtering paths are asserted because each has its own call site: the
+    // matrix rows via computeVisibleFieldIds, the suggestion list via
+    // fieldMatchesQuery directly.
     const user = userEvent.setup();
 
     render(
@@ -292,17 +291,22 @@ describe("HostConfigCompareView public mode", () => {
       "toolCancelled"
     );
 
-    // The matrix renders either the table or "No fields match" (mutually
-    // exclusive early returns) — so finding the row inside a real table
-    // already implies the empty state isn't showing. Scoped to the table
-    // because the search bar's own autocomplete popover can render a
-    // "toolCancelled" suggestion at the same time; an unscoped getByText
-    // would collide with it.
+    // The matrix returns either the table or "No fields match" (mutually
+    // exclusive early returns), so finding the row inside a real table already
+    // implies the empty state isn't showing. Scoped to the table because the
+    // autocomplete popover renders its own "toolCancelled" suggestion.
     await waitFor(() => {
       expect(
         within(screen.getByRole("table")).getByText("toolCancelled")
       ).toBeInTheDocument();
     });
+
+    // The suggestion list filters through its own fieldMatchesQuery call, so it
+    // must survive the same camelCase query — this is what the reported bug hit
+    // first: picking a suggestion feeds the field's own label back as the query.
+    expect(
+      within(screen.getByRole("listbox")).getByText("toolCancelled")
+    ).toBeInTheDocument();
   });
 
   it("clears search filtering without changing selected clients when Can I use is clicked", async () => {

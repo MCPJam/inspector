@@ -231,26 +231,21 @@ describe("fieldMatchesQuery / computeVisibleFieldIds", () => {
 
   it("matches a field whose label is itself camelCase (MCP Apps capability rows)", () => {
     // Some rows' `label` is the raw camelCase key, not a humanized string —
-    // e.g. appsCap.toolCancelled's label is literally "toolCancelled". The
-    // search bar's autocomplete inserts a selected field's own `label` as the
-    // query verbatim (onQueryChange(field.label)), so this must keep matching
-    // its own field, or picking a suggestion produces zero results.
+    // appsCap.toolCancelled's label is literally "toolCancelled". Selecting a
+    // suggestion feeds that label back as the query verbatim
+    // (onQueryChange(field.label)), so it has to match its own field.
     const field = hostConfigField("appsCap.toolCancelled");
     expect(field.label).toBe("toolCancelled");
     expect(fieldMatchesQuery(field, field.label)).toBe(true);
   });
 
-  it("callers must not lowercase the query before calling fieldMatchesQuery", () => {
-    // normalizeFieldSearchText splits camelCase by its lowercase-then-uppercase
-    // boundary; once a query has been forced to lowercase that boundary is
-    // gone for good and can't be recovered inside fieldMatchesQuery itself —
-    // "toolcancelled" stays one token against the haystack's split
-    // "tool"/"cancelled" tokens. This is why the fix lives at the call sites
-    // (HostConfigCompareView's search bar, computeVisibleFieldIds below), not
-    // in fieldMatchesQuery: it documents the failure mode those call sites
-    // must keep avoiding, not a case this function is expected to handle.
+  it("stays case-insensitive now that callers no longer pre-lowercase", () => {
+    // The tokenizer splits on the case boundary first and lowercases after, so
+    // dropping the callers' `.toLowerCase()` costs nothing in case-insensitivity.
     const field = hostConfigField("appsCap.toolCancelled");
-    expect(fieldMatchesQuery(field, field.label.toLowerCase())).toBe(false);
+    for (const query of ["toolCancelled", "ToolCancelled", "TOOL CANCELLED"]) {
+      expect(fieldMatchesQuery(field, query)).toBe(true);
+    }
   });
 
   it("narrows visible ids by search query", () => {
