@@ -430,14 +430,41 @@ export function mapTargetServerError(error: unknown): WebRouteError {
   // Mutated rather than rebuilt: `mapRuntimeError` has already stamped
   // `origin`, backfilled `normalized`, and attached the cause link the capture
   // dedupe walks. A fresh `WebRouteError` would drop all three.
-  if (
-    routeError.status === 502 &&
-    routeError.code === ErrorCode.SERVER_UNREACHABLE &&
-    namesAnMcpServer(routeError.message)
-  ) {
+  if (isTargetDependencyFailure(routeError)) {
     routeError.status = 424;
   }
   return routeError;
+}
+
+/**
+ * The two classifications that mean "we could not get an answer out of the
+ * user's MCP server", both of which the edge would otherwise eat.
+ *
+ * `504 TIMEOUT` is here for the same reason `502 SERVER_UNREACHABLE` is, and
+ * leaving it out was an oversight rather than a decision: `classifyRuntimeError`
+ * checks "timed out" BEFORE the connection patterns, so a target that accepts
+ * the connection and then goes quiet — the commonest shape for an overloaded or
+ * half-deployed server — exits as a 504 and never reaches the 502 branch.
+ * Cloudflare replaces a 504 exactly as it replaces a 502, so those failures kept
+ * arriving as MCPJam outages and kept paging us.
+ *
+ * A timeout IS weaker evidence than a refusal — silence can be our own container
+ * starving or our network stalling, where `ECONNREFUSED` is the far side
+ * actively saying no. `namesAnMcpServer` is what makes it safe anyway: only a
+ * timeout raised while connecting to a named MCP server is downgraded, and a
+ * timeout from our own hops (Convex, the backend) carries no such name, keeps
+ * 504, and keeps paging. And a downgraded failure is not an invisible one — it
+ * still emits `http.request.failed` with `origin` and `slug`, so if this class
+ * ever turns out to be ours, that is a decision to make from the volume rather
+ * than from the fear of missing it.
+ */
+function isTargetDependencyFailure(routeError: WebRouteError): boolean {
+  if (!namesAnMcpServer(routeError.message)) return false;
+  return (
+    (routeError.status === 502 &&
+      routeError.code === ErrorCode.SERVER_UNREACHABLE) ||
+    (routeError.status === 504 && routeError.code === ErrorCode.TIMEOUT)
+  );
 }
 
 /**

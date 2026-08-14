@@ -352,15 +352,45 @@ describe("mapTargetServerError", () => {
     expect(mapped.origin).toBe(originOf(mapped.normalized!));
   });
 
-  it("touches ONLY the connection class", () => {
-    // Every other status this mapper can produce is either not a dependency
-    // failure or not ours to relabel. A timeout stays 504 (the request may
-    // still be running on the far side), auth rejections stay where the spec
-    // puts them, and an internal error stays a 500 so it keeps paging.
+  it("downgrades a TARGET timeout too", () => {
+    // `classifyRuntimeError` tests "timed out" BEFORE the connection patterns,
+    // so a server that accepts the connection and then goes quiet — an
+    // overloaded or half-deployed one — exits as a 504 and never reaches the
+    // 502 branch. Cloudflare eats a 504 exactly as it eats a 502, so leaving
+    // this class behind kept the misattribution alive one branch over.
+    const mapped = mapTargetServerError(
+      new Error(
+        'Failed to connect to MCP server "srv-1" using HTTP transports: the request timed out',
+      ),
+    );
+    expect(mapped.status).toBe(424);
+    expect(mapped.code).toBe(ErrorCode.TIMEOUT);
+  });
+
+  it("keeps an MCPJam-internal timeout at 504", () => {
+    // The trade that makes the line above safe. Silence is weaker evidence
+    // than a refusal — it can be our own container starving rather than their
+    // server being slow — so only a timeout that NAMES the server it was
+    // reaching is downgraded. Ours keeps its 5xx and keeps paging.
     expect(mapTargetServerError(new Error("Connection timed out")).status).toBe(
       504,
     );
+    expect(
+      mapTargetServerError(new Error("Convex request timed out after 10000ms"))
+        .status,
+    ).toBe(504);
+  });
+
+  it("touches ONLY the dependency classes", () => {
+    // Everything else is either not a dependency failure or not ours to
+    // relabel: auth rejections stay where the spec puts them, and an internal
+    // error stays a 500 so it keeps paging — even when a server is named,
+    // since naming one does not make an unclassified throw theirs.
     expect(mapTargetServerError(new Error("kaboom")).status).toBe(500);
+    expect(
+      mapTargetServerError(new Error('MCP server "srv-1" broke us: kaboom'))
+        .status,
+    ).toBe(500);
   });
 
   it("leaves a pre-built WebRouteError alone", () => {
