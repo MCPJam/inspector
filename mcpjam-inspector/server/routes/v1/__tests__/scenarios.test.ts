@@ -175,10 +175,13 @@ describe("PUT .../scenario", () => {
     // `projectId` would still get null from this mock and still 404 here,
     // while in production it would resolve an environment from any project the
     // caller can reach — the exact bug this preflight exists to prevent.
-    expect(queryMock).toHaveBeenCalledWith("projectEnvironments:getEnvironment", {
-      projectId: PROJECT,
-      environmentId: ENV,
-    });
+    expect(queryMock).toHaveBeenCalledWith(
+      "projectEnvironments:getEnvironment",
+      {
+        projectId: PROJECT,
+        environmentId: ENV,
+      }
+    );
   });
 
   it("404s — and does not publish — when the preflight THROWS", async () => {
@@ -257,9 +260,12 @@ describe("DELETE .../scenario", () => {
     queryMock.mockResolvedValue(null);
     expect((await call("DELETE")).status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
-    expect(queryMock).toHaveBeenCalledWith("projectEnvironments:getEnvironment", {
-      projectId: PROJECT,
-      environmentId: ENV,
-    });
+    expect(queryMock).toHaveBeenCalledWith(
+      "projectEnvironments:getEnvironment",
+      {
+        projectId: PROJECT,
+        environmentId: ENV,
+      }
+    );
   });
 });

@@ -57,6 +57,35 @@ import {
   readServerResourceOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -94,6 +123,58 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+
+  // ── Swarms ──────────────────────────────────────────────────────────────
+  //
+  // READS and REVERSIBLE AUTHORING. The line this surface draws is not the
+  // beta flag and not read-vs-write — it is whether the app has a screen that
+  // shows you what you are about to do. Creating a persona in chat is fine:
+  // you can see it, edit it, delete it. Launching a run from chat is not, and
+  // the Swarms tab is the reason — it puts the journey, its targets and its
+  // session count in front of you before anything spends, and a chat tool
+  // would start all of it from an id with none of that context.
+  //
+  // `get_capabilities` leads because the same static-catalog problem applies
+  // here: this toolset is compiled in, so it cannot tell the model that this
+  // organization is not in the beta.
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+
+  // ── User testing ────────────────────────────────────────────────────────
+  //
+  // The AGGREGATE reads and the judgement calls over them. Session listings
+  // and transcripts are excluded: they are real people's conversations with
+  // your product, and a chat tool that can page through them turns an
+  // assistant turn into a transcript reader. Same line `list_chat_sessions`
+  // already draws. The exposure controls are excluded for the reason the tab
+  // exists — the share link and access mode are shown inline there.
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
 ];
 
 /**
@@ -112,22 +193,55 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_journey_run:
     "The Swarms tab has a Stop control with the run in front of you; a chat tool would cancel by id with none of that context.",
+  // Swarms authoring writes that REMOVE or SPEND. The reversible half of
+  // authoring (create/update persona, journey, swarm) is advertised above —
+  // you can see the result in the tab and undo it. These cannot be undone by
+  // looking at them.
+  delete_persona:
+    "Takes a persona off the roster; the Swarms tab shows what still references it before you do.",
+  archive_journey:
+    "Takes a journey off the roster. The tab shows its run history first, which is the thing you are deciding about.",
+  archive_swarm:
+    "Takes a container off the roster; the tab shows the journeys authored under it.",
+  generate_personas:
+    "Runs a model on the organization's account. The create flow in the Swarms tab is where generation belongs — it shows the drafts and lets you pick, where a chat tool would spend and hand back prose.",
+  generate_journeys:
+    "Same as generate_personas: spends, and the drafts want the picker the tab already has.",
+  request_wave_insights:
+    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
+  cancel_wave_insights:
+    "Paired with the request above; offering the cancel without the request is an odd half-surface.",
   // Scenarios (user testing).
   publish_scenario:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
   unpublish_scenario:
     "Takes a live scenario down; the UI confirms it, since guest sessions die with it.",
-
-  // Journeys (the Swarms product) stay out of this catalog WHOLESALE until GA.
-  // That is a CATALOG decision, not the `sandboxes-enabled` flag: these reads
-  // are deliberately ungated and never answer FEATURE_UNAVAILABLE — the flag
-  // covers the exposure-creating writes (launch, authoring, publish). Do not
-  // read this list as "what the flag blocks"; it is "what we have not committed
-  // to a public tool contract for yet".
-  list_journeys: "Pre-GA product — expose at GA.",
-  list_journey_runs: "Pre-GA product — expose at GA.",
-  get_journey_run: "Pre-GA product — expose at GA.",
-  list_journey_run_sessions: "Pre-GA product — expose at GA.",
+  // User testing: sessions and transcripts. PRIVACY, not risk — real visitors'
+  // conversations, and a chat surface that can page them is a transcript
+  // reader wearing an assistant's clothes. Mirrors `list_chat_sessions`.
+  list_user_testing_sessions:
+    "Visitor conversations; the User Testing tab is where you read them, with the consent context around them.",
+  get_user_testing_session:
+    "A real person's conversation with your product. Available on REST/CLI/MCP where the caller asked for it explicitly.",
+  // Exposure controls. Each of these decides who can reach a live scenario or
+  // what it may spend; the tab shows the link, the mode and the current caps
+  // next to the control, which a chat tool cannot.
+  update_user_testing_scenario:
+    "Changing a scenario's access mode belongs next to the share link the tab already shows.",
+  set_user_testing_guest_execution:
+    "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
+  rotate_user_testing_link:
+    "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
+  upsert_user_testing_member:
+    "Granting someone access to a live scenario is a decision about who may talk to your servers.",
+  remove_user_testing_member:
+    "Paired with the invite above; the member list is the tab's own surface.",
+  rebind_user_testing_scenario:
+    "Changes what visitors are talking to, under a link they already hold.",
+  request_user_testing_insights:
+    "Spends against the organization's shared daily insights budget. The tab has the button, next to the window it applies to.",
+  cancel_user_testing_insights:
+    "Paired with the request above. The wave pair is excluded on the same rule — offering a cancel for a request this surface cannot make is a half-surface, and the tab owns both halves.",
 
   // Identity and catalogs the surrounding UI already owns. Chat runs inside a
   // chosen project; re-offering the pickers as tools invites the model to

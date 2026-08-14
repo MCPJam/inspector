@@ -64,6 +64,46 @@ import {
   readServerResourceOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  generatePersonasOperation,
+  generateJourneysOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  cancelUserTestingInsightsOperation,
+  requestUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  upsertUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
+  setUserTestingGuestExecutionOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -181,6 +221,33 @@ function evalRunResource(
       `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(
         projectId
       )}`,
+  };
+}
+
+/**
+ * The run a launch produces, as a linkable resource.
+ *
+ * Built here rather than by the host for the reason the eval builder above
+ * documents: a host assembling URLs from a result payload would have to know
+ * each operation's result shape, and would silently link to nothing the moment
+ * one changed.
+ */
+function journeyRunResource(
+  result: unknown,
+  { projectId }: { projectId: string }
+): ExecutedActionResource | undefined {
+  const runId = readString(result, "run.id") ?? readString(result, "runId");
+  if (!runId) return undefined;
+  return {
+    type: "journey_run",
+    id: runId,
+    // `/swarms/<runId>` — the client routes on the FIRST segment after
+    // `/swarms/` (App.tsx takes `.split("/")[0]` as the run id), so a
+    // `/swarms/runs/<id>` link resolves to a run named literally "runs" and
+    // dead-links the approver.
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/swarms/${encodeURIComponent(runId)}` +
+      `?project=${encodeURIComponent(projectId)}`,
   };
 }
 
@@ -609,6 +676,279 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       UNTRUSTED_SERVER_CONTENT_NOTE,
     ],
   },
+
+  // ── SWARMS ────────────────────────────────────────────────────────────
+  //
+  // The tiers below are NOT a fresh per-operation judgement — they are read
+  // off `operation.risk` in the SDK catalog:
+  //
+  //   risk: none        → direct   (persists, reversible, costs nothing)
+  //   risk: spend       → gated    (a person approves the money)
+  //   risk: exposure    → gated    (a person approves who can reach it)
+  //   risk: destructive → excluded (an approval makes spend deliberate; it
+  //                                 does not make a deletion recoverable)
+  //
+  // Deriving from shared metadata rather than re-deciding here is the fix for
+  // a real failure: `cancel_journey_run` was once excluded from this surface
+  // citing a reason that only applied to the MCP catalog, because each
+  // partition file argued the case independently and one of them got it wrong.
+  {
+    operation: getCapabilitiesOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Before planning anything that authors, launches or publishes, call `get_capabilities` for the project. Your tool list is identical for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the action needs an admin. The `can` block answers both. Finding out from a 403 means you have already told someone you were doing it.",
+    ],
+  },
+  { operation: listPersonasOperation, tier: "direct" },
+  { operation: getPersonaOperation, tier: "direct" },
+  { operation: createPersonaOperation, tier: "direct" },
+  { operation: updatePersonaOperation, tier: "direct" },
+  { operation: listJourneysOperation, tier: "direct" },
+  {
+    operation: getJourneyOperation,
+    tier: "direct",
+    promptNotes: [
+      "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
+    ],
+  },
+  { operation: createJourneyOperation, tier: "direct" },
+  { operation: updateJourneyOperation, tier: "direct" },
+  { operation: listSwarmsOperation, tier: "direct" },
+  { operation: getSwarmOperation, tier: "direct" },
+  { operation: createSwarmOperation, tier: "direct" },
+  { operation: updateSwarmOperation, tier: "direct" },
+  { operation: listJourneyRunsOperation, tier: "direct" },
+  {
+    operation: getJourneyRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
+    ],
+  },
+  {
+    operation: getSwarmOverviewOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
+    ],
+  },
+  {
+    operation: getJourneyRunScorecardOperation,
+    tier: "direct",
+    promptNotes: [
+      "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
+    ],
+  },
+  { operation: listSwarmFindingsOperation, tier: "direct" },
+  { operation: dismissSwarmFindingOperation, tier: "direct" },
+  { operation: undismissSwarmFindingOperation, tier: "direct" },
+  { operation: getWaveInsightsOperation, tier: "direct" },
+  { operation: cancelWaveInsightsOperation, tier: "direct" },
+
+  // ── GATED — the swarm operations that SPEND.
+  {
+    operation: launchJourneyRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Launch journey ${named(input, "journey") ?? "(unnamed)"}`,
+      buttonLabel: "Launch it",
+      kind: "start",
+      confirmSeverity: "spend",
+      resource: journeyRunResource,
+      target: (input) => {
+        const journey = named(input, "journey");
+        return journey ? { type: "journey", selector: journey } : undefined;
+      },
+    },
+    promptNotes: [
+      "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
+    ],
+  },
+  {
+    operation: cancelJourneyRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Stop journey run ${named(input, "run") ?? "(unnamed)"}`,
+      buttonLabel: "Stop the run",
+      kind: "cancel",
+      // Stopping SAVES money. A host's default approval copy is worded around
+      // cost, so leaving this absent would warn about spend on the one action
+      // that reduces it.
+      confirmSeverity: "none",
+    },
+  },
+  {
+    operation: generatePersonasOperation,
+    tier: "gated",
+    proposal: {
+      describe: () => "Draft personas with a model",
+      buttonLabel: "Draft them",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: generateJourneysOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const persona = input.persona;
+        const name =
+          persona && typeof persona === "object"
+            ? named(persona as Record<string, unknown>, "name")
+            : undefined;
+        return name
+          ? `Draft journeys for ${name} with a model`
+          : "Draft journeys with a model";
+      },
+      buttonLabel: "Draft them",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: requestWaveInsightsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Analyze wave ${named(input, "wave") ?? "(unnamed)"} with a model`,
+      buttonLabel: "Analyze it",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+    ],
+  },
+
+  // ── USER TESTING ──────────────────────────────────────────────────────
+  //
+  // Same derivation as Swarms above: the tier comes off `operation.risk`.
+  //
+  // The reads here are the AGGREGATE ones. Session listings and transcripts
+  // are excluded below for privacy rather than risk — they are real visitors'
+  // conversations, and the metrics answer "how is this going" without pulling
+  // anyone's words into a turn.
+  {
+    operation: getUserTestingMetricsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+    ],
+  },
+  {
+    operation: getUserTestingUsageOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
+    ],
+  },
+  { operation: listUserTestingFindingsOperation, tier: "direct" },
+  { operation: getUserTestingSignalsOperation, tier: "direct" },
+  { operation: getUserTestingInsightsOperation, tier: "direct" },
+  { operation: dismissUserTestingFindingOperation, tier: "direct" },
+  { operation: undismissUserTestingFindingOperation, tier: "direct" },
+  { operation: cancelUserTestingInsightsOperation, tier: "direct" },
+  {
+    operation: requestUserTestingInsightsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Analyze user testing on ${
+          named(input, "scenario") ?? "(unnamed)"
+        } with a model`,
+      buttonLabel: "Analyze it",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: updateUserTestingScenarioOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const scenario = named(input, "scenario") ?? "(unnamed)";
+        const mode = named(input, "mode");
+        // The MODE is the thing the approver is really deciding about, so it
+        // goes in the sentence rather than being folded into "update".
+        // `anyone_with_link` in particular means anyone holding the URL, and
+        // an approval that said only "update scenario" would hide that.
+        return mode
+          ? `Set ${scenario} access to ${mode}`
+          : `Rename scenario ${scenario}`;
+      },
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      // A rename costs nothing and exposes nothing. ANY mode change does:
+      // `project_members` → `invited_only` also puts the scenario in front of
+      // people outside the project, and only a change TO `project_members` is
+      // a narrowing. Singling out `anyone_with_link` gave the mildest possible
+      // prompt to a genuine widening.
+      confirmSeverity: (input) => {
+        const mode = named(input, "mode");
+        if (mode === undefined || mode === "project_members") return "none";
+        return "external";
+      },
+    },
+  },
+  {
+    operation: upsertUserTestingMemberOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Invite ${named(input, "email") ?? "(unnamed)"} to scenario ${
+          named(input, "scenario") ?? "(unnamed)"
+        }`,
+      buttonLabel: "Invite them",
+      kind: "schedule",
+      // Granting a named outsider access to a live scenario is the exposure
+      // change this operation's own `risk: "exposure"` describes. `none` would
+      // have the host render its neutral prompt for it.
+      confirmSeverity: "external",
+    },
+  },
+  {
+    operation: rebindUserTestingScenarioOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Point scenario ${
+          named(input, "scenario") ?? "(unnamed)"
+        } at environment ${named(input, "environmentId") ?? "(unnamed)"}`,
+      buttonLabel: "Rebind it",
+      kind: "schedule",
+      // Visitors keep the link they already have and start talking to
+      // something else. That is a change about what MCPJam reaches on their
+      // behalf, which is what `external` warns about.
+      confirmSeverity: "external",
+    },
+  },
+  {
+    operation: setUserTestingGuestExecutionOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const scenario = named(input, "scenario") ?? "(unnamed)";
+        const cap = input.dailyCreditCap;
+        return input.enabled === true
+          ? `Allow guests on ${scenario} to run tools${
+              typeof cap === "number" ? `, up to ${cap} credits a day` : ""
+            }`
+          : `Turn off guest execution on ${scenario}`;
+      },
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      // The cap is a CEILING on recurring spend by strangers, so enabling is
+      // the only thing here that warrants a spend warning; turning it off
+      // stops spend and must not inherit one.
+      confirmSeverity: (input) => (input.enabled === true ? "spend" : "none"),
+    },
+    promptNotes: [
+      "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+    ],
+  },
 ];
 
 /**
@@ -625,26 +965,44 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
-  launch_journey_run:
-    "Pre-GA product, held out with the rest of the journey surface. (It is also the one journey operation that SPENDS — at GA it wants a tier that requires approval, not one that lets the agent start a fan-out unattended.)",
-  cancel_journey_run:
-    "Pre-GA product, held out with the rest of the journey surface — NOT a per-call judgement about cancellation. (`EXCLUDED_FROM_AGENT` means the agent cannot even PROPOSE it for approval, so a rationale about proposing would describe the opposite of what this does. At GA it should register as a gated write, like the eval cancellation it mirrors.)",
+  // Swarms operations the agent may not even PROPOSE. All three are
+  // `risk: destructive` in the SDK catalog, and the rule this surface applies
+  // is the one the gated block above states: a proposal makes spend
+  // deliberate, it does not make a removal recoverable.
+  delete_persona:
+    "Removes a persona from the roster; the agent proposes authoring, never destruction.",
+  archive_journey:
+    "Removes a journey from the roster; the agent proposes authoring, never destruction.",
+  archive_swarm:
+    "Removes a container from the roster; the agent proposes authoring, never destruction.",
+  // Session listings and their transcripts. Excluded for PRIVACY, not risk:
+  // these are conversations, synthetic or otherwise, and a chat surface that
+  // can page through them turns an agent turn into a transcript reader.
+  // Mirrors the `list_chat_sessions` precedent below. Still available on REST,
+  // the CLI and MCP, where the caller is asking for them explicitly.
+  list_journey_run_sessions:
+    "Session bodies are conversations; reading them is not a turn concern. Available on REST/CLI/MCP.",
+  // User testing: session listings and transcripts. PRIVACY, not risk — real
+  // visitors' conversations, and a chat surface that can page them is a
+  // transcript reader. Mirrors the `list_chat_sessions` precedent below.
+  // Available on REST/CLI/MCP, where the caller asked for them explicitly.
+  list_user_testing_sessions:
+    "Visitor conversations; not a turn concern. Available on REST/CLI/MCP.",
+  get_user_testing_session:
+    "A real person's conversation with your product. Available on REST/CLI/MCP.",
+  // Access REMOVAL. The agent proposes authoring, never destruction — and
+  // these two take access away from people who currently have it, with no way
+  // to hand it back except by re-inviting them individually.
+  rotate_user_testing_link:
+    "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
+  remove_user_testing_member:
+    "Revokes a named person's access; the agent proposes authoring, never destruction.",
+
   // Scenarios (user testing).
   publish_scenario:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",
   unpublish_scenario:
     "Tears down a live scenario and every guest session on it — destructive, and the agent proposes authoring rather than destruction.",
-
-  // Journeys (the Swarms product). Excluded WHOLESALE while the
-  // `sandboxes-enabled` beta flag is on: what we advertise must match what we
-  // enforce, and the flag is enforced per organization server-side. Advertising
-  // these to every caller would mean most of them get a FEATURE_UNAVAILABLE
-  // error from a tool we told them they had. Revisit at GA.
-  list_journeys: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_runs: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  get_journey_run: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_run_sessions:
-    "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
 
   // Identity and catalogs the agent turn is already scoped by. Re-offering them
   // as tools would let the model shop for a different project mid-turn.
