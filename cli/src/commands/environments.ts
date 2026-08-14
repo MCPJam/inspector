@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import {
+  addPlatformOptions,
+  runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
+import {
   archiveEnvironmentOperation,
   createEnvironmentOperation,
   getEnvironmentCapabilitiesOperation,
@@ -9,12 +14,10 @@ import {
   resolveEnvironmentOperation,
   restoreEnvironmentOperation,
   updateEnvironmentOperation,
-  PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
 import { usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -30,58 +33,6 @@ import { getGlobalOptions } from "../lib/server-config.js";
  * changed the environment in between, the write is rejected with a conflict
  * rather than silently overwriting their edit.
  */
-
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
-
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
-
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 function validateInput<TInput>(
   op: PlatformOperation<TInput, unknown>,
