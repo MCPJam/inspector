@@ -75,6 +75,14 @@ test("caniuse compare table fills the viewport and keeps its header pinned", asy
   // otherwise read as "the wheel event missed" rather than the harmless
   // hydration hiccup it actually is.
   await expect(async () => {
+    // Reset to a known position at the start of every attempt: otherwise a
+    // failed prior attempt (e.g. a header-drift read) leaves the table
+    // scrolled down, and once it's near the scroll bottom there's no 100px of
+    // room left to move — turning a transient failure into a misleading
+    // timeout instead of a clean retry.
+    await scroller.evaluate((el) => {
+      el.scrollTop = 0;
+    });
     await scroller.hover();
     const scrollTopBefore = await scroller.evaluate((el) => el.scrollTop);
     const positions: number[] = [];
