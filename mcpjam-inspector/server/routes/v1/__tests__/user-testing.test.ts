@@ -118,18 +118,34 @@ function answerQueries(answers: Record<string, unknown>) {
  * A stream rather than one big string so the assertion is about bytes
  * ARRIVING: the route is supposed to stop mid-transfer, which a fully
  * materialized body cannot demonstrate.
+ *
+ * VALID JSON, and that is the whole point. An earlier version streamed 16MB of
+ * `x`, which a route that only checked `content-length` would have parsed,
+ * thrown a SyntaxError on, and reported as `transcriptUnavailable` — the same
+ * answer the fixed route gives, so the test passed on the bug it was written to
+ * pin. Being parseable is what makes the two outcomes differ: an unbounded read
+ * SUCCEEDS here and returns a real `messageCount`, so only a route that stops
+ * counting bytes can refuse it.
  */
+const OVERSIZED_MESSAGE_COUNT = 16;
+
 function oversizedTranscriptStream(): ReadableStream<Uint8Array> {
-  const chunk = new TextEncoder().encode("x".repeat(1024 * 1024));
+  const encoder = new TextEncoder();
+  // Each message is ~1MB, so the array passes the 8MB ceiling partway through
+  // and the remaining chunks are never read.
+  const message = `{"role":"user","content":"${"x".repeat(1024 * 1024)}"}`;
   let sent = 0;
   return new ReadableStream({
     pull(controller) {
-      if (sent >= 16) {
+      if (sent === 0) controller.enqueue(encoder.encode("["));
+      if (sent >= OVERSIZED_MESSAGE_COUNT) {
+        controller.enqueue(encoder.encode("]"));
         controller.close();
         return;
       }
+      const separator = sent === 0 ? "" : ",";
       sent += 1;
-      controller.enqueue(chunk);
+      controller.enqueue(encoder.encode(separator + message));
     },
   });
 }
