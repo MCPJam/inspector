@@ -9,6 +9,28 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-08-14
+
+#### Changed
+
+- **User Testing capabilities and API contracts corrected**
+
+  Three honesty fixes to the User Testing surface. No enforcement changes — only what the API *reports* has changed.
+
+  **Capabilities (`can.*`)**
+
+  - `can.changeUserTestingExposure` now reflects **workspace membership** instead of project admin + beta gate. Mode changes, renames, member invites/removals, and link rotation all gate at workspace membership upstream — ordinary members can do all of them. If you gated UI on this flag, it will now return `true` for members who previously saw `false`.
+  - `can.manageUserTestingGuestExecution` is a new **additive** key covering the guest-execution spend caps (`setChatboxGuestExecution`), which genuinely require project admin. Use this key to gate guest-execution UI; use `can.changeUserTestingExposure` for everything else.
+
+  **API responses**
+
+  - `accessVersion` has been **removed** from scenario PATCH (`update_user_testing_scenario`) and rotate-link (`rotate_user_testing_link`) responses. The field was `null` on every response because the settings envelope the route re-reads does not carry it — only publish and rebind responses return a real value. If you read `accessVersion` from update or rotate responses, read it from the publish/rebind response instead.
+
+  **Migration**
+
+  - If you gate guest-execution UI or calls on capabilities, switch from `can.changeUserTestingExposure` to `can.manageUserTestingGuestExecution`.
+  - If you read `PlatformUserTestingScenario.accessVersion`, stop — get the value from publish or rebind responses instead.
+
 ### 2026-06-26
 
 #### Added
