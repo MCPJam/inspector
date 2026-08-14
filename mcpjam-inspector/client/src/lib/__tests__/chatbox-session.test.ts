@@ -10,6 +10,7 @@ import {
   readChatboxSignInReturnPath,
   CHATBOX_SESSION_STORAGE_KEY,
   CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+  normalizeChatboxSession,
   writeChatboxSession,
   writeChatboxSignInReturnPath,
 } from "../chatbox-session";
@@ -25,7 +26,7 @@ describe("chatbox-session", () => {
   it("extracts token from /chatbox/<slug>/<token> paths", () => {
     expect(extractChatboxTokenFromPath("/chatbox/demo/abc123")).toBe("abc123");
     expect(extractChatboxTokenFromPath("/chatbox/demo/abc%20123")).toBe(
-      "abc 123",
+      "abc 123"
     );
     expect(extractChatboxTokenFromPath("/chatbox/onlyone")).toBeNull();
     expect(extractChatboxTokenFromPath("/settings")).toBeNull();
@@ -33,7 +34,7 @@ describe("chatbox-session", () => {
 
   it("extracts token from /user-testing/<slug>/<token> paths", () => {
     expect(extractChatboxTokenFromPath("/user-testing/demo/abc123")).toBe(
-      "abc123",
+      "abc123"
     );
     // The scenario screen lives one segment shorter, and must NOT be read as a
     // tester link — doing so renders the public runtime over the app screen.
@@ -170,7 +171,7 @@ describe("chatbox-session", () => {
           requireToolApproval: true,
           servers: [],
         },
-      }),
+      })
     );
 
     // Stored row predates the post-refactor session shape; reading it must
@@ -198,7 +199,7 @@ describe("chatbox-session", () => {
           requireToolApproval: true,
           servers: [],
         },
-      }),
+      })
     );
 
     expect(readChatboxSession()).toEqual({
@@ -244,7 +245,7 @@ describe("chatbox-session", () => {
           requireToolApproval: true,
           servers: [],
         },
-      }),
+      })
     );
 
     expect(readChatboxSession()?.payload.hostStyle).toBe("codex");
@@ -303,8 +304,89 @@ describe("chatbox-session", () => {
 
   it("builds chatbox links from the current browser origin", () => {
     expect(buildChatboxLink("token 123", "Demo Chatbox")).toBe(
-      `${window.location.origin}/user-testing/demo-chatbox/token%20123`,
+      `${window.location.origin}/user-testing/demo-chatbox/token%20123`
     );
   });
+});
 
+/**
+ * The chatUi envelope carries what the hosted runtime is allowed to render.
+ * Its normalizer is an ALLOWLIST — a surface it does not recognize is dropped
+ * silently, which is exactly how a config can ship and appear to do nothing.
+ */
+describe("chatUi surface normalization", () => {
+  function session(chatUi: unknown) {
+    return {
+      chatboxId: "cbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "proj_1",
+        chatboxId: "cbx_1",
+        name: "Scenario",
+        hostStyle: "claude",
+        mode: "anyone_with_link",
+        allowGuestAccess: true,
+        viewerIsProjectMember: false,
+        systemPrompt: "",
+        modelId: "gpt-4o-mini",
+        temperature: 0.5,
+        requireToolApproval: false,
+        servers: [],
+        chatUi,
+      },
+    } as never;
+  }
+
+  it("keeps per-turn feedback config on a scenario with no welcome dialog", () => {
+    // The normalizer used to return undefined unless `welcome` parsed, which
+    // would have dropped the ratings config on most scenarios — they have no
+    // welcome dialog.
+    const normalized = normalizeChatboxSession(
+      session({
+        surfaces: {
+          perTurnFeedback: { enabled: true, prompt: "How was that?" },
+        },
+      })
+    );
+    expect(normalized?.payload.chatUi?.surfaces?.perTurnFeedback).toEqual({
+      enabled: true,
+      prompt: "How was that?",
+    });
+  });
+
+  it("keeps both surfaces when both are present", () => {
+    const normalized = normalizeChatboxSession(
+      session({
+        surfaces: {
+          welcome: { enabled: true, body: "hello" },
+          perTurnFeedback: { enabled: false },
+        },
+      })
+    );
+    expect(normalized?.payload.chatUi?.surfaces?.welcome).toEqual({
+      enabled: true,
+      body: "hello",
+    });
+    expect(normalized?.payload.chatUi?.surfaces?.perTurnFeedback).toEqual({
+      enabled: false,
+    });
+  });
+
+  it("drops the deprecated session-level feedback dialog", () => {
+    // Its write path and storage table are gone; carrying it into the runtime
+    // would offer a dialog that saves nowhere.
+    const normalized = normalizeChatboxSession(
+      session({ surfaces: { feedback: { enabled: true } } })
+    );
+    expect(normalized?.payload.chatUi).toBeUndefined();
+  });
+
+  it("never null-punches an omitted optional string", () => {
+    const normalized = normalizeChatboxSession(
+      session({ surfaces: { perTurnFeedback: { enabled: true } } })
+    );
+    expect(
+      normalized?.payload.chatUi?.surfaces?.perTurnFeedback
+    ).not.toHaveProperty("prompt");
+  });
 });

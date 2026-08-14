@@ -16,6 +16,14 @@ import {
   type WidgetRenderInput,
 } from "./types";
 
+// Hoisted so the defaults keep a STABLE identity. As inline `= {}` defaults
+// these were rebuilt on every render, which defeated `MessageView`'s shallow
+// `memo` for every message in the transcript — the same failure the
+// `renderTurnFooter` seam takes care to avoid by passing its index as a
+// separate prop rather than closing over it.
+const EMPTY_TOOLS_METADATA: Record<string, Record<string, unknown>> = {};
+const EMPTY_TOOL_SERVER_MAP: ToolServerMap = {};
+
 function themeClass(themeMode: ThemeMode): string | undefined {
   if (themeMode === "dark") return "dark";
   if (themeMode === "light") return "light";
@@ -40,6 +48,16 @@ export interface TranscriptProps {
   renderTool?: (ctx: ToolRenderContext) => ReactNode;
   /** Host override for widget rendering (inspector `WidgetReplay`). */
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
+  /**
+   * Host slot under each assistant message (per-turn ratings).
+   *
+   * `index` is the position in the VISIBLE array — what
+   * `getRenderableConversationMessages` returns, not the raw `messages` prop.
+   * Hosts join scores to turns by counting user messages in that same filtered
+   * array, so handing them the raw index would offset every rating by however
+   * many internal messages the thread happens to carry.
+   */
+  renderTurnFooter?: (message: UIMessage, index: number) => ReactNode;
 }
 
 /**
@@ -50,8 +68,8 @@ export interface TranscriptProps {
 export function Transcript({
   messages,
   model = DEFAULT_CHAT_UI_MODEL,
-  toolsMetadata = {},
-  toolServerMap = {},
+  toolsMetadata = EMPTY_TOOLS_METADATA,
+  toolServerMap = EMPTY_TOOL_SERVER_MAP,
   toolRenderOverrides,
   themeMode = "system",
   reasoningDisplayMode = "inline",
@@ -61,6 +79,7 @@ export function Transcript({
   renderAvatar,
   renderTool,
   renderWidget,
+  renderTurnFooter,
 }: TranscriptProps) {
   const visible = getRenderableConversationMessages(messages);
   return (
@@ -80,6 +99,8 @@ export function Transcript({
             renderAvatar={renderAvatar}
             renderTool={renderTool}
             renderWidget={renderWidget}
+            renderTurnFooter={renderTurnFooter}
+            turnIndex={index}
           />
         ))}
       </div>

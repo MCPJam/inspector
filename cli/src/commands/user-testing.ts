@@ -18,9 +18,11 @@
  *     irreversible: everyone holding the old URL loses access.
  *
  * AUTHORIZATION differs from the rest of the CLI. These gate on the WORKSPACE
- * role rather than the project role, the exposure controls need project ADMIN,
- * and a legacy workspace with no organization denies `sk_` keys outright. The
- * server's message says which; this CLI does not pre-guess.
+ * role rather than the project role, and workspace membership is enough for
+ * most of them — mode changes, member edits and link rotation included. Only
+ * guest execution and rebinding need project ADMIN, and a legacy workspace
+ * with no organization denies `sk_` keys outright. The server's message says
+ * which; this CLI does not pre-guess.
  */
 import type { Command } from "commander";
 import {

@@ -45,7 +45,7 @@ export type CriterionVerdict = "pass" | "fail" | "ungraded";
 /** Build a criterion chip value. Mirrors `criterionChipValue` on the server. */
 export function criterionChipValue(
   criterionId: string,
-  verdict: CriterionVerdict,
+  verdict: CriterionVerdict
 ): string {
   return `${criterionId}:${verdict}`;
 }
@@ -64,7 +64,7 @@ export function criterionChipValue(
  * the user selected.
  */
 export function parseCriterionChipValue(
-  value: string,
+  value: string
 ): { criterionId: string; verdict: CriterionVerdict } | null {
   const idx = value.lastIndexOf(":");
   if (idx <= 0) return null;
@@ -115,7 +115,7 @@ const PRIMARY_BEHAVIOR_PRIORITY = [
 
 /** The single behavior value for a thread, or null when it has no tags. */
 export function primaryBehaviorTag(
-  tags: readonly string[] | undefined | null,
+  tags: readonly string[] | undefined | null
 ): string | null {
   if (!tags || tags.length === 0) return null;
   for (const candidate of PRIMARY_BEHAVIOR_PRIORITY) {
@@ -175,11 +175,33 @@ export const EMPTY_USAGE_FILTER: UsageFilterState = {
 
 const MEANINGFUL_MESSAGE_THRESHOLD = 4;
 
+/**
+ * The session's rating: its WORST turn.
+ *
+ * Ratings are per-turn (`sessionScores`), and one bad turn makes a session
+ * bad — averaging it away behind good turns is exactly what per-turn ratings
+ * exist to prevent. Mirrors `matchesPreset` in the backend's
+ * `lib/usageInsights/filters.ts`, which reads `chatSessions.feedback.min`.
+ *
+ * The flat `feedbackRating` fallback is the same number from an older backend
+ * projection, so the two agree either way.
+ */
+function threadRating(thread: SharedChatThread): number | null {
+  return thread.feedback?.min ?? thread.feedbackRating ?? null;
+}
+
+/**
+ * ANY turn carries a comment. Distinct from `feedbackComment`, which is the
+ * WORST turn's comment: a 5-star turn with a written complaint attached still
+ * needs review, and reading only the worst turn's comment would miss it.
+ */
+function threadHasComment(thread: SharedChatThread): boolean {
+  if (thread.feedback) return thread.feedback.hasComment;
+  return (thread.feedbackComment?.trim().length ?? 0) > 0;
+}
+
 function hasNoFeedbackRecord(thread: SharedChatThread): boolean {
-  return (
-    thread.feedbackRating == null &&
-    !(thread.feedbackComment && thread.feedbackComment.trim().length > 0)
-  );
+  return threadRating(thread) == null && !threadHasComment(thread);
 }
 
 function inferNeedsReviewHeuristic(thread: SharedChatThread): boolean {
@@ -194,7 +216,7 @@ function inferNeedsReviewHeuristic(thread: SharedChatThread): boolean {
 }
 
 function threadFeedbackBucket(thread: SharedChatThread): string {
-  const r = thread.feedbackRating;
+  const r = threadRating(thread);
   if (r == null) return "none";
   if (r >= 4) return "positive";
   if (r >= 3) return "neutral";
@@ -203,15 +225,15 @@ function threadFeedbackBucket(thread: SharedChatThread): string {
 
 export function threadMatchesUsageFilter(
   thread: SharedChatThread,
-  filter: UsageFilterPreset,
+  filter: UsageFilterPreset
 ): boolean {
   if (filter === "all") return true;
 
-  const rating = thread.feedbackRating;
-  const comment = thread.feedbackComment?.trim() ?? "";
+  const rating = threadRating(thread);
+  const hasComment = threadHasComment(thread);
 
   if (filter === "low_ratings") {
-    return rating === 1 || rating === 2;
+    return rating !== null && rating <= 2;
   }
 
   if (filter === "no_feedback") {
@@ -219,15 +241,15 @@ export function threadMatchesUsageFilter(
   }
 
   // needs_review
-  if (rating === 1 || rating === 2) return true;
-  if (rating === 3 && comment.length > 0) return true;
+  if (rating !== null && rating <= 2) return true;
+  if (rating === 3 && hasComment) return true;
   if (inferNeedsReviewHeuristic(thread)) return true;
   return false;
 }
 
 export function threadMatchesChip(
   thread: SharedChatThread,
-  chip: UsageFilterChip,
+  chip: UsageFilterChip
 ): boolean {
   if (chip.kind === "cluster") {
     return threadThemeId(thread, chip.dimension ?? "goal") === chip.clusterId;
@@ -318,7 +340,7 @@ function chipGroupKey(chip: UsageFilterChip): string {
 
 export function threadMatchesFilterState(
   thread: SharedChatThread,
-  filter: UsageFilterState,
+  filter: UsageFilterState
 ): boolean {
   if (!threadMatchesUsageFilter(thread, filter.preset)) return false;
   // Chips are AND'd across dimensions but OR'd within the same dimension.
@@ -341,7 +363,7 @@ export function threadMatchesFilterState(
 
 export function toggleChip(
   filter: UsageFilterState,
-  chip: UsageFilterChip,
+  chip: UsageFilterChip
 ): UsageFilterState {
   const matches = filter.chips.findIndex((c) => chipKey(c) === chipKey(chip));
   if (matches >= 0) {
@@ -365,7 +387,7 @@ export function chipKey(chip: UsageFilterChip): string {
 /** The theme a session carries on one axis; `themeClusterId` is the goal one. */
 export function threadThemeId(
   thread: SharedChatThread,
-  dimension: SignalDimension,
+  dimension: SignalDimension
 ): string | undefined {
   switch (dimension) {
     case "goal":
@@ -409,10 +431,13 @@ export type ThemeRef = {
  * independently before the whole value is handed to URLSearchParams.
  */
 export function serializeSelectionParam(
-  themes: readonly Pick<ThemeRef, "dimension" | "clusterId">[],
+  themes: readonly Pick<ThemeRef, "dimension" | "clusterId">[]
 ): string {
   return themes
-    .map(({ dimension, clusterId }) => `${dimension}:${encodeURIComponent(clusterId)}`)
+    .map(
+      ({ dimension, clusterId }) =>
+        `${dimension}:${encodeURIComponent(clusterId)}`
+    )
     .join(",");
 }
 
@@ -456,7 +481,7 @@ export function isEmptySelection(selection: InsightsSelection): boolean {
 
 /** The chips that express a selection. */
 export function selectionChips(
-  selection: InsightsSelection,
+  selection: InsightsSelection
 ): UsageFilterChip[] {
   return selection.themes.map((theme) => ({
     kind: "cluster" as const,
@@ -479,7 +504,7 @@ export function selectionChips(
  */
 export function removeChipsByKeys(
   filter: UsageFilterState,
-  keys: readonly string[],
+  keys: readonly string[]
 ): UsageFilterState {
   if (keys.length === 0) return filter;
   const drop = new Set(keys);
@@ -495,11 +520,11 @@ export function removeChipsByKeys(
  */
 export function selectionChipsToAdd(
   filter: UsageFilterState,
-  selection: InsightsSelection,
+  selection: InsightsSelection
 ): UsageFilterChip[] {
   const existing = new Set(filter.chips.map(chipKey));
   return selectionChips(selection).filter(
-    (chip) => !existing.has(chipKey(chip)),
+    (chip) => !existing.has(chipKey(chip))
   );
 }
 
@@ -516,7 +541,7 @@ export function selectionChipsToAdd(
 export function applySelection(
   filter: UsageFilterState,
   next: InsightsSelection,
-  previousOwnedKeys: readonly string[] = [],
+  previousOwnedKeys: readonly string[] = []
 ): UsageFilterState {
   const base = removeChipsByKeys(filter, previousOwnedKeys);
   return {
@@ -528,7 +553,7 @@ export function applySelection(
 /** Whether every chip this selection implies is currently active. */
 export function isSelectionSelected(
   filter: UsageFilterState,
-  selection: InsightsSelection,
+  selection: InsightsSelection
 ): boolean {
   if (isEmptySelection(selection)) return false;
   const active = new Set(filter.chips.map(chipKey));
@@ -538,7 +563,7 @@ export function isSelectionSelected(
 /** Structural equality, used to decide whether a click re-opens or closes. */
 export function isSameSelection(
   a: InsightsSelection | null,
-  b: InsightsSelection | null,
+  b: InsightsSelection | null
 ): boolean {
   if (a === null || b === null) return a === b;
   const left = selectionChips(a).map(chipKey).sort();
@@ -550,7 +575,7 @@ export function isSameSelection(
 
 export function removeChipByKey(
   filter: UsageFilterState,
-  key: string,
+  key: string
 ): UsageFilterState {
   return {
     ...filter,
@@ -560,13 +585,13 @@ export function removeChipByKey(
 
 export function compareThreadsForUsageList(
   a: SharedChatThread,
-  b: SharedChatThread,
+  b: SharedChatThread
 ): number {
   const score = (t: SharedChatThread) => {
     let s = 0;
-    const r = t.feedbackRating;
-    if (r === 1 || r === 2) s += 100;
-    else if (r === 3 && (t.feedbackComment?.trim().length ?? 0) > 0) s += 80;
+    const r = threadRating(t);
+    if (r !== null && r <= 2) s += 100;
+    else if (r === 3 && threadHasComment(t)) s += 80;
     else if (t.authInterrupted) s += 70;
     else if (inferNeedsReviewHeuristic(t)) s += 50;
     if (r != null) s += (5 - r) * 5;
@@ -576,8 +601,8 @@ export function compareThreadsForUsageList(
   const diff = score(b) - score(a);
   if (diff !== 0) return diff;
 
-  const ra = a.feedbackRating ?? 99;
-  const rb = b.feedbackRating ?? 99;
+  const ra = threadRating(a) ?? 99;
+  const rb = threadRating(b) ?? 99;
   if (ra !== rb) return ra - rb;
 
   return b.lastActivityAt - a.lastActivityAt;

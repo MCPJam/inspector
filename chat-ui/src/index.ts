@@ -15,6 +15,11 @@ export { MessageView, type MessageViewProps } from "./message-view";
 export { PartSwitch, type PartSwitchProps } from "./part-switch";
 export { ToolCallPart, type ToolCallPartProps } from "./tool-call-part";
 export { WidgetPlaceholder } from "./widget-placeholder";
+export {
+  TurnRating,
+  type TurnRatingProps,
+  type TurnRatingStatus,
+} from "./turn-rating";
 
 // --- Part renderers (handy for custom layouts) ---
 export { TextPart } from "./parts/text-part";
