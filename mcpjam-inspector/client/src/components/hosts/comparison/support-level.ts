@@ -176,11 +176,12 @@ function normalizeFieldSearchText(value: string): string {
 
 /**
  * Free-text match against a field's label / subsection / description / id /
- * path. `query` must keep its original casing — pass it in pre-lowercased and
- * normalizeFieldSearchText's camelCase splitter has no case boundary left to
- * find, so a query like "toolCancelled" would stay one token and never match
- * the haystack's split "tool"/"cancelled" tokens. `normalizeFieldSearchText`
- * already lowercases internally, so callers don't need to.
+ * path. Callers must NOT lowercase `query` before calling this — pass it in
+ * with its original casing intact. `normalizeFieldSearchText` already
+ * lowercases internally, so pre-lowercasing is redundant at best; at worst it
+ * destroys the case boundary its camelCase splitter relies on, so a query
+ * like "toolCancelled" would stay one token once lowercased and never match
+ * the haystack's split "tool"/"cancelled" tokens.
  */
 export function fieldMatchesQuery(
   field: HostConfigFieldDef,

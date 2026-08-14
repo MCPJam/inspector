@@ -262,6 +262,39 @@ describe("HostConfigCompareView public mode", () => {
     expect(filterButton).not.toBeDisabled();
   });
 
+  it("matches a field whose label is itself camelCase (regression: search query must not be lowercased)", async () => {
+    // appsCap.toolCancelled's label is literally "toolCancelled" — some MCP
+    // Apps capability rows use their raw camelCase key as the label. If the
+    // query were lowercased before matching (the original bug), typing this
+    // exact label would produce "No fields match" instead of the row itself.
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/embed/host-compare?hosts=preset%3Aclaude%2Cpreset%3Avscode",
+        ]}
+      >
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>
+    );
+
+    await user.type(
+      screen.getByLabelText("Search client config fields"),
+      "toolCancelled"
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/No fields match/i)
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("clears search filtering without changing selected clients when Can I use is clicked", async () => {
     const user = userEvent.setup();
 

@@ -270,6 +270,20 @@ describe("fieldMatchesQuery / computeVisibleFieldIds", () => {
     expect(narrowed.has("modelId")).toBe(false);
     expect(narrowed.size).toBeLessThan(all.size);
   });
+
+  it("computeVisibleFieldIds matches a camelCase field label without lowercasing", () => {
+    // This is the other call site the fix touched (the search bar's own
+    // matching goes through fieldMatchesQuery directly, above) — it must not
+    // reintroduce the pre-lowercasing that broke the search bar's autocomplete.
+    const field = hostConfigField("appsCap.toolCancelled");
+    const ids = computeVisibleFieldIds({
+      configs: [makeConfig()],
+      divergingOnly: false,
+      supportFilter: "all",
+      searchQuery: field.label,
+    });
+    expect(ids.has(field.id)).toBe(true);
+  });
 });
 
 describe("getCapabilityCaveats", () => {
