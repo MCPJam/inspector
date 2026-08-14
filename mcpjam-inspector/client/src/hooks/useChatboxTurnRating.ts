@@ -35,11 +35,24 @@ export interface TurnRatingState {
   status: TurnRatingStatus;
 }
 
+/** The two per-turn score keys — one per widget style. */
+export type TurnScoreKey = "user_rating" | "user_thumb";
+
 type PendingSubmission = {
   chatSessionId: string;
   turnId: string;
   value: number;
   comment?: string;
+  /**
+   * The key this submission was CREATED under, carried rather than read live
+   * for the same reason `chatboxId` is: every retry path (the not_ready
+   * backoff, the stale-access replay, the abandon sweep) can wake up after the
+   * scenario's style changed, and a `0` minted by a thumbs click must never be
+   * resubmitted as `user_rating` — the server would take it as a star value
+   * out of range, and the tester's actual judgement would be lost to an error
+   * they cannot act on.
+   */
+  scoreKey: TurnScoreKey;
   /**
    * The chatbox this rating was left in. A retry that fires after the host
    * switched chatboxes would otherwise submit the old session and turn under
@@ -63,6 +76,12 @@ interface UseChatboxTurnRatingOptions {
   enabled: boolean;
   chatboxId?: string;
   accessVersion?: number;
+  /**
+   * Which key to write, derived from the scenario's `perTurnFeedback.style`.
+   * Defaults to stars so a config that predates the style field behaves
+   * exactly as it did.
+   */
+  scoreKey?: TurnScoreKey;
   /**
    * Ask the owner (ChatboxChatPage) to re-run `/web/chatbox/redeem`, exactly
    * as the widget-capture hook does. A fresh `accessVersion` flowing back in
@@ -99,6 +118,7 @@ export function useChatboxTurnRating({
   enabled,
   chatboxId,
   accessVersion,
+  scoreKey = "user_rating",
   onStaleHostedAccess,
 }: UseChatboxTurnRatingOptions): UseChatboxTurnRatingResult {
   const submitScore = useMutation("sessionScores:submitScore" as any);
@@ -159,20 +179,31 @@ export function useChatboxTurnRating({
     enabled && chatboxId && chatSessionId
       ? { chatboxId, accessVersion, chatSessionId }
       : "skip"
-  ) as Array<{ turnId?: string; value?: number; comment?: string }> | undefined;
+  ) as
+    | Array<{ key?: string; turnId?: string; value?: number; comment?: string }>
+    | undefined;
 
   const persistedByTurn = useMemo(() => {
     const map = new Map<string, { value?: number; comment?: string }>();
     if (!chatSessionId) return map;
     for (const row of persisted ?? []) {
       if (!row.turnId) continue;
+      // FILTER BY KEY. The server returns every key it holds for this session,
+      // and the map is keyed by turn alone — so after a mid-session style
+      // switch a leftover `user_rating` row would land in the thumbs widget's
+      // slot and rehydrate as "value 4", which the thumbs control has no way
+      // to render honestly. A turn rated under the other style shows as
+      // unrated here, which is the truthful reading: it carries no judgement
+      // in the style this scenario is now asking for. The score row itself
+      // survives and keeps counting in the PM-facing rollup.
+      if ((row.key ?? "user_rating") !== scoreKey) continue;
       map.set(stateKey(chatSessionId, row.turnId), {
         value: row.value,
         comment: row.comment,
       });
     }
     return map;
-  }, [persisted, chatSessionId]);
+  }, [persisted, chatSessionId, scoreKey]);
 
   // Read inside `setState` without making it a dependency — the merge below
   // needs the persisted comment, but re-creating `setState` on every query
@@ -256,7 +287,7 @@ export function useChatboxTurnRating({
           accessVersion: liveAccessVersion,
           chatSessionId: pending.chatSessionId,
           turnId: pending.turnId,
-          key: "user_rating",
+          key: pending.scoreKey,
           value: pending.value,
           ...(pending.comment !== undefined
             ? { comment: pending.comment }
@@ -421,9 +452,9 @@ export function useChatboxTurnRating({
       // redeem the newer submission may no longer need — and standing the
       // timer down should not depend on effect ordering.
       staleQueueRef.current.delete(key);
-      void runSubmit({ ...args, chatboxId, generation }, 0);
+      void runSubmit({ ...args, chatboxId, generation, scoreKey }, 0);
     },
-    [enabled, runSubmit]
+    [enabled, runSubmit, scoreKey]
   );
 
   const getState = useCallback(

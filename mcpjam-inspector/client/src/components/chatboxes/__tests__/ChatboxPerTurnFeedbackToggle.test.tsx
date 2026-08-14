@@ -168,3 +168,142 @@ describe("ChatboxPerTurnFeedbackToggle", () => {
     expect(toastErrorMock).toHaveBeenCalled();
   });
 });
+
+describe("ChatboxPerTurnFeedbackToggle — widget style", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    updateChatboxMock.mockResolvedValue(undefined);
+  });
+
+  const styled = (perTurnFeedback: Record<string, unknown>): ChatboxSettings =>
+    ({
+      chatboxId: "cbx_1",
+      projectId: "proj_1",
+      name: "Scenario",
+      chatUi: { surfaces: { perTurnFeedback } },
+    } as unknown as ChatboxSettings);
+
+  const stylePicker = () =>
+    screen.queryByTestId("user-testing-per-turn-feedback-style");
+  const styleButton = (style: "stars" | "thumbs") =>
+    screen.getByTestId(`user-testing-per-turn-feedback-style-${style}`);
+
+  it("is hidden while the surface is off", () => {
+    // A widget style is a question about a widget nobody is being shown.
+    render(
+      <ChatboxPerTurnFeedbackToggle chatbox={styled({ enabled: false })} />
+    );
+    expect(stylePicker()).toBeNull();
+  });
+
+  it("defaults to stars for a scenario that predates the style field", () => {
+    render(
+      <ChatboxPerTurnFeedbackToggle chatbox={styled({ enabled: true })} />
+    );
+    expect(styleButton("stars")).toHaveAttribute("aria-checked", "true");
+    expect(styleButton("thumbs")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("reflects a stored thumbs style", () => {
+    render(
+      <ChatboxPerTurnFeedbackToggle
+        chatbox={styled({ enabled: true, style: "thumbs" })}
+      />
+    );
+    expect(styleButton("thumbs")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("writes ONLY the style — the backend merge preserves enabled", () => {
+    // Restating `enabled` here would be the style control asserting a rollout
+    // decision it is not making, and would race a toggle write.
+    render(
+      <ChatboxPerTurnFeedbackToggle chatbox={styled({ enabled: true })} />
+    );
+
+    fireEvent.click(styleButton("thumbs"));
+
+    expect(updateChatboxMock).toHaveBeenCalledWith({
+      chatboxId: "cbx_1",
+      chatUi: { surfaces: { perTurnFeedback: { style: "thumbs" } } },
+    });
+  });
+
+  it("does not write when the chosen style is already active", () => {
+    render(
+      <ChatboxPerTurnFeedbackToggle chatbox={styled({ enabled: true })} />
+    );
+    fireEvent.click(styleButton("stars"));
+    expect(updateChatboxMock).not.toHaveBeenCalled();
+  });
+
+  it("reverts to the stored style when the write fails", async () => {
+    updateChatboxMock.mockRejectedValue(new Error("nope"));
+    render(
+      <ChatboxPerTurnFeedbackToggle chatbox={styled({ enabled: true })} />
+    );
+
+    fireEvent.click(styleButton("thumbs"));
+
+    await waitFor(() =>
+      expect(styleButton("stars")).toHaveAttribute("aria-checked", "true")
+    );
+    expect(toastErrorMock).toHaveBeenCalled();
+  });
+
+  it("holds the style override until the SERVER's style catches up", async () => {
+    // The two optimistic values live in one object with a PER-FIELD standdown.
+    // `chatbox` arrives through a reactive query that re-renders for reasons
+    // that have nothing to do with this control; a shared "clear on any
+    // resolve" rule would snap the segmented control back to the old style for
+    // the frames before the write lands.
+    let resolveWrite: (() => void) | undefined;
+    updateChatboxMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <ChatboxPerTurnFeedbackToggle chatbox={styled({ enabled: true })} />
+    );
+
+    fireEvent.click(styleButton("thumbs"));
+    expect(styleButton("thumbs")).toHaveAttribute("aria-checked", "true");
+
+    // A reactive re-render arrives still carrying the OLD style.
+    rerender(
+      <ChatboxPerTurnFeedbackToggle
+        chatbox={styled({ enabled: true, prompt: "unrelated change" })}
+      />
+    );
+    expect(styleButton("thumbs")).toHaveAttribute("aria-checked", "true");
+
+    if (!resolveWrite) throw new Error("expected a pending write to resolve");
+    await act(async () => {
+      resolveWrite!();
+    });
+
+    // Only the server reporting the new style stands the override down.
+    rerender(
+      <ChatboxPerTurnFeedbackToggle
+        chatbox={styled({ enabled: true, style: "thumbs" })}
+      />
+    );
+    expect(styleButton("thumbs")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("makes the description copy match the chosen style", () => {
+    const { rerender } = render(
+      <ChatboxPerTurnFeedbackToggle chatbox={styled({ enabled: true })} />
+    );
+    expect(screen.getByText(/1–5 stars/)).toBeInTheDocument();
+
+    rerender(
+      <ChatboxPerTurnFeedbackToggle
+        chatbox={styled({ enabled: true, style: "thumbs" })}
+      />
+    );
+    expect(screen.getByText(/👍 or 👎/)).toBeInTheDocument();
+  });
+});

@@ -82,6 +82,11 @@ export interface ChatboxWelcomeDialogPayload {
  */
 export interface ChatboxPerTurnFeedbackPayload {
   enabled: boolean;
+  /**
+   * Which widget to render, and therefore which score key the tester writes
+   * under. Absent ⇒ `stars`, the only style that existed before this field.
+   */
+  style?: "stars" | "thumbs";
   prompt?: string;
   commentPlaceholder?: string;
   thanksMessage?: string;
@@ -217,6 +222,14 @@ function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
     typeof (perTurnRaw as { enabled?: unknown }).enabled === "boolean"
       ? {
           enabled: (perTurnRaw as { enabled: boolean }).enabled,
+          // A CLOSED enum check, not `optionalString`: the value picks which
+          // widget renders and which score key the tester writes under, so an
+          // unrecognised string copied through would produce a scenario whose
+          // rating widget renders nothing. Anything but "thumbs" omits the
+          // field, and absence means stars downstream.
+          ...((perTurnRaw as { style?: unknown }).style === "thumbs"
+            ? { style: "thumbs" as const }
+            : {}),
           ...optionalString(perTurnRaw, "prompt"),
           ...optionalString(perTurnRaw, "commentPlaceholder"),
           ...optionalString(perTurnRaw, "thanksMessage"),

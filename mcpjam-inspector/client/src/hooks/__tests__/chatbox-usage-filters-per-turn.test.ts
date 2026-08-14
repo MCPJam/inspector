@@ -137,3 +137,90 @@ describe("worst-turn policy", () => {
     ).toBe(true);
   });
 });
+
+describe("thumbs ride the same worst-turn axis", () => {
+  // The filters never learn what a thumb is. Thumbs are projected onto the
+  // 1–5 scale server-side (down ⇒ 1, up ⇒ 5), which is exactly what lets ONE
+  // filter UI serve both widget styles — these pin that no client-side branch
+  // is needed for it.
+
+  it("a thumbs-down session matches Low (≤2)", () => {
+    const thumbedDown = thread({
+      _id: "a",
+      feedback: summary({
+        count: 2,
+        avg: 3,
+        min: 1,
+        latestRating: 5,
+        thumbUpCount: 1,
+        thumbDownCount: 1,
+      }),
+    });
+    expect(threadMatchesUsageFilter(thumbedDown, "low_ratings")).toBe(true);
+    expect(
+      threadMatchesChip(thumbedDown, {
+        kind: "dimension",
+        key: "feedbackBucket",
+        value: "negative",
+      })
+    ).toBe(true);
+  });
+
+  it("a thumbs-up-only session does not", () => {
+    const thumbedUp = thread({
+      _id: "a",
+      feedback: summary({
+        count: 2,
+        avg: 5,
+        min: 5,
+        latestRating: 5,
+        thumbUpCount: 2,
+      }),
+    });
+    expect(threadMatchesUsageFilter(thumbedUp, "low_ratings")).toBe(false);
+    expect(
+      threadMatchesChip(thumbedUp, {
+        kind: "dimension",
+        key: "feedbackBucket",
+        value: "positive",
+      })
+    ).toBe(true);
+  });
+
+  it("the neutral bucket is simply unreachable for a thumbs-only session", () => {
+    // A documented dead option, not a bug: a two-state control has no neutral
+    // to express, so no projection can land on 3.
+    const thumbedDown = thread({
+      _id: "a",
+      feedback: summary({
+        count: 1,
+        avg: 1,
+        min: 1,
+        latestRating: 1,
+        thumbDownCount: 1,
+      }),
+    });
+    expect(
+      threadMatchesChip(thumbedDown, {
+        kind: "dimension",
+        key: "feedbackBucket",
+        value: "neutral",
+      })
+    ).toBe(false);
+  });
+
+  it("a mixed-style session is judged by its worst turn, whatever wrote it", () => {
+    // One star row (4) and one thumbs-down (⇒ 1) — the complaint wins.
+    const mixed = thread({
+      _id: "a",
+      feedback: summary({
+        count: 2,
+        avg: 2.5,
+        min: 1,
+        latestRating: 4,
+        thumbDownCount: 1,
+      }),
+    });
+    expect(threadMatchesUsageFilter(mixed, "low_ratings")).toBe(true);
+  });
+});

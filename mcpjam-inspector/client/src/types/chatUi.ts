@@ -10,8 +10,13 @@ export interface ChatboxWelcomeDialogSettings {
 
 /**
  * @deprecated The session-level feedback dialog. Its backend write path and
- * storage table are gone; per-turn ratings replaced it. Kept because stored
- * chatbox docs still carry the object.
+ * storage table are gone; per-turn ratings replaced it.
+ *
+ * As of the backend's Phase-3 deploy A, redeem and the settings response no
+ * longer return this surface at all, and `chatUi.surfaces.feedback` is no
+ * longer writable. Nothing in the client reads it. It survives only so a build
+ * running against an older backend still typechecks, and goes away with the
+ * backend's deploy B.
  */
 export interface ChatboxFeedbackDialogSettings {
   enabled: boolean;
@@ -21,8 +26,16 @@ export interface ChatboxFeedbackDialogSettings {
 }
 
 /**
- * Per-turn ratings: 1–5 stars plus an optional comment under each assistant
- * response, written to `sessionScores` under the `user_rating` key.
+ * Which per-turn widget a scenario shows. `stars` writes `sessionScores` under
+ * the `user_rating` key (1–5); `thumbs` writes `user_thumb` (0|1). Both fold
+ * into the same session rollup server-side, so the Sessions filters do not
+ * branch on this.
+ */
+export type ChatboxPerTurnFeedbackStyle = "stars" | "thumbs";
+
+/**
+ * Per-turn ratings: a rating plus an optional comment under each assistant
+ * response, written to `sessionScores` under the key the `style` selects.
  *
  * OFF by default and rolled out per scenario. The backend normalizer returns a
  * fully-defaulted envelope through redeem, so a `true` default would enable
@@ -30,7 +43,9 @@ export interface ChatboxFeedbackDialogSettings {
  */
 export interface ChatboxPerTurnFeedbackSettings {
   enabled: boolean;
-  /** Label above the stars. Empty ⇒ the widget's own copy. */
+  /** Absent ⇒ `stars`, which is what every scenario predating thumbs had. */
+  style?: ChatboxPerTurnFeedbackStyle;
+  /** Label above the widget. Empty ⇒ the widget's own copy. */
   prompt?: string;
   commentPlaceholder?: string;
   thanksMessage?: string;

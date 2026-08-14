@@ -759,4 +759,165 @@ describe("useChatboxTurnRating", () => {
 
     expect(mockSubmitScore).not.toHaveBeenCalled();
   });
+
+  describe("score key follows the scenario's widget style", () => {
+    it("writes user_thumb when the scenario picked thumbs", async () => {
+      const { result } = renderHook(() =>
+        useChatboxTurnRating({
+          enabled: true,
+          chatboxId: "cbx_1",
+          accessVersion: 1,
+          scoreKey: "user_thumb",
+        })
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 0,
+        });
+      });
+      await flushMicrotasks();
+
+      expect(mockSubmitScore).toHaveBeenCalledWith({
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        key: "user_thumb",
+        value: 0,
+      });
+      // A thumbs-down is a rated turn, not an unrated one.
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+        value: 0,
+        status: "submitted",
+      });
+    });
+
+    it("defaults to user_rating when no style was configured", async () => {
+      const { result } = renderHook(() =>
+        useChatboxTurnRating({
+          enabled: true,
+          chatboxId: "cbx_1",
+          accessVersion: 1,
+        })
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 4,
+        });
+      });
+      await flushMicrotasks();
+
+      expect(mockSubmitScore).toHaveBeenCalledWith(
+        expect.objectContaining({ key: "user_rating" })
+      );
+    });
+
+    it("a not_ready retry resubmits under the key it was created with", async () => {
+      // The retry fires long after the click. If it read the key live and the
+      // scenario had been switched to stars meanwhile, a thumbs-down's `0`
+      // would be resubmitted as a star value and rejected out of range —
+      // losing the tester's judgement to an error they cannot act on.
+      vi.useFakeTimers();
+      mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+      const { result, rerender } = renderHook(
+        (props: { scoreKey: "user_rating" | "user_thumb" }) =>
+          useChatboxTurnRating({
+            enabled: true,
+            chatboxId: "cbx_1",
+            accessVersion: 1,
+            scoreKey: props.scoreKey,
+          }),
+        {
+          initialProps: {
+            scoreKey: "user_thumb",
+          } as { scoreKey: "user_rating" | "user_thumb" },
+        }
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 0,
+        });
+      });
+      await flushMicrotasks();
+
+      // The scenario's style changes while the retry is armed.
+      rerender({ scoreKey: "user_rating" });
+      mockSubmitScore.mockResolvedValue({ status: "ok" });
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      for (const call of mockSubmitScore.mock.calls) {
+        expect(call[0]).toMatchObject({ key: "user_thumb", value: 0 });
+      }
+    });
+
+    it("rehydration ignores rows written under the other style", async () => {
+      // `listMySessionScores` returns every key it holds. Keyed by turn alone,
+      // a leftover star row would land in the thumbs widget's slot and
+      // rehydrate as "value 4", which thumbs cannot render honestly.
+      mockUseQuery.mockReturnValue([
+        { key: "user_rating", turnId: TURN_ID, value: 4, comment: "fine" },
+        { key: "user_thumb", turnId: "turn-other", value: 0 },
+      ]);
+
+      const { result } = renderHook(() =>
+        useChatboxTurnRating({
+          enabled: true,
+          chatboxId: "cbx_1",
+          accessVersion: 1,
+          scoreKey: "user_thumb",
+        })
+      );
+
+      act(() => {
+        result.current.observeChatSession(CHAT_SESSION_ID);
+      });
+
+      // The star-rated turn reads as unrated in the thumbs widget — truthful:
+      // it carries no judgement in the style this scenario now asks for. The
+      // row itself survives and still counts in the PM-facing rollup.
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toEqual({
+        status: "idle",
+      });
+      expect(
+        result.current.getState(CHAT_SESSION_ID, "turn-other")
+      ).toMatchObject({ value: 0, status: "submitted" });
+    });
+
+    it("a keyless rehydration row is read as stars", async () => {
+      // Rows projected by a backend that predates the key field.
+      mockUseQuery.mockReturnValue([{ turnId: TURN_ID, value: 3 }]);
+
+      const { result } = renderHook(() =>
+        useChatboxTurnRating({
+          enabled: true,
+          chatboxId: "cbx_1",
+          accessVersion: 1,
+          scoreKey: "user_rating",
+        })
+      );
+
+      act(() => {
+        result.current.observeChatSession(CHAT_SESSION_ID);
+      });
+
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+        value: 3,
+        status: "submitted",
+      });
+    });
+  });
 });
