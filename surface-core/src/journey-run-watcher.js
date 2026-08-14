@@ -180,10 +180,13 @@ export async function collectJourneyRunEvidence(args) {
 
 /** @param {Record<string, any>} session */
 function isFailedSession(session) {
-	// `rate_limited` counts: on a rate-limited run those ARE the sessions worth
-	// reading, and ranking them below ordinary completions would attach the
-	// least relevant evidence to exactly the run that needs it.
-	if (session?.status === "failed" || session?.status === "rate_limited") {
+	// `outcome` is the attempt's verdict (`succeeded`/`failed`/`rate_limited`),
+	// joined onto the session by the sessions route. NOT `status` — that field
+	// is the session's archival state (`active`/`archived`) and never says how
+	// the attempt went, which is why an earlier version of this check matched
+	// nothing. `rate_limited` counts: on a rate-limited run those ARE the
+	// sessions worth reading.
+	if (session?.outcome === "failed" || session?.outcome === "rate_limited") {
 		return true;
 	}
 	// `goalScore` is the judge's verdict; `readiness` is the transport-level

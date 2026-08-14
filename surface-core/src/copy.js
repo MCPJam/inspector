@@ -246,14 +246,17 @@ export function formatJourneyRunEvidenceLines(evidence, opts = {}) {
 	);
 	for (const session of sessions) {
 		const who = session.personaLabel || session.personaId || "session";
+		// Verdict from `outcome` (the attempt's end state) and the judge's
+		// `goalScore` — never from `status`, which is the session's archival
+		// flag and would print "active" as a verdict.
 		const verdict =
 			session?.goalScore?.passed === false
 				? "did not reach the goal"
-				: session?.status === "rate_limited"
+				: session?.outcome === "rate_limited"
 					? "rate-limited"
-					: session?.status === "failed"
+					: session?.outcome === "failed"
 						? "failed"
-						: (session?.status ?? "finished");
+						: "finished";
 		const preview =
 			typeof session.preview === "string" && session.preview.length > 0
 				? ` — “${session.preview.slice(0, 80)}”`
