@@ -75,6 +75,7 @@ import {
 import { buildChatboxLink } from "@/lib/chatbox-session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 /**
  * One User Testing scenario.
@@ -136,12 +137,12 @@ export function UserTestingScenarioDetail({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environment = useProjectEnvironment(
     environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
-    chatbox.environmentId ?? null
+    chatbox.environmentId ?? null,
   );
   // Fail closed: `undefined` (loading) and `null` (not visible) both hide the
   // promote affordance rather than guessing.
   const environmentIsAdhoc = Boolean(
-    environment && isAdhocEnvironment(environment)
+    environment && isAdhocEnvironment(environment),
   );
 
   // ── Setup editor: the shared composer, committing through REBIND ────────
@@ -153,11 +154,11 @@ export function UserTestingScenarioDetail({
   // an ad-hoc row is immutable by construction. Session history stays with the
   // chatbox either way.
   const namedEnvironments = useProjectEnvironments(
-    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null
+    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
   );
   const liveNamedEnvironments = useMemo(
     () => (namedEnvironments ?? []).filter((env) => !env.archivedAt),
-    [namedEnvironments]
+    [namedEnvironments],
   );
   const resolveComposerTargets = useComposerResolver(chatbox.projectId);
   const [composer, setComposer] =
@@ -173,7 +174,7 @@ export function UserTestingScenarioDetail({
   // a no-op and get silently swallowed while the backend stayed on the FIRST
   // target.
   const committedEnvironmentIdRef = useRef<string | null>(
-    chatbox.environmentId ?? null
+    chatbox.environmentId ?? null,
   );
   // Always the CURRENT reactive values, for the post-commit reconciliation
   // below: a subscription update that lands mid-commit is deliberately
@@ -181,7 +182,7 @@ export function UserTestingScenarioDetail({
   // time the commit ends — clearing the guard alone never replays it. The
   // closure's own props are frozen at edit time, so it reads these instead.
   const latestEnvironmentIdRef = useRef<string | null>(
-    chatbox.environmentId ?? null
+    chatbox.environmentId ?? null,
   );
   latestEnvironmentIdRef.current = chatbox.environmentId ?? null;
   const latestEnvironmentRowRef = useRef(environment);
@@ -200,7 +201,7 @@ export function UserTestingScenarioDetail({
   }, [environment?.environmentId, environment?.revision]);
 
   const composerActive = Boolean(
-    environmentsEnabled && chatbox.environmentId && environment
+    environmentsEnabled && chatbox.environmentId && environment,
   );
   // Held closed until the NAMED list settles, like the create flow: the
   // resolver reuses a matching named environment, and resolving against an
@@ -253,7 +254,7 @@ export function UserTestingScenarioDetail({
         toast.error(
           isAdhocUnavailable(err)
             ? "This workspace's backend doesn't support editing a scenario's setup yet."
-            : convexErrMessage(err, "Could not update this scenario's setup")
+            : convexErrMessage(err, "Could not update this scenario's setup"),
         );
       } finally {
         committingRef.current = false;
@@ -290,7 +291,7 @@ export function UserTestingScenarioDetail({
   // in-progress typing without a trace. The remote value skipped during focus
   // is picked up on blur instead (see `persistDescription`).
   const [descriptionDraft, setDescriptionDraft] = useState(
-    chatbox.description ?? ""
+    chatbox.description ?? "",
   );
   const descriptionFocusedRef = useRef(false);
   useEffect(() => {
@@ -424,7 +425,7 @@ export function UserTestingScenarioDetail({
         sel: selParam ?? undefined,
         view,
       }),
-      { replace: true }
+      { replace: true },
     );
   };
 
@@ -437,7 +438,7 @@ export function UserTestingScenarioDetail({
       onDeleted();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to delete the scenario"
+        err instanceof Error ? err.message : "Failed to delete the scenario",
       );
       // Rethrow: the dialog closes itself when `onConfirm` RESOLVES, so
       // swallowing here would dismiss the confirmation on a delete that
@@ -475,7 +476,7 @@ export function UserTestingScenarioDetail({
           className={cn(
             "min-h-0 min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm",
             "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-            "focus-visible:border-0 focus-visible:ring-0"
+            "focus-visible:border-0 focus-visible:ring-0",
           )}
         />
       ) : chatbox.namedHostName ? (
@@ -772,7 +773,7 @@ export function UserTestingScenarioDetail({
                       sel: themes ? serializeSelectionParam(themes) : undefined,
                       view,
                     }),
-                    { replace: true }
+                    { replace: true },
                   );
                 }}
                 initialView={view}
@@ -784,7 +785,7 @@ export function UserTestingScenarioDetail({
                       sel: selParam ?? undefined,
                       view: nextView,
                     }),
-                    { replace: true }
+                    { replace: true },
                   );
                 }}
                 onOpenSession={(threadId) => {
@@ -795,7 +796,7 @@ export function UserTestingScenarioDetail({
                       sel: selParam ?? undefined,
                       view,
                     }),
-                    { replace: true }
+                    { replace: true },
                   );
                 }}
                 onOpenSessionsTab={() => {
@@ -806,7 +807,7 @@ export function UserTestingScenarioDetail({
                       sel: selParam ?? undefined,
                       view,
                     }),
-                    { replace: true }
+                    { replace: true },
                   );
                 }}
                 recommendationsSlot={
@@ -814,6 +815,33 @@ export function UserTestingScenarioDetail({
                     name="user-testing-insights-rail"
                     fallback={null}
                   >
+                    {/* Repair tasks above the pattern rail: what to change,
+                        then what concentrated. The subscription lives inside
+                        this component (not in the page body) so a backend
+                        without the query degrades to nothing instead of
+                        taking the scenario page down, and it only mounts on
+                        the insights tab — never in edit mode. Membership is
+                        enforced at the backend; a non-member simply gets
+                        nothing. */}
+                    <ActionableFindings
+                      boundaryName="user-testing-actionable-findings"
+                      surface={{
+                        kind: "scenario",
+                        chatboxId: chatbox.chatboxId,
+                      }}
+                      context={{ rerunLabel: "this user-testing scenario" }}
+                      onOpenSession={(threadId) => {
+                        navigate(
+                          buildUserTestingScenarioPath(chatbox.chatboxId, {
+                            tab: "sessions",
+                            session: threadId,
+                            sel: selParam ?? undefined,
+                            view,
+                          }),
+                          { replace: true },
+                        );
+                      }}
+                    />
                     <RunInsightsProvider
                       surface={{
                         kind: "chatbox",
@@ -827,7 +855,7 @@ export function UserTestingScenarioDetail({
                             sel: selParam ?? undefined,
                             view,
                           }),
-                          { replace: true }
+                          { replace: true },
                         );
                       }}
                     >
