@@ -885,6 +885,24 @@ export function buildSecretSyncOptions(formData: ServerFormData): {
   };
 }
 
+/**
+ * What a `syncServerToConvex` call did. A bare `string | undefined` could not
+ * separate "nothing was written" from "written, here is the id", so callers
+ * that only checked truthiness reported success for a save that never happened.
+ *
+ * `not-saved` deliberately covers every pre-existing way the sync declines to
+ * return an id — local-fallback mode, no authenticated user, no project, or a
+ * failed write — because callers already treat those alike. Only
+ * `workspace-name-taken` is new: the name belongs to another project in this
+ * workspace, no retry will clear it, and the user has to rename.
+ */
+type ServerSyncResult =
+  | { ok: true; serverId: string }
+  | { ok: false; reason: "not-saved" }
+  | { ok: false; reason: "workspace-name-taken"; takenByProjectId?: string };
+
+const SERVER_NOT_SAVED: ServerSyncResult = { ok: false, reason: "not-saved" };
+
 export function useServerState({
   appState,
   dispatch,
@@ -1652,13 +1670,8 @@ export function useServerState({
         projectId: string;
         serverId?: string | null;
         exactServerId?: boolean;
-      },
-      // Fires when the save is abandoned because the workspace already gave
-      // this name to another project's server. Callers that show the failure
-      // need it to tell a name the user can fix apart from a write that is
-      // worth retrying; both otherwise arrive as an absent id.
-      onWorkspaceNameConflict?: () => void
-    ): Promise<string | undefined> => {
+      }
+    ): Promise<ServerSyncResult> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
       const latestProjectId =
@@ -1669,7 +1682,7 @@ export function useServerState({
         !latestProjectId ||
         latestProjectId === "none"
       ) {
-        return undefined;
+        return SERVER_NOT_SAVED;
       }
 
       // The ambient org/project coherence guard only applies to ambient
@@ -1793,7 +1806,18 @@ export function useServerState({
           return owned
             ? { owned }
             : { workspaceTwin: findWorkspaceTwin(fresh) };
-        } catch {
+        } catch (queryError) {
+          // The snapshot is all that is left, and a twin in it can now abort
+          // the save — so the failure has to be visible, or a transient Convex
+          // error reads as "this name is taken" with nothing to point at.
+          logger.warn("Could not re-read project servers before saving", {
+            serverName,
+            projectId: latestProjectId,
+            error:
+              queryError instanceof Error
+                ? queryError.message
+                : "Unknown error",
+          });
           return { workspaceTwin: findWorkspaceTwin(snapshot) };
         }
       };
@@ -1805,7 +1829,7 @@ export function useServerState({
       // and `servers:updateServer` authorizes by workspace role, so a later
       // pinned re-sync would write this payload onto the sibling project's
       // server. Report the collision and fail the save instead.
-      const logWorkspaceTwinConflict = (twin: RemoteServer): void => {
+      const workspaceTwinConflict = (twin: RemoteServer): ServerSyncResult => {
         logger.warn(
           "Server name already belongs to another project in this workspace",
           {
@@ -1815,7 +1839,11 @@ export function useServerState({
             existingProjectId: twin.projectId,
           }
         );
-        onWorkspaceNameConflict?.();
+        return {
+          ok: false,
+          reason: "workspace-name-taken",
+          takenByProjectId: twin.projectId,
+        };
       };
 
       // Existing-server edits from a hosted UI carry the exact authorized row
@@ -1934,12 +1962,11 @@ export function useServerState({
           } else {
             await convexUpdateServer(updatePayload);
           }
-          return serverIdToUpdate;
+          return { ok: true, serverId: serverIdToUpdate };
         }
 
         if (existing.workspaceTwin && hasSecretOperation) {
-          logWorkspaceTwinConflict(existing.workspaceTwin);
-          return undefined;
+          return workspaceTwinConflict(existing.workspaceTwin);
         }
 
         const createPayload = {
@@ -1950,7 +1977,9 @@ export function useServerState({
         const newId = hasSecretOperation
           ? await convexCreateServerWithClientSecret(createPayload)
           : await convexCreateServerIfMissing(createPayload);
-        return newId as string | undefined;
+        return newId
+          ? { ok: true, serverId: newId as string }
+          : SERVER_NOT_SAVED;
       } catch (primaryError) {
         const primaryErrorMessage =
           primaryError instanceof Error
@@ -1966,7 +1995,7 @@ export function useServerState({
             serverId: exactServerId,
             error: primaryErrorMessage,
           });
-          return undefined;
+          return SERVER_NOT_SAVED;
         }
         // Best-effort fallback for stale query snapshots: re-resolve the name
         // and let the second attempt pick its own write. Both failures come
@@ -1991,7 +2020,7 @@ export function useServerState({
             } else {
               await convexUpdateServer(updatePayload);
             }
-            return retryExisting._id;
+            return { ok: true, serverId: retryExisting._id };
           }
           // A twin can surface here even when the first resolve missed it: a
           // sibling project may have won the name concurrently, or — the
@@ -1999,8 +2028,7 @@ export function useServerState({
           // sibling's row has held the name all along. Either way a second
           // create would only resolve back to it.
           if (retry.workspaceTwin && hasSecretOperation) {
-            logWorkspaceTwinConflict(retry.workspaceTwin);
-            return undefined;
+            return workspaceTwinConflict(retry.workspaceTwin);
           }
           const createPayload = {
             projectId: latestProjectId,
@@ -2010,7 +2038,9 @@ export function useServerState({
           const newId = hasSecretOperation
             ? await convexCreateServerWithClientSecret(createPayload)
             : await convexCreateServerIfMissing(createPayload);
-          return newId as string | undefined;
+          return newId
+            ? { ok: true, serverId: newId as string }
+            : SERVER_NOT_SAVED;
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
             serverName,
@@ -2020,7 +2050,7 @@ export function useServerState({
                 ? fallbackError.message
                 : "Unknown error",
           });
-          return undefined;
+          return SERVER_NOT_SAVED;
         }
       }
     },
@@ -2187,7 +2217,7 @@ export function useServerState({
           return "skipped_existing_name";
         }
 
-        let convexResult: string | undefined;
+        let convexResult: ServerSyncResult;
         try {
           convexResult = await syncServerToConvex(serverName, runtime);
         } catch (syncError) {
@@ -2207,13 +2237,14 @@ export function useServerState({
           return "failed";
         }
 
-        if (convexResult === undefined) {
+        if (!convexResult.ok) {
           logger.error(
             "persistRuntimeServerToProjectIfNeeded: syncServerToConvex returned no server id",
             {
               serverName,
               projectId,
               phase: "after_syncServerToConvex",
+              reason: convexResult.reason,
             }
           );
           clearDedupeKey();
@@ -2292,14 +2323,16 @@ export function useServerState({
             `Cannot start: server "${serverName}" is not connected, so it can't be saved to the project.`
           );
         }
-        const serverId = await syncServerToConvex(serverName, entry);
-        if (!serverId) {
+        const synced = await syncServerToConvex(serverName, entry);
+        if (!synced.ok) {
           throw new Error(
-            `Cannot start: failed to save server "${serverName}" to the project.`
+            synced.reason === "workspace-name-taken"
+              ? `Cannot start: a server named "${serverName}" already exists in this workspace. Choose a different name.`
+              : `Cannot start: failed to save server "${serverName}" to the project.`
           );
         }
-        injectHostedServerMapping(serverName, serverId);
-        out.push({ serverName, serverId });
+        injectHostedServerMapping(serverName, synced.serverId);
+        out.push({ serverName, serverId: synced.serverId });
       }
       return out;
     },
@@ -2785,17 +2818,34 @@ export function useServerState({
                   serverId: hostedCallbackContext.serverId ?? null,
                 }
               : undefined;
+            // Fire-and-forget, so a refusal has to be inspected: it resolves
+            // rather than rejecting, and the OAuth profile silently never
+            // reaches Convex. Warn on both, and tell the user about the one
+            // they can act on — a taken name will refuse every retry.
             syncServerToConvex(
               serverName,
               oauthServerEntry,
               undefined,
               pinnedTarget
-            ).catch((error) =>
-              logger.warn("Failed to sync OAuth profile to Convex", {
-                serverName,
-                error,
+            )
+              .then((synced) => {
+                if (synced.ok) return;
+                logger.warn("OAuth profile was not saved to Convex", {
+                  serverName,
+                  reason: synced.reason,
+                });
+                if (synced.reason === "workspace-name-taken") {
+                  toast.error(
+                    `Signed in, but "${serverName}" could not be saved: that name already belongs to another project in this workspace.`
+                  );
+                }
               })
-            );
+              .catch((error) =>
+                logger.warn("Failed to sync OAuth profile to Convex", {
+                  serverName,
+                  error,
+                })
+              );
           }
 
           // A conformance problem that did not block the OAuth flow (today: an
@@ -3189,15 +3239,18 @@ export function useServerState({
       // local mode — the legacy {serverConfig, serverId: name} body still
       // works as a fallback.
       let syncErr: unknown;
+      let workspaceNameTaken = false;
       try {
-        const serverId = await syncServerToConvex(
+        const synced = await syncServerToConvex(
           formData.name,
           serverEntryForSave,
           clientSecretSyncOptions
         );
-        if (serverId) {
-          hostedServerId = serverId;
-          injectHostedServerMapping(formData.name, serverId);
+        if (synced.ok) {
+          hostedServerId = synced.serverId;
+          injectHostedServerMapping(formData.name, synced.serverId);
+        } else {
+          workspaceNameTaken = synced.reason === "workspace-name-taken";
         }
       } catch (err) {
         syncErr = err;
@@ -3216,10 +3269,13 @@ export function useServerState({
         // runtime connection starts. Continuing after a cloud save failure
         // creates an unscoped runtime-only server that can appear under another
         // organization while remaining unauthenticated.
-        const errorMessage =
-          syncErr instanceof Error
-            ? syncErr.message
-            : "Could not save the hosted server before connecting. Please try again.";
+        // A taken workspace name is the user's to fix and survives every retry,
+        // so it must not arrive as "Please try again".
+        const errorMessage = workspaceNameTaken
+          ? `A server named "${formData.name}" already exists in this workspace. Choose a different name.`
+          : syncErr instanceof Error
+          ? syncErr.message
+          : "Could not save the hosted server before connecting. Please try again.";
         dispatch({
           type: "CONNECT_FAILURE",
           name: formData.name,
@@ -3250,7 +3306,7 @@ export function useServerState({
       const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
       const storedServerUrlBeforeSave = HOSTED_MODE
         ? undefined
-        : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
+        : localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined;
       saveOAuthConfigToLocalStorage(formData);
 
       try {
@@ -3404,48 +3460,49 @@ export function useServerState({
           let oauthOptions: BuiltOAuthRequest;
           try {
             oauthOptions = buildOAuthRequest(
-            {
-              serverName: formData.name,
-              serverUrl: formData.url,
-              scopes: oauthInputs.scopes,
-              // Previously omitted here while every other entry point sent it,
-              // so a server with a configured resource indicator authorized
-              // against a different audience on first connect than on
-              // reconnect. Both candidates are gated on still belonging to
-              // THIS url — editing a server's endpoint must not carry the old
-              // endpoint's audience forward.
-              resourceUrl: selectStoredResourceUrl(formData.url, [
-                {
-                  resourceUrl: existingOAuthProfile?.resourceUrl,
-                  capturedForServerUrl: existingOAuthProfile?.serverUrl,
+              {
+                serverName: formData.name,
+                serverUrl: formData.url,
+                scopes: oauthInputs.scopes,
+                // Previously omitted here while every other entry point sent it,
+                // so a server with a configured resource indicator authorized
+                // against a different audience on first connect than on
+                // reconnect. Both candidates are gated on still belonging to
+                // THIS url — editing a server's endpoint must not carry the old
+                // endpoint's audience forward.
+                resourceUrl: selectStoredResourceUrl(formData.url, [
+                  {
+                    resourceUrl: existingOAuthProfile?.resourceUrl,
+                    capturedForServerUrl: existingOAuthProfile?.serverUrl,
+                  },
+                  {
+                    resourceUrl: storedOAuthConfigBeforeSave.resourceUrl,
+                    capturedForServerUrl: storedServerUrlBeforeSave,
+                  },
+                ]),
+                clientId: oauthInputs.clientId,
+                clientSecret: oauthInputs.clientSecret,
+                hasClientSecret: oauthInputs.hasClientSecret,
+                registryServerId: oauthInputs.registryServerId,
+                useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+                customHeaders: mergeWithProjectHeaders(formData.headers),
+                // Same per-server opt-in the OAuth Debugger honors: Connect runs
+                // the same state machine, so without this a path-scoped
+                // authorization server is rejected here even with the toggle on.
+                allowPathScopedIssuer:
+                  (formData.oauthAllowPathScopedIssuer ??
+                    existingServer?.oauthAllowPathScopedIssuer) === true,
+                protocolMode: protocolSelection.mode,
+                registrationMode,
+                protocolVersion: protocolSelection.protocolVersion,
+                protocolResolutionSource: protocolSelection.source,
+                registrationStrategy:
+                  existingOAuthProfile?.registrationStrategy,
+                onTraceUpdate: (oauthTrace: OAuthTrace) => {
+                  updateServerOAuthTrace(formData.name, oauthTrace);
                 },
-                {
-                  resourceUrl: storedOAuthConfigBeforeSave.resourceUrl,
-                  capturedForServerUrl: storedServerUrlBeforeSave,
-                },
-              ]),
-              clientId: oauthInputs.clientId,
-              clientSecret: oauthInputs.clientSecret,
-              hasClientSecret: oauthInputs.hasClientSecret,
-              registryServerId: oauthInputs.registryServerId,
-              useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-              customHeaders: mergeWithProjectHeaders(formData.headers),
-              // Same per-server opt-in the OAuth Debugger honors: Connect runs
-              // the same state machine, so without this a path-scoped
-              // authorization server is rejected here even with the toggle on.
-              allowPathScopedIssuer:
-                (formData.oauthAllowPathScopedIssuer ??
-                  existingServer?.oauthAllowPathScopedIssuer) === true,
-              protocolMode: protocolSelection.mode,
-              registrationMode,
-              protocolVersion: protocolSelection.protocolVersion,
-              protocolResolutionSource: protocolSelection.source,
-              registrationStrategy: existingOAuthProfile?.registrationStrategy,
-              onTraceUpdate: (oauthTrace: OAuthTrace) => {
-                updateServerOAuthTrace(formData.name, oauthTrace);
               },
-            },
-            { intent: "connect" },
+              { intent: "connect" }
             );
           } catch (error) {
             const errorMessage =
@@ -3794,9 +3851,8 @@ export function useServerState({
         hostedProjectId &&
         hostedProjectId !== "none"
       ) {
-        let workspaceNameTaken = false;
         try {
-          const syncedServerId = await syncServerToConvex(
+          const synced = await syncServerToConvex(
             serverName,
             serverEntry,
             {
@@ -3820,17 +3876,14 @@ export function useServerState({
                   ...options.hostedWriteTarget,
                   exactServerId: true,
                 }
-              : undefined,
-            () => {
-              workspaceNameTaken = true;
-            }
+              : undefined
           );
-          if (!syncedServerId) {
+          if (!synced.ok) {
             // A name the workspace has already given to another project's
             // server is the user's to fix, and no retry will clear it. Say so
             // instead of "try again", and leave it out of the error channel —
             // the sync path already warned with the project that holds it.
-            if (workspaceNameTaken) {
+            if (synced.reason === "workspace-name-taken") {
               toast.error(
                 `A server named "${serverName}" already exists in this workspace. Choose a different name.`
               );
@@ -4696,55 +4749,55 @@ export function useServerState({
         let oauthOptions: BuiltOAuthRequest;
         try {
           oauthOptions = buildOAuthRequest(
-          {
-            serverName,
-            serverUrl,
-            scopes: profileScopes ?? storedOAuthConfig.scopes,
-            // Same staleness gate as the connect path: a stored resource
-            // belongs to the endpoint it was captured for.
-            resourceUrl: selectStoredResourceUrl(serverUrl, [
-              {
-                resourceUrl: server.oauthFlowProfile?.resourceUrl,
-                capturedForServerUrl: server.oauthFlowProfile?.serverUrl,
+            {
+              serverName,
+              serverUrl,
+              scopes: profileScopes ?? storedOAuthConfig.scopes,
+              // Same staleness gate as the connect path: a stored resource
+              // belongs to the endpoint it was captured for.
+              resourceUrl: selectStoredResourceUrl(serverUrl, [
+                {
+                  resourceUrl: server.oauthFlowProfile?.resourceUrl,
+                  capturedForServerUrl: server.oauthFlowProfile?.serverUrl,
+                },
+                {
+                  resourceUrl: storedOAuthConfig.resourceUrl,
+                  capturedForServerUrl:
+                    localStorage.getItem(`mcp-serverUrl-${serverName}`) ??
+                    undefined,
+                },
+              ]),
+              clientId:
+                server.oauthTokens?.client_id ??
+                server.oauthFlowProfile?.clientId ??
+                storedClientCredentials.clientId,
+              clientSecret: undefined,
+              hasClientSecret: Boolean(server.hasClientSecret),
+              customHeaders: mergeWithProjectHeaders(
+                profileHeaders ??
+                  ("requestInit" in server.config
+                    ? extractRequestHeaders(server.config.requestInit)
+                    : undefined) ??
+                  storedOAuthConfig.customHeaders
+              ),
+              registryServerId: storedOAuthConfig.registryServerId,
+              useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+              // See the initial-connect path: the reconnect flow must honor the
+              // same per-server opt-in, or a reconnect fails where connect
+              // worked.
+              allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
+              protocolMode: protocolSelection.mode,
+              registrationMode,
+              protocolVersion: protocolSelection.protocolVersion,
+              protocolResolutionSource: protocolSelection.source,
+              registrationStrategy:
+                server.oauthFlowProfile?.registrationStrategy ??
+                storedOAuthConfig.registrationStrategy,
+              onTraceUpdate: (oauthTrace: OAuthTrace) => {
+                updateServerOAuthTrace(serverName, oauthTrace);
               },
-              {
-                resourceUrl: storedOAuthConfig.resourceUrl,
-                capturedForServerUrl:
-                  localStorage.getItem(`mcp-serverUrl-${serverName}`) ??
-                  undefined,
-              },
-            ]),
-            clientId:
-              server.oauthTokens?.client_id ??
-              server.oauthFlowProfile?.clientId ??
-              storedClientCredentials.clientId,
-            clientSecret: undefined,
-            hasClientSecret: Boolean(server.hasClientSecret),
-            customHeaders: mergeWithProjectHeaders(
-              profileHeaders ??
-                ("requestInit" in server.config
-                  ? extractRequestHeaders(server.config.requestInit)
-                  : undefined) ??
-                storedOAuthConfig.customHeaders
-            ),
-            registryServerId: storedOAuthConfig.registryServerId,
-            useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
-            // See the initial-connect path: the reconnect flow must honor the
-            // same per-server opt-in, or a reconnect fails where connect
-            // worked.
-            allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
-            protocolMode: protocolSelection.mode,
-            registrationMode,
-            protocolVersion: protocolSelection.protocolVersion,
-            protocolResolutionSource: protocolSelection.source,
-            registrationStrategy:
-              server.oauthFlowProfile?.registrationStrategy ??
-              storedOAuthConfig.registrationStrategy,
-            onTraceUpdate: (oauthTrace: OAuthTrace) => {
-              updateServerOAuthTrace(serverName, oauthTrace);
             },
-          },
-          { intent: "reconnect" },
+            { intent: "reconnect" }
           );
         } catch (error) {
           const errorMessage =
@@ -5598,7 +5651,19 @@ export function useServerState({
             originalServerName: isRename ? originalServerName : undefined,
           });
         } else {
-          await syncServerToConvex(nextServerName, updatedServer);
+          const synced = await syncServerToConvex(
+            nextServerName,
+            updatedServer
+          );
+          // Nothing was written, so the success toast below would be a lie.
+          if (!synced.ok) {
+            toast.error(
+              synced.reason === "workspace-name-taken"
+                ? `A server named "${nextServerName}" already exists in this workspace. Choose a different name.`
+                : "Could not save the server configuration. Please try again."
+            );
+            return { ok: false, serverName: originalServerName };
+          }
         }
 
         saveOAuthConfigToLocalStorage(formData);
