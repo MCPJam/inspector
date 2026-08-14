@@ -310,13 +310,27 @@ describe("UserTestingScenarioDetail", () => {
     // Regression for INSPECTOR-CLIENT-236 (infinite render loop).
     renderDetail();
 
-    const before = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
-    await act(async () => {
-      (before as (empty: boolean) => void)?.(false);
-    });
-    const after = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
+    const before = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
+      | ((empty: boolean) => void)
+      | undefined;
+    expect(before).toBeTypeOf("function");
 
+    const callsAfterMount = workbenchMock.mock.calls.length;
+    await act(async () => {
+      before?.(false);
+    });
+    // A no-op regression (setter or callback stops updating) would leave
+    // `calls` at the same length, making the identity check below vacuous.
+    expect(workbenchMock.mock.calls.length).toBeGreaterThan(callsAfterMount);
+    const after = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
     expect(after).toBe(before);
+
+    // Redundant update, same value: the no-op guard must skip the re-render.
+    const callsAfterFirstUpdate = workbenchMock.mock.calls.length;
+    await act(async () => {
+      before?.(false);
+    });
+    expect(workbenchMock.mock.calls.length).toBe(callsAfterFirstUpdate);
   });
 
   it("shows setup and share controls on the Edit route", () => {
