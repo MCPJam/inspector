@@ -215,6 +215,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | Endpoint | What it does |
 | --- | --- |
 | `GET /me` | The account behind the key |
+| `GET /organizations` | The organizations the caller belongs to — where `organizationId` comes from. A key is bound to one organization and only ever sees that one |
 | `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
 | `GET /projects/{projectId}/servers` | The project's saved MCP servers |
 | `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |

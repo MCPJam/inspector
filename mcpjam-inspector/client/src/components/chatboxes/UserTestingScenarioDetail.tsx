@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
@@ -20,6 +20,7 @@ import {
   ChatboxShareEmptyPanel,
 } from "@/components/chatboxes/ChatboxShareBanner";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
+import { ChatboxPerTurnFeedbackToggle } from "@/components/chatboxes/ChatboxPerTurnFeedbackToggle";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
@@ -27,15 +28,6 @@ import {
   RunInsightsRecommendations,
 } from "@/components/shared/usage-insights/run-insights";
 import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
-import {
-  ChatboxOutcomeCalibration,
-  hasOutcomeFeedbackCalibration,
-} from "@/components/chatboxes/ChatboxOutcomeCalibration";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
 import {
   parseSelectionParam,
   serializeSelectionParam,
@@ -144,12 +136,12 @@ export function UserTestingScenarioDetail({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environment = useProjectEnvironment(
     environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
-    chatbox.environmentId ?? null,
+    chatbox.environmentId ?? null
   );
   // Fail closed: `undefined` (loading) and `null` (not visible) both hide the
   // promote affordance rather than guessing.
   const environmentIsAdhoc = Boolean(
-    environment && isAdhocEnvironment(environment),
+    environment && isAdhocEnvironment(environment)
   );
 
   // ── Setup editor: the shared composer, committing through REBIND ────────
@@ -161,16 +153,15 @@ export function UserTestingScenarioDetail({
   // an ad-hoc row is immutable by construction. Session history stays with the
   // chatbox either way.
   const namedEnvironments = useProjectEnvironments(
-    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
+    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null
   );
   const liveNamedEnvironments = useMemo(
     () => (namedEnvironments ?? []).filter((env) => !env.archivedAt),
-    [namedEnvironments],
+    [namedEnvironments]
   );
   const resolveComposerTargets = useComposerResolver(chatbox.projectId);
-  const [composer, setComposer] = useState<EnvironmentComposerState>(
-    emptyComposerState,
-  );
+  const [composer, setComposer] =
+    useState<EnvironmentComposerState>(emptyComposerState);
   const [isRebinding, setIsRebinding] = useState(false);
   // Blocks the reseed below while a commit is in flight, so the rebind's own
   // reactive echo doesn't clobber the state the user is mid-editing against.
@@ -182,7 +173,7 @@ export function UserTestingScenarioDetail({
   // a no-op and get silently swallowed while the backend stayed on the FIRST
   // target.
   const committedEnvironmentIdRef = useRef<string | null>(
-    chatbox.environmentId ?? null,
+    chatbox.environmentId ?? null
   );
   // Always the CURRENT reactive values, for the post-commit reconciliation
   // below: a subscription update that lands mid-commit is deliberately
@@ -190,7 +181,7 @@ export function UserTestingScenarioDetail({
   // time the commit ends — clearing the guard alone never replays it. The
   // closure's own props are frozen at edit time, so it reads these instead.
   const latestEnvironmentIdRef = useRef<string | null>(
-    chatbox.environmentId ?? null,
+    chatbox.environmentId ?? null
   );
   latestEnvironmentIdRef.current = chatbox.environmentId ?? null;
   const latestEnvironmentRowRef = useRef(environment);
@@ -209,7 +200,7 @@ export function UserTestingScenarioDetail({
   }, [environment?.environmentId, environment?.revision]);
 
   const composerActive = Boolean(
-    environmentsEnabled && chatbox.environmentId && environment,
+    environmentsEnabled && chatbox.environmentId && environment
   );
   // Held closed until the NAMED list settles, like the create flow: the
   // resolver reuses a matching named environment, and resolving against an
@@ -262,7 +253,7 @@ export function UserTestingScenarioDetail({
         toast.error(
           isAdhocUnavailable(err)
             ? "This workspace's backend doesn't support editing a scenario's setup yet."
-            : convexErrMessage(err, "Could not update this scenario's setup"),
+            : convexErrMessage(err, "Could not update this scenario's setup")
         );
       } finally {
         committingRef.current = false;
@@ -299,7 +290,7 @@ export function UserTestingScenarioDetail({
   // in-progress typing without a trace. The remote value skipped during focus
   // is picked up on blur instead (see `persistDescription`).
   const [descriptionDraft, setDescriptionDraft] = useState(
-    chatbox.description ?? "",
+    chatbox.description ?? ""
   );
   const descriptionFocusedRef = useRef(false);
   useEffect(() => {
@@ -356,9 +347,17 @@ export function UserTestingScenarioDetail({
     insightsEmptyReport?.chatboxId === chatbox.chatboxId
       ? insightsEmptyReport.empty
       : true;
-  const handleInsightsEmptyChange = (empty: boolean) => {
-    setInsightsEmptyReport({ chatboxId: chatbox.chatboxId, empty });
-  };
+  // Stable ref: a new one each render loops InsightsWorkbench's report effect.
+  const handleInsightsEmptyChange = useCallback(
+    (empty: boolean) => {
+      setInsightsEmptyReport((prev) =>
+        prev?.chatboxId === chatbox.chatboxId && prev.empty === empty
+          ? prev
+          : { chatboxId: chatbox.chatboxId, empty },
+      );
+    },
+    [chatbox.chatboxId],
+  );
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;
@@ -370,10 +369,7 @@ export function UserTestingScenarioDetail({
   const selParam = searchParams.get("sel");
   const view: InsightsView =
     searchParams.get("view") === "clusters" ? "clusters" : "flow";
-  const urlSelection = useMemo(
-    () => parseSelectionParam(selParam),
-    [selParam],
-  );
+  const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
 
   // Present only when the environment can't resolve right now (archived, a
   // pinned plugin disabled, its host gone). The scenario still opens: its
@@ -428,7 +424,7 @@ export function UserTestingScenarioDetail({
         sel: selParam ?? undefined,
         view,
       }),
-      { replace: true },
+      { replace: true }
     );
   };
 
@@ -441,7 +437,7 @@ export function UserTestingScenarioDetail({
       onDeleted();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to delete the scenario",
+        err instanceof Error ? err.message : "Failed to delete the scenario"
       );
       // Rethrow: the dialog closes itself when `onConfirm` RESOLVES, so
       // swallowing here would dismiss the confirmation on a delete that
@@ -479,7 +475,7 @@ export function UserTestingScenarioDetail({
           className={cn(
             "min-h-0 min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm",
             "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-            "focus-visible:border-0 focus-visible:ring-0",
+            "focus-visible:border-0 focus-visible:ring-0"
           )}
         />
       ) : chatbox.namedHostName ? (
@@ -542,14 +538,21 @@ export function UserTestingScenarioDetail({
                           : "This scenario's environment can't be loaded right now — the share link won't open."}
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {environmentError.message} Its sessions are
-                        unaffected.
+                        {environmentError.message} Its sessions are unaffected.
                       </p>
                     </div>
                   </div>
                 ) : null}
 
                 <ChatboxShareSection chatbox={chatbox} />
+
+                {/* Keyed per scenario: the toggle holds optimistic state
+                    across an await, and reusing one instance would let a
+                    write started on one scenario resolve into another's. */}
+                <ChatboxPerTurnFeedbackToggle
+                  key={chatbox.chatboxId}
+                  chatbox={chatbox}
+                />
 
                 <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
                   {composerActive ? (
@@ -586,9 +589,7 @@ export function UserTestingScenarioDetail({
                 data-testid="user-testing-edit-preview"
               >
                 <div className="flex h-9 shrink-0 items-center border-b border-border/40 px-4">
-                  <p className="text-sm font-medium text-foreground">
-                    Preview
-                  </p>
+                  <p className="text-sm font-medium text-foreground">Preview</p>
                 </div>
                 <div className="relative min-h-0 flex-1">
                   {isPreviewProfilePending ? (
@@ -745,14 +746,46 @@ export function UserTestingScenarioDetail({
         ) : null}
         {tab === "insights" ? (
           <div className="absolute inset-0">
-            {/* Ships dark and guest-tolerant: `useQuery` against an undeployed
-                query throws, and a guest hitting the member-only request
-                mutation would too. Keyed per scenario across route reuse. */}
-            <ErrorBoundary key={chatbox.chatboxId} fallback={null}>
-              <RunInsightsProvider
-                surface={{
-                  kind: "chatbox",
-                  chatboxId: chatbox.chatboxId,
+            {/* The workbench (empty state, Sankey, sessions) must stay up
+                even when the window-insights rail is missing: those queries
+                throw against an undeployed backend, and wrapping THIS whole
+                tree in `fallback={null}` left a blank `absolute inset-0`.
+                Isolate the rail; if the workbench itself blows up, show the
+                share empty panel rather than nothing. */}
+            <ErrorBoundary
+              key={chatbox.chatboxId}
+              name="user-testing-insights"
+              fallback={<ChatboxShareEmptyPanel chatbox={chatbox} />}
+            >
+              <InsightsWorkbench
+                scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
+                cohortKey={chatbox.chatboxId}
+                // Scenarios carry real-user traffic; the retired simulation
+                // flow's rows are still in the database and stay hidden.
+                augmentFilter={withHideSynthetic}
+                urlSelection={urlSelection}
+                onSelectionChange={(themes) => {
+                  navigate(
+                    buildUserTestingScenarioPath(chatbox.chatboxId, {
+                      tab: "insights",
+                      session: sessionParam ?? undefined,
+                      sel: themes ? serializeSelectionParam(themes) : undefined,
+                      view,
+                    }),
+                    { replace: true }
+                  );
+                }}
+                initialView={view}
+                onViewChange={(nextView) => {
+                  navigate(
+                    buildUserTestingScenarioPath(chatbox.chatboxId, {
+                      tab: "insights",
+                      session: sessionParam ?? undefined,
+                      sel: selParam ?? undefined,
+                      view: nextView,
+                    }),
+                    { replace: true }
+                  );
                 }}
                 onOpenSession={(threadId) => {
                   navigate(
@@ -762,95 +795,52 @@ export function UserTestingScenarioDetail({
                       sel: selParam ?? undefined,
                       view,
                     }),
-                    { replace: true },
+                    { replace: true }
                   );
                 }}
-              >
-                <InsightsWorkbench
-                  scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
-                  cohortKey={chatbox.chatboxId}
-                  // Scenarios carry real-user traffic; the retired simulation
-                  // flow's rows are still in the database and stay hidden.
-                  augmentFilter={withHideSynthetic}
-                  urlSelection={urlSelection}
-                  onSelectionChange={(themes) => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "insights",
-                        session: sessionParam ?? undefined,
-                        sel: themes
-                          ? serializeSelectionParam(themes)
-                          : undefined,
-                        view,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  initialView={view}
-                  onViewChange={(nextView) => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "insights",
-                        session: sessionParam ?? undefined,
-                        sel: selParam ?? undefined,
-                        view: nextView,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  onOpenSession={(threadId) => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "sessions",
-                        session: threadId,
-                        sel: selParam ?? undefined,
-                        view,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  onOpenSessionsTab={() => {
-                    navigate(
-                      buildUserTestingScenarioPath(chatbox.chatboxId, {
-                        tab: "sessions",
-                        session: sessionParam ?? undefined,
-                        sel: selParam ?? undefined,
-                        view,
-                      }),
-                      { replace: true },
-                    );
-                  }}
-                  recommendationsSlot={<RunInsightsRecommendations />}
-                  strugglesSlot={(breakdown) =>
-                    hasOutcomeFeedbackCalibration(breakdown) ? (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button
-                            type="button"
-                            className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium tabular-nums transition-colors hover:bg-muted/50"
-                            data-testid="chatbox-insights-feedback-chip"
-                          >
-                            Feedback
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          align="start"
-                          className="w-[28rem] max-w-[90vw] p-0"
-                        >
-                          <div className="flex max-h-[60vh] min-h-0 flex-col overflow-y-auto">
-                            <ChatboxOutcomeCalibration breakdown={breakdown} />
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    ) : null
-                  }
-                  autoBackfillTopicMap
-                  emptyState={<ChatboxShareEmptyPanel chatbox={chatbox} />}
-                  onEmptyChange={handleInsightsEmptyChange}
-                  className="px-8 py-4"
-                  testIdPrefix="chatbox-insights"
-                />
-              </RunInsightsProvider>
+                onOpenSessionsTab={() => {
+                  navigate(
+                    buildUserTestingScenarioPath(chatbox.chatboxId, {
+                      tab: "sessions",
+                      session: sessionParam ?? undefined,
+                      sel: selParam ?? undefined,
+                      view,
+                    }),
+                    { replace: true }
+                  );
+                }}
+                recommendationsSlot={
+                  <ErrorBoundary
+                    name="user-testing-insights-rail"
+                    fallback={null}
+                  >
+                    <RunInsightsProvider
+                      surface={{
+                        kind: "chatbox",
+                        chatboxId: chatbox.chatboxId,
+                      }}
+                      onOpenSession={(threadId) => {
+                        navigate(
+                          buildUserTestingScenarioPath(chatbox.chatboxId, {
+                            tab: "sessions",
+                            session: threadId,
+                            sel: selParam ?? undefined,
+                            view,
+                          }),
+                          { replace: true }
+                        );
+                      }}
+                    >
+                      <RunInsightsRecommendations />
+                    </RunInsightsProvider>
+                  </ErrorBoundary>
+                }
+                autoBackfillTopicMap
+                emptyState={<ChatboxShareEmptyPanel chatbox={chatbox} />}
+                onEmptyChange={handleInsightsEmptyChange}
+                className="px-8 py-4"
+                testIdPrefix="chatbox-insights"
+              />
             </ErrorBoundary>
           </div>
         ) : null}

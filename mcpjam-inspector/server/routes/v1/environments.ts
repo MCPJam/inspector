@@ -72,6 +72,8 @@ type EnvironmentRow = {
   description?: string;
   hostId: string;
   serverAttachmentId?: string;
+  /** The stored model OVERRIDE. Absent ⇒ the environment inherits its host's. */
+  modelId?: string;
   skillSelection?: SkillSelection;
   pluginVersionIds?: string[];
   /** Internal (Convex) name for the sandbox-image pin — public DTOs expose it
@@ -88,6 +90,17 @@ type ResolvedEnvironmentRow = {
   hostId: string;
   hostName: string;
   hostConfigId: string;
+  /** The stored override, when the environment sets one. */
+  modelId?: string;
+  /**
+   * The model this environment WILL RUN. Optional in the wire type only for
+   * deploy skew — a backend that predates the feature omits it. A launch
+   * resolution from a current backend always carries it, because an
+   * environment with no model is refused with `ENV_MODEL_REQUIRED` rather than
+   * resolved.
+   */
+  effectiveModelId?: string;
+  modelSource?: "environment" | "host";
   serverAttachmentId?: string;
   /** Optional for deploy skew: present once the backend resolve carries the
    *  env-level sandbox-image pin through. */
@@ -114,6 +127,11 @@ function toEnvironmentDto(row: EnvironmentRow) {
     ...(row.serverAttachmentId !== undefined
       ? { serverAttachmentId: row.serverAttachmentId }
       : {}),
+    // The STORED override only. `effectiveModelId` is a resolution result and
+    // lives on the resolve DTO — conflating them here would leave a caller
+    // unable to tell "pinned to X" from "inheriting X", which is exactly the
+    // distinction an editor needs.
+    ...(row.modelId !== undefined ? { modelId: row.modelId } : {}),
     ...(row.skillSelection !== undefined
       ? { skillSelection: row.skillSelection }
       : {}),
@@ -146,6 +164,13 @@ function toResolvedDto(resolved: ResolvedEnvironmentRow) {
     hostId: resolved.hostId,
     hostName: resolved.hostName,
     hostConfigId: resolved.hostConfigId,
+    ...(resolved.modelId !== undefined ? { modelId: resolved.modelId } : {}),
+    ...(resolved.effectiveModelId !== undefined
+      ? { effectiveModelId: resolved.effectiveModelId }
+      : {}),
+    ...(resolved.modelSource !== undefined
+      ? { modelSource: resolved.modelSource }
+      : {}),
     ...(resolved.serverAttachmentId !== undefined
       ? { serverAttachmentId: resolved.serverAttachmentId }
       : {}),
@@ -180,6 +205,27 @@ type ConvexErrorData = {
   details?: Record<string, string>;
 };
 
+/**
+ * True when a Convex call failed because the DEPLOYMENT does not export the
+ * function — the one failure the capability probe is allowed to read as
+ * "unsupported".
+ *
+ * Matched on the message because Convex surfaces this as a plain client error
+ * with no structured code: there is nothing more precise to key on. Kept
+ * deliberately narrow so an authorization or transport failure cannot be
+ * mistaken for deploy skew.
+ */
+function isMissingConvexFunctionError(error: unknown): boolean {
+  const message = String(
+    (error as { message?: unknown } | null)?.message ?? error ?? ""
+  ).toLowerCase();
+  return (
+    message.includes("could not find public function") ||
+    message.includes("could not find function") ||
+    message.includes("function not found")
+  );
+}
+
 function convexErrorData(error: unknown): ConvexErrorData | null {
   const data = (error as { data?: unknown } | null)?.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -196,6 +242,20 @@ function convexErrorData(error: unknown): ConvexErrorData | null {
  */
 const RESOLVE_NOT_FOUND_CODES = new Set(["ENV_NOT_FOUND", "ENV_CROSS_PROJECT"]);
 
+/**
+ * Stable `details.reason` slugs for the ENV_* codes a caller is expected to
+ * BRANCH on rather than merely display.
+ *
+ * `ENV_MODEL_REQUIRED` is the one that matters today: the environment sets no
+ * model and the client it uses has none pinned, so it cannot launch at all.
+ * That is remediable — pick a model on one of the two — and a caller (the CLI,
+ * an external runner, the composer) needs to distinguish it from the other
+ * transient resolution failures without pattern-matching prose.
+ */
+const RESOLVE_REASON_BY_CODE: Record<string, string> = {
+  ENV_MODEL_REQUIRED: "environment_model_required",
+};
+
 function translateResolveError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
   const data = convexErrorData(error);
@@ -210,9 +270,11 @@ function translateResolveError(error: unknown): WebRouteError {
         "Environment not found"
       );
     }
+    const reason = RESOLVE_REASON_BY_CODE[code];
     return new WebRouteError(409, ErrorCode.CONFLICT, message, {
       code,
       ...(data?.details ?? {}),
+      ...(reason ? { reason } : {}),
     });
   }
   return translateConvexError(error, "Environment could not be resolved");
@@ -322,6 +384,12 @@ const createEnvironmentSchema = z.strictObject({
   description: z.string().optional(),
   hostId: z.string().trim().min(1),
   serverAttachmentId: z.string().trim().min(1).optional(),
+  /**
+   * Model OVERRIDE. Omit to inherit the host's pinned model. `.min(1)` after
+   * trimming, matching the backend: an empty string is not a way to spell "no
+   * model" — on PATCH that is `null`, and on create it is simply omission.
+   */
+  modelId: z.string().trim().min(1).optional(),
   skillSelection: skillSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
   /** Public name for the internal `computerEnvironmentId` pin; must be a
@@ -343,6 +411,7 @@ const updateEnvironmentSchema = z
     description: z.string().optional(),
     hostId: z.string().trim().min(1).optional(),
     serverAttachmentId: z.string().trim().min(1).nullable().optional(),
+    modelId: z.string().trim().min(1).nullable().optional(),
     skillSelection: skillSelectionSchema.nullable().optional(),
     pluginVersionIds: pluginVersionIdsSchema.nullable().optional(),
     sandboxImageId: z.string().trim().min(1).nullable().optional(),
@@ -353,12 +422,13 @@ const updateEnvironmentSchema = z
       value.description !== undefined ||
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
+      value.modelId !== undefined ||
       value.skillSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 
@@ -368,6 +438,58 @@ const revisionBodySchema = z.strictObject({
 });
 
 // ── Routes ───────────────────────────────────────────────────────────────────
+
+// GET /v1/projects/:projectId/environments/capabilities
+//
+// What THIS deployment's environment surface accepts. Exists for version skew,
+// not feature flagging: the Inspector, the SDK and the CLI ship independently
+// of the backend, and a newer client must not send a `modelId` an older
+// deployment's validator would reject with an unreadable error.
+//
+// ABSENCE IS THE SIGNAL. An older backend does not export `getCapabilities`,
+// the proxied query fails, and this route answers `false` for everything —
+// which is exactly what a client should assume when it cannot ask. So the
+// failure is swallowed on purpose rather than surfaced: a 500 here would break
+// clients that are perfectly able to fall back.
+//
+// Registered ABOVE `/:environmentId` so the literal segment is not captured as
+// an environment id.
+environments.get(
+  "/projects/:projectId/environments/capabilities",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const readClient = createConvexClient(await getConvexBearerForRequest(c));
+    let capabilities: { modelOverrides?: boolean; modelMatrix?: boolean } = {};
+    try {
+      capabilities =
+        ((await readClient.query(
+          "projectEnvironments:getCapabilities" as any,
+          { projectId } as any
+        )) as typeof capabilities | null) ?? {};
+    } catch (error) {
+      // ONLY deploy skew is swallowed. An older backend does not export this
+      // function, so the call fails with a "could not find function" error and
+      // `false` is the correct answer.
+      //
+      // Everything else must surface. Collapsing an authorization failure, a
+      // missing project, or an upstream outage into a cheerful 200 with both
+      // capabilities false tells the caller "this platform is too old" — which
+      // is not merely unhelpful but wrong, and sends them to upgrade something
+      // that is already current instead of fixing their access.
+      if (!isMissingConvexFunctionError(error)) {
+        throw translateConvexError(
+          error,
+          "Environment capabilities could not be read"
+        );
+      }
+      capabilities = {};
+    }
+    return v1Resource(c, {
+      modelOverrides: capabilities.modelOverrides === true,
+      modelMatrix: capabilities.modelMatrix === true,
+    });
+  }
+);
 
 // GET /v1/projects/:projectId/environments — list a project's environments.
 // Archived rows are excluded unless `?includeArchived=true`; without it there
@@ -504,6 +626,9 @@ environments.patch(
     if (body.hostId !== undefined) updateArgs.hostId = body.hostId;
     if (body.serverAttachmentId !== undefined)
       updateArgs.serverAttachmentId = body.serverAttachmentId;
+    // Tri-state, like every other clearable: `null` CLEARS the override (fall
+    // back to the host's model), a value replaces it, omission preserves it.
+    if (body.modelId !== undefined) updateArgs.modelId = body.modelId;
     if (body.skillSelection !== undefined)
       updateArgs.skillSelection = body.skillSelection;
     if (body.pluginVersionIds !== undefined)

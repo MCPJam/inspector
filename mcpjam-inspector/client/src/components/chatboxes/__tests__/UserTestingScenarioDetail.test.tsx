@@ -256,6 +256,7 @@ const openSetup = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  workbenchMock.mockReset();
   // `clearAllMocks` clears calls but NOT implementations — reinstate the
   // resolved defaults so a per-test rejection can't leak into later cases.
   deleteChatboxMock.mockResolvedValue(undefined);
@@ -306,6 +307,33 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.getByTestId("stub-share-banner")).toBeInTheDocument();
   });
 
+  it("keeps onEmptyChange stable across the render it triggers", async () => {
+    // Regression for INSPECTOR-CLIENT-236 (infinite render loop).
+    renderDetail();
+
+    const before = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
+      | ((empty: boolean) => void)
+      | undefined;
+    expect(before).toBeTypeOf("function");
+
+    const callsAfterMount = workbenchMock.mock.calls.length;
+    await act(async () => {
+      before?.(false);
+    });
+    // A no-op regression (setter or callback stops updating) would leave
+    // `calls` at the same length, making the identity check below vacuous.
+    expect(workbenchMock.mock.calls.length).toBeGreaterThan(callsAfterMount);
+    const after = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
+    expect(after).toBe(before);
+
+    // Redundant update, same value: the no-op guard must skip the re-render.
+    const callsAfterFirstUpdate = workbenchMock.mock.calls.length;
+    await act(async () => {
+      before?.(false);
+    });
+    expect(workbenchMock.mock.calls.length).toBe(callsAfterFirstUpdate);
+  });
+
   it("shows setup and share controls on the Edit route", () => {
     renderEdit();
 
@@ -325,6 +353,26 @@ describe("UserTestingScenarioDetail", () => {
         cohortKey: "cb-1",
       }),
     );
+  });
+
+  it("shows the share empty panel when Insights throw, not a blank pane", () => {
+    // The window-insights rail used to wrap the whole tab in
+    // `fallback={null}`. An undeployed `getWindowSignals` then left the
+    // Insights `absolute inset-0` with no children — no empty state, no
+    // retry. The workbench must stay reachable; if it itself blows up, the
+    // share empty panel is the recovery UI.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    workbenchMock.mockImplementation(() => {
+      throw new Error(
+        "Could not find public function: chatboxWindowInsights:getWindowSignals",
+      );
+    });
+
+    renderDetail();
+
+    expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
+    consoleError.mockRestore();
   });
 
   it("switches tabs by replacing the URL, not pushing onto history", () => {
