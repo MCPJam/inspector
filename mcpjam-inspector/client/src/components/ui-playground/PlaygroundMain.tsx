@@ -247,10 +247,14 @@ const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 
 // PUR-11: the 3 catalog templates a first-run guest's Playground compare
 // lineup is seeded from, lead first. See the "Seed backstop" effect below.
+// Keep every id here flag-free: guests never match a rollout gate, and the
+// seed refuses a partial lineup (falling back to one blank host), so a gated
+// template like "claude-code" would both leak the gated client to everyone
+// and have no working way to be filtered out.
 const PLAYGROUND_SEED_TEMPLATE_IDS = [
   "chatgpt",
   "claude",
-  "claude-code",
+  "cursor",
 ] as const;
 
 function buildHistoryContentSignature(
@@ -1296,7 +1300,7 @@ export function PlaygroundMain({
   // default "MCPJam" host for empty projects) is hidden on the playground, so
   // this replicates that one-shot seed — but with the immediate client-
   // comparison value prop (PUR-11): guests land with 3 pre-selected clients
-  // (ChatGPT, Claude, Claude Code) instead of one blank host + a toggle they'd
+  // (ChatGPT, Claude, Cursor) instead of one blank host + a toggle they'd
   // have to find and flip themselves. Guarded by `hostList.length === 0` + a
   // per-project ref so it fires at most once per empty project and never
   // blocks a different empty project from getting its own default hosts.

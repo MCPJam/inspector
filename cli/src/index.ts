@@ -13,6 +13,7 @@ import { registerScenariosCommands } from "./commands/scenarios.js";
 import { registerEvalCommands } from "./commands/eval.js";
 import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
+import { registerOrganizationsCommands } from "./commands/organizations.js";
 import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
@@ -98,6 +99,7 @@ export async function main(
   registerXaaCommands(program);
   registerProtocolCommands(program);
   registerAuthCommands(program);
+  registerOrganizationsCommands(program);
   registerProjectsCommands(program);
   registerEvalCommands(program);
   registerChatCommands(program);

@@ -39,6 +39,7 @@ import type {
   PlatformHostDetail,
   PlatformMe,
   PlatformModel,
+  PlatformOrganization,
   PlatformPage,
   PlatformPlugin,
   PlatformPluginVersion,
@@ -126,6 +127,12 @@ export class PlatformApiClient {
 
   listModels(options?: RequestOptions): Promise<PlatformPage<PlatformModel>> {
     return this.request("GET", "/models", {}, options);
+  }
+
+  listOrganizations(
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformOrganization>> {
+    return this.request("GET", "/organizations", {}, options);
   }
 
   listProjects(

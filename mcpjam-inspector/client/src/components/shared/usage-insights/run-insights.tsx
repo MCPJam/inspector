@@ -800,8 +800,8 @@ export function RunInsightsBanner() {
 }
 
 /**
- * Scorecard-adjacent Recommendations: pattern findings as expandable rows
- * matching the criterion scorecard chrome.
+ * Scorecard-adjacent Recommendations: pattern findings as expandable rows.
+ * Card chrome lives on Findings; this is a subsection, not a second card.
  */
 export function RunInsightsRecommendations() {
   const {
@@ -845,17 +845,14 @@ export function RunInsightsRecommendations() {
   if (signals.truncated) caveats.push("newest sessions only");
 
   return (
-    <div
-      className={cn(rows.length > 0 || busy || error ? "mt-4" : undefined)}
-      data-testid="run-insights-recommendations"
-    >
-      <div className="mb-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+    <div data-testid="run-insights-recommendations">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 pt-2.5 pb-2">
         <h3 className="text-sm font-semibold tracking-tight">Recommendations</h3>
         <span className="text-xs text-muted-foreground">
           Patterns to investigate across sessions
         </span>
       </div>
-      <div className="overflow-hidden rounded-lg border border-border/60 bg-card/60">
+      <div>
         {busy && rows.length === 0 ? (
           <p
             className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground"

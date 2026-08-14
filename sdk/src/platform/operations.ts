@@ -62,6 +62,7 @@ import type {
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
+  PlatformOrganization,
   PlatformPage,
   PlatformMe,
   PlatformModel,
@@ -104,6 +105,21 @@ export const listModelsOperation: PlatformOperation<
   inputSchema: z.object({}),
   async execute(_input, { client, signal }) {
     return client.listModels({ signal });
+  },
+};
+
+export const listOrganizationsOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformPage<PlatformOrganization>
+> = {
+  name: "list_organizations",
+  title: "List MCPJam organizations",
+  description:
+    "List the organizations the caller belongs to. Use this to discover the organization id that list_projects filters by and create_project takes. An organization-scoped API key only ever sees its own organization.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.listOrganizations({ signal });
   },
 };
 
@@ -169,7 +185,14 @@ export const listProjectsOperation: PlatformOperation<
 const createProjectInput = z.object({
   name: z.string().trim().min(1),
   description: z.string().optional(),
-  organizationId: z.string().trim().min(1).optional(),
+  organizationId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Organization to create the project in, from list_organizations. Defaults to the caller's own organization."
+    ),
   icon: z.string().optional(),
   visibility: z.enum(["public", "private"]).optional(),
 });
@@ -181,7 +204,8 @@ export const createProjectOperation: PlatformOperation<
 > = {
   name: "create_project",
   title: "Create an MCPJam project",
-  description: "Create a new project in an accessible organization.",
+  description:
+    "Create an empty project in an organization the caller belongs to. The new project starts with no MCP servers; add them with create_project_server or connect_project_server. Counts against the organization plan's project limit.",
   readOnly: false,
   inputSchema: createProjectInput,
   async execute(input, { client, signal }) {
@@ -213,7 +237,8 @@ export const updateProjectOperation: PlatformOperation<
 > = {
   name: "update_project",
   title: "Update an MCPJam project",
-  description: "Update project metadata without replacing its server set.",
+  description:
+    "Rename a project or change its description, icon or visibility. Metadata only — this never adds, removes or edits the project's MCP server configurations, which have their own operations.",
   readOnly: false,
   inputSchema: updateProjectInput,
   async execute(input, { client, signal }) {
@@ -4975,6 +5000,7 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
+  listOrganizationsOperation,
   listProjectsOperation,
   createProjectOperation,
   updateProjectOperation,

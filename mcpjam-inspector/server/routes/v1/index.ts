@@ -35,6 +35,7 @@ import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import organizations from "./organizations.js";
 import projects from "./projects.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
@@ -110,6 +111,11 @@ v1.route("/", agent);
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
+// Organizations — READ ONLY, and the only organization route there is. It
+// exists so a caller can discover the `organizationId` that `/v1/projects`
+// filters by; org/member/role/billing writes stay off every machine surface.
+// Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
+v1.route("/", organizations);
 v1.route("/", projects);
 v1.route("/", tunnels);
 

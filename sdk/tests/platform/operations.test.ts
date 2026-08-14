@@ -1322,6 +1322,7 @@ describe("operation catalog consistency", () => {
   const MINIMAL_INPUTS: Record<string, Record<string, unknown>> = {
     get_me: {},
     list_models: {},
+    list_organizations: {},
     list_projects: {},
     create_project: { name: "p" },
     update_project: { project: "p", name: "renamed" },

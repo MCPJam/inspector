@@ -26,6 +26,28 @@ export interface PlatformMe {
   updatedAt: number | null;
 }
 
+/**
+ * An organization the caller belongs to — the ids `list_projects` and
+ * `create_project` take as `organizationId`.
+ *
+ * Deliberately thin. The backing query is the browser app shell's, so it
+ * carries billing and Stripe fields this transport DTO drops: an organization
+ * on the machine surfaces is a SCOPE (an id, a name, and enough context to
+ * pick between two of them), not an account-management object.
+ */
+export interface PlatformOrganization {
+  id: string;
+  name: string;
+  /** Billing plan slug (`free` / `team` / `enterprise`) when resolved. */
+  plan: string | null;
+  /** Caller's role in the organization (`owner` / `admin` / `member`). */
+  myRole: string | null;
+  /** Whether the caller created the organization. */
+  isCreator: boolean;
+  logoUrl: string | null;
+  createdAt: number | null;
+}
+
 /** A hosted model catalog entry. Unknown additive fields are tolerated. */
 export interface PlatformModel {
   id: string;
