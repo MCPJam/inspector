@@ -195,6 +195,41 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",
   // The planning read that makes the static agent surfaces survivable.
   "get /projects/{projectId}/capabilities": "getCapabilities",
+  // User testing — everything you do with a scenario once it exists.
+  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}":
+    "updateUserTestingScenario",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions":
+    "listUserTestingSessions",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}":
+    "getUserTestingSession",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics":
+    "getUserTestingMetrics",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage":
+    "getUserTestingUsage",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings":
+    "listUserTestingFindings",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals":
+    "getUserTestingSignals",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights":
+    "getUserTestingInsights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights":
+    "requestUserTestingInsights",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights":
+    "cancelUserTestingInsights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss":
+    "dismissUserTestingFinding",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss":
+    "undismissUserTestingFinding",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution":
+    "setUserTestingGuestExecution",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link":
+    "rotateUserTestingLink",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members":
+    "upsertUserTestingMember",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}":
+    "removeUserTestingMember",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind":
+    "rebindUserTestingScenario",
 
   // Scenarios (user testing)
   "put /projects/{projectId}/environments/{environmentId}/scenario":

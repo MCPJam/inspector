@@ -32,6 +32,7 @@ import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
+import userTesting from "./user-testing.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
 import agent from "./agent.js";
@@ -114,6 +115,11 @@ v1.route("/", swarmInsights);
 // and the existing chatbox guest GETs (which share-link flows depend on) stay
 // exactly as they are until a guest security review says otherwise.
 v1.route("/", scenarios);
+// User testing — everything you do with a scenario ONCE IT EXISTS: read what
+// it produced, and control who can reach it. `scenarios.ts` above owns
+// publishing (keyed by environment, because the scenario does not exist yet);
+// this is keyed by the scenario. Guest-DENIED by default, same as publishing.
+v1.route("/", userTesting);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.

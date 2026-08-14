@@ -87,6 +87,26 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // its older name.
   publish_scenario: { command: "scenarios publish" },
   unpublish_scenario: { command: "scenarios unpublish" },
+  // ── User testing: everything you do with a scenario once it exists ──────
+  update_user_testing_scenario: { command: "user-testing update" },
+  list_user_testing_sessions: { command: "user-testing sessions" },
+  get_user_testing_session: { command: "user-testing session" },
+  get_user_testing_metrics: { command: "user-testing metrics" },
+  get_user_testing_usage: { command: "user-testing usage" },
+  list_user_testing_findings: { command: "user-testing findings" },
+  get_user_testing_signals: { command: "user-testing signals" },
+  get_user_testing_insights: { command: "user-testing insights" },
+  request_user_testing_insights: { command: "user-testing request-insights" },
+  cancel_user_testing_insights: { command: "user-testing cancel-insights" },
+  dismiss_user_testing_finding: { command: "user-testing dismiss-finding" },
+  undismiss_user_testing_finding: {
+    command: "user-testing undismiss-finding",
+  },
+  set_user_testing_guest_execution: { command: "user-testing guest-execution" },
+  rotate_user_testing_link: { command: "user-testing rotate-link" },
+  upsert_user_testing_member: { command: "user-testing invite" },
+  remove_user_testing_member: { command: "user-testing remove-member" },
+  rebind_user_testing_scenario: { command: "user-testing rebind" },
 
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "eval list" },

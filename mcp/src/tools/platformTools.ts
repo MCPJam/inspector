@@ -89,6 +89,23 @@ import {
   cancelWaveInsightsOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -206,6 +223,23 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   cancelWaveInsightsOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
@@ -324,6 +358,10 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   cancelJourneyRunOperation.name,
   // Unpublishing kills every live guest session on a scenario.
   unpublishScenarioOperation.name,
+  // Rotating a share link is immediate and irreversible: everyone holding the
+  // old URL loses access and every live session on it dies.
+  rotateUserTestingLinkOperation.name,
+  removeUserTestingMemberOperation.name,
 ]);
 
 /**

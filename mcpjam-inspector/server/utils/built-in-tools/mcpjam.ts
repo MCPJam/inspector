@@ -77,6 +77,14 @@ import {
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
   getWaveInsightsOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  cancelUserTestingInsightsOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -146,6 +154,23 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
   getWaveInsightsOperation,
+
+  // ── User testing ────────────────────────────────────────────────────────
+  //
+  // The AGGREGATE reads and the judgement calls over them. Session listings
+  // and transcripts are excluded: they are real people's conversations with
+  // your product, and a chat tool that can page through them turns an
+  // assistant turn into a transcript reader. Same line `list_chat_sessions`
+  // already draws. The exposure controls are excluded for the reason the tab
+  // exists — the share link and access mode are shown inline there.
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  cancelUserTestingInsightsOperation,
 ];
 
 /**
@@ -187,6 +212,30 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
   unpublish_scenario:
     "Takes a live scenario down; the UI confirms it, since guest sessions die with it.",
+  // User testing: sessions and transcripts. PRIVACY, not risk — real visitors'
+  // conversations, and a chat surface that can page them is a transcript
+  // reader wearing an assistant's clothes. Mirrors `list_chat_sessions`.
+  list_user_testing_sessions:
+    "Visitor conversations; the User Testing tab is where you read them, with the consent context around them.",
+  get_user_testing_session:
+    "A real person's conversation with your product. Available on REST/CLI/MCP where the caller asked for it explicitly.",
+  // Exposure controls. Each of these decides who can reach a live scenario or
+  // what it may spend; the tab shows the link, the mode and the current caps
+  // next to the control, which a chat tool cannot.
+  update_user_testing_scenario:
+    "Changing a scenario's access mode belongs next to the share link the tab already shows.",
+  set_user_testing_guest_execution:
+    "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
+  rotate_user_testing_link:
+    "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
+  upsert_user_testing_member:
+    "Granting someone access to a live scenario is a decision about who may talk to your servers.",
+  remove_user_testing_member:
+    "Paired with the invite above; the member list is the tab's own surface.",
+  rebind_user_testing_scenario:
+    "Changes what visitors are talking to, under a link they already hold.",
+  request_user_testing_insights:
+    "Spends against the organization's shared daily insights budget. The tab has the button, next to the window it applies to.",
 
   // Identity and catalogs the surrounding UI already owns. Chat runs inside a
   // chosen project; re-offering the pickers as tools invites the model to

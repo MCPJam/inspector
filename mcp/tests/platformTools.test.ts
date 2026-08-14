@@ -169,6 +169,23 @@ const PLAIN_TOOLS = [
   "cancel_wave_insights",
   "publish_scenario",
   "unpublish_scenario",
+  "list_user_testing_sessions",
+  "get_user_testing_session",
+  "get_user_testing_metrics",
+  "get_user_testing_usage",
+  "list_user_testing_findings",
+  "get_user_testing_signals",
+  "get_user_testing_insights",
+  "update_user_testing_scenario",
+  "request_user_testing_insights",
+  "cancel_user_testing_insights",
+  "dismiss_user_testing_finding",
+  "undismiss_user_testing_finding",
+  "set_user_testing_guest_execution",
+  "rotate_user_testing_link",
+  "upsert_user_testing_member",
+  "remove_user_testing_member",
+  "rebind_user_testing_scenario",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -321,6 +338,23 @@ describe("platform tool registration", () => {
       "cancel_wave_insights",
       "publish_scenario",
       "unpublish_scenario",
+      "list_user_testing_sessions",
+      "get_user_testing_session",
+      "get_user_testing_metrics",
+      "get_user_testing_usage",
+      "list_user_testing_findings",
+      "get_user_testing_signals",
+      "get_user_testing_insights",
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "rotate_user_testing_link",
+      "upsert_user_testing_member",
+      "remove_user_testing_member",
+      "rebind_user_testing_scenario",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -396,6 +430,18 @@ describe("platform tool registration", () => {
       "launch_journey_run",
       // Publishing exposes an environment. Additive: it creates a scenario.
       "publish_scenario",
+      // User testing writes that change state without removing anything.
+      // `rotate_user_testing_link` and `remove_user_testing_member` are below,
+      // with the destructive set: both take access away from people who have
+      // it, immediately.
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "upsert_user_testing_member",
+      "rebind_user_testing_scenario",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
@@ -412,6 +458,9 @@ describe("platform tool registration", () => {
       "cancel_journey_run",
       // Unpublishing kills every live guest session on the scenario.
       "unpublish_scenario",
+      // Rotating invalidates every copy of the share link that anyone holds.
+      "rotate_user_testing_link",
+      "remove_user_testing_member",
     ]);
 
     for (const registration of registrations) {

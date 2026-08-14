@@ -1422,6 +1422,31 @@ describe("operation catalog consistency", () => {
     get_wave_insights: { wave: "w" },
     request_wave_insights: { wave: "w" },
     cancel_wave_insights: { wave: "w" },
+    update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
+    list_user_testing_sessions: { scenario: "cb" },
+    get_user_testing_session: { scenario: "cb", session: "s" },
+    get_user_testing_metrics: { scenario: "cb" },
+    get_user_testing_usage: { scenario: "cb" },
+    list_user_testing_findings: { scenario: "cb" },
+    get_user_testing_signals: { scenario: "cb" },
+    get_user_testing_insights: { scenario: "cb", window: "w" },
+    request_user_testing_insights: { scenario: "cb" },
+    cancel_user_testing_insights: { scenario: "cb", window: "w" },
+    dismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    undismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    set_user_testing_guest_execution: {
+      scenario: "cb",
+      enabled: true,
+      computerEnabled: false,
+      sharedSkillsEnabled: false,
+      dailyCreditCap: 100,
+      dailyComputerStartCap: 0,
+      maxConcurrentComputers: 0,
+    },
+    rotate_user_testing_link: { scenario: "cb" },
+    upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
+    remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
+    rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
     list_hosts: {},
     get_host: { host: "h" },
     set_host_servers: { host: "h", serverIds: [] },
@@ -1553,6 +1578,20 @@ describe("operation catalog consistency", () => {
       "undismiss_swarm_finding",
       "request_wave_insights",
       "cancel_wave_insights",
+      // User testing writes. The exposure controls are the reason `risk`
+      // exists as a separate axis from `readOnly`: rotating a link and
+      // dismissing a finding are both writes, and only one of them can lock
+      // people out of a live scenario.
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "rotate_user_testing_link",
+      "upsert_user_testing_member",
+      "remove_user_testing_member",
+      "rebind_user_testing_scenario",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));

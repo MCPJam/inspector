@@ -148,6 +148,9 @@ describe("agent op registry", () => {
         "dismiss_swarm_finding",
         "undismiss_swarm_finding",
         "cancel_wave_insights",
+        "dismiss_user_testing_finding",
+        "undismiss_user_testing_finding",
+        "cancel_user_testing_insights",
       ].sort()
     );
   });
@@ -648,6 +651,9 @@ const EXPECTED_PROMPT_NOTES = [
   "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
   "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+  "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+  "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
+  "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
 ];
 
 describe("assembled system prompt", () => {

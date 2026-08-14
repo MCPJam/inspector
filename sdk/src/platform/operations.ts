@@ -61,6 +61,10 @@ import type {
   PlatformSwarmOverview,
   PlatformWaveInsights,
   PlatformWaveInsightsCanceled,
+  PlatformUserTestingInsightsRequested,
+  PlatformUserTestingScenario,
+  PlatformUserTestingSession,
+  PlatformUserTestingSessionDetail,
   PlatformWaveInsightsRequested,
   PlatformJourneyRunLaunched,
   PlatformScenario,
@@ -5968,6 +5972,737 @@ export const getCapabilitiesOperation: PlatformOperation<
   },
 };
 
+// ── User testing ────────────────────────────────────────────────────────────
+//
+// What a published scenario produced, and who may reach it. `publish_scenario`
+// creates one; everything here addresses the scenario itself.
+//
+// The scenario is selected by ID rather than by name, unlike projects: a
+// scenario's name is the public-facing label a visitor sees, so it is edited
+// often and duplicated freely, and resolving by name would let an agent
+// rotate the link on whichever "Checkout test" it matched first.
+
+const userTestingScenarioSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  scenario: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Scenario id (the `id` from list_chatboxes / publish_scenario)."),
+});
+
+const updateUserTestingScenarioInput = userTestingScenarioSelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(2000).optional(),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link. Send this ON ITS OWN — identity and exposure are separate operations, and a mixed request is rejected."
+    ),
+});
+
+export type UpdateUserTestingScenarioInput = z.infer<
+  typeof updateUserTestingScenarioInput
+>;
+export type UpdateUserTestingScenarioResult = {
+  project: SelectedProjectInfo;
+  scenario: PlatformUserTestingScenario;
+};
+
+export const updateUserTestingScenarioOperation: PlatformOperation<
+  UpdateUserTestingScenarioInput,
+  UpdateUserTestingScenarioResult
+> = {
+  name: "update_user_testing_scenario",
+  title: "Update a user-testing scenario",
+  description:
+    "Rename a scenario, or change who may open its share link. SINGLE-CONCERN: send `mode` alone, or name/description together — never both, because they are separate operations upstream and applying them in sequence could leave the scenario live in a mode nobody asked for. Widening to anyone_with_link exposes it to anyone holding the URL. Project admin.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: updateUserTestingScenarioInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const scenario = await client.updateUserTestingScenario(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), scenario };
+  },
+};
+
+const listUserTestingSessionsInput = userTestingScenarioSelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type ListUserTestingSessionsInput = z.infer<
+  typeof listUserTestingSessionsInput
+>;
+export type ListUserTestingSessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformUserTestingSession[];
+  nextCursor?: string;
+};
+
+export const listUserTestingSessionsOperation: PlatformOperation<
+  ListUserTestingSessionsInput,
+  ListUserTestingSessionsResult
+> = {
+  name: "list_user_testing_sessions",
+  title: "List the sessions a user-testing scenario produced",
+  description:
+    "Sessions real visitors had with a published scenario: message counts, feedback, device and visitor segment, and a first-message preview. SUMMARIES only — transcripts are a separate call, because these are real people's conversations and a listing should not page them into every caller that wanted counts.",
+  readOnly: true,
+  inputSchema: listUserTestingSessionsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listUserTestingSessions(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const getUserTestingSessionInput = userTestingScenarioSelectorInput.extend({
+  session: z.string().trim().min(1).describe("Session id."),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type GetUserTestingSessionInput = z.infer<
+  typeof getUserTestingSessionInput
+>;
+export type GetUserTestingSessionResult = {
+  project: SelectedProjectInfo;
+  session: PlatformUserTestingSessionDetail;
+};
+
+export const getUserTestingSessionOperation: PlatformOperation<
+  GetUserTestingSessionInput,
+  GetUserTestingSessionResult
+> = {
+  name: "get_user_testing_session",
+  title: "Read one user-testing session's transcript",
+  description:
+    "One session's conversation, paged. This is a real person talking to your product — read it when you need the words, and prefer get_user_testing_metrics or the findings when you need the pattern. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
+  readOnly: true,
+  inputSchema: getUserTestingSessionInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const session = await client.getUserTestingSession(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        sessionId: input.session,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), session };
+  },
+};
+
+const userTestingMetricsInput = userTestingScenarioSelectorInput.extend({
+  population: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Restrict the metrics to a session population."),
+});
+
+export type GetUserTestingMetricsInput = z.infer<
+  typeof userTestingMetricsInput
+>;
+export type GetUserTestingMetricsResult = {
+  project: SelectedProjectInfo;
+  metrics: Record<string, unknown>;
+};
+
+export const getUserTestingMetricsOperation: PlatformOperation<
+  GetUserTestingMetricsInput,
+  GetUserTestingMetricsResult
+> = {
+  name: "get_user_testing_metrics",
+  title: "Get a user-testing scenario's session metrics",
+  description:
+    "Aggregate metrics across a scenario's sessions. Start here rather than reading transcripts — it answers 'how is this going' without pulling anyone's conversation into the turn.",
+  readOnly: true,
+  inputSchema: userTestingMetricsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const metrics = await client.getUserTestingMetrics(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.population ? { population: input.population } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), metrics };
+  },
+};
+
+export type GetUserTestingUsageInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type GetUserTestingUsageResult = {
+  project: SelectedProjectInfo;
+  usage: Record<string, unknown>;
+};
+
+export const getUserTestingUsageOperation: PlatformOperation<
+  GetUserTestingUsageInput,
+  GetUserTestingUsageResult
+> = {
+  name: "get_user_testing_usage",
+  title: "Get a user-testing scenario's usage breakdown",
+  description:
+    "Usage rates for a scenario, broken down by visitor and device. READ `scan.truncated` BEFORE QUOTING ANY RATE: true means the numbers were computed over the most recent N sessions rather than all of them, so reporting them unconditionally would overstate what was measured.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const usage = await client.getUserTestingUsage(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), usage };
+  },
+};
+
+export type ListUserTestingFindingsInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type ListUserTestingFindingsResult = {
+  project: SelectedProjectInfo;
+  items: Array<Record<string, unknown>>;
+};
+
+export const listUserTestingFindingsOperation: PlatformOperation<
+  ListUserTestingFindingsInput,
+  ListUserTestingFindingsResult
+> = {
+  name: "list_user_testing_findings",
+  title: "List a user-testing scenario's findings",
+  description:
+    "Problems detected across a scenario's sessions, tracked over time so a recurring one is distinguishable from a new one.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listUserTestingFindings(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetUserTestingSignalsInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type GetUserTestingSignalsResult = {
+  project: SelectedProjectInfo;
+  signals: Record<string, unknown>;
+};
+
+export const getUserTestingSignalsOperation: PlatformOperation<
+  GetUserTestingSignalsInput,
+  GetUserTestingSignalsResult
+> = {
+  name: "get_user_testing_signals",
+  title: "Get a user-testing scenario's current window signals",
+  description:
+    "The scenario's live analysis window, and the `windowId` you need to read its insights. Call this first when you want insights for 'the current window'.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const signals = await client.getUserTestingSignals(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), signals };
+  },
+};
+
+const userTestingWindowInput = userTestingScenarioSelectorInput.extend({
+  window: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Window id, from get_user_testing_signals."),
+});
+
+export type GetUserTestingInsightsInput = z.infer<
+  typeof userTestingWindowInput
+>;
+export type GetUserTestingInsightsResult = {
+  project: SelectedProjectInfo;
+  insights: Record<string, unknown>;
+};
+
+export const getUserTestingInsightsOperation: PlatformOperation<
+  GetUserTestingInsightsInput,
+  GetUserTestingInsightsResult
+> = {
+  name: "get_user_testing_insights",
+  title: "Get a user-testing window's insights",
+  description:
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working.",
+  readOnly: true,
+  inputSchema: userTestingWindowInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const insights = await client.getUserTestingInsights(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        windowId: input.window,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), insights };
+  },
+};
+
+const requestUserTestingInsightsInput = userTestingScenarioSelectorInput.extend(
+  {
+    force: z
+      .boolean()
+      .optional()
+      .describe(
+        "Regenerate over a window that already has insights. Spends again."
+      ),
+  }
+);
+
+export type RequestUserTestingInsightsInput = z.infer<
+  typeof requestUserTestingInsightsInput
+>;
+export type RequestUserTestingInsightsResult = {
+  project: SelectedProjectInfo;
+  request: PlatformUserTestingInsightsRequested;
+};
+
+export const requestUserTestingInsightsOperation: PlatformOperation<
+  RequestUserTestingInsightsInput,
+  RequestUserTestingInsightsResult
+> = {
+  name: "request_user_testing_insights",
+  title: "Request insights for a user-testing scenario",
+  description:
+    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. SPENDS against the organization's daily insights budget, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: requestUserTestingInsightsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const request = await client.requestUserTestingInsights(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.force ? { force: true } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), request };
+  },
+};
+
+export type CancelUserTestingInsightsInput = z.infer<
+  typeof userTestingWindowInput
+>;
+export type CancelUserTestingInsightsResult = {
+  project: SelectedProjectInfo;
+  canceled: Record<string, unknown>;
+};
+
+export const cancelUserTestingInsightsOperation: PlatformOperation<
+  CancelUserTestingInsightsInput,
+  CancelUserTestingInsightsResult
+> = {
+  name: "cancel_user_testing_insights",
+  title: "Cancel a user-testing insights request",
+  description:
+    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which spends again.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: userTestingWindowInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const canceled = await client.cancelUserTestingInsights(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        windowId: input.window,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), canceled };
+  },
+};
+
+const userTestingFindingInput = userTestingScenarioSelectorInput.extend({
+  finding: z.string().trim().min(1).describe("Finding id."),
+});
+
+export type DismissUserTestingFindingInput = z.infer<
+  typeof userTestingFindingInput
+>;
+export type DismissUserTestingFindingResult = {
+  project: SelectedProjectInfo;
+  finding: Record<string, unknown>;
+};
+
+export const dismissUserTestingFindingOperation: PlatformOperation<
+  DismissUserTestingFindingInput,
+  DismissUserTestingFindingResult
+> = {
+  name: "dismiss_user_testing_finding",
+  title: "Dismiss a user-testing finding",
+  description:
+    "Mark a finding as not worth acting on. Its lifecycle keeps updating underneath, so undismissing later shows honest current state.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: userTestingFindingInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const finding = await client.dismissUserTestingFinding(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        findingId: input.finding,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+export type UndismissUserTestingFindingInput = DismissUserTestingFindingInput;
+export type UndismissUserTestingFindingResult = DismissUserTestingFindingResult;
+
+export const undismissUserTestingFindingOperation: PlatformOperation<
+  UndismissUserTestingFindingInput,
+  UndismissUserTestingFindingResult
+> = {
+  name: "undismiss_user_testing_finding",
+  title: "Undismiss a user-testing finding",
+  description: "Bring a dismissed finding back into the active list.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: userTestingFindingInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const finding = await client.undismissUserTestingFinding(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        findingId: input.finding,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+const setGuestExecutionInput = userTestingScenarioSelectorInput.extend({
+  enabled: z.boolean(),
+  computerEnabled: z.boolean(),
+  sharedSkillsEnabled: z.boolean(),
+  dailyCreditCap: z
+    .number()
+    .min(0)
+    .describe("Hard ceiling on what visitors can spend per day, in credits."),
+  dailyComputerStartCap: z.number().int().min(0),
+  maxConcurrentComputers: z.number().int().min(0),
+  harnessEnabled: z.boolean().optional(),
+  dailyHarnessSpendCapMicros: z.number().int().min(0).optional(),
+  dailyHarnessCallCap: z.number().int().min(0).optional(),
+  maxConcurrentHarnessRuns: z.number().int().min(0).optional(),
+});
+
+export type SetUserTestingGuestExecutionInput = z.infer<
+  typeof setGuestExecutionInput
+>;
+export type SetUserTestingGuestExecutionResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const setUserTestingGuestExecutionOperation: PlatformOperation<
+  SetUserTestingGuestExecutionInput,
+  SetUserTestingGuestExecutionResult
+> = {
+  name: "set_user_testing_guest_execution",
+  title: "Set a user-testing scenario's guest execution caps",
+  description:
+    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Read the current values first. Project admin.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: setGuestExecutionInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const { project: _project, scenario, ...guestExecution } = input;
+    const result = await client.setUserTestingGuestExecution(
+      {
+        projectId: project.id,
+        scenarioId: scenario,
+        guestExecution,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+export type RotateUserTestingLinkInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type RotateUserTestingLinkResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const rotateUserTestingLinkOperation: PlatformOperation<
+  RotateUserTestingLinkInput,
+  RotateUserTestingLinkResult
+> = {
+  name: "rotate_user_testing_link",
+  title: "Rotate a user-testing scenario's share link",
+  description:
+    "Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked, not routine hygiene. Project admin.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const result = await client.rotateUserTestingLink(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const upsertUserTestingMemberInput = userTestingScenarioSelectorInput.extend({
+  email: z.string().trim().min(3).max(320),
+  sendInviteEmail: z
+    .boolean()
+    .optional()
+    .describe(
+      "Off by default — adding someone is not the same as telling them."
+    ),
+});
+
+export type UpsertUserTestingMemberInput = z.infer<
+  typeof upsertUserTestingMemberInput
+>;
+export type UpsertUserTestingMemberResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const upsertUserTestingMemberOperation: PlatformOperation<
+  UpsertUserTestingMemberInput,
+  UpsertUserTestingMemberResult
+> = {
+  name: "upsert_user_testing_member",
+  title: "Invite someone to a user-testing scenario",
+  description:
+    "Grant one person access to a scenario by email. Upsert, so re-inviting an existing member is not an error. Widens who can reach the scenario.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: upsertUserTestingMemberInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const result = await client.upsertUserTestingMember(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        email: input.email,
+        ...(input.sendInviteEmail !== undefined
+          ? { sendInviteEmail: input.sendInviteEmail }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const removeUserTestingMemberInput = userTestingScenarioSelectorInput.extend({
+  member: z.string().trim().min(1).describe("Member id or email."),
+});
+
+export type RemoveUserTestingMemberInput = z.infer<
+  typeof removeUserTestingMemberInput
+>;
+export type RemoveUserTestingMemberResult = UpsertUserTestingMemberResult;
+
+export const removeUserTestingMemberOperation: PlatformOperation<
+  RemoveUserTestingMemberInput,
+  RemoveUserTestingMemberResult
+> = {
+  name: "remove_user_testing_member",
+  title: "Remove someone from a user-testing scenario",
+  description:
+    "Revoke one person's access. NARROWS exposure, so it keeps working for an organization that has lost the beta — losing access to a feature is exactly when revoking matters most.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: removeUserTestingMemberInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const result = await client.removeUserTestingMember(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        member: input.member,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const rebindUserTestingScenarioInput = userTestingScenarioSelectorInput.extend({
+  environmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The environment to point at."),
+});
+
+export type RebindUserTestingScenarioInput = z.infer<
+  typeof rebindUserTestingScenarioInput
+>;
+export type RebindUserTestingScenarioResult = UpsertUserTestingMemberResult;
+
+export const rebindUserTestingScenarioOperation: PlatformOperation<
+  RebindUserTestingScenarioInput,
+  RebindUserTestingScenarioResult
+> = {
+  name: "rebind_user_testing_scenario",
+  title: "Point a user-testing scenario at a different environment",
+  description:
+    "Swap the environment behind a scenario, KEEPING its share link, its members and its session history. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone. Changes what visitors are talking to; project admin.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: rebindUserTestingScenarioInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const result = await client.rebindUserTestingScenario(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        environmentId: input.environmentId,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
@@ -6080,4 +6815,22 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getWaveInsightsOperation,
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
+  // User testing — what a published scenario produced, and who may reach it.
+  updateUserTestingScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
 ];

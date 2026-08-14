@@ -102,6 +102,23 @@ so results respect the caller's project access.
 | `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
 | `publish_scenario` | Publish a project environment for user testing, returning its share link and access mode. | — |
 | `unpublish_scenario` | Take a live user-testing scenario down. Every guest session on it dies with it. | — |
+| `list_user_testing_sessions` | Sessions real visitors had with a published scenario: counts, feedback, device, segment and a first-message preview. Summaries only. | — |
+| `get_user_testing_session` | One session's conversation, paged and projected. Prefer the metrics or findings when you need the pattern rather than the words. | — |
+| `get_user_testing_metrics` | Aggregate metrics across a scenario's sessions. | — |
+| `get_user_testing_usage` | Usage rates by visitor and device. Read `scan.truncated` before quoting any rate. | — |
+| `list_user_testing_findings` | Problems detected across a scenario's sessions, tracked over time. | — |
+| `get_user_testing_signals` | The scenario's live analysis window, and the windowId its insights are keyed by. | — |
+| `get_user_testing_insights` | The model's analysis of one analysis window, if one has been requested. | — |
+| `update_user_testing_scenario` | Rename a scenario, or change who may open its share link. Send `mode` on its own — identity and exposure are separate operations. | — |
+| `request_user_testing_insights` | Ask a model to analyze the current window. Spends against the organization's shared daily insights budget. | — |
+| `cancel_user_testing_insights` | Stop an in-flight insights generation — the recovery path for a window stuck pending. | — |
+| `dismiss_user_testing_finding` | Mark a finding as not worth acting on. | — |
+| `undismiss_user_testing_finding` | Bring a dismissed finding back into the active list. | — |
+| `set_user_testing_guest_execution` | What anonymous visitors may run on the organization's account, and how much. A full replacement, not a patch. | — |
+| `rotate_user_testing_link` | Mint a new share link and invalidate the old one. Immediate and irreversible. | — |
+| `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
+| `remove_user_testing_member` | Revoke one person's access. | — |
+| `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by

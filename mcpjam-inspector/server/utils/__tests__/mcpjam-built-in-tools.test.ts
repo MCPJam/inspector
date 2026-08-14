@@ -178,6 +178,17 @@ describe("workspace tool catalog", () => {
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
       "get_wave_insights",
+      // User testing: aggregate reads and the judgement calls over them.
+      // Session listings, transcripts and every exposure control stay out —
+      // see EXCLUDED_FROM_WORKSPACE for which reason applies to which.
+      "get_user_testing_metrics",
+      "get_user_testing_usage",
+      "list_user_testing_findings",
+      "get_user_testing_signals",
+      "get_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "cancel_user_testing_insights",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);

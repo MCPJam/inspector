@@ -13,6 +13,7 @@ import { registerImagesCommands } from "../src/commands/images.js";
 import { registerProjectsCommands } from "../src/commands/projects.js";
 import { registerTunnelCommands } from "../src/commands/tunnel.js";
 import { registerSwarmAuthoringCommands } from "../src/commands/swarms.js";
+import { registerUserTestingCommands } from "../src/commands/user-testing.js";
 
 /**
  * The CLI's half of the operation-exposure ratchet.
@@ -38,6 +39,7 @@ function buildPlatformProgram(): Command {
   // building a second `journeys` command would resolve paths that the real CLI
   // does not have.
   registerSwarmAuthoringCommands(program, journeys);
+  registerUserTestingCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   return program;

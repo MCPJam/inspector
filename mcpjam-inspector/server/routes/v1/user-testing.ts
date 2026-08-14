@@ -1,0 +1,921 @@
+/**
+ * Public v1 USER TESTING surface — what a published scenario produced, and the
+ * controls over who can reach it.
+ *
+ * NAMING. The public noun is "user testing" and the resource is a "scenario":
+ * one project environment, published for people outside the project to talk to
+ * through a share link. Internally every one of these is a `chatboxes` row and
+ * that is not changing — a table rename buys no agent capability and costs a
+ * migration. What matters is that a caller who has never seen the codebase can
+ * read `/user-testing/scenarios/:id/sessions` and know what it returns.
+ *
+ * `../scenarios.ts` owns PUBLISHING (create/destroy, keyed by environment).
+ * This module owns everything you do with a scenario once it exists, keyed by
+ * the scenario itself. The split follows the ids: publishing addresses an
+ * environment because the scenario does not exist yet.
+ *
+ * AUTHORIZATION, and it is not the same as everywhere else on `/v1`:
+ *
+ *   - Chatbox mutations gate on the WORKSPACE role, not the project role.
+ *     Usually the same people; not always.
+ *   - LEGACY WORKSPACES WITH NO `organizationId` HARD-DENY delegated callers
+ *     (`delegatedScopeAllowsLegacyWorkspace` upstream). An `sk_` key cannot
+ *     write to one at all, and no amount of role granting changes that. The
+ *     backend's 403 copy is forwarded verbatim rather than reworded, because
+ *     it is the only place that knows why.
+ *   - Publishing, guest execution, link rotation and rebinding need project
+ *     ADMIN. An API key acting as an ordinary member gets a 403, and that is
+ *     the intended answer.
+ *
+ * CROSS-PROJECT SCOPING is enforced HERE. Every `chatboxes:*` mutation takes a
+ * `chatboxId` alone and authorizes against whatever workspace the row turns out
+ * to be in — never the project in the path. The preflight below resolves the
+ * scenario and asserts the project matches, then 404s, so the surface is never
+ * an existence oracle for a project the caller cannot see.
+ */
+import { Hono } from "hono";
+import { z } from "zod";
+import type { ConvexHttpClient } from "convex/browser";
+import { createConvexClient } from "./convex-client.js";
+import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { v1PageJson, v1Resource } from "./envelope.js";
+import { translateConvexWriteError } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
+
+const userTesting = new Hono();
+
+const BASE = "/projects/:projectId/user-testing/scenarios/:scenarioId";
+
+function translateReadError(error: unknown): WebRouteError {
+  return translateConvexReadError(error, { scope: "v1.user-testing" });
+}
+
+function translateWriteError(error: unknown): WebRouteError {
+  return translateConvexWriteError(error, {
+    resource: "Scenario",
+    // "requires admin" is actionable and reveals nothing new: Convex already
+    // confirmed workspace membership, so the caller can see the scenario.
+    adminFailureIsForbidden: true,
+  });
+}
+
+// ── Convex row shapes (hand-mirrored) ───────────────────────────────────────
+
+type ChatboxRow = {
+  _id: string;
+  projectId?: string;
+  workspaceId?: string;
+  name?: string;
+  description?: string;
+  mode?: "project_members" | "invited_only" | "anyone_with_link";
+  accessVersion?: number;
+  environmentId?: string;
+};
+
+type SessionThreadRow = {
+  _id: string;
+  chatSessionId: string;
+  chatboxId?: string;
+  modelId?: string;
+  messageCount: number;
+  firstMessagePreview: string;
+  startedAt: number;
+  lastActivityAt: number;
+  feedbackRating: number | null;
+  feedbackComment: string | null;
+  feedbackCount: number;
+  toolCallCount?: number;
+  authInterrupted?: boolean;
+  visitorDisplayName?: string;
+  visitorSegment?: string;
+  authType?: "signedIn" | "guest";
+  visitorRecency?: "new" | "returning";
+  deviceKind?: string;
+  language?: string;
+  themeClusterId?: string;
+  themeClusterLabel?: string;
+  themeKeywords?: string[];
+};
+
+// ── DTOs ────────────────────────────────────────────────────────────────────
+
+function toSessionSummaryDto(row: SessionThreadRow) {
+  return {
+    /** The `chatSessions` document id — the address for the detail route. */
+    id: row._id,
+    /** The runtime's own key for the live conversation. Not an address here. */
+    chatSessionId: row.chatSessionId,
+    messageCount: row.messageCount,
+    /**
+     * First message only. The transcript is a separate, explicit read: a
+     * listing that inlined conversations would page real people's words into
+     * every caller that only wanted counts.
+     */
+    preview: row.firstMessagePreview,
+    ...(row.modelId !== undefined ? { modelId: row.modelId } : {}),
+    ...(row.toolCallCount !== undefined
+      ? { toolCallCount: row.toolCallCount }
+      : {}),
+    /** The visitor abandoned mid-flow because a server demanded auth. */
+    ...(row.authInterrupted !== undefined
+      ? { authInterrupted: row.authInterrupted }
+      : {}),
+    visitor: {
+      ...(row.visitorDisplayName !== undefined
+        ? { displayName: row.visitorDisplayName }
+        : {}),
+      ...(row.visitorSegment !== undefined
+        ? { segment: row.visitorSegment }
+        : {}),
+      ...(row.authType !== undefined ? { authType: row.authType } : {}),
+      ...(row.visitorRecency !== undefined
+        ? { recency: row.visitorRecency }
+        : {}),
+      ...(row.deviceKind !== undefined ? { deviceKind: row.deviceKind } : {}),
+      ...(row.language !== undefined ? { language: row.language } : {}),
+    },
+    feedback: {
+      rating: row.feedbackRating,
+      comment: row.feedbackComment,
+      count: row.feedbackCount,
+    },
+    ...(row.themeClusterId !== undefined
+      ? {
+          theme: {
+            id: row.themeClusterId,
+            label: row.themeClusterLabel ?? null,
+            keywords: row.themeKeywords ?? [],
+          },
+        }
+      : {}),
+    startedAt: row.startedAt,
+    lastActivityAt: row.lastActivityAt,
+  };
+}
+
+// ── Preflight ───────────────────────────────────────────────────────────────
+
+/**
+ * Assert `scenarioId` is a scenario in `projectId`, and return it.
+ *
+ * `chatboxes:getChatbox` resolves the row and authorizes it; the project
+ * comparison is this layer's job, because every downstream mutation takes the
+ * chatbox id alone. A scenario in another project answers 404 — identical to
+ * one that does not exist.
+ */
+async function requireScenarioInProject(
+  client: ConvexHttpClient,
+  projectId: string,
+  scenarioId: string
+): Promise<ChatboxRow> {
+  let row: ChatboxRow | null;
+  try {
+    row = (await client.query(
+      "chatboxes:getChatbox" as never,
+      { chatboxId: scenarioId } as never
+    )) as ChatboxRow | null;
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  if (!row || String(row.projectId ?? "") !== projectId) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Scenario not found");
+  }
+  return row;
+}
+
+async function parseBody<T>(
+  c: { req: { json: () => Promise<unknown> } },
+  schema: z.ZodType<T>
+): Promise<T> {
+  let raw: unknown;
+  try {
+    raw = await c.req.json();
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Request body must be JSON"
+    );
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      parsed.error.issues[0]?.message ?? "Invalid request body"
+    );
+  }
+  return parsed.data;
+}
+
+/** Shared scaffolding: resolve the bearer, scope the scenario, hand both back. */
+async function scopedScenario(c: {
+  req: { param: (k: string) => string };
+}): Promise<{
+  client: ConvexHttpClient;
+  projectId: string;
+  scenarioId: string;
+  scenario: ChatboxRow;
+}> {
+  const projectId = c.req.param("projectId");
+  const scenarioId = c.req.param("scenarioId");
+  const client = createConvexClient(
+    await getConvexBearerForRequest(c as never)
+  );
+  const scenario = await requireScenarioInProject(
+    client,
+    projectId,
+    scenarioId
+  );
+  return { client, projectId, scenarioId, scenario };
+}
+
+// ── Scenario metadata ───────────────────────────────────────────────────────
+
+/**
+ * SINGLE-CONCERN ONLY, and the 400 on a mixed body is the whole point.
+ *
+ * Identity (`name`/`description`) and exposure (`mode`) are two different
+ * Convex mutations. A route that accepted both would have to call them in
+ * sequence, and a failure between the two leaves the scenario half-updated —
+ * on the half that decides who can reach it. Splitting the request means the
+ * caller sees which one failed and nothing is ever partially applied.
+ *
+ * This is the same atomicity the publish route protects by forwarding create-
+ * time overrides in one call, arrived at from the other direction: publish can
+ * do it in one mutation, so it must; update cannot, so it refuses to pretend.
+ */
+const updateScenarioSchema = z
+  .strictObject({
+    name: z.string().trim().min(1).max(200).optional(),
+    description: z.string().max(2000).optional(),
+    mode: z
+      .enum(["project_members", "invited_only", "anyone_with_link"])
+      .optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Provide a field to update.",
+  })
+  .refine(
+    (value) =>
+      value.mode === undefined ||
+      (value.name === undefined && value.description === undefined),
+    {
+      message:
+        "Send `mode` on its own: identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.",
+    }
+  );
+
+// PATCH /v1/projects/:p/user-testing/scenarios/:id
+userTesting.patch(BASE, async (c) => {
+  const body = await parseBody(c, updateScenarioSchema);
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+
+  try {
+    if (body.mode !== undefined) {
+      await client.mutation(
+        "chatboxes:setChatboxMode" as never,
+        { chatboxId: scenarioId, mode: body.mode } as never
+      );
+    } else {
+      await client.mutation(
+        "chatboxes:updateChatbox" as never,
+        {
+          chatboxId: scenarioId,
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.description !== undefined
+            ? { description: body.description }
+            : {}),
+        } as never
+      );
+    }
+  } catch (error) {
+    throw translateWriteError(error);
+  }
+
+  const updated = await requireScenarioInProject(client, projectId, scenarioId);
+  return v1Resource(c, {
+    id: scenarioId,
+    projectId,
+    name: updated.name ?? null,
+    description: updated.description ?? null,
+    mode: updated.mode ?? null,
+    accessVersion: updated.accessVersion ?? null,
+  });
+});
+
+// ── Sessions ────────────────────────────────────────────────────────────────
+
+// GET .../sessions
+//
+// SUMMARIES, not transcripts. `cursor` is the public spelling of the upstream
+// `before` timestamp — opaque to the caller, as everywhere else on `/v1`.
+userTesting.get(`${BASE}/sessions`, async (c) => {
+  const { client, scenarioId } = await scopedScenario(c);
+  const rawLimit = Number(c.req.query("limit"));
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), 200)
+      : 50;
+  const cursor = c.req.query("cursor");
+  const before = cursor ? Number(cursor) : undefined;
+  if (cursor !== undefined && !Number.isFinite(before)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "cursor must be a value returned as nextCursor by this endpoint"
+    );
+  }
+
+  let rows: SessionThreadRow[];
+  try {
+    rows = ((await client.query(
+      "chatSessions:listByChatbox" as never,
+      {
+        chatboxId: scenarioId,
+        limit,
+        ...(before !== undefined ? { before } : {}),
+      } as never
+    )) ?? []) as SessionThreadRow[];
+  } catch (error) {
+    throw translateReadError(error);
+  }
+
+  // The upstream page is newest-first and bounded by `limit`, so a full page
+  // means there is probably more. The cursor is the oldest row's activity
+  // timestamp — the exact value `before` expects.
+  const nextCursor =
+    rows.length === limit && rows.length > 0
+      ? String(rows[rows.length - 1]?.lastActivityAt)
+      : undefined;
+  return v1PageJson(c, rows.map(toSessionSummaryDto), nextCursor);
+});
+
+/**
+ * How many transcript messages one page carries.
+ *
+ * A real user-testing conversation runs long, and the whole thing in one
+ * response is both a large payload and — for an agent — a context flood that
+ * crowds out the reason it was reading the session.
+ */
+const TRANSCRIPT_PAGE_SIZE = 50;
+const TRANSCRIPT_MAX_PAGE_SIZE = 200;
+const TRANSCRIPT_FETCH_TIMEOUT_MS = 10_000;
+
+type RawMessage = {
+  role?: unknown;
+  content?: unknown;
+  parts?: unknown;
+  createdAt?: unknown;
+  toolName?: unknown;
+};
+
+/**
+ * Flatten a message's content to text.
+ *
+ * Deliberately LOSSY. A stored message can carry tool payloads, base64 images
+ * and provider-specific blobs; this projects the parts that are words and
+ * drops the rest rather than passing an unbounded structure through a public
+ * API. A caller who needs the raw shape has the app.
+ */
+function messageText(message: RawMessage): string {
+  if (typeof message.content === "string") return message.content;
+  const parts = Array.isArray(message.parts)
+    ? message.parts
+    : Array.isArray(message.content)
+    ? message.content
+    : [];
+  return parts
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object") {
+        const text = (part as { text?: unknown }).text;
+        if (typeof text === "string") return text;
+      }
+      return "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
+}
+
+// GET .../sessions/:sessionId
+//
+// The transcript, PAGED and PROJECTED. Two things this deliberately does not
+// do:
+//
+//   1. It never returns `messagesBlobUrl`. That URL is a direct handle on the
+//      stored conversation with no further authorization and no expiry the
+//      caller can reason about — handing it out would turn one authorized read
+//      into an unbounded, unrevocable one, shareable by anyone who receives it.
+//      The gateway fetches the blob itself and serves the contents.
+//   2. It does not return raw message objects. Stored messages carry tool
+//      payloads and provider blobs; the DTO projects role, text and timing.
+userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
+  const { client, scenarioId } = await scopedScenario(c);
+  const sessionId = c.req.param("sessionId");
+
+  const rawLimit = Number(c.req.query("limit"));
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), TRANSCRIPT_MAX_PAGE_SIZE)
+      : TRANSCRIPT_PAGE_SIZE;
+  const rawOffset = Number(c.req.query("cursor") ?? 0);
+  const offset =
+    Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+
+  let session: (Record<string, unknown> & { messagesBlobUrl?: string }) | null;
+  try {
+    session = (await client.query(
+      "chatSessions:getSession" as never,
+      { sessionId } as never
+    )) as typeof session;
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  // The scenario preflight proved the caller may see THIS scenario; this
+  // proves the session belongs to it. `getSession` authorizes broadly (project
+  // members can read swarm sessions), so without the check a project member
+  // could read any session in the project through a scenario's URL.
+  if (!session || String(session.chatboxId ?? "") !== scenarioId) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Session not found");
+  }
+
+  let messages: RawMessage[] = [];
+  let transcriptUnavailable = false;
+  if (typeof session.messagesBlobUrl === "string") {
+    try {
+      const response = await fetch(session.messagesBlobUrl, {
+        signal: AbortSignal.timeout(TRANSCRIPT_FETCH_TIMEOUT_MS),
+      });
+      if (response.ok) {
+        const parsed = (await response.json()) as unknown;
+        const candidate = Array.isArray(parsed)
+          ? parsed
+          : (parsed as { messages?: unknown })?.messages;
+        if (Array.isArray(candidate)) messages = candidate as RawMessage[];
+      } else {
+        transcriptUnavailable = true;
+      }
+    } catch {
+      // A blob we cannot read is reported as such rather than as an empty
+      // conversation: "they said nothing" and "we could not fetch it" lead to
+      // opposite conclusions about a user test.
+      transcriptUnavailable = true;
+    }
+  }
+
+  const page = messages.slice(offset, offset + limit);
+  return v1Resource(c, {
+    id: sessionId,
+    scenarioId,
+    chatSessionId: session.chatSessionId ?? null,
+    modelId: session.modelId ?? null,
+    startedAt: session.startedAt ?? null,
+    lastActivityAt: session.lastActivityAt ?? null,
+    messageCount: messages.length,
+    /**
+     * True when the stored conversation could not be read. Distinct from an
+     * empty `messages` array, which means the visitor genuinely said nothing.
+     */
+    ...(transcriptUnavailable ? { transcriptUnavailable: true } : {}),
+    messages: page.map((message) => ({
+      role: typeof message.role === "string" ? message.role : "unknown",
+      text: messageText(message),
+      ...(typeof message.toolName === "string"
+        ? { toolName: message.toolName }
+        : {}),
+      ...(typeof message.createdAt === "number"
+        ? { createdAt: message.createdAt }
+        : {}),
+    })),
+    ...(offset + page.length < messages.length
+      ? { nextCursor: String(offset + page.length) }
+      : {}),
+  });
+});
+
+// GET .../metrics
+userTesting.get(`${BASE}/metrics`, async (c) => {
+  const { client, scenarioId } = await scopedScenario(c);
+  const population = c.req.query("population");
+  let metrics: unknown;
+  try {
+    metrics = await client.query(
+      "chatSessions:getChatboxSessionMetrics" as never,
+      {
+        chatboxId: scenarioId,
+        ...(population ? { population } : {}),
+      } as never
+    );
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  if (metrics === null || metrics === undefined) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "This scenario has no session metrics yet"
+    );
+  }
+  return v1Resource(c, metrics);
+});
+
+// GET .../usage
+//
+// Carries the upstream `truncated` flag through UNTOUCHED. It means the rates
+// above it were computed over the most recent N sessions rather than all of
+// them, and a consumer that drops it turns a conditional statistic into an
+// unconditional one.
+userTesting.get(`${BASE}/usage`, async (c) => {
+  const { client, scenarioId } = await scopedScenario(c);
+  let usage: unknown;
+  try {
+    usage = await client.query(
+      "chatSessions:getUsageBreakdown" as never,
+      { chatboxId: scenarioId } as never
+    );
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  if (usage === null || usage === undefined) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "This scenario has no usage data yet"
+    );
+  }
+  return v1Resource(c, usage);
+});
+
+// ── Insights ────────────────────────────────────────────────────────────────
+
+// GET .../findings
+userTesting.get(`${BASE}/findings`, async (c) => {
+  const { client, scenarioId } = await scopedScenario(c);
+  let rows: unknown[];
+  try {
+    rows = ((await client.query(
+      "chatboxWindowInsights:listChatboxFindings" as never,
+      { chatboxId: scenarioId } as never
+    )) ?? []) as unknown[];
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  return v1PageJson(c, rows);
+});
+
+// GET .../signals
+//
+// Also how you learn the CURRENT window id, which the window-insights read
+// below takes. There is no separate "list windows" route because the only
+// window anyone asks about is the live one.
+userTesting.get(`${BASE}/signals`, async (c) => {
+  const { client, scenarioId } = await scopedScenario(c);
+  let signals: unknown;
+  try {
+    signals = await client.query(
+      "chatboxWindowInsights:getWindowSignals" as never,
+      { chatboxId: scenarioId } as never
+    );
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  if (signals === null || signals === undefined) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "This scenario has no analyzed window yet"
+    );
+  }
+  return v1Resource(c, signals);
+});
+
+// GET .../windows/:windowId/insights
+userTesting.get(`${BASE}/windows/:windowId/insights`, async (c) => {
+  const { client, scenarioId } = await scopedScenario(c);
+  const windowId = c.req.param("windowId");
+  let insights: unknown;
+  try {
+    insights = await client.query(
+      "chatboxWindowInsights:getWindowInsights" as never,
+      { chatboxId: scenarioId, windowGroupId: windowId } as never
+    );
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  if (insights === null || insights === undefined) {
+    // Never requested. Distinct from `pending`, so a caller polling in a loop
+    // does not mistake "nobody asked" for "asked and still working".
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "No insights have been requested for this window"
+    );
+  }
+  return v1Resource(c, { windowId, ...(insights as object) });
+});
+
+const requestInsightsSchema = z
+  .strictObject({ force: z.boolean().optional() })
+  .optional();
+
+// POST .../insights
+//
+// 202 with the window id the request applies to. SPENDS against the org's
+// `insightsPerDay` ledger, which is SHARED with swarm wave insights.
+userTesting.post(`${BASE}/insights`, async (c) => {
+  const raw = (await c.req.text()).trim();
+  let body: { force?: boolean } | undefined;
+  if (raw.length > 0) {
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw);
+    } catch {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Request body must be JSON"
+      );
+    }
+    const parsed = requestInsightsSchema.safeParse(parsedJson);
+    if (!parsed.success) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        parsed.error.issues[0]?.message ?? "Invalid request body"
+      );
+    }
+    body = parsed.data;
+  }
+
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+  let result: { windowGroupId: string };
+  try {
+    result = (await client.mutation(
+      "chatboxWindowInsights:requestWindowInsights" as never,
+      {
+        chatboxId: scenarioId,
+        ...(body?.force ? { force: true } : {}),
+      } as never
+    )) as { windowGroupId: string };
+  } catch (error) {
+    // `window_not_analyzed` is a 409 with real copy rather than a bare
+    // validation error: the request was well-formed and retrying it verbatim
+    // will not help until the window has been mined.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/window_not_analyzed/.test(message)) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        "This scenario's current window has not been analyzed yet, so there is nothing to generate insights over. Wait for sessions to be processed and try again."
+      );
+    }
+    throw translateWriteError(error);
+  }
+
+  return v1Resource(
+    c,
+    {
+      scenarioId,
+      projectId,
+      windowId: result.windowGroupId,
+      status: "pending",
+    },
+    202
+  );
+});
+
+const cancelInsightsSchema = z.strictObject({
+  windowId: z.string().trim().min(1),
+});
+
+// DELETE .../insights
+//
+// Takes the window id in the body because cancellation is scoped to one
+// generation, and the recovery case this exists for — a window stuck pending —
+// is precisely when you have the id and nothing else works.
+userTesting.delete(`${BASE}/insights`, async (c) => {
+  const body = await parseBody(c, cancelInsightsSchema);
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+  try {
+    await client.mutation(
+      "chatboxWindowInsights:cancelWindowInsights" as never,
+      { chatboxId: scenarioId, windowGroupId: body.windowId } as never
+    );
+  } catch (error) {
+    throw translateWriteError(error);
+  }
+  return v1Resource(c, {
+    scenarioId,
+    projectId,
+    windowId: body.windowId,
+    canceled: true,
+  });
+});
+
+// POST .../findings/:findingId/dismiss  |  /undismiss
+//
+// The same `swarmFindings` mutations the swarm surface uses: they are
+// scope-branched upstream, authorizing a chatbox finding by its workspace role
+// and a project finding by its project role. Nothing here needs to know which.
+for (const action of ["dismiss", "undismiss"] as const) {
+  userTesting.post(`${BASE}/findings/:findingId/${action}`, async (c) => {
+    const { client, projectId, scenarioId } = await scopedScenario(c);
+    const findingId = c.req.param("findingId");
+    // The finding must belong to THIS scenario, or a member of two scenarios
+    // could dismiss the other's finding through this URL.
+    let findings: Array<{ findingId?: string }>;
+    try {
+      findings = ((await client.query(
+        "chatboxWindowInsights:listChatboxFindings" as never,
+        { chatboxId: scenarioId } as never
+      )) ?? []) as Array<{ findingId?: string }>;
+    } catch (error) {
+      throw translateReadError(error);
+    }
+    if (!findings.some((row) => String(row.findingId) === findingId)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Finding not found");
+    }
+
+    try {
+      await client.mutation(
+        `swarmWaveInsights:${action}Finding` as never,
+        { findingId } as never
+      );
+    } catch (error) {
+      throw translateWriteError(error);
+    }
+    return v1Resource(c, {
+      id: findingId,
+      scenarioId,
+      projectId,
+      dismissed: action === "dismiss",
+    });
+  });
+}
+
+// ── Exposure controls ───────────────────────────────────────────────────────
+//
+// Everything below changes WHO CAN REACH the scenario or WHAT IT MAY SPEND on
+// their behalf. All need project admin upstream; an API key acting as an
+// ordinary member gets a 403, which is the intended answer.
+
+const guestExecutionSchema = z.strictObject({
+  enabled: z.boolean(),
+  computerEnabled: z.boolean(),
+  sharedSkillsEnabled: z.boolean(),
+  /** Hard ceiling on what visitors can spend per day, in credits. */
+  dailyCreditCap: z.number().min(0),
+  dailyComputerStartCap: z.number().int().min(0),
+  maxConcurrentComputers: z.number().int().min(0),
+  harnessEnabled: z.boolean().optional(),
+  dailyHarnessSpendCapMicros: z.number().int().min(0).optional(),
+  dailyHarnessCallCap: z.number().int().min(0).optional(),
+  maxConcurrentHarnessRuns: z.number().int().min(0).optional(),
+});
+
+// PUT .../guest-execution
+//
+// The spend dial for anonymous visitors. A full replacement rather than a
+// patch, deliberately: these caps only mean something as a SET, and a partial
+// update that raised `dailyCreditCap` while leaving a stale
+// `maxConcurrentComputers` behind would produce a combination nobody chose.
+userTesting.put(`${BASE}/guest-execution`, async (c) => {
+  const body = await parseBody(c, guestExecutionSchema);
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+  try {
+    await client.mutation(
+      "chatboxes:setChatboxGuestExecution" as never,
+      { chatboxId: scenarioId, guestExecution: body } as never
+    );
+  } catch (error) {
+    throw translateWriteError(error);
+  }
+  return v1Resource(c, { id: scenarioId, projectId, guestExecution: body });
+});
+
+// POST .../rotate-link
+//
+// DESTRUCTIVE and immediate: the old share link stops working and every
+// session minted under it dies. That is the point — it is what you do when a
+// link has leaked — but it means a caller cannot undo this by rotating back.
+userTesting.post(`${BASE}/rotate-link`, async (c) => {
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+  let result: unknown;
+  try {
+    result = await client.mutation(
+      "chatboxes:rotateChatboxLink" as never,
+      { chatboxId: scenarioId } as never
+    );
+  } catch (error) {
+    throw translateWriteError(error);
+  }
+  return v1Resource(c, {
+    id: scenarioId,
+    projectId,
+    rotated: true,
+    ...(result && typeof result === "object" ? result : {}),
+  });
+});
+
+const upsertMemberSchema = z.strictObject({
+  email: z.string().trim().min(3).max(320),
+  /** Off by default: adding someone quietly is not the same as inviting them. */
+  sendInviteEmail: z.boolean().optional(),
+});
+
+// PUT .../members — upsert by email, so a re-invite is not an error.
+userTesting.put(`${BASE}/members`, async (c) => {
+  const body = await parseBody(c, upsertMemberSchema);
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+  let result: unknown;
+  try {
+    result = await client.mutation(
+      "chatboxes:upsertChatboxMember" as never,
+      {
+        chatboxId: scenarioId,
+        email: body.email,
+        ...(body.sendInviteEmail !== undefined
+          ? { sendInviteEmail: body.sendInviteEmail }
+          : {}),
+      } as never
+    );
+  } catch (error) {
+    throw translateWriteError(error);
+  }
+  return v1Resource(c, {
+    scenarioId,
+    projectId,
+    email: body.email,
+    ...(result && typeof result === "object" ? result : {}),
+  });
+});
+
+// DELETE .../members/:memberIdOrEmail
+//
+// Removing a member NARROWS access, which is why it is not behind the beta
+// gate: an org that has just lost the flag must still be able to revoke.
+userTesting.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+  const memberIdOrEmail = c.req.param("memberIdOrEmail");
+  try {
+    await client.mutation(
+      "chatboxes:removeChatboxMember" as never,
+      { chatboxId: scenarioId, memberIdOrEmail } as never
+    );
+  } catch (error) {
+    throw translateWriteError(error);
+  }
+  return v1Resource(c, { scenarioId, projectId, removed: memberIdOrEmail });
+});
+
+const rebindSchema = z.strictObject({
+  environmentId: z.string().trim().min(1),
+});
+
+// POST .../rebind
+//
+// Point an existing scenario at a DIFFERENT environment, keeping its link,
+// its members and its session history. The alternative — unpublish and
+// republish — mints a new link, which means re-sharing it with everyone.
+//
+// The new environment is checked against THIS project first: the Convex
+// mutation resolves the environment on its own, so without the preflight a
+// member of two projects could rebind a scenario onto another project's
+// environment and expose it under this project's link.
+userTesting.post(`${BASE}/rebind`, async (c) => {
+  const body = await parseBody(c, rebindSchema);
+  const { client, projectId, scenarioId } = await scopedScenario(c);
+
+  let environment: unknown;
+  try {
+    environment = await client.query(
+      "projectEnvironments:getEnvironment" as never,
+      { projectId, environmentId: body.environmentId } as never
+    );
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  if (!environment) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found");
+  }
+
+  let result: unknown;
+  try {
+    result = await client.mutation(
+      "chatboxes:rebindEnvironmentChatbox" as never,
+      { chatboxId: scenarioId, environmentId: body.environmentId } as never
+    );
+  } catch (error) {
+    throw translateWriteError(error);
+  }
+  return v1Resource(c, {
+    id: scenarioId,
+    projectId,
+    environmentId: body.environmentId,
+    ...(result && typeof result === "object" ? result : {}),
+  });
+});
+
+export default userTesting;

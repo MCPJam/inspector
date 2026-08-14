@@ -107,6 +107,27 @@ const KNOWN_UNDOCUMENTED = new Set([
   // Same flag, same reason (`sandboxes-enabled` gates both products).
   "put /projects/{projectId}/environments/{environmentId}/scenario",
   "delete /projects/{projectId}/environments/{environmentId}/scenario",
+  // The rest of user testing: what a published scenario produced, and who may
+  // reach it. Same beta, and the exposure controls want their own security
+  // review in the docs before they are advertised publicly.
+  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
+
   // A PLANNING read, not a product surface: it reports the caller's own role,
   // the beta gate's state and their plan limits so an agent on a static
   // surface can check before it acts. Undocumented for now because half of

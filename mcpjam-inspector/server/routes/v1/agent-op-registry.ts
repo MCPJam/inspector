@@ -89,6 +89,19 @@ import {
   cancelWaveInsightsOperation,
   generatePersonasOperation,
   generateJourneysOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  cancelUserTestingInsightsOperation,
+  requestUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  upsertUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
+  setUserTestingGuestExecutionOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -753,6 +766,125 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
     ],
   },
+
+  // ── USER TESTING ──────────────────────────────────────────────────────
+  //
+  // Same derivation as Swarms above: the tier comes off `operation.risk`.
+  //
+  // The reads here are the AGGREGATE ones. Session listings and transcripts
+  // are excluded below for privacy rather than risk — they are real visitors'
+  // conversations, and the metrics answer "how is this going" without pulling
+  // anyone's words into a turn.
+  {
+    operation: getUserTestingMetricsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+    ],
+  },
+  {
+    operation: getUserTestingUsageOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
+    ],
+  },
+  { operation: listUserTestingFindingsOperation, tier: "direct" },
+  { operation: getUserTestingSignalsOperation, tier: "direct" },
+  { operation: getUserTestingInsightsOperation, tier: "direct" },
+  { operation: dismissUserTestingFindingOperation, tier: "direct" },
+  { operation: undismissUserTestingFindingOperation, tier: "direct" },
+  { operation: cancelUserTestingInsightsOperation, tier: "direct" },
+  {
+    operation: requestUserTestingInsightsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Analyze user testing on ${
+          named(input, "scenario") ?? "(unnamed)"
+        } with a model`,
+      buttonLabel: "Analyze it",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: updateUserTestingScenarioOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const scenario = named(input, "scenario") ?? "(unnamed)";
+        const mode = named(input, "mode");
+        // The MODE is the thing the approver is really deciding about, so it
+        // goes in the sentence rather than being folded into "update".
+        // `anyone_with_link` in particular means anyone holding the URL, and
+        // an approval that said only "update scenario" would hide that.
+        return mode
+          ? `Set ${scenario} access to ${mode}`
+          : `Rename scenario ${scenario}`;
+      },
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      // A rename costs nothing and exposes nothing; widening access is the
+      // whole risk. Severity is computed rather than fixed so the host's copy
+      // does not warn about exposure on a rename.
+      confirmSeverity: (input) =>
+        named(input, "mode") === "anyone_with_link" ? "external" : "none",
+    },
+  },
+  {
+    operation: upsertUserTestingMemberOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Invite ${named(input, "email") ?? "(unnamed)"} to scenario ${
+          named(input, "scenario") ?? "(unnamed)"
+        }`,
+      buttonLabel: "Invite them",
+      kind: "schedule",
+      confirmSeverity: "none",
+    },
+  },
+  {
+    operation: rebindUserTestingScenarioOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Point scenario ${
+          named(input, "scenario") ?? "(unnamed)"
+        } at environment ${named(input, "environmentId") ?? "(unnamed)"}`,
+      buttonLabel: "Rebind it",
+      kind: "schedule",
+      // Visitors keep the link they already have and start talking to
+      // something else. That is a change about what MCPJam reaches on their
+      // behalf, which is what `external` warns about.
+      confirmSeverity: "external",
+    },
+  },
+  {
+    operation: setUserTestingGuestExecutionOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const scenario = named(input, "scenario") ?? "(unnamed)";
+        const cap = input.dailyCreditCap;
+        return input.enabled === true
+          ? `Allow guests on ${scenario} to run tools${
+              typeof cap === "number" ? `, up to ${cap} credits a day` : ""
+            }`
+          : `Turn off guest execution on ${scenario}`;
+      },
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      // The cap is a CEILING on recurring spend by strangers, so enabling is
+      // the only thing here that warrants a spend warning; turning it off
+      // stops spend and must not inherit one.
+      confirmSeverity: (input) => (input.enabled === true ? "spend" : "none"),
+    },
+    promptNotes: [
+      "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+    ],
+  },
 ];
 
 /**
@@ -786,6 +918,22 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // the CLI and MCP, where the caller is asking for them explicitly.
   list_journey_run_sessions:
     "Session bodies are conversations; reading them is not a turn concern. Available on REST/CLI/MCP.",
+  // User testing: session listings and transcripts. PRIVACY, not risk — real
+  // visitors' conversations, and a chat surface that can page them is a
+  // transcript reader. Mirrors the `list_chat_sessions` precedent below.
+  // Available on REST/CLI/MCP, where the caller asked for them explicitly.
+  list_user_testing_sessions:
+    "Visitor conversations; not a turn concern. Available on REST/CLI/MCP.",
+  get_user_testing_session:
+    "A real person's conversation with your product. Available on REST/CLI/MCP.",
+  // Access REMOVAL. The agent proposes authoring, never destruction — and
+  // these two take access away from people who currently have it, with no way
+  // to hand it back except by re-inviting them individually.
+  rotate_user_testing_link:
+    "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
+  remove_user_testing_member:
+    "Revokes a named person's access; the agent proposes authoring, never destruction.",
+
   // Scenarios (user testing).
   publish_scenario:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",

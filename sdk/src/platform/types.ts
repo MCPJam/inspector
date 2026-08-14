@@ -1269,3 +1269,98 @@ export interface PlatformPersonaDraft {
 export interface PlatformGenerationDrafts {
   [field: string]: unknown;
 }
+
+// ── User testing ────────────────────────────────────────────────────────────
+
+/** One session a visitor had with a published scenario. SUMMARY, not transcript. */
+export interface PlatformUserTestingSession {
+  /** The address for the transcript route. */
+  id: string;
+  chatSessionId: string;
+  messageCount: number;
+  /** First message only. The transcript is a separate, explicit read. */
+  preview: string;
+  modelId?: string;
+  toolCallCount?: number;
+  /** The visitor abandoned mid-flow because a server demanded auth. */
+  authInterrupted?: boolean;
+  visitor: {
+    displayName?: string;
+    segment?: string;
+    authType?: "signedIn" | "guest";
+    recency?: "new" | "returning";
+    deviceKind?: string;
+    language?: string;
+  };
+  feedback: {
+    rating: number | null;
+    comment: string | null;
+    count: number;
+  };
+  theme?: { id: string; label: string | null; keywords: string[] };
+  startedAt: number;
+  lastActivityAt: number;
+}
+
+/** One projected transcript message. Tool payloads and blobs are dropped. */
+export interface PlatformTranscriptMessage {
+  role: string;
+  text: string;
+  toolName?: string;
+  createdAt?: number;
+}
+
+/**
+ * A session's transcript, paged.
+ *
+ * The stored blob URL is never returned: it is a direct handle with no further
+ * authorization, so handing it out would turn one authorized read into an
+ * unbounded, unrevocable one.
+ */
+export interface PlatformUserTestingSessionDetail {
+  id: string;
+  scenarioId: string;
+  chatSessionId: string | null;
+  modelId: string | null;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+  messageCount: number;
+  /**
+   * True when the stored conversation could not be read. Distinct from an
+   * empty `messages`, which means the visitor genuinely said nothing.
+   */
+  transcriptUnavailable?: boolean;
+  messages: PlatformTranscriptMessage[];
+  nextCursor?: string;
+}
+
+/** Scenario metadata after an update. */
+export interface PlatformUserTestingScenario {
+  id: string;
+  projectId: string;
+  name: string | null;
+  description: string | null;
+  mode: string | null;
+  accessVersion: number | null;
+}
+
+/** Guest execution caps — the spend dial for anonymous visitors. */
+export interface PlatformGuestExecution {
+  enabled: boolean;
+  computerEnabled: boolean;
+  sharedSkillsEnabled: boolean;
+  dailyCreditCap: number;
+  dailyComputerStartCap: number;
+  maxConcurrentComputers: number;
+  harnessEnabled?: boolean;
+  dailyHarnessSpendCapMicros?: number;
+  dailyHarnessCallCap?: number;
+  maxConcurrentHarnessRuns?: number;
+}
+
+export interface PlatformUserTestingInsightsRequested {
+  scenarioId: string;
+  projectId: string;
+  windowId: string;
+  status: "pending";
+}

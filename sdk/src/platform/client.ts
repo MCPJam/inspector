@@ -30,7 +30,12 @@ import type {
   PlatformPersona,
   PlatformPersonaDeleted,
   PlatformRunScorecard,
+  PlatformGuestExecution,
   PlatformScenario,
+  PlatformUserTestingInsightsRequested,
+  PlatformUserTestingScenario,
+  PlatformUserTestingSession,
+  PlatformUserTestingSessionDetail,
   PlatformSwarm,
   PlatformSwarmArchived,
   PlatformSwarmFinding,
@@ -1870,6 +1875,354 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
+      {},
+      options
+    );
+  }
+
+  // ── User testing ────────────────────────────────────────────────────────
+  //
+  // What a published scenario produced, and who may reach it. `publishScenario`
+  // above creates one (keyed by environment, because the scenario does not
+  // exist yet); everything here is keyed by the scenario.
+  //
+  // AUTHORIZATION DIFFERS from the rest of this client: these gate on the
+  // WORKSPACE role rather than the project role, and the exposure controls
+  // (guest execution, link rotation, rebinding) need project ADMIN. A legacy
+  // workspace with no organization hard-denies delegated (`sk_`) callers
+  // entirely — a documented limitation, not a bug you can grant your way out
+  // of.
+
+  /**
+   * Publish an environment as a scenario.
+   *
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the scenario is never briefly live in a wider mode than you
+   * asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`), because re-applying `mode` would let a routine
+   * idempotent publish widen a scenario someone had narrowed by hand.
+   */
+  publishUserTestingScenario(
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformScenario & { overridesIgnored?: boolean }> {
+    const { projectId, environmentId, ...body } = params;
+    return this.request(
+      "PUT",
+      `/projects/${encodeURIComponent(
+        projectId
+      )}/environments/${encodeURIComponent(environmentId)}/scenario`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Edit a scenario. SINGLE-CONCERN: send `mode` on its own, or `name` and
+   * `description` together — never both. Identity and exposure are separate
+   * mutations upstream, so a mixed request would have to apply them in
+   * sequence, and a failure between the two leaves the scenario half-updated
+   * on the half that decides who can reach it.
+   */
+  updateUserTestingScenario(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformUserTestingScenario> {
+    const { projectId, scenarioId, ...body } = params;
+    return this.request(
+      "PATCH",
+      this.userTestingPath(projectId, scenarioId),
+      { body },
+      options
+    );
+  }
+
+  /** Session SUMMARIES. Transcripts are a separate, explicit read. */
+  listUserTestingSessions(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformUserTestingSession>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/sessions`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * One session's transcript, PAGED and projected to role + text + timing.
+   *
+   * These are real people's conversations with your product. The API never
+   * hands back the stored blob URL, so a caller cannot pass "read this
+   * transcript" onward as an unrevocable capability.
+   */
+  getUserTestingSession(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      sessionId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformUserTestingSessionDetail> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/sessions/${encodeURIComponent(params.sessionId)}`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getUserTestingMetrics(
+    params: { projectId: string; scenarioId: string; population?: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/metrics`,
+      {
+        query: params.population ? { population: params.population } : {},
+      },
+      options
+    );
+  }
+
+  /**
+   * Usage breakdown. Read `scan.truncated` before quoting any rate from this:
+   * true means the rates were computed over the most recent N sessions rather
+   * than all of them, and dropping the flag turns a conditional statistic into
+   * an unconditional claim.
+   */
+  getUserTestingUsage(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/usage`,
+      {},
+      options
+    );
+  }
+
+  listUserTestingFindings(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<Record<string, unknown>>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/findings`,
+      {},
+      options
+    );
+  }
+
+  /** Also how you learn the CURRENT window id, which the insights read takes. */
+  getUserTestingSignals(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/signals`,
+      {},
+      options
+    );
+  }
+
+  getUserTestingInsights(
+    params: { projectId: string; scenarioId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/windows/${encodeURIComponent(params.windowId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Ask a model to analyze the scenario's current window. **202** — scheduled,
+   * not done. SPENDS against the organization's daily insights budget, which
+   * is SHARED with swarm wave insights.
+   */
+  requestUserTestingInsights(
+    params: { projectId: string; scenarioId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformUserTestingInsightsRequested> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  cancelUserTestingInsights(
+    params: { projectId: string; scenarioId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
+      { body: { windowId: params.windowId } },
+      options
+    );
+  }
+
+  dismissUserTestingFinding(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.userTestingFindingAction(params, "dismiss", options);
+  }
+
+  undismissUserTestingFinding(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.userTestingFindingAction(params, "undismiss", options);
+  }
+
+  /**
+   * Replace the guest-execution caps.
+   *
+   * A full replacement, not a patch: these only mean something as a SET, and
+   * raising one while leaving a stale sibling behind produces a combination
+   * nobody chose. Project ADMIN.
+   */
+  setUserTestingGuestExecution(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      guestExecution: PlatformGuestExecution;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "PUT",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/guest-execution`,
+      { body: params.guestExecution },
+      options
+    );
+  }
+
+  /**
+   * Rotate the share link. DESTRUCTIVE and immediate: the old link stops
+   * working and every session on it dies. There is no rotating back.
+   */
+  rotateUserTestingLink(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/rotate-link`,
+      {},
+      options
+    );
+  }
+
+  /** Upsert by email, so re-inviting someone is not an error. */
+  upsertUserTestingMember(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      email: string;
+      sendInviteEmail?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    const { projectId, scenarioId, ...body } = params;
+    return this.request(
+      "PUT",
+      `${this.userTestingPath(projectId, scenarioId)}/members`,
+      { body },
+      options
+    );
+  }
+
+  removeUserTestingMember(
+    params: { projectId: string; scenarioId: string; member: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/members/${encodeURIComponent(params.member)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Point a scenario at a DIFFERENT environment, keeping its link, members and
+   * session history. The alternative — unpublish and republish — mints a new
+   * link, which means re-sharing it with everyone who had the old one.
+   */
+  rebindUserTestingScenario(
+    params: { projectId: string; scenarioId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/rebind`,
+      { body: { environmentId: params.environmentId } },
+      options
+    );
+  }
+
+  private userTestingPath(projectId: string, scenarioId: string): string {
+    return `/projects/${encodeURIComponent(
+      projectId
+    )}/user-testing/scenarios/${encodeURIComponent(scenarioId)}`;
+  }
+
+  private userTestingFindingAction(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    action: "dismiss" | "undismiss",
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/findings/${encodeURIComponent(params.findingId)}/${action}`,
       {},
       options
     );
