@@ -269,6 +269,7 @@ function renderUseServerState(
     activeMcpProfile?: any;
     activeHostConfig?: any;
     requestSignIn?: () => void | Promise<void>;
+    logger?: ReturnType<typeof createTestLogger>;
   }
 ) {
   mockUseDbUserReady.mockReturnValue(
@@ -294,7 +295,7 @@ function renderUseServerState(
       activeMcpProfile: options?.activeMcpProfile,
       activeHostConfig: options?.activeHostConfig,
       requestSignIn: options?.requestSignIn,
-      logger: createTestLogger(),
+      logger: options?.logger ?? createTestLogger(),
     })
   );
 }
@@ -824,6 +825,130 @@ describe("useServerState CLI config import", () => {
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
     expect(mockUpdateServer).not.toHaveBeenCalled();
     expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
+  });
+
+  it("refuses the save when the create resolves the name back to a sibling row the resolve never saw", async () => {
+    // Nothing shows the twin before the write: the snapshot is empty and the
+    // fresh query misses it. The create still resolves the workspace clash to
+    // the sibling's row and hands back its id, so only reading the row back
+    // separates that from a create of our own.
+    mockUseDbUserReady.mockReturnValue(true);
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          servers: [
+            {
+              name: "cli-http",
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: { Authorization: "Bearer secret" },
+            },
+          ],
+        },
+      }),
+    } as Response);
+    mockConvexQuery.mockResolvedValueOnce([]).mockResolvedValue([
+      {
+        _id: "srv_sibling",
+        projectId: "proj_sibling",
+        name: "cli-http",
+        enabled: true,
+        transportType: "http" as const,
+        url: "https://example.com/mcp",
+      },
+    ]);
+    mockCreateServerWithClientSecret.mockResolvedValue("srv_sibling");
+    const appState = createCloudCliAppState();
+    const logger = createTestLogger();
+
+    renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger,
+      })
+    );
+
+    await waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Server name already belongs to another project in this workspace",
+        expect.objectContaining({
+          serverName: "cli-http",
+          existingServerId: "srv_sibling",
+          existingProjectId: "proj_sibling",
+        })
+      );
+    });
+    expect(injectHostedServerMapping).not.toHaveBeenCalled();
+  });
+
+  it("keeps the created server when the read-back shows it belongs to this project", async () => {
+    // The same read-back must not turn an ordinary create into a conflict.
+    mockUseDbUserReady.mockReturnValue(true);
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          servers: [
+            {
+              name: "cli-http",
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: { Authorization: "Bearer secret" },
+            },
+          ],
+        },
+      }),
+    } as Response);
+    mockConvexQuery.mockResolvedValueOnce([]).mockResolvedValue([
+      {
+        _id: "srv_own",
+        projectId: "proj_cloud",
+        name: "cli-http",
+        enabled: true,
+        transportType: "http" as const,
+        url: "https://example.com/mcp",
+      },
+    ]);
+    mockCreateServerWithClientSecret.mockResolvedValue("srv_own");
+    const appState = createCloudCliAppState();
+    const logger = createTestLogger();
+
+    renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger,
+      })
+    );
+
+    await waitFor(() => {
+      expect(injectHostedServerMapping).toHaveBeenCalledWith(
+        "cli-http",
+        "srv_own"
+      );
+    });
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      "Server name already belongs to another project in this workspace",
+      expect.anything()
+    );
   });
 
   it("does not create after a failed update when the row it resolved is gone and a sibling holds the name", async () => {
@@ -4094,12 +4219,14 @@ describe("syncServerToConvex name-collision recovery", () => {
       },
     ]);
 
+    const logger = createTestLogger();
     const { result } = renderUseServerState(dispatch, appState, {
       isAuthenticated: true,
       hasSignedInUser: true,
       useLocalFallback: false,
       effectiveProjects: appState.projects,
       activeProjectServersFlat: [],
+      logger,
     });
 
     let saved: boolean | undefined;
@@ -4125,6 +4252,16 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(toastError).not.toHaveBeenCalledWith(
       errorToastMessage("Could not save the server. Please try again."),
       { duration: 8000 }
+    );
+    // The toast cannot name the project that holds it — a user may not even be
+    // able to see it — so the log has to carry the owner for support to follow.
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Server name already belongs to another project in this workspace",
+      expect.objectContaining({
+        serverName: "Excalidraw (App)",
+        existingServerId: "srv_sibling",
+        existingProjectId: "other-project",
+      })
     );
     expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
   });

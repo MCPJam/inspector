@@ -1846,6 +1846,50 @@ export function useServerState({
         };
       };
 
+      // The twin guard above can only fire on a twin the resolve could see. A
+      // stale query — or a sibling project that won the name between the
+      // resolve and the create — leaves the secret-path create to resolve the
+      // clash itself, and it does that by handing back the id of the row that
+      // already holds the name with this payload never applied. That reads as
+      // a successful create. Confirm the row we were handed is this project's
+      // before reporting a save that never touched it.
+      const confirmSecretCreateIsOurs = async (
+        newServerId: string
+      ): Promise<ServerSyncResult> => {
+        const ok: ServerSyncResult = { ok: true, serverId: newServerId };
+        if (!isUserReadyRef.current) return ok;
+        let rows: RemoteServer[] | undefined;
+        try {
+          rows = (await convex.query(
+            "servers:getProjectServers" as any,
+            {
+              projectId: latestProjectId,
+            } as any
+          )) as RemoteServer[] | undefined;
+        } catch (verifyError) {
+          // Nothing to check against. Failing a save that most likely landed
+          // is worse than the race it would close, so accept the id and leave
+          // the reason the check was skipped in the log.
+          logger.warn("Could not verify the created server's project", {
+            serverName,
+            projectId: latestProjectId,
+            serverId: newServerId,
+            error:
+              verifyError instanceof Error
+                ? verifyError.message
+                : "Unknown error",
+          });
+          return ok;
+        }
+        // A row missing from the read-back is our own create not yet visible,
+        // not someone else's server.
+        const created = rows?.find((s) => s._id === newServerId);
+        return created &&
+          !remoteServerBelongsToProject(created, latestProjectId)
+          ? workspaceTwinConflict(created)
+          : ok;
+      };
+
       // Existing-server edits from a hosted UI carry the exact authorized row
       // id. Do not consult a possibly stale name snapshot for those writes:
       // updating a different/recreated row would silently bind the edit to the
@@ -1977,9 +2021,10 @@ export function useServerState({
         const newId = hasSecretOperation
           ? await convexCreateServerWithClientSecret(createPayload)
           : await convexCreateServerIfMissing(createPayload);
-        return newId
-          ? { ok: true, serverId: newId as string }
-          : SERVER_NOT_SAVED;
+        if (!newId) return SERVER_NOT_SAVED;
+        return hasSecretOperation
+          ? await confirmSecretCreateIsOurs(newId as string)
+          : { ok: true, serverId: newId as string };
       } catch (primaryError) {
         const primaryErrorMessage =
           primaryError instanceof Error
@@ -2038,9 +2083,10 @@ export function useServerState({
           const newId = hasSecretOperation
             ? await convexCreateServerWithClientSecret(createPayload)
             : await convexCreateServerIfMissing(createPayload);
-          return newId
-            ? { ok: true, serverId: newId as string }
-            : SERVER_NOT_SAVED;
+          if (!newId) return SERVER_NOT_SAVED;
+          return hasSecretOperation
+            ? await confirmSecretCreateIsOurs(newId as string)
+            : { ok: true, serverId: newId as string };
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
             serverName,
