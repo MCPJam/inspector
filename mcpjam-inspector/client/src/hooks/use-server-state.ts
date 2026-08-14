@@ -1759,8 +1759,16 @@ export function useServerState({
       // route passes and this client does not. `servers:createServerIfMissing`
       // matches per PROJECT, so the no-secret path still creates our own row
       // and is left to run.
+      //
+      // `forceFresh` skips only the snapshot short-circuit, for the retry after
+      // a failed write: the snapshot it is handed is the one that was live when
+      // the mutation was issued, so trusting it would re-resolve the same row
+      // and re-issue the write that just failed. The snapshot is still passed —
+      // the not-yet-ready and query-error paths below have nothing else to find
+      // a workspace twin in.
       const resolveExistingServer = async (
-        snapshot: RemoteServer[] | undefined
+        snapshot: RemoteServer[] | undefined,
+        { forceFresh = false }: { forceFresh?: boolean } = {}
       ): Promise<{ owned?: RemoteServer; workspaceTwin?: RemoteServer }> => {
         // A pinned serverId is authoritative: the row was created before the
         // OAuth redirect and the hosted session validated it. Match by id
@@ -1781,8 +1789,10 @@ export function useServerState({
                   s.name === serverName &&
                   !remoteServerBelongsToProject(s, latestProjectId)
               );
-        const local = snapshot?.find(matches);
-        if (local) return { owned: local };
+        if (!forceFresh) {
+          const local = snapshot?.find(matches);
+          if (local) return { owned: local };
+        }
         if (!isUserReadyRef.current) {
           return { workspaceTwin: findWorkspaceTwin(snapshot) };
         }
@@ -2050,7 +2060,9 @@ export function useServerState({
         try {
           const flatRetry =
             activeProjectServersFlatRef.current ?? activeProjectServersFlat;
-          const retry = await resolveExistingServer(flatRetry);
+          const retry = await resolveExistingServer(flatRetry, {
+            forceFresh: true,
+          });
           const retryExisting = retry.owned;
           if (retryExisting) {
             const updatePayload = {

@@ -370,7 +370,7 @@ describe("ensureHostedServerIdsForNames (hosted harness preflight)", () => {
     expect(resolved).toEqual([
       { serverName: "demo-server", serverId: "srv_existing" },
     ]);
-    // Already resolved â†’ no persistence side effect.
+    // Already resolved → no persistence side effect.
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
     expect(mockCreateServer).not.toHaveBeenCalled();
   });
@@ -604,7 +604,7 @@ describe("useServerState CLI config import", () => {
   // project comes back in this project's list. It is not ours to write, and on
   // the secret path `servers:createServerWithClientSecret` resolves the
   // workspace name clash back to that row and returns its id with this payload
-  // never applied â€” which is how one CLI re-import re-attempted the same doomed
+  // never applied — which is how one CLI re-import re-attempted the same doomed
   // create on every launch (Sentry CONVEX-1R / CONVEX-1NG).
   //
   // Both branches that can spot the twin are covered: the local snapshot, which
@@ -765,7 +765,7 @@ describe("useServerState CLI config import", () => {
 
   it("does not retry the create when the twin only appears after the first attempt fails", async () => {
     // A sibling project can win the name between the resolve and the write.
-    // The retry re-resolves, so it sees the twin the first pass missed â€” and on
+    // The retry re-resolves, so it sees the twin the first pass missed — and on
     // the secret path a second create would resolve to that same row.
     mockUseDbUserReady.mockReturnValue(true);
     vi.mocked(authFetch).mockResolvedValueOnce({
@@ -952,7 +952,7 @@ describe("useServerState CLI config import", () => {
   });
 
   it("does not create after a failed update when the row it resolved is gone and a sibling holds the name", async () => {
-    // The row resolved on the first pass is not proof it still exists â€” that is
+    // The row resolved on the first pass is not proof it still exists — that is
     // what the update failing says. Re-resolving finds a sibling's row instead,
     // and on the secret path a create would resolve back to it, so this project
     // would bind an id it may not write.
@@ -1026,6 +1026,74 @@ describe("useServerState CLI config import", () => {
     expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
     expect(injectHostedServerMapping).not.toHaveBeenCalled();
+  });
+
+  it("creates the row after a failed update when only the stale snapshot still lists it", async () => {
+    // The snapshot the retry is handed is the one that was live when the update
+    // was issued — the subscription has not re-rendered yet. Trusting it would
+    // re-resolve the row the update just failed on and re-issue the same write,
+    // so the retry must re-read instead.
+    mockUseDbUserReady.mockReturnValue(true);
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          servers: [
+            { name: "cli-http", type: "http", url: "https://example.com/mcp" },
+          ],
+        },
+      }),
+    } as Response);
+    // Deleted elsewhere: the fresh read no longer has it.
+    mockConvexQuery.mockResolvedValue([]);
+    mockUpdateServer.mockRejectedValue(new Error("Server not found"));
+    mockCreateServerIfMissing.mockResolvedValue("srv_new");
+    const appState = createCloudCliAppState();
+    const logger = createTestLogger();
+
+    renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [
+          {
+            _id: "srv_stale",
+            projectId: "proj_cloud",
+            name: "cli-http",
+            enabled: true,
+            transportType: "http" as const,
+            url: "https://example.com/mcp",
+          },
+        ],
+        logger,
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "proj_cloud",
+          name: "cli-http",
+          url: "https://example.com/mcp",
+        })
+      );
+    });
+    // The first update only — the retry never re-resolved the dead row.
+    expect(mockUpdateServer).toHaveBeenCalledTimes(1);
+    expect(mockUpdateServer).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "srv_stale" })
+    );
+    expect(injectHostedServerMapping).toHaveBeenCalledWith(
+      "cli-http",
+      "srv_new"
+    );
   });
 });
 
@@ -1966,7 +2034,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     // Existence was decided against the pinned project and the pinned row
-    // was updated in place â€” no create in the ambient project.
+    // was updated in place — no create in the ambient project.
     expect(mockConvexQuery).toHaveBeenCalledWith("servers:getProjectServers", {
       projectId: "project_pinned",
     });
@@ -1994,7 +2062,7 @@ describe("useServerState OAuth callback failures", () => {
     // The pinned row was deleted and recreated mid-flow, so the id misses and
     // the resolver falls back to matching by name. `servers:getProjectServers`
     // is workspace-wide, so an unscoped name match there would hand the update
-    // to another project's server â€” the pin says which project, and the
+    // to another project's server — the pin says which project, and the
     // fallback has to honor it.
     mockHostedMode.mockReturnValue(true);
     localStorage.setItem(
@@ -2055,7 +2123,7 @@ describe("useServerState OAuth callback failures", () => {
     // Regression: local dev runs with HOSTED_MODE=false, where completion
     // goes through the legacy client-side token exchange. The pending marker
     // is still written before the redirect, and the Convex sync after the
-    // callback must honor it â€” this was the path that kept duplicating the
+    // callback must honor it — this was the path that kept duplicating the
     // server into the fallback org after the hosted-only fix.
     localStorage.setItem("mcp-oauth-pending", "bart");
     localStorage.setItem(
@@ -2602,7 +2670,7 @@ describe("useServerState OAuth callback failures", () => {
     // Repro of the client-switch toast bug: when the user switches clients
     // faster than a reconnect completes, the in-flight reconnect's op token
     // goes stale (a newer op now owns the server). That must NOT surface as a
-    // reconnect failure â€” `reconnectServerForClientSwitch` should resolve, so
+    // reconnect failure — `reconnectServerForClientSwitch` should resolve, so
     // the auto-connect recycle never toasts "Failed to reconnect".
     const { ensureAuthorizedForReconnect } = await import(
       "@/state/oauth-orchestrator"
@@ -3509,7 +3577,7 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
       "https://example.com/mcp"
     );
 
-    // Slow token exchange â€” controllable promise so we can assert before it resolves
+    // Slow token exchange — controllable promise so we can assert before it resolves
     let resolveTokenExchange!: (value: unknown) => void;
     handleOAuthCallbackMock.mockReturnValue(
       new Promise((resolve) => {
@@ -3532,7 +3600,7 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
       );
     });
 
-    // Token exchange hasn't finished yet â€” no CONNECT_SUCCESS dispatched
+    // Token exchange hasn't finished yet — no CONNECT_SUCCESS dispatched
     expect(
       dispatch.mock.calls.some(([a]) => a.type === "CONNECT_SUCCESS")
     ).toBe(false);
@@ -4486,17 +4554,17 @@ describe("syncServerToConvex name-collision recovery", () => {
   });
 });
 
-// NOTE: keep this describe BEFORE "persistRuntimeServerToProjectIfNeeded" â€”
+// NOTE: keep this describe BEFORE "persistRuntimeServerToProjectIfNeeded" —
 // its dedupe test intentionally overlaps act() scopes (a pending act promise
 // awaited later), which leaves React's act queue unable to flush effects for
 // hooks rendered afterwards in this file.
-describe("useServerState XAA identity pair â€” shared save semantics across all three save paths", () => {
+describe("useServerState XAA identity pair — shared save semantics across all three save paths", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
     // Earlier describes install hanging mockImplementations on the server
     // mutations (e.g. the persist-dedupe test's never-resolving
-    // createServerIfMissing) â€” clearAllMocks keeps implementations, so
+    // createServerIfMissing) — clearAllMocks keeps implementations, so
     // reset these fully.
     mockCreateServer.mockReset();
     mockCreateServerIfMissing.mockReset();
@@ -4601,7 +4669,7 @@ describe("useServerState XAA identity pair â€” shared save semantics across
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch, createXaaAppState());
 
-    // Omitted pair â†’ preserve.
+    // Omitted pair → preserve.
     await act(async () => {
       await result.current.saveServerConfigWithoutConnecting(baseXaaFormData);
     });
@@ -4610,7 +4678,7 @@ describe("useServerState XAA identity pair â€” shared save semantics across
     expect(saved.xaaEmail).toBe("stored@example.com");
     expect(saved.authServerMode).toBe("mcpjam");
 
-    // Explicit "" pair â†’ clear reaches the persisted entry (and the wire).
+    // Explicit "" pair → clear reaches the persisted entry (and the wire).
     dispatch.mockClear();
     await act(async () => {
       await result.current.saveServerConfigWithoutConnecting({
