@@ -505,3 +505,49 @@ describe("POST .../journeys/:journeyId/runs", () => {
     expect(launchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("session DTO outcome join", () => {
+  it("joins each session's attempt outcome from the run row", async () => {
+    // A session row's own `status` is its ARCHIVAL state (active/archived) —
+    // it never says how the attempt went. The verdict lives on the run's
+    // attempts, keyed by chatSessionId, and the route must join it or every
+    // consumer reads "active" as if it were a result.
+    queryMock
+      .mockResolvedValueOnce(
+        runRow({
+          attempts: [
+            { chatSessionId: "cs_ok", hostId: "h1", status: "succeeded" },
+            { chatSessionId: "cs_bad", hostId: "h1", status: "failed" },
+            { chatSessionId: "cs_limited", hostId: "h1", status: "rate_limited" },
+          ],
+        })
+      )
+      .mockResolvedValueOnce({
+        page: [
+          { id: "s1", chatSessionId: "cs_ok", projectId: PROJECT, status: "active" },
+          { id: "s2", chatSessionId: "cs_bad", projectId: PROJECT, status: "active" },
+          { id: "s3", chatSessionId: "cs_limited", projectId: PROJECT, status: "active" },
+          { id: "s4", chatSessionId: "cs_unknown", projectId: PROJECT, status: "active" },
+        ],
+        isDone: true,
+        continueCursor: "",
+      });
+
+    const res = await get(`/projects/${PROJECT}/journey-runs/${RUN}/sessions`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{ id: string; status: string; outcome: string | null }>;
+    };
+    expect(body.items.map((s) => s.outcome)).toEqual([
+      "succeeded",
+      "failed",
+      // The watcher ranks rate-limited sessions as evidence — this literal
+      // surviving the join is what that depends on.
+      "rate_limited",
+      // No matching attempt (historical run) → null, never a guess.
+      null,
+    ]);
+    // The archival flag survives unchanged alongside the verdict.
+    expect(body.items[0]?.status).toBe("active");
+  });
+});

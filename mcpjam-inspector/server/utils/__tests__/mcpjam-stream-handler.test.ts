@@ -84,6 +84,12 @@ vi.mock("../logger", () => ({
     // catch-block-doesn't-propagate test would have validated against
     // a mock-shape side effect instead of the real behavior).
     warn: vi.fn(),
+    // The failure-reporter fallback (`createSystemStreamFailureReporter`)
+    // emits the typed route.operation.failed row through the system logger
+    // on every engine failure path; without `systemEvent` the reporter call
+    // would TypeError inside the catch instead of reaching the assertions.
+    systemEvent: vi.fn(),
+    event: vi.fn(),
   },
   // `error-origin-capture` routes its Sentry capture through the logger
   // module, so this mock has to carry it or the backend-failure paths below
