@@ -4499,9 +4499,30 @@ export function useServerState({
       const suppressErrors = options?.suppressErrors ?? false;
 
       const reportError = (errorMessage: string) => {
-        if (!suppressErrors) {
-          toast.error(errorMessage);
+        if (suppressErrors) return;
+        // Reconnect is the path a user takes right AFTER changing the protocol
+        // version, so it is the likeliest place to meet a pin the server
+        // doesn't offer — and its toast carries the bare message, with no
+        // action of its own. Matched on the message because that is all this
+        // helper receives; the clause is MCPJam's own wording.
+        if (isProtocolVersionPinFailure(undefined, errorMessage)) {
+          toast.error(errorMessage, {
+            action: {
+              label: "Change protocol version",
+              onClick: () => {
+                track("change_protocol_version_clicked", {
+                  location: "reconnect_failure_toast",
+                  has_host_id: Boolean(previewedHostIdRef.current),
+                });
+                navigateApp(
+                  buildHostFocusTabPath(previewedHostIdRef.current, "protocol")
+                );
+              },
+            },
+          });
+          return;
         }
+        toast.error(errorMessage);
       };
 
       if (isClientConfigSyncPending) {
