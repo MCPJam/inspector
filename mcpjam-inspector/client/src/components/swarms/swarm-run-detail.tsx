@@ -35,7 +35,12 @@ import {
   type ThemeRef,
 } from "@/hooks/chatbox-usage-filters";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
-import { SWARM_QUERIES, type SwarmOverview } from "@/lib/swarm-api";
+import {
+  SWARM_QUERIES,
+  type SwarmOverview,
+  type SwarmWaveSignals,
+} from "@/lib/swarm-api";
+import { SwarmTargetHealthStrip } from "@/components/swarms/swarm-target-health-strip";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
@@ -116,6 +121,17 @@ export function SwarmRunDetail({
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
     [overview, waves, swarmId]
   );
+
+  // Same subscription the insights rail mounts — Convex dedupes identical
+  // queries, so this costs nothing extra and keeps launch health on screen
+  // regardless of which tab is open.
+  const waveGroupId = wave?.runs[0]?.swarmRunGroupId;
+  const waveSignals = useQuery(
+    SWARM_QUERIES.getWaveSignals as any,
+    (queryable && waveGroupId
+      ? { projectId, swarmRunGroupId: waveGroupId }
+      : "skip") as any
+  ) as SwarmWaveSignals | null | undefined;
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -370,6 +386,14 @@ export function SwarmRunDetail({
           ) : null}
         </div>
       ) : null}
+
+      {/* Launch outcomes, above the tabs and OUTSIDE the findings: a target
+          that never reached a session says nothing about the server's tools,
+          and used to be mined as if it did. */}
+      <SwarmTargetHealthStrip
+        targetHealth={waveSignals?.targetHealth}
+        terminal={waveSignals?.terminal ?? false}
+      />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "insights" ? (
