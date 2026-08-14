@@ -367,6 +367,20 @@ describe("mapTargetServerError", () => {
     expect(mapped.code).toBe(ErrorCode.TIMEOUT);
   });
 
+  it.each([
+    // The wrapper the manager actually builds, with the timeout text buried in
+    // one transport's leg. This is the realistic shape and the dangerous one:
+    // it is a CONNECT failure by structure and a TIMEOUT by substring, and the
+    // substring wins — so it never looks like the connection class at all.
+    'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: Request timed out. SSE error: Request timed out.',
+    // Auto-negotiation probing the modern era before either transport is up.
+    'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: Version negotiation probe timed out. SSE error: fetch failed.',
+    // Only the SSE leg times out; the first leg failed some other way.
+    'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: fetch failed. SSE error: the operation timed out.',
+  ])("downgrades a connect failure carrying timeout text: %s", (message) => {
+    expect(mapTargetServerError(new Error(message)).status).toBe(424);
+  });
+
   it("keeps an MCPJam-internal timeout at 504", () => {
     // The trade that makes the line above safe. Silence is weaker evidence
     // than a refusal — it can be our own container starving rather than their
