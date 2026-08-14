@@ -98,7 +98,10 @@ export interface UseChatboxTurnRatingResult {
    * widget reports it rather than the page passing it down.
    */
   observeChatSession: (chatSessionId: string) => void;
-  /** Rating state for one turn, keyed `${chatSessionId}:${turnId}`. */
+  /**
+   * Rating state for one turn, under the hook's CURRENT `scoreKey`. A turn
+   * rated in the other widget style reads as unrated here — see `stateKey`.
+   */
   getState: (chatSessionId: string, turnId: string) => TurnRatingState;
   submit: (args: {
     chatSessionId: string;
@@ -108,8 +111,31 @@ export interface UseChatboxTurnRatingResult {
   }) => void;
 }
 
-function stateKey(chatSessionId: string, turnId: string): string {
-  return `${chatSessionId}:${turnId}`;
+/**
+ * The identity every piece of transient state hangs off.
+ *
+ * SCORE KEY IS PART OF IT, not just session + turn. A rating is a judgement in
+ * a particular widget's vocabulary, and the two vocabularies do not translate:
+ * the same turn can hold a `4` under stars and a `0` under thumbs, and neither
+ * is a sensible value for the other's control. Sharing one slot between them
+ * costs three distinct bugs when a scenario's style changes mid-session:
+ *
+ *   - the optimistic map wins over the (key-filtered) persisted read in
+ *     `getState`, so a 4★ submitted this page-load would rehydrate into the
+ *     thumbs widget as a "submitted" rating no thumb can represent;
+ *   - a new stars submission would bump the generation of a queued thumbs
+ *     retry and silently cancel it, losing a judgement the tester made;
+ *   - the stale-access queue would replace a queued thumbs rating with a stars
+ *     one on the same turn instead of holding both.
+ *
+ * Namespacing the key makes all three impossible rather than handled.
+ */
+function stateKey(
+  scoreKey: TurnScoreKey,
+  chatSessionId: string,
+  turnId: string
+): string {
+  return `${scoreKey}:${chatSessionId}:${turnId}`;
 }
 
 const IDLE: TurnRatingState = { status: "idle" };
@@ -131,8 +157,9 @@ export function useChatboxTurnRating({
   }, []);
 
   // Queued submissions waiting on a fresh accessVersion. Keyed the same way as
-  // `states` so a second rating on the same turn replaces the first rather
-  // than replaying both.
+  // `states` — including the score key — so a second rating on the same turn
+  // AND style replaces the first rather than replaying both, while a rating
+  // left under the other style keeps its own slot.
   const staleQueueRef = useRef(new Map<string, PendingSubmission>());
   // Latest submission generation per key — see `PendingSubmission.generation`.
   const generationRef = useRef(new Map<string, number>());
@@ -197,7 +224,7 @@ export function useChatboxTurnRating({
       // in the style this scenario is now asking for. The score row itself
       // survives and keeps counting in the PM-facing rollup.
       if ((row.key ?? "user_rating") !== scoreKey) continue;
-      map.set(stateKey(chatSessionId, row.turnId), {
+      map.set(stateKey(scoreKey, chatSessionId, row.turnId), {
         value: row.value,
         comment: row.comment,
       });
@@ -248,7 +275,11 @@ export function useChatboxTurnRating({
 
   const runSubmit = useCallback(
     async (pending: PendingSubmission, attempt: number): Promise<void> => {
-      const key = stateKey(pending.chatSessionId, pending.turnId);
+      const key = stateKey(
+        pending.scoreKey,
+        pending.chatSessionId,
+        pending.turnId
+      );
       // A retry waking up on a dead page, or carrying a superseded
       // generation, must do nothing — not touch state, not hit the server.
       if (unmountedRef.current) return;
@@ -380,7 +411,11 @@ export function useChatboxTurnRating({
         staleQueueRef.current.clear();
         staleAttemptRef.current = 0;
         for (const pending of abandoned) {
-          const key = stateKey(pending.chatSessionId, pending.turnId);
+          const key = stateKey(
+            pending.scoreKey,
+            pending.chatSessionId,
+            pending.turnId
+          );
           // A superseded queue entry no longer owns its key's state —
           // erroring it here would clobber a newer click's outcome.
           if (generationRef.current.get(key) !== pending.generation) continue;
@@ -441,7 +476,7 @@ export function useChatboxTurnRating({
     }) => {
       const chatboxId = accessRef.current.chatboxId;
       if (!enabled || !chatboxId) return;
-      const key = stateKey(args.chatSessionId, args.turnId);
+      const key = stateKey(scoreKey, args.chatSessionId, args.turnId);
       // Claim the key: every retry path spawned by an EARLIER click now
       // carries a stale generation and self-cancels.
       const generation = (generationRef.current.get(key) ?? 0) + 1;
@@ -459,7 +494,7 @@ export function useChatboxTurnRating({
 
   const getState = useCallback(
     (session: string, turnId: string): TurnRatingState => {
-      const key = stateKey(session, turnId);
+      const key = stateKey(scoreKey, session, turnId);
       // The optimistic map wins over the persisted read: it carries the
       // in-flight status, and after a submit it already holds the same value
       // the query will report on its next round-trip.

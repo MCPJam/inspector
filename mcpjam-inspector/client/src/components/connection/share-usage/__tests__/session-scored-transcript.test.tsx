@@ -144,4 +144,24 @@ describe("SessionScoredTranscript", () => {
     renderTranscript();
     expect(mockTurnRating).not.toHaveBeenCalled();
   });
+
+  it("renders nothing when the session has no score rows", () => {
+    mockScores.rows = [];
+    renderTranscript();
+    expect(mockTurnRating).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing while the scores query is still loading", () => {
+    // `useQuery` returns undefined before the first round-trip, and the
+    // transcript is the point of the page — it must render regardless.
+    mockScores.rows = undefined as never;
+    renderTranscript();
+    expect(mockTurnRating).not.toHaveBeenCalled();
+  });
+
+  it("skips a row with no promptIndex — there is no turn to anchor it to", () => {
+    mockScores.rows = [score({ value: 4, promptIndex: undefined })];
+    renderTranscript();
+    expect(mockTurnRating).not.toHaveBeenCalled();
+  });
 });

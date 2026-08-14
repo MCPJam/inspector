@@ -138,13 +138,19 @@ describe("worst-turn policy", () => {
   });
 });
 
-describe("thumbs ride the same worst-turn axis", () => {
-  // The filters never learn what a thumb is. Thumbs are projected onto the
-  // 1–5 scale server-side (down ⇒ 1, up ⇒ 5), which is exactly what lets ONE
-  // filter UI serve both widget styles — these pin that no client-side branch
-  // is needed for it.
+describe("a thumbs-rated session needs no client-side filter branch", () => {
+  // SCOPE, stated plainly: the projection itself (down ⇒ 1, up ⇒ 5) happens
+  // server-side in `SUMMARY_VALUE_MAP` and is pinned in the backend's
+  // `sessionScores.test.ts`. The fixtures below therefore set `min` by hand,
+  // exactly as the backend would have written it, and a broken projection
+  // would be caught there rather than here.
+  //
+  // What these pin is the client half: given a summary carrying thumb
+  // tallies, every matcher still reads `min` and NONE of them grows a special
+  // case. That is the claim that would silently rot if someone "fixed" the
+  // filters to branch on `thumbUpCount`/`thumbDownCount`.
 
-  it("a thumbs-down session matches Low (≤2)", () => {
+  it("a summary carrying a down-thumb matches Low (≤2) through min alone", () => {
     const thumbedDown = thread({
       _id: "a",
       feedback: summary({
@@ -166,7 +172,7 @@ describe("thumbs ride the same worst-turn axis", () => {
     ).toBe(true);
   });
 
-  it("a thumbs-up-only session does not", () => {
+  it("an up-thumbs-only summary does not, and buckets positive", () => {
     const thumbedUp = thread({
       _id: "a",
       feedback: summary({
@@ -187,7 +193,7 @@ describe("thumbs ride the same worst-turn axis", () => {
     ).toBe(true);
   });
 
-  it("the neutral bucket is simply unreachable for a thumbs-only session", () => {
+  it("no projected thumb value can land in the neutral bucket", () => {
     // A documented dead option, not a bug: a two-state control has no neutral
     // to express, so no projection can land on 3.
     const thumbedDown = thread({
@@ -209,7 +215,7 @@ describe("thumbs ride the same worst-turn axis", () => {
     ).toBe(false);
   });
 
-  it("a mixed-style session is judged by its worst turn, whatever wrote it", () => {
+  it("a mixed-style summary is judged by min, whatever wrote that turn", () => {
     // One star row (4) and one thumbs-down (⇒ 1) — the complaint wins.
     const mixed = thread({
       _id: "a",

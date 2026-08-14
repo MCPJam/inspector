@@ -12,6 +12,7 @@ import {
   extractTesterLinkToken,
   TESTER_LINK_PATH_SEGMENT,
 } from "@/lib/tester-link-path";
+import type { ChatboxPerTurnFeedbackStyle } from "@/types/chatUi";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -85,8 +86,11 @@ export interface ChatboxPerTurnFeedbackPayload {
   /**
    * Which widget to render, and therefore which score key the tester writes
    * under. Absent ⇒ `stars`, the only style that existed before this field.
+   *
+   * Aliased from the settings type rather than restated, so the bootstrap
+   * payload and the scenario config cannot drift apart on what a style is.
    */
-  style?: "stars" | "thumbs";
+  style?: ChatboxPerTurnFeedbackStyle;
   prompt?: string;
   commentPlaceholder?: string;
   thanksMessage?: string;
