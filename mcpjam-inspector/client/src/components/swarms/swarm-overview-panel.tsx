@@ -47,6 +47,7 @@ import {
 } from "@/lib/swarm-api";
 import {
   PREDICATE_KIND_LABELS,
+  formatCriterion,
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -69,17 +70,18 @@ export function formatPercent(rate: number): string {
 /**
  * Author label, else the predicate kind's label, else the raw criterion id.
  *
- * The raw-id fallback is deliberate — a finding whose criterion no longer
+ * The label rules are delegated to `formatCriterion` so they stay defined once
+ * across the authoring form, the run scorecard, and this panel. The raw-id
+ * fallback stays local and is deliberate — a finding whose check no longer
  * appears in the run snapshot still has real counts, and inventing a friendly
- * name for it would be a guess.
+ * name for it would be a guess (and `formatCriterion` has no id to fall back
+ * to).
  */
 function findingName(finding: SwarmOverviewFinding): string {
-  const label = finding.label?.trim();
-  if (label) return label;
   if (finding.kind && finding.kind in PREDICATE_KIND_LABELS) {
-    return PREDICATE_KIND_LABELS[finding.kind as PredicateKind];
+    return formatCriterion({ ...finding, kind: finding.kind as PredicateKind });
   }
-  return finding.criterionId;
+  return finding.label?.trim() || finding.criterionId;
 }
 
 /**
@@ -1091,7 +1093,7 @@ function FindingSessions({
     <div className="border-t border-border/40 px-2.5 py-1.5">
       {failing.length === 0 ? (
         <p className="py-1 text-[11px] text-muted-foreground">
-          No session in this run carries a failing verdict for this criterion.
+          No session in this run carries a failing verdict for this check.
         </p>
       ) : (
         <ul className="flex flex-col">
@@ -1149,7 +1151,7 @@ function NoRunsEmptyState() {
         <h3 className="text-sm font-semibold text-foreground">No runs yet</h3>
         <p className="mt-1.5 text-pretty text-xs text-muted-foreground">
           Open Personas and run one of your goals. Once a run finishes, its
-          outcomes and any failing rubric criteria show up here.
+          outcomes and any failing checks show up here.
         </p>
       </div>
     </div>

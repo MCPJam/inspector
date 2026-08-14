@@ -897,7 +897,7 @@ export function IterationDetails({
       <div className="space-y-2" data-testid="iteration-predicates-section">
         <div className="flex items-center justify-between border-b border-border/40 pb-2">
           <div className="text-xs font-semibold">
-            {isProbe ? "Predicate Gate" : "Global Gates"}
+            {isProbe ? "Checks" : "Whole-run checks"}
           </div>
         </div>
         <PredicatesList predicates={gateRows} observations={blobObservations} />
