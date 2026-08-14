@@ -368,7 +368,7 @@ export class PaginatedToolHeaderDiscoveryUnsupported extends Error {
  * able to silently empty this field.
  *
  * NOTE: the message wording is load-bearing. `describeError` matches
- * "which this connection is pinned to" to resolve
+ * "which this client is pinned to" to resolve
  * `sdk/protocol_version_pin_unsupported` — error identity does not survive
  * the realm boundary between the SDK and the inspector's client bundle, so
  * the text is the only stable carrier. A test pins that round trip; reword
@@ -394,7 +394,7 @@ export class ProtocolVersionPinUnsupported extends Error {
   ) {
     const supported = options?.supportedVersions ?? [];
     super(
-      `MCP server "${serverId}" doesn't support MCP protocol version ${protocolVersion}, which this connection is pinned to.${
+      `MCP server "${serverId}" doesn't support MCP protocol version ${protocolVersion}, which this client is pinned to.${
         supported.length > 0 ? ` It offers ${supported.join(", ")}.` : ""
       }`,
       options

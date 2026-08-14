@@ -1076,7 +1076,7 @@ describe("ServerConnectionCard", () => {
 describe("ServerConnectionCard — protocol version pin", () => {
   const failedServer = (
     slug: string,
-    message = "MCP server \"acme\" doesn't support MCP protocol version 2026-07-28, which this connection is pinned to.",
+    message = "MCP server \"acme\" doesn't support MCP protocol version 2026-07-28, which this client is pinned to.",
   ): ServerWithName => ({
     name: "acme",
     lastConnectionTime: new Date(),
@@ -1127,7 +1127,10 @@ describe("ServerConnectionCard — protocol version pin", () => {
     // navigates somewhere vaguely related is worse than no button.
     render(
       <ServerConnectionCard
-        server={failedServer("transport/econnrefused")}
+        server={failedServer(
+          "transport/econnrefused",
+          "connect ECONNREFUSED 127.0.0.1:8080",
+        )}
         projectId="proj_1"
         {...props}
       />,
@@ -1136,5 +1139,23 @@ describe("ServerConnectionCard — protocol version pin", () => {
     expect(
       screen.queryByRole("button", { name: /change protocol version/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("still offers it when only the message survives", () => {
+    // The slug is the better signal but it comes from whichever copy of the
+    // describer the bundle happens to hold; a client one version behind
+    // resolves this to a generic transport slug. The sentence is authored by
+    // MCPJam and cannot be echoed by a server, so it carries the fallback.
+    render(
+      <ServerConnectionCard
+        server={failedServer("transport/fetch_failed")}
+        projectId="proj_1"
+        {...props}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /change protocol version/i }),
+    ).toBeInTheDocument();
   });
 });

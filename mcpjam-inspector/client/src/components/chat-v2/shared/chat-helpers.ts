@@ -560,7 +560,7 @@ export const PROTOCOL_VERSION_PIN_CODE = "protocol_version_pin_unsupported";
  * surface sees anything. The SDK-side describer keys off the same clause and
  * says so; reword one and the paired tests on both sides fail together.
  */
-const PROTOCOL_VERSION_PIN_MARKER = /which this connection is pinned to/i;
+const PROTOCOL_VERSION_PIN_MARKER = /which this client is pinned to/i;
 
 /** `2026-07-28` out of the sentence, for the banner's own wording. */
 const PROTOCOL_VERSION_PATTERN = /protocol version (\d{4}-\d{2}-\d{2})/i;

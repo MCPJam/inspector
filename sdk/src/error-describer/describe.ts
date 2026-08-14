@@ -175,7 +175,7 @@ function inspectorSentinelSlug(message: string): string | undefined {
   // (`formatError` and `getErrorMessage` both read `.message` only). The
   // clause is one MCPJam authors, not one a server can echo back at us. The
   // class doc says to reword both together; a test holds them together.
-  if (/which this connection is pinned to/i.test(message)) {
+  if (/which this client is pinned to/i.test(message)) {
     return "sdk/protocol_version_pin_unsupported";
   }
   return undefined;

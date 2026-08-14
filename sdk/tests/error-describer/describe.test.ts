@@ -642,7 +642,7 @@ describe("protocol version pin", () => {
     // `mcpjam-inspector/client/src/components/chat-v2/shared/chat-helpers.ts`
     // and the fixture in `chat-v2/__tests__/protocol-version-pin-banner.test.tsx`.
     expect(new ProtocolVersionPinUnsupported("srv", "2026-07-28").message).toContain(
-      "which this connection is pinned to",
+      "which this client is pinned to",
     );
   });
 });

@@ -1742,13 +1742,20 @@ export async function executeLocalServerConnect(
         );
       }
     }
+    const failureMessage =
+      error instanceof Error ? error.message : "Unknown error";
     return c.json(
       {
         success: false,
-        error: `Connection failed for server ${serverDisplayName}: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-        details: error instanceof Error ? error.message : "Unknown error",
+        // The prefix exists to say WHICH server failed, so it is redundant —
+        // and reads like a stutter — when the error already names it:
+        // "Connection failed for server champions: MCP server "champions"
+        // doesn't support …". Errors that name their own server are the ones
+        // written for a person to read; prefixing those buries the sentence.
+        error: failureMessage.includes(`"${serverDisplayName}"`)
+          ? failureMessage
+          : `Connection failed for server ${serverDisplayName}: ${failureMessage}`,
+        details: failureMessage,
         normalized: describeError(error),
       },
       500

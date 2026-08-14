@@ -157,6 +157,7 @@ export function ServerConnectionCard({
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const isProtocolPinFailure = isProtocolVersionPinFailure(
     server.lastNormalizedError,
+    server.lastError,
   );
   const protocolPinAction = isProtocolPinFailure
     ? {

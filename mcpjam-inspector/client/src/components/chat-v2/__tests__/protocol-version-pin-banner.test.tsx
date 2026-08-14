@@ -23,7 +23,7 @@ import {
  * the class's message, so a reword there fails loudly and names this file.
  */
 const PIN_FAILURE_MESSAGE =
-  'MCP server "github-mcp" doesn\'t support MCP protocol version 2026-07-28, which this connection is pinned to.';
+  'MCP server "github-mcp" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.';
 
 function pinFailureAsChatSees(): string {
   return PIN_FAILURE_MESSAGE;
