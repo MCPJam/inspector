@@ -168,15 +168,27 @@ export function registerProjectsCommands(program: Command): void {
       // The operation has always taken this filter; the CLI had no way to pass
       // it, and no way to learn an id to pass either. `organizations list`
       // supplies the id, so the flag is finally usable end to end.
+      //
+      // Named `--organization-id`, matching `projects create`, because both
+      // take an ID and only an ID. (`--project` elsewhere is a name-OR-id
+      // selector, which is why that one has no `-id` suffix.)
       .option(
-        "--organization <id>",
+        "--organization-id <id>",
         "Restrict the listing to one organization (see `mcpjam organizations list`)"
       )
   ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const organizationId = (
-      command.opts() as { organization?: string }
-    ).organization?.trim();
+    const rawOrganization = (command.opts() as { organizationId?: string })
+      .organizationId;
+    // A supplied-but-blank value is a typo, not "no filter". Silently widening
+    // it to every accessible project is the wrong answer to a request that
+    // asked to narrow — same reasoning as `requireProject` above.
+    if (rawOrganization !== undefined && rawOrganization.trim() === "") {
+      command.error(
+        "error: option '--organization-id <id>' cannot be empty"
+      );
+    }
+    const organizationId = rawOrganization?.trim();
     const result = await runPlatformCommand(
       platformOptionsOf(command),
       globalOptions.timeout,

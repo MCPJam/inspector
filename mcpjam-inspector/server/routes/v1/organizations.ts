@@ -23,6 +23,7 @@ import {
   getDelegatedOrganizationId,
 } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
 import { v1PageJson } from "./envelope.js";
 
 const organizations = new Hono();
@@ -70,10 +71,18 @@ function toOrganizationDto(row: Record<string, unknown>) {
 // reaches this handler.
 organizations.get("/organizations", async (c) => {
   const token = await getConvexBearerForRequest(c);
-  const rows = ((await convexClient(token).query(
-    "organizations:getMyOrganizations" as any,
-    {} as any
-  )) ?? []) as Array<Record<string, unknown>>;
+  let rows: Array<Record<string, unknown>>;
+  try {
+    // Direct Convex call, so the shared read-error classifier applies: Convex's
+    // failure text is written for us and can quote function names and argument
+    // validator output. It goes to the log, redacted; the caller gets a code.
+    rows = ((await convexClient(token).query(
+      "organizations:getMyOrganizations" as any,
+      {} as any
+    )) ?? []) as Array<Record<string, unknown>>;
+  } catch (error) {
+    throw translateConvexReadError(error, { scope: "v1.organizations" });
+  }
 
   // THE CLAMP. `getMyOrganizations` answers for the acting HUMAN and takes no
   // organization argument, so a delegated token — which is org-scoped by

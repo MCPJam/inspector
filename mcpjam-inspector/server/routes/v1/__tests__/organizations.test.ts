@@ -202,6 +202,36 @@ describe("GET /v1/organizations", () => {
     expect(await res.json()).toEqual({ items: [] });
   });
 
+  it("fails closed when a delegated caller has no resolvable organization", async () => {
+    // The clamp's dangerous failure is not throwing — it is returning
+    // "confined to nothing" for a caller who is confined to one org, which
+    // reads as a session user and skips the filter. A binding that resolves
+    // to an empty string must not produce a full listing.
+    convexQueryMock.mockResolvedValue([
+      orgRow("org_a", "Alpha"),
+      orgRow("org_b", "Beta"),
+    ]);
+    stubDelegatedMint();
+    lookupWorkosKeyBindingMock.mockResolvedValue({ mcpjamOrganizationId: "" });
+
+    const res = await request("sk_live_secret");
+    expect(res.status).not.toBe(200);
+    const body = (await res.json()) as { items?: unknown[] };
+    expect(body.items).toBeUndefined();
+  });
+
+  it("does not leak the upstream error message when the query fails", async () => {
+    convexQueryMock.mockRejectedValue(
+      new Error("CONVEX Q(organizations:getMyOrganizations): secret internals")
+    );
+
+    const res = await request("jwt-session-token");
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    const raw = await res.text();
+    expect(raw).not.toContain("secret internals");
+    expect(JSON.parse(raw)).toMatchObject({ code: expect.any(String) });
+  });
+
   it("rejects guests (default-deny — no guest-allowed-paths entry)", async () => {
     validateGuestTokenMock.mockResolvedValue({ valid: true, guestId: "guest_1" });
     convexQueryMock.mockResolvedValue([orgRow("org_a", "Alpha")]);

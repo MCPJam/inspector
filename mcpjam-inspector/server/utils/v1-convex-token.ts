@@ -171,13 +171,26 @@ function usesDelegatedToken(c: Context): boolean {
  * JWT caller can carry the var too (it is the org their UI is looking at), and
  * clamping them to it would hide the other orgs they legitimately belong to —
  * the exact list this endpoint exists to return.
+ *
+ * FAILS CLOSED. A delegated caller whose org cannot be resolved throws rather
+ * than returning `undefined`, because `undefined` here means "confined to
+ * nothing" — the caller would skip the clamp entirely and receive everything.
+ * The two states are opposites and must not share a return value. Today this
+ * is also unreachable, since `getConvexBearerForRequest` mints first and
+ * `delegationContext` rejects the same broken state (with this same code); the
+ * throw is here so the clamp does not depend on that ordering holding.
  */
 export function getDelegatedOrganizationId(c: Context): string | undefined {
   if (!usesDelegatedToken(c)) return undefined;
   const organizationId = c.get("mcpjamOrganizationId");
-  return typeof organizationId === "string" && organizationId.length > 0
-    ? organizationId
-    : undefined;
+  if (typeof organizationId !== "string" || organizationId.length === 0) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Missing WorkOS delegation context for organization scoping"
+    );
+  }
+  return organizationId;
 }
 
 /**
