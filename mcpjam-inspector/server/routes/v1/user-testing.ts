@@ -51,6 +51,27 @@ function translateReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, { scope: "v1.user-testing" });
 }
 
+/**
+ * For SCOPING PREFLIGHTS only — the reads that decide whether a
+ * caller-supplied id is visible to the caller at all (`getChatbox`,
+ * `getSession`). Their refusal paths are workspace-scoped plain errors that
+ * production Convex redacts to "Server Error", so without `redactedIsRefusal`
+ * a cross-workspace probe answers 502 — an existence oracle plus a Sentry
+ * page — instead of the 404 the preflight exists to guarantee. Reads AFTER a
+ * preflight keep using `translateReadError`: at that point a redacted error
+ * is a genuine incident.
+ */
+function translatePreflightReadError(
+  error: unknown,
+  notFoundMessage: string
+): WebRouteError {
+  return translateConvexReadError(error, {
+    scope: "v1.user-testing",
+    notFoundMessage,
+    redactedIsRefusal: true,
+  });
+}
+
 function translateWriteError(error: unknown): WebRouteError {
   return translateConvexWriteError(error, {
     resource: "Scenario",
@@ -176,7 +197,7 @@ async function requireScenarioInProject(
       { chatboxId: scenarioId } as never
     )) as ChatboxRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error, "Scenario not found");
   }
   if (!row || String(row.projectId ?? "") !== projectId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Scenario not found");
@@ -494,7 +515,11 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
       { sessionId } as never
     )) as typeof session;
   } catch (error) {
-    throw translateReadError(error);
+    // Preflight semantics: `getSession` refuses with a plain
+    // "ChatSession not found or unauthorized" (redacted in production), and
+    // the id came from the caller — so refusal and absence must be the same
+    // 404 here too.
+    throw translatePreflightReadError(error, "Session not found");
   }
   // The scenario preflight proved the caller may see THIS scenario; this
   // proves the session belongs to it. `getSession` authorizes broadly (project
@@ -541,6 +566,13 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
       // opposite conclusions about a user test.
       transcriptUnavailable = true;
     }
+  } else {
+    // `messagesBlobId` is a required field, so a session ALWAYS has a blob —
+    // a non-string URL means `ctx.storage.getUrl` returned null because the
+    // stored file was deleted. That is "we cannot read it", not "the visitor
+    // said nothing": without this branch a deleted blob reported
+    // `messageCount: 0`, the exact misreport documented below.
+    transcriptUnavailable = true;
   }
 
   const page = messages.slice(offset, offset + limit);
@@ -583,6 +615,17 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
 userTesting.get(`${BASE}/metrics`, async (c) => {
   const { client, scenarioId } = await scopedScenario(c);
   const population = c.req.query("population");
+  // Validated HERE, not left to Convex: the upstream union validator rejects
+  // an unknown value with an ArgumentValidationError, which reads as 404 —
+  // but a bad query-parameter value is the caller's input, and 400 with the
+  // accepted values is the answer they can act on.
+  if (population !== undefined && !["real", "synthetic"].includes(population)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      'population must be "real" or "synthetic"'
+    );
+  }
   let metrics: unknown;
   try {
     metrics = await client.query(
@@ -927,9 +970,12 @@ userTesting.put(`${BASE}/members`, async (c) => {
       {
         chatboxId: scenarioId,
         email: body.email,
-        ...(body.sendInviteEmail !== undefined
-          ? { sendInviteEmail: body.sendInviteEmail }
-          : {}),
+        // ALWAYS forwarded, never omitted: the backend defaults an absent
+        // `sendInviteEmail` to TRUE and mails the person a working share
+        // link. This route documents quiet-add as the default, so absence
+        // must be an explicit `false` — omitting the field here silently
+        // inverts the contract on an exposure-granting write.
+        sendInviteEmail: body.sendInviteEmail ?? false,
       } as never
     )) as { memberId?: string; invited?: boolean } | null;
   } catch (error) {

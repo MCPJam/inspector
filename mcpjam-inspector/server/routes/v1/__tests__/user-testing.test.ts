@@ -663,3 +663,112 @@ describe("insight lifecycle", () => {
     expect(body.message).toMatch(/not been analyzed/i);
   });
 });
+
+describe("probe answers (the preflight is not an oracle)", () => {
+  /** Every query rejects with `error`; used to fail the preflight itself. */
+  function failAllQueries(error: Error) {
+    queryMock.mockImplementation(() => Promise.reject(error));
+  }
+
+  it("404s a malformed scenario id instead of paging as a 502", async () => {
+    // `v.id('chatboxes')` rejects before the handler runs. That is a caller
+    // problem, not an incident — and 502-vs-404 must not distinguish
+    // "malformed" from "missing".
+    failAllQueries(
+      new Error("ArgumentValidationError: Value does not match validator")
+    );
+    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    expect(res.status).toBe(404);
+  });
+
+  it("404s a cross-WORKSPACE refusal exactly like a missing scenario", async () => {
+    // `getChatbox` authorizes at workspace scope, so its refusal wording
+    // differs from the project one — before the classifier knew it, this
+    // answered 502 and told the prober the id exists somewhere.
+    failAllQueries(new Error("Not a member of this workspace"));
+    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    expect(res.status).toBe(404);
+  });
+
+  it("404s production's redacted refusal at the preflight", async () => {
+    // In production a plain-error refusal arrives as "Server Error". At the
+    // preflight, refusal and absence must be indistinguishable.
+    failAllQueries(new Error("[Request ID: abc] Server Error"));
+    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    expect(res.status).toBe(404);
+  });
+
+  it("keeps 502 for a redacted error AFTER the preflight passed", async () => {
+    // Same string, different meaning: once the scenario resolved, a redacted
+    // error is a genuine upstream incident and must surface as one.
+    queryMock.mockImplementation((name: string) => {
+      const fn = String(name).split(":").pop() ?? "";
+      if (fn === "getChatbox") return Promise.resolve(scenarioRow());
+      return Promise.reject(new Error("[Request ID: abc] Server Error"));
+    });
+    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    expect(res.status).toBe(502);
+  });
+
+  it("400s an unknown population value instead of 404ing it", async () => {
+    // The bad value is the caller's query parameter — they need the accepted
+    // values, not a claim the scenario is gone.
+    const res = await call(
+      userTesting,
+      "GET",
+      `${BASE}/metrics?population=fake`
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/real.*synthetic/i);
+  });
+});
+
+describe("member invite default", () => {
+  it("forwards an explicit sendInviteEmail: false when the caller omits it", async () => {
+    // The backend defaults an ABSENT flag to true and emails the person a
+    // working share link. This route documents quiet-add as its default, so
+    // absence must reach Convex as an explicit false.
+    mutationMock.mockResolvedValue({ memberId: "m_1" });
+    await call(userTesting, "PUT", `${BASE}/members`, {
+      email: "tester@example.com",
+    });
+    expect(mutationMock).toHaveBeenCalledTimes(1);
+    const [fn, args] = mutationMock.mock.calls[0]!;
+    expect(fn).toBe("chatboxes:upsertChatboxMember");
+    expect((args as { sendInviteEmail?: boolean }).sendInviteEmail).toBe(false);
+  });
+
+  it("still honors an explicit sendInviteEmail: true", async () => {
+    mutationMock.mockResolvedValue({ memberId: "m_1", invited: true });
+    await call(userTesting, "PUT", `${BASE}/members`, {
+      email: "tester@example.com",
+      sendInviteEmail: true,
+    });
+    const [, args] = mutationMock.mock.calls[0]!;
+    expect((args as { sendInviteEmail?: boolean }).sendInviteEmail).toBe(true);
+  });
+});
+
+describe("deleted transcript blob", () => {
+  it("reports transcriptUnavailable, not an empty conversation", async () => {
+    // `messagesBlobId` is required, so a session always HAS a blob — a null
+    // URL means `storage.getUrl` found the file deleted. "We cannot read it"
+    // and "the visitor said nothing" lead to opposite conclusions.
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getSession: { chatboxId: SCENARIO, chatSessionId: "cs_1" },
+    });
+    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      messageCount: number | null;
+      transcriptUnavailable?: boolean;
+      messages: unknown[];
+    };
+    expect(body.transcriptUnavailable).toBe(true);
+    expect(body.messageCount).toBeNull();
+    expect(body.messages).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
