@@ -36,6 +36,7 @@ import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
+import { SessionChecksSection } from "./SessionChecksSection";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
@@ -478,6 +479,9 @@ export function ShareUsageThreadDetail({
             <SessionInsightBar readiness={thread.readiness} />
           ) : null}
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
+          {/* A transcript-less attempt is exactly where a runner failure
+              shows up, so the checks block belongs on this shell too. */}
+          <SessionChecksSection chatSessionId={thread._id} />
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm text-muted-foreground">
               No messages in this session
@@ -598,6 +602,13 @@ export function ShareUsageThreadDetail({
       {thread.sourceType === "swarm" ? (
         <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
       ) : null}
+
+      {/* Deterministic checks, in their own block below the judge rather than
+          merged into it: one is a rule that held or did not, the other an
+          LLM's opinion, and a reader must not weigh them as the same kind of
+          fact. Not swarm-gated — User Testing sessions get graded too — and
+          self-hiding when the session carries no check rows. */}
+      <SessionChecksSection chatSessionId={thread._id} />
 
       {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
           session carries browser-rendered MCP App artifacts (synthetic runs);

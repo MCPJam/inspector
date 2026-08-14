@@ -28,13 +28,21 @@ const {
   },
 }));
 
+// `useQuery` is here for SessionChecksSection, which subscribes to
+// `chatSessionChecks:getCheckRunsForSession`. Undefined = still loading, which
+// is the state that keeps the panel out of every assertion in this file; the
+// panel's own behavior is covered in SessionChecksSection.test.tsx.
 vi.mock("convex/react", () => ({
   useAction: () => mockRequestJudge,
+  useQuery: () => undefined,
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatThread: () => ({
     thread: {
+      // The chatSessions doc id the checks panel keys on. Distinct field from
+      // the `threadId` prop on purpose — the component must read this one.
+      _id: "session-doc-1",
       sourceType: mockThreadState.sourceType,
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,

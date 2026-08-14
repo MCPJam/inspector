@@ -1,5 +1,6 @@
 import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
+import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
 import type { EvalTraceWidgetRenderObservationView } from "@/shared/eval-trace";
 import { RenderObservationCard } from "./browser-artifacts-view";
 import {
@@ -162,7 +163,7 @@ export function PredicatesList({
         </div>
       </div>
 
-      {renderGroup("Global gates", caseLevel, "case")}
+      {renderGroup("Whole-run checks", caseLevel, "case")}
       {renderGroup("Step checks", stepScoped, "step")}
     </div>
   );
@@ -213,8 +214,8 @@ function PredicateRow({
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="font-mono text-xs font-medium">
-                {row.predicate.type}
+              <span className="text-xs font-medium">
+                {predicateRowTitle(row.predicate)}
               </span>
               <span className="truncate text-[11px] text-muted-foreground">
                 {summarizePredicate(row.predicate)}
@@ -253,6 +254,23 @@ function PredicateRow({
       </details>
     </li>
   );
+}
+
+/**
+ * The row's title: the same human label every other checks surface uses.
+ *
+ * Never the raw discriminator (`widgetRendered`, `toolCalledAtLeastOnce`) —
+ * that is a code identifier, and printing it here made this the one surface
+ * speaking a different vocabulary from the authoring form, the scorecard and
+ * Insights. `summarizePredicate` still renders beside it as the args detail
+ * line; it carries argument specifics the kind label does not.
+ *
+ * Total by construction, for the same reason `summarizePredicate` is: a
+ * predicate type newer than this build must degrade to its raw type rather
+ * than render `undefined`.
+ */
+function predicateRowTitle(predicate: Predicate): string {
+  return PREDICATE_KIND_LABELS[predicate.type] ?? predicate.type;
 }
 
 /**

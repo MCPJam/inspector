@@ -83,7 +83,9 @@ describe("PredicatesList — render-observation evidence", () => {
       <PredicatesList predicates={[row({ type: "widgetRendered" })]} />,
     );
     expect(screen.queryByTestId("predicate-render-evidence")).toBeNull();
-    // The verdict itself still renders.
-    expect(screen.getByText("widgetRendered")).toBeInTheDocument();
+    // The verdict itself still renders — titled with the shared human label,
+    // never the raw `widgetRendered` discriminator.
+    expect(screen.getByText("View rendered")).toBeInTheDocument();
+    expect(screen.queryByText("widgetRendered")).toBeNull();
   });
 });

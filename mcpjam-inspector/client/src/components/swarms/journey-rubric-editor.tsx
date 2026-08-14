@@ -62,7 +62,7 @@ export function JourneyRubricEditor({
         onChange={(next: Predicate[]) =>
           onChange(reconcileRubricEntries(value, next))
         }
-        title="Deterministic checks"
+        title="Checks"
         // "Measure", never "gate": a failing check is a finding on the
         // scorecard, and nothing downstream blocks or fails because of it.
         // One line on purpose — this doubles as card-header copy on the
@@ -78,7 +78,7 @@ export function JourneyRubricEditor({
       />
       {atCap ? (
         <p className="text-[11px] text-muted-foreground">
-          A rubric holds at most {cap} criteria. Remove one to add another.
+          At most {cap} checks — remove one to add another.
         </p>
       ) : null}
       {value.length > 0 ? (
@@ -101,7 +101,7 @@ export function JourneyRubricEditor({
                   onChange(next);
                 }}
                 className="h-8 text-xs"
-                aria-label={`Name for criterion ${index + 1}`}
+                aria-label={`Name for check ${index + 1}`}
               />
             </div>
           ))}

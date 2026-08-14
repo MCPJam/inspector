@@ -29,6 +29,17 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   turnCountUnder: "Fewer than N user turns",
 };
 
+/**
+ * The TURN-SCOPED variant of {@link PREDICATE_KIND_LABELS} — not a fork of it.
+ *
+ * Only the kinds whose meaning actually narrows when they are evaluated at a
+ * point in the flow rather than over the finished transcript appear here: "no
+ * tool errors" over the whole run and "no tool errors *so far*" are different
+ * claims, and a step-scoped row that borrowed the whole-run wording would
+ * overstate what it checked. Every other kind falls through to the canonical
+ * label via {@link labelForInlineAssert}, so adding a predicate kind needs no
+ * entry here unless it has that same scope-sensitivity.
+ */
 export const INLINE_ASSERT_LABELS: Partial<Record<PredicateKind, string>> = {
   noToolErrors: "No tool errors so far",
   widgetNoConsoleErrors: "No view console errors so far",
@@ -109,11 +120,11 @@ export type GlobalGateCatalogEntry = {
 };
 
 export const GLOBAL_GATES_SECTION_HELP = {
-  title: "Global gates",
+  title: "Whole-run checks",
   paragraphs: [
     "Whole-run rules evaluated after the scenario finishes, using the full transcript.",
     "Step checks run inline at a specific point in the flow — use those for conversation and view assertions.",
-    "Case gates extend suite defaults. Add here only for policies that must hold across the entire run.",
+    "Case checks extend suite defaults. Add here only for policies that must hold across the entire run.",
   ],
 } as const;
 

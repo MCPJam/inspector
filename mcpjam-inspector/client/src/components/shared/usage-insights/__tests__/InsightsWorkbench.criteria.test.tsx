@@ -146,7 +146,9 @@ describe("InsightsWorkbench — criterion scorecard", () => {
     expect(screen.getByText("Score 65%")).toBeInTheDocument();
     // Neither criterion has a clean sheet (6 fails and 1 fail respectively).
     expect(
-      screen.getByText(/0 \/ 2 criteria passing · 7\/20 graded checks failed/),
+      screen.getByText(
+        /0 \/ 2 checks passing · 7\/20 failed in graded sessions/
+      ),
     ).toBeInTheDocument();
   });
 
