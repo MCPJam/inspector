@@ -1,304 +1,82 @@
-diff --git a/.changeset/chat-upstream-error-page-retry.md b/.changeset/chat-upstream-error-page-retry.md
+diff --git a/.changeset/environment-model-override.md b/.changeset/environment-model-override.md
 deleted file mode 100644
-index adefc186d..000000000
---- a/.changeset/chat-upstream-error-page-retry.md
+index ff9e7aeaf..000000000
+--- a/.changeset/environment-model-override.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Stop pasting a gateway's error page into the chat, and offer a retry instead of only a reset.
--
--An upstream hop answering with HTML was already summarized in the banner headline, but the page itself was kept — truncated to 4KB — as the "More details" payload, so a momentary 502 in front of `app.mcpjam.com` still put `<!DOCTYPE html>` onward, a Cloudflare status table and a datacentre name into a User Testing transcript. The banner's only action was `Reset chat`, which for a User Testing session means discarding the data the session existed to collect.
--
--The page body is now discarded outright. The banner says the useful thing — "MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again." — and "More details" carries status plus the gateway's own request id (Cloudflare's `Ray ID`, or the `Request ID` / `Correlation ID` its peers print), which are the only two facts on such a page anyone can act on.
--
--The formatted error also carries `code: "upstream_error_page"` and `isRetryable`, and the chat surfaces render a Retry beside the reset for it — resending the last message is the entire fix for a transient upstream failure. The retry is gated on that code rather than on `isRetryable` alone, which the server also sets on failures a blind resend cannot help with.
--
--Ordinary error text and oversized-but-readable messages are untouched: only a response body that is an error page takes this path.
-diff --git a/.changeset/oauth-consolidate-diagram-actions.md b/.changeset/oauth-consolidate-diagram-actions.md
-deleted file mode 100644
-index 0881156ac..000000000
---- a/.changeset/oauth-consolidate-diagram-actions.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Collapse ~1,300 lines of duplicated sequence-diagram action builders into one era-parameterized builder.
--
--`buildActions_2025_03_26` / `_2025_06_18` / `_2025_11_25` / `_2026_07_28` were four near-identical array literals totaling ~1,700 lines. They are pure presentation — the arrows in the debugger's sequence diagram — with zero effect on the wire, which makes them the one part of the era machines where consolidation is all upside: maximum maintenance cost, no protocol risk. (The wire step tables are the opposite trade and deliberately stay separate.)
--
--The eras genuinely differ in five places, and each is now a field on an era spec rather than a conditional buried in a shared body: whether the ladder opens with the RFC 9728 protected-resource preamble (2025-03-26 does not), the MCP method on the unauthenticated probe, how the authorization-server metadata document is discovered, PKCE's requirement wording, and 2026-07-28's three additions (the DCR-deprecation note, the issuer the credentials are bound to, and the SEP-2350 scope union).
--
--Verified rather than asserted: `sequence-actions-goldens.test.ts` snapshots the rendered actions for every era × every supported registration strategy × populated and empty flow state — 24 snapshots — and they are byte-identical across the change. One quirk is preserved deliberately, with a comment saying so: an operator-precedence artifact that renders `"undefined..."` for an absent code challenge. Fixing it would move the goldens, and this change's job is to not move them.
-diff --git a/.changeset/oauth-delete-legacy-auth-tab.md b/.changeset/oauth-delete-legacy-auth-tab.md
-deleted file mode 100644
-index 91d2628bf..000000000
---- a/.changeset/oauth-delete-legacy-auth-tab.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
+@@ -1,21 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
-----
--
--Delete the legacy Auth tab and the two OAuth implementations only it used.
--
--The Auth tab was reachable by URL but absent from the sidebar and blocked in hosted mode. It was also the only importer of `lib/oauth/oauth-state-machine.ts` (385 lines, one commit in six months) and the only production caller of `refreshOAuthTokens`. Three of the five client-side OAuth implementations existed to serve one unlinked screen — and every one of them was another place the same user action could behave differently.
--
--Removed: `components/AuthTab.tsx`, `lib/oauth/oauth-state-machine.ts`, `refreshOAuthTokens`, the `auth` route and its `AuthRoute` component, and the `auth` app surface.
--
--No replacement is needed. The main connect path never called `refreshOAuthTokens`, and hosted refresh goes through Convex (`server/utils/hosted-oauth-refresh.ts`). If local manual refresh is wanted later, it belongs as an era-parameterized SDK refresh step — not as a revived `fetchToken` + `loadCallbackDiscoveryState` pair, which bypassed every era rule the state machines enforce.
-diff --git a/.changeset/oauth-era-differential-harness.md b/.changeset/oauth-era-differential-harness.md
-deleted file mode 100644
-index 2c3359234..000000000
---- a/.changeset/oauth-era-differential-harness.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Add a differential golden harness across every era, registration strategy, and branch.
--
--`no-emulation-goldens.test.ts` covers one happy ladder per era, `dcr` only, no error branches. That notices an accidental change to the default path and nothing else — a thin basis for trusting four ~50%-duplicated state machines, and far too thin to justify consolidating them.
--
--`era-differential-goldens.test.ts` widens it to 4 eras × each supported registration strategy (`dcr`, `preregistered`, and `cimd` where the era supports it) × a catalog of the branches that actually differ: DCR failure, DCR failure with a pre-registered fallback, `strictConformance` refusing that fallback, present-but-mismatched and absent RFC 9207 `iss`, issuer mismatch, `allowPathScopedIssuer` on and off, each `resourceIndicatorEnforcement` mode, and — for the current-profile eras — missing PKCE metadata, `S256` absent, `plain` alongside `S256`, and empty or absent `authorization_servers`.
--
--Two layers on purpose. The full request-sequence snapshot is a review aid: it shows what changed, and accepting an update is one keystroke. The named assertions are the gate — S256 PKCE end to end, one `redirect_uri` reused, the same validated canonical resource on both the authorization and token requests, a CSRF state always issued, and no MCP bearer credential on any OAuth endpoint. A snapshot update cannot normalize away a violation of those.
--
--Era differences are pinned rather than tolerated. The issuer-mismatch branch asserts that only 2026-07-28 hard-rejects it, so a change to shared code cannot quietly give an older era the strict behavior or take it from the newest one.
-diff --git a/.changeset/oauth-executor-machine-integration.md b/.changeset/oauth-executor-machine-integration.md
-deleted file mode 100644
-index f35bd0a5f..000000000
---- a/.changeset/oauth-executor-machine-integration.md
-+++ /dev/null
-@@ -1,15 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Cover the executor ↔ state-machine seam with a real integration test, and gate the MCP OAuth wire invariants on named assertions.
--
--Every OAuth test mocked one side of the joint the #3865 bug lived in: the inspector's tests mock `@mcpjam/sdk/browser`, and the SDK's tests stub the request executor. Nobody wired the real pair, which is how a redactor applied to live response bodies reached production.
--
--`client/src/lib/oauth/__tests__/oauth-refresh-integration.test.ts` mocks only what cannot exist in a unit process — `@/lib/config` pinned to the hosted configuration that exhibited the bug, and `authFetch` replaced by a forwarder that performs the same unwrap the real `/api/web/oauth` proxy does before making a real request. `@mcpjam/sdk/browser` is deliberately not mocked; `client/vitest.config.ts` already aliases it to SDK source, so the real state machines run. The whole flow — initiate, authorize, callback — takes about two seconds and needs no browser.
--
--The oracle is the fixture rather than our own options object. `e2e/fixtures/fake-oauth-mcp-server.ts` returns 401 from `/mcp` unless `Authorization` matches byte-for-byte, so the happy-path test proves the token is usable rather than merely non-empty. The wire invariants are asserted by name against the requests the fixture actually received: same canonical `resource` on the authorization and token requests, S256 PKCE end to end, one `redirect_uri` reused across registration/authorization/exchange, no MCP bearer token on any OAuth endpoint, zero token requests when callback `state` is missing or mismatched, no raw nonce in the published trace, fail-closed on missing PKCE or protected-resource metadata, and no foreign configured `resourceUrl` reaching the wire.
--
--Named assertions rather than snapshots alone: accepting an updated snapshot must not be able to make a missing `S256`, a broken resource binding, or a forwarded credential look normal.
--
--The fixture gains an opt-in `tokenFailure` and metadata overrides, plus full URL, query, and headers on its request log. Defaults are byte-identical, so both Playwright projects are unaffected.
-diff --git a/.changeset/oauth-one-redaction-owner.md b/.changeset/oauth-one-redaction-owner.md
-deleted file mode 100644
-index a8ccf9b15..000000000
---- a/.changeset/oauth-one-redaction-owner.md
-+++ /dev/null
-@@ -1,22 +0,0 @@
-----
 -"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
+-"@mcpjam/cli": minor
 ----
 -
--Give OAuth trace redaction one owner, and make `state` a secret in traces.
+-Give an environment its own model, and hold a client to pinning one.
 -
--The redaction policy — which field names are secret, what a redacted value looks like, how a free-form error string is scrubbed — existed in six places, and the copies had already drifted. The SDK's sensitive-field set omitted `state` while the client's included it, so the same value was published or redacted depending on which code path rendered it; the SDK's error-string redactor was a naive subset that turned "Bearer token is expired" into "Bearer [redacted] is expired", destroying the word that says what went wrong.
+-An environment now carries an optional `modelId` that OVERRIDES the model pinned on the client it selects. Absent means inherit, not "no model" — so `POST /environments/:id/resolve` answers with both: `modelId` (the stored override, when set), `effectiveModelId` (what will actually run), and `modelSource` (`"environment"` or `"host"`), which is the distinction an editor needs and could not previously make. `PATCH` takes `modelId: null` to clear the override and fall back to the client's; an empty string is rejected rather than treated as a clear, and the id is trimmed at the write boundary because it is stored and compared verbatim downstream.
 -
--There is now one source of truth: `oauth/state-machines/trace-redaction.ts` in the SDK, exported from `@mcpjam/sdk/browser`. The inspector's `lib/oauth/trace-redaction.ts` re-exports it and adds the `SANITIZE_OAUTH_TRACES` gate; `mcp-oauth.ts`, `oauth-trace.ts`, and `App.tsx`'s OAuth-debugger error boundary all call it instead of their own copies. The surviving error redactor is the debugger's, which already handled URL userinfo, named parameters, echoed `Authorization` headers, JSON credential fields, and truncation tails — and preserves diagnostic wording.
+-Both halves of that resolution can be empty, and an environment that names no model cannot launch at all. The backend refuses it with `ENV_MODEL_REQUIRED`, which now reaches callers as a 409 carrying `details.reason: "environment_model_required"` — the same shape from the v1 resolve route and from the eval runner's launch path, so a caller branching on the slug gets one answer whichever surface refused it. Previously the runner leaked it as a bare Convex rejection that read as an internal fault.
 -
--Consolidating on it dropped two cases the SDK's redactor did have, both restored here. A credential after a bare `:` — `access_token: <value>` is how prose in an `error_description` writes it, and the surviving rule matched `=` only. And short opaque `Bearer`/`Basic` values carrying no base64url punctuation, such as `Basic dXNlcjpwYXNz`, which the surviving rule skipped because it keyed on punctuation-or-length to avoid eating "Bearer token is expired". That test is now inverted rather than dropped: redact unless the value is a plain lowercase word, so the diagnostic wording survives and short credentials do not.
+-The forward-client invariant closes the other end: a client created through `POST /hosts` must pin a model, by explicit `config` or by template, because every environment that selects it inherits that model. The check is a refinement over the passthrough config record, not a second copy of `ensureHostConfigV2` — the XOR message still wins for a degenerate `config: {}`, whose real problem is that it picked neither branch. In the client builder, clearing the model of a client that HAD one is now a blocking save error; a client that was already modelless stays a warning, so legacy rows do not strand an unrelated rename behind a model choice. Existing rows are otherwise untouched — the invariant binds new clients only.
 -
--Three leaks closed on the way:
+-`GET /environments/capabilities` reports `modelOverrides` and `modelMatrix` for version skew, not feature flagging: the SDK and CLI ship independently of the platform, and an unknown field is a hard validator error there rather than a silently ignored one. The CLI asks only when model input was actually supplied, so an ordinary `environments create` costs no extra round trip, and a deployment too old to answer reports `false` for everything. `mcpjam environments create/update` gain `--model` and `--clear-model`. The operation is excluded from the agent registry — it is a compatibility probe, not an action, and the write paths already ask it on the caller's behalf.
 -
--- **`state` in sanitized traces.** It is not a bearer credential, which is why it was easy to leave out, but a still-live `state` is the CSRF correlation secret for an in-flight authorization. It is now redacted as a structured field, in URL queries, in form and JSON bodies, and inside error strings. Diagnostics use the new `describeOAuthStateMatch`, which reports `statePresent`/`stateMatched` instead of the nonce.
--- **Request URLs in HTTP history.** `sanitizeHttpHistoryEntry` redacted headers and bodies but not `request.url`, so every recorded authorization request kept its `state` (and a callback URL its `code`).
--- **Prose reshaped into fields.** `URLSearchParams` never fails, so `"rejected: access_token=ntn_live"` was parsed into a single field whose key (`"rejected: access_token"`) is not in the sensitive set — losing redaction the plain-string path would have applied. Reshaping now requires parameter-shaped keys; everything else goes to the error-string redactor.
+-Model attribution on eval sessions is now the model that ran. The hosted runner persists the RESOLVED id — the one the `/stream` call billed — and the local runner persists `test.model` only when the case actually needs a model, on both the success and the throw path: a model-free case reaches the runner with a display-only sentinel, and labelling a session with it would name a model that never ran. The Explore table labels each case row from the iterations' own snapshots rather than the case's current authored model, so a finished environment-backed run is no longer relabelled with whatever the case would run today, and a row whose iterations span two models is marked mixed instead of picking one.
 -
--Telemetry redaction stays separate and is renamed to `redactForTelemetry` (`src/telemetry-redaction.ts`). It over-redacts deliberately and is length-capped for Sentry; merging it with the display redactor would weaken one or the other. `redactSensitiveValue` remains exported as a deprecated alias so external consumers do not break.
+-Provider classification moves to one canonical module (`shared/model-provider.ts`). The same question — given only this id, which provider serves it — was answered slightly differently in at least four places, and the divergences were real: `meta-llama/…` classified as `meta-llama` here and `meta` there, `mistralai/…` fell through to Ollama, and a bare unknown id became `openrouter` in chat but `ollama` in the runner. The module is pure and is the source of truth; the backend keeps a hand-mirrored copy (Convex cannot import from this repo) checked against the same fixture vectors, so changing one fails the other's parity test.
 -
--A ratchet test (`lib/__tests__/oauth-redaction-ratchet.test.ts`) keeps redaction identifiers inside the trace modules. Vitest runs in CI; the lint workflow only runs typecheck and build, so an eslint rule would never have fired.
-diff --git a/.changeset/oauth-required-metadata-fails-closed.md b/.changeset/oauth-required-metadata-fails-closed.md
+-Swarm launch waves stop scheduling once an organization hits its credit limit. Every remaining launch would be rejected for the same reason, so the wave now costs one round trip instead of N and shows one banner instead of N identical ones. Requests already in flight are allowed to settle rather than cancelled — a launch is a POST that may already have created a durable run row, and aborting the client half would leave one running with nobody watching. The wave's `launchJourney` prop also regains `environmentIds` in its type, which a conditional spread had been hiding from excess property checking while the call site passed it.
+diff --git a/.changeset/oauth-authenticated-request-reason.md b/.changeset/oauth-authenticated-request-reason.md
 deleted file mode 100644
-index f3e453a57..000000000
---- a/.changeset/oauth-required-metadata-fails-closed.md
+index 36599fc4a..000000000
+--- a/.changeset/oauth-authenticated-request-reason.md
 +++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/sdk": major
--"@mcpjam/inspector": patch
-----
--
--Fail closed when metadata an MCP authorization profile requires a client to verify is missing or unusable.
--
--Two checks used to warn and continue, which means the flow proceeded without the protection the check exists to guarantee, and the downgrade was invisible on the wire:
--
--- **Protected-resource metadata.** An empty or missing RFC 9728 `authorization_servers` list was replaced by the MCP server's own URL, inventing an authorization server the resource never named. Now an error from **2025-06-18** onward — that revision already required the PRM document to "include the `authorization_servers` field containing at least one authorization server," and 2025-11-25 and 2026-07-28 repeat it verbatim.
--- **PKCE.** An authorization server whose `code_challenge_methods_supported` omits `S256` was accepted with a `console.warn` unless `strictConformance` was set. Continuing is a silent downgrade to a weaker code challenge method, so the flow now stops. Gated at **2025-11-25**, because 2025-06-18 says nothing about `code_challenge_methods_supported` and inventing a rule it does not state would make that machine unfaithful to its era. Advertising `plain` in addition to `S256` is still fine — the client picks `S256`.
--
--The two gates are deliberately different, and each is scoped to the eras whose spec text actually states the requirement. Gating both at 2025-11-25 would have left the version selector as a one-click bypass: a user blocked by the PRM check could pick 2025-06-18 and connect anyway, against a revision carrying the same MUST. 2025-03-26 predates the profile's adoption of RFC 9728 and keeps the historical fallback.
--
--The debugger keeps the warn-and-continue behavior, because showing what a half-built server actually does is the point of pointing MCPJam at one. It gets it by passing the new `requiredMetadataEnforcement: "observe"`, an explicit non-connect intent: the default is `"reject"`, so connect, reconnect, hosted connect, and callback completion fail closed without opting in. Under `"observe"` an authorization-server substitution is recorded as an info log rather than applied silently.
--
--Both gates live in `oauth/state-machines/shared/required-metadata.ts` and are consulted by every era's machine, so a machine cannot drift from its era's policy and a new era file cannot silently omit the check.
-diff --git a/.changeset/oauth-retire-legacy-callback-exchange.md b/.changeset/oauth-retire-legacy-callback-exchange.md
-deleted file mode 100644
-index 02597fa7d..000000000
---- a/.changeset/oauth-retire-legacy-callback-exchange.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Retire the legacy callback token exchange, and give `clearOAuthData` ownership of the pending marker.
--
--`handleOAuthCallback` branched on whether a stored flow session existed: with one, the era state machine redeemed the code; without one, a second complete implementation rediscovered metadata and called `exchangeAuthorization` directly. That is how the same user action took two different code paths — prod and staging shipped byte-identical code and behaved differently — and the legacy path was era-blind. It skipped the era machine and with it the callback-state checks the machine performs, the resource binding, and the issuer policy, so each of those protections had to be re-implemented and separately tested on the fallback.
--
--The fallback is gone. A callback with no stored flow session now clears the pending marker, records `oauth_callback_no_session_recovery`, and returns an explicit "please connect again to reauthorize" — it makes no token request at all. A session that straddles a deploy will land here, and a clear reauthorization is strictly safer than redeeming a code without the protections the current era requires.
--
--The branch was reachable because `clearOAuthData(serverName)` cleared every per-server key but never the global `mcp-oauth-pending` marker, leaving a server name with no session behind it. `clearOAuthData` now owns the full key list, and removes the global marker **only when it names the server being cleaned** — the marker is global, so cleanup for one server must never strand another server's in-flight authorization (a real two-tab shape). A test enumerates every `mcp-*` key an OAuth flow writes, so a new key has to be added to the cleanup too.
--
--Five tests that each defended one protection on the retired path are replaced by one that asserts every such shape now asks for reauthorization and redeems nothing.
-diff --git a/.changeset/oauth-review-redaction-gaps.md b/.changeset/oauth-review-redaction-gaps.md
-deleted file mode 100644
-index eb633f4ac..000000000
---- a/.changeset/oauth-review-redaction-gaps.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/sdk": patch
--"@mcpjam/inspector": patch
-----
--
--Close four ways a credential could still reach a sanitized OAuth trace.
--
--Each was found by probing the redactor with the shape rather than by reading it, and each is now pinned by a test that fails on the unredacted string:
--
--- **Underscore-prefixed credential names.** `user_access_token=…` in a query string or error body did not match, because the name heuristic anchored on a word boundary and `_` is a word character. Names are matched on `_`-delimited segments now, so a vendor prefix no longer defeats the check.
--- **Colon-bearing keys.** A key containing `:` let ordinary prose be parsed as a structured field record and skip the field-name policy entirely. The key charset for that detection no longer admits `:`.
--- **Credential-shaped names outside the enumerated set.** `session_token`, `refresh_secret` and friends were not on the sensitive-field list, so a body containing them serialized in the clear. The heuristic now covers `token`/`secret`/`password`/`credential`/`cookie`/`auth`/`api_key` as name segments — with an explicit exemption for descriptive suffixes (`_type`, `_endpoint`, `_supported`, `_uri`, `_methods`, …) so `token_type: "Bearer"` and `token_endpoint` stay legible. Redacting those would make a trace useless for the thing it exists for. The exemption is on the NAME alone — the value behind it is still sanitized, so a descriptive-looking `session_token_url=…%3Faccess_token%3D…` cannot carry a credential through a name the policy waved past.
--- **URL userinfo.** `https://user:s3cret@auth.example.com/token` survived `sanitizeOAuthUrl`, because `new URL().toString()` preserves credentials in the authority. They are cleared before serialization, and HTTP-history entries now route their `request.url` through the same sanitizer instead of copying it verbatim.
--
--`sanitizeTraceErrorMessage` takes `maxLength`/`maxScanned` options so a long stack is redacted in one pass rather than line by line — line-splitting was itself the leak, since a credential spanning a wrap escaped every per-line scan.
--
--Also in this pass: the connect-time `resourceUrl` is checked for provenance against the configured server URL before it is used (`selectStoredResourceUrl`), so a stale or foreign stored value cannot bind the flow to a resource the user never configured; it is rejected before the browser is redirected.
-diff --git a/.changeset/oauth-secret-sweep-and-xaa-pin.md b/.changeset/oauth-secret-sweep-and-xaa-pin.md
-deleted file mode 100644
-index 66e6776e0..000000000
---- a/.changeset/oauth-secret-sweep-and-xaa-pin.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
+@@ -1,19 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
 ----
 -
--Pin the "no raw secret in a sanitized trace" criterion, and fence the XAA redact-into-live-state instance.
+-Say why the server rejected the OAuth debugger's authenticated request.
 -
--`sanitized-trace-contains-no-secrets.test.ts` asks the whole question at once: a sanitized projection carrying an access token, refresh token, ID token, client secret, authorization code, PKCE verifier, cookie, and OAuth `state` — in request URLs, headers, form and JSON bodies, response bodies, transport errors, info-log data, and the free-form flow error — must contain none of them. Each leak fixed in this series was found somewhere different; what they had in common was that nobody was asking about all of them together. It also asserts the trace stays useful (step, endpoint, and non-secret parameters survive) and that local dev still shows everything raw, which is the point of the inspector.
+-The debugger's last step sends an authenticated MCP request with the token it just obtained — `initialize` before 2026-07-28, `tools/list` after. When the server refuses, the flow error was built from the status line alone — "Authenticated request failed: 400 Bad Request" — while the body naming the cause sat unread in `mcpResponseData`, which the same update writes to `lastResponse`. On screen the reason was one panel away; in error reporting it was gone, so an aggregate of these 400s said only that servers were rejecting us.
 -
--Separately, XAA's `sanitizeDiagnosticUpdates` redacts secrets and writes the result back into live flow state — structurally the same shape as the OAuth bug this series started from. It is inert today for two reasons, now written down next to the code: every redacted key is a display surface, and the only one read back as behavior (`lastResponse.body.status`) is a number the redactor does not touch. The key list is extracted as `REDACTED_DIAGNOSTIC_KEYS` and pinned by a test, so widening it to a credential field cannot happen as a one-word edit. This is a fence, not a refactor — the instance is provably harmless and does not need changing.
-diff --git a/.changeset/oauth-typed-request-builder.md b/.changeset/oauth-typed-request-builder.md
+-The reason is now appended when the body carries one: `extractResponseErrorReason` reads the JSON-RPC `{ error: { message } }` an MCP server rejects with, the OAuth `error`/`error_description` pair, a lone `message`, and a plain-text body — the last being what a server behind a gateway usually returns. Candidates are trimmed and a blank one counts as absent, so precedence falls through to a field that says something and a blank `error_description` cannot compose a dangling `": "`. A body that explains nothing yields `undefined` rather than an empty suffix.
+-
+-Because that text is chosen by the server under test — and MCPJam is routinely pointed at half-built servers that echo the bearer token back in an error body — the reason is redacted through `sanitizeTraceErrorMessage` before it becomes `state.error`, rather than at each place that renders it. `state.error` is toasted, folded into conformance step results, and reported; the OAuth conformance text formatter prints step errors verbatim. The full body stays readable in HTTP history either way.
+-
+-The redactor also owns the 300-character cap that keeps an HTML error page from becoming the message, and the extractor deliberately returns text neither capped nor scanned. Capping first is unsafe: `sanitizeTraceErrorMessage` closes an unterminated JSON value or URL userinfo only when it is the one that cut the text, so a reason cut beforehand looks whole to it, and a credential whose closing quote or `@` sat just past the cap keeps its raw prefix. Scanning first is merely wasteful: a body is server-controlled and can be megabytes, and `trace.ts` re-derives this on every projection, so the whitespace collapse that keeps the error on one line runs last, on the capped output. The redactor bounds its own scan at `MAX_SCANNED`, so a megabyte body costs one slice. `trace.ts` shares the extractor and sanitizes its own result the same way, so registration failures gain the same guard.
+-
+-Because the redactor is what bounds these strings, `trace.ts` now caps a derived step error itself in raw-history mode (`sanitize: false`), which skips redaction: that error is drawn from the response body, and a gateway's error page would otherwise become a step's one-line error in full. The untruncated body stays on the HTTP history entry, which is where raw mode means to keep it. It collapses that error onto one line in both modes for the same reason — a registration failure's `error_description` can be a multi-line list, and a step error is a line. `toSingleLine` is shared, and runs last in either path: collapsing shortens the text, so doing it first can drop a message back under `MAX_SCANNED` and disarm the very tail guards above.
+-
+-`trace.ts` already had this extraction for registration failures and now shares it, gaining the plain-text case it lacked — that path previously fell through to `HTTP 400 Bad Request`, discarding the same text for the same reason.
+-
+-All four protocol machines (2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28) end on this step and now report it identically, through `describeAuthenticatedRequestFailure`.
+diff --git a/.changeset/oauth-missing-issuer-unreported.md b/.changeset/oauth-missing-issuer-unreported.md
 deleted file mode 100644
-index 30792a510..000000000
---- a/.changeset/oauth-typed-request-builder.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--One typed builder for every OAuth initiation, so the same server cannot behave differently depending on which button started it.
--
--Four production paths hand-rolled their own `initiateOAuth` options, and they disagreed. The hosted gate omitted `allowPathScopedIssuer`, `clientSecret`, `hasClientSecret`, `customHeaders`, `resourceUrl`, and `registrationMode`; the initial-connect path omitted `resourceUrl`. A server with a path-scoped authorization server or a configured resource indicator therefore authorized correctly from one entry point and failed from another — the most expensive shape an OAuth bug can take, because it only reproduces on one path and nobody knows which.
--
--`lib/oauth/oauth-request.ts` now assembles every security-sensitive field once. Callers supply what they resolved from their own source — connect form, stored server record, hosted bootstrap — and the builder decides what reaches the wire. Intent is explicit (`connect`, `reconnect`, `hosted-connect`, `step-up`, `debug`, `emulation`); the four connect-like intents produce identical shared fields, and the intentional differences (step-up's widened scopes and challenge metadata URL) are asserted separately so they stay intentional.
--
--`initiateOAuth` accepts only a `BuiltOAuthRequest` — a branded type nothing but the builder can produce — so a fifth divergent bag is a compile error rather than a bug report.
--
--Connect-like intents now reject a configured `resourceUrl` that does not identify the configured MCP server, **before** the redirect, and report it as a configuration failure at each entry point. Previously the mismatch surfaced only after the user had left the page. `debug` and `emulation` may still carry nonconforming values, because exercising them is what those surfaces are for — but they have to say so by name, and the deviation is an observation rather than conformance.
--
--`allowPathScopedIssuer` remains a per-server opt-in and reads as off when absent; it never becomes a default.
--
--The proof is not options-object equality alone: the test also drives a built request into the real state machine and re-checks the wire invariants — same canonical resource, S256 PKCE, and one `redirect_uri` reused across registration and authorization.
-diff --git a/.changeset/sdk-oauth-node-entry.md b/.changeset/sdk-oauth-node-entry.md
-deleted file mode 100644
-index 8b29936a1..000000000
---- a/.changeset/sdk-oauth-node-entry.md
-+++ /dev/null
-@@ -1,18 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Add `@mcpjam/sdk/oauth/node`, a Node-only entry point for SSRF-hardened OAuth networking.
--
--The guard that keeps an outbound OAuth fetch from reaching private infrastructure is already written, tested, and complete — it just isn't reachable from a Node consumer that isn't the Inspector. Both existing doors are the wrong shape:
--
--- The root `@mcpjam/sdk` entry exports the DNS-pinned proxy (`executeOAuthProxy`, `fetchOAuthMetadata`, `validateUrl`), but importing it pulls in the entire SDK graph — `ai`, every provider package, the eval runtime, the client manager. `dist/index.js` is 1.69 MB. A backend action that only wants to fetch an authorization-server metadata document safely should not have to load a model factory to do it.
--- `@mcpjam/sdk/browser` exports the RFC 6890 classifier (`isPrivateHost`, `isDisallowedIpAddress`, `assertOutboundOAuthUrlAllowed`), and stops there deliberately. Classification alone does not close the DNS-rebinding window: a bare public hostname passes the classifier by design, on the understanding that the caller will resolve it, validate every answer, and pin the surviving addresses into the socket. That resolution step needs `node:dns` and has always lived on the Node side.
--
--So a Node consumer outside this repo could have the cheap half or the complete half, never a cheap complete half. `@mcpjam/sdk/oauth/node` is that: the classifier and the pinned transport together, with `node:dns`, `node:http`, and `node:https` as the only imports in the whole graph. The built entry is 29.58 KB.
--
--The immediate consumer is `mcpjam-backend`, whose hosted OAuth discovery, token exchange, and refresh paths still use unrestricted `fetch`. Those are the requests where an attacker-influenced URL — a hostile server's `resource_metadata` pointer, a redirect hop — is most worth steering at 169.254.169.254 or a LAN address, and they are the ones with a credential attached. Giving the backend an import instead of a port is the point: a second copy of an SSRF policy is a copy that drifts, and the drift is silent until it is a vulnerability.
--
--Nothing else changes. This is additive — a new export map entry, a new tsup entry, and a file that contains only re-exports. Existing imports from the root entry and from `/browser` are untouched.
--
--Two things are locked down by tests rather than convention. The re-exports are asserted by **identity** against `oauth-proxy.ts` and `oauth/ssrf-guard.ts`, so a future fork fails the suite instead of quietly diverging while still type-checking. And the import graph is walked transitively and asserted to reach only `node:` builtins, so the "safe for a backend action" property survives someone adding a heavy import three modules deep in `oauth-proxy.ts` — the check fires there, not in a backend deploy months later.
-diff --git a/.changeset/v1-upstream-auth-failed-code.md b/.changeset/v1-upstream-auth-failed-code.md
-deleted file mode 100644
-index 074457872..000000000
---- a/.changeset/v1-upstream-auth-failed-code.md
+index 93f2464ad..000000000
+--- a/.changeset/oauth-missing-issuer-unreported.md
 +++ /dev/null
 @@ -1,12 +0,0 @@
 ----
--"@mcpjam/sdk": patch
+-"@mcpjam/sdk": minor
 -"@mcpjam/inspector": patch
 ----
 -
--Stop reporting an upstream MCP auth rejection as a 500 on the public v1 API.
+-Stop reporting missing-issuer metadata failures as MCPJam errors.
 -
--`UPSTREAM_AUTH_FAILED` landed as an internal Inspector `ErrorCode` — the target MCP server refused the credentials MCPJam presented, which the hosted routes now answer with a 403 instead of burying in the INTERNAL_ERROR bucket. `INTERNAL_TO_V1_CODE` had no entry for it, and `mapInternalCode` defaults to `INTERNAL_ERROR`, so the public surface kept telling API callers that MCPJam had broken when the user's own server had refused us. It now collapses onto `FORBIDDEN` (403): the public union has no upstream-auth member, and FORBIDDEN carries the property that matters to a caller — retrying with a different MCPJam credential will not help.
+-RFC 8414 makes `issuer` REQUIRED, and every debug OAuth machine rejects an authorization-server metadata document that omits it. That check stays, and the message stays on screen — but it describes a spec violation in the server under test, not a fault in MCPJam, and only the 2026-07-28 machine reads the field afterwards (it compares the issuer to the authorization-server URL and to the callback `iss`). On the other three eras the failure was arriving as an MCPJam alert, burying real step failures under other projects' bugs.
 -
--This is the second code to fall into that default (`ENVIRONMENT_REVISION_CONFLICT` was the first), because the test meant to catch it could not: `mapInternalCode` always returns a valid public code, so asserting the result is a member of the union passes for an unmapped code too. The contract suite now pins the unmapped set explicitly, so adding an `ErrorCode` without deciding its public mapping fails instead of silently widening the INTERNAL_ERROR bucket. That check documents six codes as a known, accepted gap — `BILLING_LIMIT_REACHED` (the public union has no billing member), plus `XAA_CONNECTION_NOT_CONFIGURED`, `TASK_NOT_FOUND`, `TASKS_UNSUPPORTED`, `CHATBOX_ACCESS_DENIED` and `CHATBOX_ACCESS_STALE`, whose reachability from `/api/v1` is unconfirmed and whose mappings are contract decisions rather than mechanical ones.
+-The step-failure reporter now skips it, alongside the `Warning: `-prefixed advisories it already skipped, and treats it the same way for recurrence: it still replaces the previous message, so a genuine failure that follows one counts as new.
 -
--`mcpjam-backend` keeps a byte-identical copy of this map in `convex/publicApi/contract.ts` until its pinned SDK version includes the subpath, so it needs the same entry and fixture line to stay in step.
-diff --git a/.changeset/workos-client-config-runtime-injection.md b/.changeset/workos-client-config-runtime-injection.md
-deleted file mode 100644
-index cc45f130f..000000000
---- a/.changeset/workos-client-config-runtime-injection.md
-+++ /dev/null
-@@ -1,20 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Serve WorkOS client config at runtime instead of baking it into the bundle, and delete the dead `VITE_WORKOS_DEV_MODE` knob.
--
--`VITE_WORKOS_CLIENT_ID` and `VITE_WORKOS_API_HOSTNAME` were inlined by Vite at build time, which meant every environment needed the value listed in two hand-maintained places that nobody diffs: the Railway service variables, and the `ARG` allowlist in `mcpjam-inspector/Dockerfile`. Miss either one and the client does not fail to build — it ships silently misconfigured.
--
--That is what happened to staging. It carried no `VITE_WORKOS_API_HOSTNAME`, so `resolveWorkosClientOptions` fell through to the default `api.workos.com`. From `staging.mcpjam.com` that host is cross-site, so the AuthKit session cookie was never sent; `#refreshSession` posted `{client_id, grant_type: "refresh_token"}` with no credential, got a 400, and `#doRefresh`'s catch called `removeSessionData()`. Because AuthKit stores the refresh token in `memoryStorage` outside dev mode, nothing survived the page load and every single navigation logged the user out. Production was unaffected only because it sets the variable to `auth.mcpjam.com`, which shares a registrable domain with `app.mcpjam.com`.
--
--The downstream symptoms all traced back to that one 400: the hosted shell showed its `logged-out` gate (staging runs `NON_PROD_LOCKDOWN`, so there is no guest fallback to absorb it), `AppReadyProvider` never left `resolving-auth`, and MCP server OAuth appeared to fail — tokens are persisted through `/api/web/oauth/import-tokens`, which forwards the caller's bearer, so with no session the credential could not be written and the next connect attempt replayed the consent screen.
--
--Both values now ride the existing `window.__MCP_RUNTIME_CONFIG__` channel that already carries the Convex URLs (`getInspectorClientRuntimeConfig` in `server/env.ts`, read by `client/src/lib/runtime-config.ts`). The serving process knows which WorkOS environment it belongs to; the bundle no longer has to. A Railway variable change now takes effect on restart, in every environment, with no rebuild and no Dockerfile edit.
--
--This is backward compatible and needs no deploy-config change: the server reads the canonical unprefixed `WORKOS_CLIENT_ID` / `WORKOS_API_HOSTNAME` first and falls back to the `VITE_`-prefixed names, which Railway already injects into the running container. The client still falls back to its build-time value when no runtime config is present, so npx and Electron builds are unchanged. The Dockerfile `ARG`s are deliberately left in place for now — removing them is a separate cleanup once every environment has been confirmed on the runtime path.
--
--Two smaller fixes ride along:
--
--- **`getInspectorClientRuntimeConfigScript` keyed its "inject anything at all?" guard off the two Convex fields.** An environment with WorkOS config but no Convex URL would have emitted no script and silently fallen back to build-time values. It now checks every field.
--- **`resolveWorkosDevMode` is gone.** It read `VITE_WORKOS_DEV_MODE`, which was set in no environment and was absent from the Dockerfile `ARG` allowlist, so no deployed build could set it — a config knob that could not be configured. It was added in the same change as the first-party AuthKit proxy at `/user_management`, which is what actually gives local dev cookie mode, and it existed only to opt out of the mode that proxy made universal. It is replaced by an exported `WORKOS_DEV_MODE = false` constant, still passed explicitly to `AuthKitProvider`, because `@workos-inc/authkit-js` defaults `devMode` to `location.hostname === "localhost"` — omitting the prop would move local dev onto a different session-storage path than every deployed environment.
+-The SDK exports `AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER` and the machines throw it, so the match cannot drift out of sync with the message they actually produce.
 diff --git a/cli/package.json b/cli/package.json
-index 641f5f557..82c691a0a 100644
+index 82c691a0a..b983cbefa 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.20.0",
-+  "version": "3.20.1",
+-  "version": "3.20.1",
++  "version": "3.21.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -306,21 +84,21 @@ index 641f5f557..82c691a0a 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^3.0.0",
-+    "@mcpjam/sdk": "^4.0.0",
+-    "@mcpjam/sdk": "^4.0.0",
++    "@mcpjam/sdk": "^4.1.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 745dfe2cb..c00444dcc 100644
+index c00444dcc..8e1094b9e 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.35.1",
-+  "version": "2.36.0",
+-  "version": "2.36.0",
++  "version": "2.37.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -328,24 +106,24 @@ index 745dfe2cb..c00444dcc 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^3.1.0",
-+    "@mcpjam/sdk": "^4.0.0",
+-    "@mcpjam/sdk": "^4.0.0",
++    "@mcpjam/sdk": "^4.1.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 548ffbcff..d1aa5d464 100644
+index d4aff1851..21b530fb7 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -60,9 +60,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.20.0",
-+      "version": "3.20.1",
+-      "version": "3.20.1",
++      "version": "3.21.0",
        "dependencies": {
--        "@mcpjam/sdk": "^3.0.0",
-+        "@mcpjam/sdk": "^4.0.0",
+-        "@mcpjam/sdk": "^4.0.0",
++        "@mcpjam/sdk": "^4.1.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
@@ -353,8 +131,8 @@ index 548ffbcff..d1aa5d464 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.35.1",
-+      "version": "2.36.0",
+-      "version": "2.36.0",
++      "version": "2.37.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -362,64 +140,636 @@ index 548ffbcff..d1aa5d464 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^3.1.0",
-+        "@mcpjam/sdk": "^4.0.0",
+-        "@mcpjam/sdk": "^4.0.0",
++        "@mcpjam/sdk": "^4.1.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37839,7 +37839,7 @@
+@@ -935,7 +935,7 @@
+       "version": "0.9.31",
+       "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
+       "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@adobe/css-tools": {
+@@ -1737,7 +1737,7 @@
+       "version": "4.1.2",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
+       "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@csstools/css-calc": "^3.0.0",
+@@ -1751,7 +1751,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -1761,7 +1761,7 @@
+       "version": "6.8.1",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
+       "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@asamuzakjp/nwsapi": "^2.3.9",
+@@ -1775,7 +1775,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -1785,7 +1785,7 @@
+       "version": "2.3.9",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
+       "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@aws-crypto/crc32": {
+@@ -3126,7 +3126,7 @@
+       "version": "6.0.2",
+       "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
+       "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3146,7 +3146,7 @@
+       "version": "3.2.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
+       "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3170,7 +3170,7 @@
+       "version": "4.1.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
+       "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3198,7 +3198,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
+       "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3221,7 +3221,7 @@
+       "version": "1.1.3",
+       "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
+       "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3246,7 +3246,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
+       "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -5625,7 +5625,7 @@
+       "version": "1.15.0",
+       "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
+       "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
+@@ -7149,7 +7149,7 @@
+       "version": "0.3.11",
+       "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
+       "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@jridgewell/gen-mapping": "^0.3.5",
+@@ -9371,7 +9371,7 @@
+       "version": "1.59.1",
+       "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
+       "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "playwright": "1.59.1"
+@@ -14876,6 +14876,7 @@
+       "version": "19.2.14",
+       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
+       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "csstype": "^3.2.2"
+@@ -14885,7 +14886,7 @@
+       "version": "19.2.3",
+       "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
+       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "peerDependencies": {
+         "@types/react": "^19.2.0"
+@@ -17541,7 +17542,7 @@
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
+       "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "require-from-string": "^2.0.2"
+@@ -17769,7 +17770,7 @@
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
+       "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/bundle-name": {
+@@ -18861,7 +18862,7 @@
+       "version": "3.2.1",
+       "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
+       "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "mdn-data": "2.27.1",
+@@ -18882,7 +18883,7 @@
+       "version": "5.3.7",
+       "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
+       "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@asamuzakjp/css-color": "^4.1.1",
+@@ -18898,7 +18899,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -19469,7 +19470,7 @@
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
+       "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "whatwg-mimetype": "^5.0.0",
+@@ -19483,7 +19484,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
+       "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=20"
+@@ -19580,7 +19581,7 @@
+       "version": "10.6.0",
+       "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
+       "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/decimal.js-light": {
+@@ -21011,6 +21012,7 @@
+       "version": "0.1.13",
+       "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
+       "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -21021,6 +21023,7 @@
+       "version": "0.6.3",
+       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
+       "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -23785,7 +23788,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
+       "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@exodus/bytes": "^1.6.0"
+@@ -23852,7 +23855,7 @@
+       "version": "7.0.2",
+       "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
+       "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "agent-base": "^7.1.0",
+@@ -23866,7 +23869,7 @@
+       "version": "7.1.4",
+       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 14"
+@@ -24678,7 +24681,7 @@
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
+       "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/is-promise": {
+@@ -26082,7 +26085,7 @@
+       "version": "27.4.0",
+       "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
+       "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@acemir/cssom": "^0.9.28",
+@@ -26122,7 +26125,7 @@
+       "version": "7.1.4",
+       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 14"
+@@ -26132,7 +26135,7 @@
+       "version": "7.0.6",
+       "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
+       "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "agent-base": "^7.1.2",
+@@ -26146,7 +26149,7 @@
+       "version": "8.20.0",
+       "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
+       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=10.0.0"
+@@ -26540,7 +26543,7 @@
+       "version": "1.32.0",
+       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
+       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MPL-2.0",
+       "dependencies": {
+         "detect-libc": "^2.0.3"
+@@ -26573,6 +26576,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26593,6 +26597,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26613,6 +26618,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26633,6 +26639,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26653,6 +26660,7 @@
+       "cpu": [
+         "arm"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26673,6 +26681,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26693,6 +26702,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26713,6 +26723,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26733,6 +26744,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26753,6 +26765,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26773,6 +26786,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27745,7 +27759,7 @@
+       "version": "2.27.1",
+       "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
+       "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "CC0-1.0"
+     },
+     "node_modules/media-typer": {
+@@ -30555,7 +30569,7 @@
+       "version": "8.0.0",
+       "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
+       "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "entities": "^6.0.0"
+@@ -31431,7 +31445,7 @@
+       "version": "2.3.1",
+       "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=6"
+@@ -32854,7 +32868,7 @@
+       "version": "7.8.2",
+       "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
+       "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "tslib": "^2.1.0"
+@@ -32945,7 +32959,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
+       "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "ISC",
+       "dependencies": {
+         "xmlchars": "^2.2.0"
+@@ -33618,7 +33632,7 @@
+       "version": "0.6.1",
+       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
+       "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-3-Clause",
+       "engines": {
+         "node": ">=0.10.0"
+@@ -33637,7 +33651,7 @@
+       "version": "0.5.21",
+       "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
+       "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "buffer-from": "^1.0.0",
+@@ -34334,7 +34348,7 @@
+       "version": "3.2.4",
+       "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
+       "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/synckit": {
+@@ -34481,7 +34495,7 @@
+       "version": "5.46.1",
+       "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
+       "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-2-Clause",
+       "dependencies": {
+         "@jridgewell/source-map": "^0.3.3",
+@@ -34565,7 +34579,7 @@
+       "version": "2.20.3",
+       "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
+       "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/test-exclude": {
+@@ -34823,7 +34837,7 @@
+       "version": "7.0.28",
+       "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
+       "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "tldts-core": "^7.0.28"
+@@ -34836,7 +34850,7 @@
+       "version": "7.0.28",
+       "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
+       "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/tmp": {
+@@ -34940,7 +34954,7 @@
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
+       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-3-Clause",
+       "dependencies": {
+         "tldts": "^7.0.5"
+@@ -34953,7 +34967,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
+       "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "punycode": "^2.3.1"
+@@ -35316,7 +35330,7 @@
+       "version": "4.21.0",
+       "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
+       "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "esbuild": "~0.27.0",
+@@ -35499,7 +35513,7 @@
+       "version": "5.9.3",
+       "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "bin": {
+         "tsc": "bin/tsc",
+@@ -36510,7 +36524,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
+       "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "xml-name-validator": "^5.0.0"
+@@ -36586,7 +36600,7 @@
+       "version": "8.0.1",
+       "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
+       "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-2-Clause",
+       "engines": {
+         "node": ">=20"
+@@ -36691,7 +36705,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
+       "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=18"
+@@ -36701,7 +36715,7 @@
+       "version": "15.1.0",
+       "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
+       "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "tr46": "^6.0.0",
+@@ -37572,7 +37586,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
+       "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "engines": {
+         "node": ">=18"
+@@ -37592,7 +37606,7 @@
+       "version": "2.2.0",
+       "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
+       "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/xpath": {
+@@ -37825,7 +37839,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "3.1.0",
-+      "version": "4.0.0",
+-      "version": "4.0.0",
++      "version": "4.1.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
-@@ -38268,11 +38268,11 @@
-     },
-     "widget-react": {
-       "name": "@mcpjam/widget-react",
--      "version": "0.1.4",
-+      "version": "0.1.5",
-       "license": "MIT",
-       "dependencies": {
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^3.0.0",
-+        "@mcpjam/sdk": "^4.0.0",
-         "@modelcontextprotocol/client": "2.0.0",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 53edce593..6bbec114d 100644
+index 6bbec114d..6d9bfa65f 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "3.1.0",
-+  "version": "4.0.0",
+-  "version": "4.0.0",
++  "version": "4.1.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
-diff --git a/widget-react/package.json b/widget-react/package.json
-index 42431c608..037c35d9a 100644
---- a/widget-react/package.json
-+++ b/widget-react/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/widget-react",
--  "version": "0.1.4",
-+  "version": "0.1.5",
-   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
-   "license": "MIT",
-   "type": "module",
-@@ -34,7 +34,7 @@
-   },
-   "dependencies": {
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^3.0.0",
-+    "@mcpjam/sdk": "^4.0.0",
-     "@modelcontextprotocol/client": "2.0.0",
-     "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "lucide-react": "^0.525.0",
