@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { ConvexError } from "convex/values";
 
@@ -424,6 +425,43 @@ describe("useChatboxTurnRating", () => {
     });
   });
 
+  it("survives StrictMode's mount → cleanup → mount cycle", async () => {
+    // A cleanup-only `unmountedRef` write latches true on the synthetic
+    // teardown and never clears, silently disabling every unmount guard — in
+    // development only, which is the worst place for it to hide.
+    vi.useFakeTimers();
+    mockSubmitScore.mockRejectedValue(staleError());
+    const onStaleHostedAccess = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useChatboxTurnRating({
+          enabled: true,
+          chatboxId: "cbx_1",
+          accessVersion: 1,
+          onStaleHostedAccess,
+        }),
+      { wrapper: StrictMode }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 1,
+      });
+    });
+    await flushMicrotasks();
+
+    // Recovery still runs: the direct ask fires, and the backoff re-arms.
+    expect(onStaleHostedAccess).toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThan(1);
+  });
+
   it("does not re-ask for a redeem after unmount", async () => {
     // A mutation can reject after the page is gone; the rejection handler must
     // not re-arm timers or ask for a redeem for a chat nobody is looking at.
@@ -462,9 +500,9 @@ describe("useChatboxTurnRating", () => {
       await vi.advanceTimersByTimeAsync(60000);
     });
 
-    // One ask is the direct `onStaleHostedAccess` call in the catch; what must
-    // NOT happen is the backoff re-arming afterwards.
-    expect(onStaleHostedAccess.mock.calls.length).toBeLessThanOrEqual(1);
+    // Zero, not "at most one": the direct ask in the catch block is just as
+    // wrong as a re-armed timer once the page is gone.
+    expect(onStaleHostedAccess).not.toHaveBeenCalled();
   });
 
   it("drops a queued retry once the active chatbox changes", async () => {

@@ -120,6 +120,41 @@ describe("ChatboxPerTurnFeedbackToggle", () => {
     expect(toggle()).toHaveAttribute("data-state", "checked");
   });
 
+  it("does not carry pending state into another scenario", async () => {
+    // The parent swaps the `chatbox` prop rather than remounting, so a write
+    // started on one scenario must not resolve into the next one's state —
+    // that would clear `saving` while the previous optimistic value stayed on
+    // screen, showing the old scenario's setting for the new one.
+    let resolveWrite: (() => void) | undefined;
+    updateChatboxMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <ChatboxPerTurnFeedbackToggle chatbox={chatbox(false)} />
+    );
+    fireEvent.click(toggle());
+    expect(toggle()).toHaveAttribute("data-state", "checked");
+
+    // Navigate to a different scenario that has the surface OFF.
+    rerender(
+      <ChatboxPerTurnFeedbackToggle
+        chatbox={{ ...chatbox(false), chatboxId: "cbx_2" } as ChatboxSettings}
+      />
+    );
+    expect(toggle()).toHaveAttribute("data-state", "unchecked");
+    expect(toggle()).not.toBeDisabled();
+
+    // The first scenario's write lands late — it must not touch this one.
+    resolveWrite?.();
+    await waitFor(() =>
+      expect(toggle()).toHaveAttribute("data-state", "unchecked")
+    );
+  });
+
   it("reverts the switch when the write fails", async () => {
     updateChatboxMock.mockRejectedValue(new Error("nope"));
     render(<ChatboxPerTurnFeedbackToggle chatbox={chatbox(false)} />);

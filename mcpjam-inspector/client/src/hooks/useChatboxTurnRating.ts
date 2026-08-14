@@ -112,12 +112,17 @@ export function useChatboxTurnRating({
   // handler would re-arm timers and re-ask for a redeem for a chat nobody is
   // looking at.
   const unmountedRef = useRef(false);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Reset on SETUP, not just on cleanup. StrictMode runs
+    // mount → cleanup → mount in development; a cleanup-only write would latch
+    // this true on the synthetic teardown and never clear, silently disabling
+    // every guard below it — stale-access recovery would stop scheduling its
+    // backoff and ratings would sit in `pending` instead of erroring.
+    unmountedRef.current = false;
+    return () => {
       unmountedRef.current = true;
-    },
-    []
-  );
+    };
+  }, []);
   const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
   useEffect(() => {
     onStaleHostedAccessRef.current = onStaleHostedAccess;
@@ -272,6 +277,10 @@ export function useChatboxTurnRating({
           status: "error",
         });
       } catch (error) {
+        // The page is gone. Nothing below is worth doing — asking a dead page
+        // to re-redeem is the same mistake as re-arming its timers, just one
+        // frame earlier.
+        if (unmountedRef.current) return;
         if (isStaleHostedAccessError(error)) {
           // The share link rotated mid-session. Queue for replay and ask the
           // owner to re-redeem; the effect below drains the queue when a fresh

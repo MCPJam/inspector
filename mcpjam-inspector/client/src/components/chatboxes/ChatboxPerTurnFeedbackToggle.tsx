@@ -44,24 +44,46 @@ export function ChatboxPerTurnFeedbackToggle({
   // caller sees it.
   const inFlightRef = useRef(false);
 
+  // Which scenario the in-flight write belongs to. This component can be reused
+  // across scenarios (the parent swaps the `chatbox` prop rather than
+  // remounting), and without scoping, a write started on one scenario would
+  // resolve into the next one's state — clearing `saving` while the previous
+  // optimistic value stayed on screen, so the new scenario showed the old
+  // scenario's setting.
+  const writeChatboxIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    inFlightRef.current = false;
+    writeChatboxIdRef.current = null;
+    setOptimistic(null);
+    setSaving(false);
+  }, [chatbox.chatboxId]);
+
   const handleChange = async (next: boolean) => {
     if (inFlightRef.current) return;
+    const chatboxId = chatbox.chatboxId;
     inFlightRef.current = true;
+    writeChatboxIdRef.current = chatboxId;
     setSaving(true);
     setOptimistic(next);
     try {
       await updateChatbox({
-        chatboxId: chatbox.chatboxId,
+        chatboxId,
         chatUi: { surfaces: { perTurnFeedback: { enabled: next } } },
       } as any);
     } catch (err) {
+      if (writeChatboxIdRef.current !== chatboxId) return;
       setOptimistic(null);
       toast.error(
         convexErrMessage(err, "Failed to update the per-turn ratings setting")
       );
     } finally {
-      inFlightRef.current = false;
-      setSaving(false);
+      // The reset effect already cleared these for the new scenario; touching
+      // them here would undo that.
+      if (writeChatboxIdRef.current === chatboxId) {
+        inFlightRef.current = false;
+        setSaving(false);
+      }
     }
   };
 
