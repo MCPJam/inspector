@@ -150,20 +150,38 @@ interface FailedResponse {
  * toast and titles an error-report group, so a stack trace or an HTML page must
  * not carry its newlines in — and collapsing before the cap would scan the
  * whole body to do it.
+ *
+ * `statusText` goes through the same pipeline as the reason, for the same
+ * reason: it is the reason-phrase the server under test wrote, not a value we
+ * derived. RFC 9112 confines it to one short line of visible characters, but a
+ * server that ignores that — or a proxy that synthesizes the field from
+ * something else — would otherwise put unredacted text straight into the
+ * message. The status code beside it is the part that is always trustworthy.
+ *
+ * An empty phrase is dropped rather than printed, so a response with no reason
+ * phrase reads `"...: 502"` instead of trailing a bare space. `statusText` is
+ * typed as required, but the value crosses a proxy boundary before it gets
+ * here, so a missing one degrades to that same code-only form rather than
+ * throwing inside the redactor.
  */
 function describeResponseFailure(
   label: string,
   response: FailedResponse,
 ): string {
+  const safeStatusText = toSingleLine(
+    sanitizeTraceErrorMessage(response.statusText ?? "", {
+      maxLength: MAX_REASON_CHARS,
+    }),
+  );
   const reason = extractResponseErrorReason(response.body);
   const safeReason = reason
     ? toSingleLine(
         sanitizeTraceErrorMessage(reason, { maxLength: MAX_REASON_CHARS }),
       )
     : undefined;
-  return `${label}: ${response.status} ${response.statusText}${
-    safeReason ? `: ${safeReason}` : ""
-  }`;
+  return `${label}: ${response.status}${
+    safeStatusText ? ` ${safeStatusText}` : ""
+  }${safeReason ? `: ${safeReason}` : ""}`;
 }
 
 /**
