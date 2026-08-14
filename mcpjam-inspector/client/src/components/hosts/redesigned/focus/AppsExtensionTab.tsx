@@ -37,6 +37,7 @@ import {
 import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+import { HostThemeTokenBrowser } from "./HostThemeTokenBrowser";
 
 interface AppsExtensionTabProps {
   draft: HostConfigInputV2;
@@ -1741,6 +1742,10 @@ export function AppsExtensionTab({
           nothing. When collapsed, it still fills the panel and the editor
           flex-grows. */}
       <div className="flex min-h-full flex-col gap-3">
+        <HostThemeTokenBrowser
+          hostContext={draft.hostContext}
+          hostStyle={draft.hostStyle}
+        />
         <OpenaiAppsCapabilityMatrix
           draft={draft}
           onDraftChange={onDraftChange}
