@@ -115,18 +115,28 @@ export function extractResponseErrorReason(body: unknown): string | undefined {
   return errorMessage;
 }
 
+/** A response a step can fail on — the fields every failure message reads. */
+interface FailedResponse {
+  status: number;
+  statusText: string;
+  body?: unknown;
+}
+
 /**
- * The flow error for a rejected authenticated request — the debugger's last
- * step, where the server under test answers the token it just issued.
+ * `"<what failed>: <status line>"`, plus the server's own reason when its body
+ * carries one.
  *
- * Status line first so the shape is unchanged, then the server's own reason
- * when the body carries one. Every protocol era ends on that step (older ones
- * with `initialize`, 2026-07-28 with `tools/list`), so they all report it the
- * same way.
+ * The status line always leads, so a body that explains nothing still names the
+ * code. Never interpolate a body field into the message directly: `error` is a
+ * string only when the server follows RFC 6749, and an MCP server rejecting the
+ * request answers with the JSON-RPC `{ error: { code, message } }` shape
+ * instead — which renders as `[object Object]` and buries every distinct
+ * failure in one error-report group. {@link extractResponseErrorReason} knows
+ * both shapes.
  *
  * The reason is redacted here rather than at each display: it is text the
  * server under test chose, and MCPJam is routinely pointed at half-built
- * servers that echo the bearer token back in an error body. This value becomes
+ * servers that echo the bearer token back in an error body. The result becomes
  * `state.error`, which is toasted, folded into conformance step results, and
  * reported — the full body stays readable in HTTP history either way.
  *
@@ -136,23 +146,48 @@ export function extractResponseErrorReason(body: unknown): string | undefined {
  * credential whose closing delimiter sat just past the cap. Its own scan window
  * (`MAX_SCANNED`) bounds the work, so a megabyte body costs one slice.
  *
- * Whitespace is collapsed last, on that capped output: the flow error renders
- * in a toast and titles an error-report group, so a stack trace or an HTML page
- * must not carry its newlines in — and collapsing before the cap would scan the
+ * Whitespace is collapsed last, on that capped output: the message renders in a
+ * toast and titles an error-report group, so a stack trace or an HTML page must
+ * not carry its newlines in — and collapsing before the cap would scan the
  * whole body to do it.
  */
-export function describeAuthenticatedRequestFailure(response: {
-  status: number;
-  statusText: string;
-  body?: unknown;
-}): string {
+function describeResponseFailure(
+  label: string,
+  response: FailedResponse,
+): string {
   const reason = extractResponseErrorReason(response.body);
   const safeReason = reason
     ? toSingleLine(
         sanitizeTraceErrorMessage(reason, { maxLength: MAX_REASON_CHARS }),
       )
     : undefined;
-  return `Authenticated request failed: ${response.status} ${
-    response.statusText
-  }${safeReason ? `: ${safeReason}` : ""}`;
+  return `${label}: ${response.status} ${response.statusText}${
+    safeReason ? `: ${safeReason}` : ""
+  }`;
+}
+
+/**
+ * The flow error for a rejected authenticated request — the debugger's last
+ * step, where the server under test answers the token it just issued.
+ *
+ * Every protocol era ends on that step (older ones with `initialize`,
+ * 2026-07-28 with `tools/list`), so they all report it the same way.
+ */
+export function describeAuthenticatedRequestFailure(
+  response: FailedResponse,
+): string {
+  return describeResponseFailure("Authenticated request failed", response);
+}
+
+/**
+ * The flow error for a rejected token exchange — the authorization server
+ * refusing to trade the code (or the client credentials) for a token.
+ *
+ * Shared by every debug state machine and by the conformance
+ * client-credentials strategy, which all previously hand-rolled the message
+ * from `body.error` and so reported `[object Object] - Unknown error` whenever
+ * the endpoint answered in a non-RFC-6749 shape.
+ */
+export function describeTokenRequestFailure(response: FailedResponse): string {
+  return describeResponseFailure("Token request failed", response);
 }
