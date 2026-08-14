@@ -110,7 +110,23 @@ export type RequestEventMap = {
     slug?: string;
   };
   "http.stream.opened": { statusCode: number };
-  "http.stream.closed": { statusCode: number; durationMs: number };
+  /**
+   * Lifecycle, not failure: every wrapped stream emits exactly one of these,
+   * whatever ends it. `outcome` is the only record of HOW a streaming
+   * response died — the middleware's streaming branch returns before any
+   * `http.request.failed`/`completed` emission, and a producer error or a
+   * client disconnect used to skip the old flush()-only hook entirely,
+   * leaving zero rows for the most common streaming failure. Aborts are
+   * deliberately an `outcome` here and never a failure event: a user closing
+   * a tab is normal operation, but its rate is a useful denominator.
+   */
+  "http.stream.closed": {
+    statusCode: number;
+    durationMs: number;
+    outcome: "completed" | "aborted" | "errored";
+    /** errored only; capped at 500 chars, scrubbed on emit. */
+    errorMessage?: string;
+  };
   "mcp.oauth.proxy.failed": {
     targetUrlHost: string;
     oauthPhase: "metadata" | "proxy" | "token";

@@ -100,17 +100,61 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     const body = c.res.body;
     if (body) {
       const closedCtx: RequestLogContext = { ...enriched };
-      const ts = new TransformStream({
-        flush() {
-          const durationMs = Date.now() - startedAt;
-          logger.event(
-            "http.stream.closed",
-            { ...closedCtx, durationMs },
-            { statusCode: closedCtx.statusCode ?? status, durationMs },
-          );
+      // Hand-rolled pull wrapper instead of a TransformStream: flush() only
+      // runs on a NORMAL end-of-stream, so a producer error or a client
+      // disconnect used to leave no `http.stream.closed` at all — the most
+      // common streaming failure produced zero telemetry. read()/cancel()
+      // cover all three exits deterministically, and pull() is demand-driven
+      // so backpressure is preserved.
+      const reader = body.getReader();
+      let closedEmitted = false;
+      const emitClosed = (
+        outcome: "completed" | "aborted" | "errored",
+        error?: unknown,
+      ) => {
+        // Exactly once: cancel and a pending read rejection can race.
+        if (closedEmitted) return;
+        closedEmitted = true;
+        const durationMs = Date.now() - startedAt;
+        const errorMessage =
+          outcome === "errored" && error !== undefined
+            ? (error instanceof Error ? error.message : String(error)).slice(
+                0,
+                500,
+              )
+            : undefined;
+        logger.event(
+          "http.stream.closed",
+          { ...closedCtx, durationMs },
+          {
+            statusCode: closedCtx.statusCode ?? status,
+            durationMs,
+            outcome,
+            ...(errorMessage ? { errorMessage } : {}),
+          },
+        );
+      };
+      const wrapped = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              emitClosed("completed");
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          } catch (err) {
+            emitClosed("errored", err);
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          emitClosed("aborted", reason);
+          return reader.cancel(reason);
         },
       });
-      c.res = new Response(body.pipeThrough(ts), {
+      c.res = new Response(wrapped, {
         status: c.res.status,
         statusText: c.res.statusText,
         headers: c.res.headers,
