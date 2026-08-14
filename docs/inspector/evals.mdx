@@ -139,6 +139,8 @@ Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge*
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+Each Swarm and User Testing session detail also shows a **Checks** block listing every deterministic check that ran against that session — its name, PASS/FAIL verdict, and the evaluator's reason string. The block is separate from the judge section: a check is a rule that held or did not, while the judge is an LLM opinion, and the two are kept visually distinct. The block is hidden for sessions that have no check rows (eval sessions store their verdicts differently and do not show this block).
+
 ### MCP App widgets in swarm sessions
 
 When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.
