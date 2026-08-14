@@ -184,7 +184,13 @@ describe("publish (scenarios.ts)", () => {
       scenarios,
       "PUT",
       `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
-      { name: "Checkout", mode: "invited_only" }
+      {
+        name: "Checkout",
+        // Sent because the test claims all THREE travel together. Without it a
+        // regression that dropped `description` would leave this green.
+        description: "Checkout flow, mobile web",
+        mode: "invited_only",
+      }
     );
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledTimes(1);
@@ -195,7 +201,37 @@ describe("publish (scenarios.ts)", () => {
     expect(args).toMatchObject({
       environmentId: "env_1",
       name: "Checkout",
+      description: "Checkout flow, mobile web",
       mode: "invited_only",
+    });
+  });
+
+  it("omits an absent description rather than sending an empty one", () => {
+    // `""` and absent are different upstream: one blanks a description the
+    // scenario may already have, the other leaves it alone.
+    answerQueries({
+      getEnvironment: { environmentId: "env_1", projectId: PROJECT },
+    });
+    mutationMock.mockResolvedValue({
+      chatboxId: SCENARIO,
+      environmentId: "env_1",
+      name: "Checkout",
+      mode: "invited_only",
+      accessVersion: 1,
+      link: null,
+      created: true,
+    });
+    return call(
+      scenarios,
+      "PUT",
+      `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
+      { name: "Checkout", mode: "invited_only" }
+    ).then(() => {
+      const [, args] = mutationMock.mock.calls[0] as [
+        string,
+        Record<string, unknown>
+      ];
+      expect(args).not.toHaveProperty("description");
     });
   });
 

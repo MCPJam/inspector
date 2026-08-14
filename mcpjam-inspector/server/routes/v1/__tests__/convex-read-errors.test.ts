@@ -76,6 +76,19 @@ describe("classifyConvexReadError", () => {
     );
   });
 
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["an Error with no message", new Error("")],
+    ["a thrown string", "boom"],
+  ])("falls back to upstream for %s", (_label, thrown) => {
+    // The signature takes `unknown`, so these are reachable inputs, and the
+    // fallback has to be the CAUTIOUS one. Any of them landing in `membership`
+    // would answer 404 — telling a caller their resource is gone on the
+    // strength of an error we could not read at all.
+    expect(classifyConvexReadError(thrown).kind).toBe("upstream");
+  });
+
   it("does NOT read a bare 'not found' as membership", () => {
     // A renamed or undeployed Convex function says this. Calling it membership
     // would answer 404 — telling a caller their resource is gone during an
@@ -91,6 +104,18 @@ describe("translateConvexReadError", () => {
     expect(translate("Not a member of this project").status).toBe(404);
     expect(translate("token expired").status).toBe(401);
     expect(translate("boom").status).toBe(502);
+  });
+
+  it("answers 502 to an unreadable throw rather than guessing", () => {
+    // `null` and a message-less Error are both reachable through the `unknown`
+    // signature. 502 is the honest answer — we do not know what happened, and
+    // the alternative reading (404) would report a resource as gone.
+    expect(translateConvexReadError(null, { scope: "v1.test" }).status).toBe(
+      502
+    );
+    expect(
+      translateConvexReadError(new Error(""), { scope: "v1.test" }).status
+    ).toBe(502);
   });
 
   it("answers 404 to a validator-rejected argument, without logging", () => {
@@ -121,6 +146,10 @@ describe("translateConvexReadError", () => {
     );
     expect(err.status).toBe(404);
     expect(err.message).toBe("Scenario not found");
+    // And SILENTLY. A cross-workspace probe is someone typing an id they do
+    // not have access to; paging on each one turns a routine refusal into an
+    // alert stream, which is how the real incidents get lost.
+    expect(errorMock).not.toHaveBeenCalled();
   });
 
   it("still answers 502 to a network failure even at a preflight", () => {
