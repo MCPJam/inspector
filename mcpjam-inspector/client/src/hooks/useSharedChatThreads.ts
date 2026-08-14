@@ -27,10 +27,30 @@ export interface SharedChatThread {
   startedAt: number;
   lastActivityAt: number;
   messagesBlobUrl?: string;
-  /** Set when chatbox feedback was recorded for this session. */
+  /**
+   * Flat projections of the session's per-turn ratings, carrying the
+   * WORST-TURN policy: `feedbackRating` is the minimum rating across the
+   * session's turns and `feedbackComment` is that turn's comment. The backend
+   * maps them from `chatSessions.feedback.{min, worstComment}`; they stay flat
+   * because every filter and sort in `chatbox-usage-filters.ts` reads them.
+   */
   feedbackRating?: number | null;
   feedbackComment?: string | null;
   feedbackCount?: number;
+  /**
+   * The full rollup, for DISPLAY (average across N ratings). Absent on rows
+   * from an older backend, which is why the flat fields above stay the filter
+   * surface rather than being replaced by this.
+   */
+  feedback?: {
+    count: number;
+    avg: number;
+    min: number;
+    hasComment: boolean;
+    worstComment?: string;
+    latestRating: number;
+    latestAt: number;
+  } | null;
   toolCallCount?: number;
   /** OAuth or permission flow interrupted the session. */
   authInterrupted?: boolean;
@@ -256,6 +276,39 @@ export function useSharedChatTurnTraces({
   ) as SharedChatTurnTrace[] | undefined;
 
   return { traces };
+}
+
+export interface SharedChatTurnScore {
+  key: string;
+  turnId?: string;
+  promptIndex?: number;
+  dataType: "numeric" | "categorical" | "boolean";
+  value?: number;
+  stringValue?: string;
+  comment?: string;
+  source: "end_user" | "member" | "eval";
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Every score on a session, for the PM-facing detail view — the per-turn stars
+ * a tester left, joined to the transcript by `promptIndex`.
+ *
+ * Returned in prompt order by the backend, so a caller can zip it against the
+ * adapted messages without re-sorting.
+ */
+export function useSharedChatTurnScores({
+  threadId,
+}: {
+  threadId: string | null;
+}) {
+  const scores = useQuery(
+    "sessionScores:listBySession" as any,
+    threadId ? ({ sessionId: threadId } as any) : "skip"
+  ) as SharedChatTurnScore[] | undefined;
+
+  return { scores };
 }
 
 export interface SessionBrowserArtifacts {
