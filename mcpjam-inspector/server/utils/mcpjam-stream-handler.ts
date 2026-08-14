@@ -2408,21 +2408,27 @@ async function processOneStep(
     // status from our own backend, which `describeBackendStreamFailure`
     // leaves `ambiguous` because it classifies the response alone and cannot
     // know whose backend answered.
-    failureReporter({
-      message: "[mcpjam-stream-handler] backend stream failed",
-      error: new Error(parsed.message),
-      source: "mcp.chat-v2.backend-stream",
-      hop: isRecognizedDenial ? "user_server_hop" : "mcpjam_internal",
-      transport: "http_stream",
-      normalized,
-      ...(parsed.code ? { errorCode: parsed.code } : {}),
-      context: {
-        httpStatus: res.status,
-        code: parsed.code,
-        isJsonDenial,
-        isRecognizedDenial,
-      },
-    });
+    // Silent-cancel invariant: a fired abort can race this site (res.text()
+    // rejecting into the generic fallback, or the failure landing while the
+    // client is already gone). An aborted turn must not inflate the
+    // operation-failure rate.
+    if (!abortSignal?.aborted) {
+      failureReporter({
+        message: "[mcpjam-stream-handler] backend stream failed",
+        error: new Error(parsed.message),
+        source: "mcp.chat-v2.backend-stream",
+        hop: isRecognizedDenial ? "user_server_hop" : "mcpjam_internal",
+        transport: "http_stream",
+        normalized,
+        ...(parsed.code ? { errorCode: parsed.code } : {}),
+        context: {
+          httpStatus: res.status,
+          code: parsed.code,
+          isJsonDenial,
+          isRecognizedDenial,
+        },
+      });
+    }
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,
       ...(parsed.code ? { code: parsed.code } : {}),
@@ -2898,18 +2904,24 @@ async function processOneStep(
       // row, and the typed route.operation.failed event (the response is a
       // 200 stream, so the HTTP failure events never see this).
       const stepNormalized = describeError(error);
-      failureReporter({
-        message: "[mcpjam-stream-handler] engine step failed",
-        error,
-        source: "mcp.chat-v2.engine-step",
-        hop: "user_server_hop",
-        transport: "http_stream",
-        normalized: stepNormalized,
-        context: {
-          promptIndex: traceTurn.promptIndex,
-          stepIndex,
-        },
-      });
+      // Same silent-cancel guard as the outer loop's catch (which checks
+      // `isAbortError(error) || abortSignal?.aborted`): a non-AbortError that
+      // lands after the signal fired belongs to a turn the client already
+      // cancelled.
+      if (!abortSignal?.aborted) {
+        failureReporter({
+          message: "[mcpjam-stream-handler] engine step failed",
+          error,
+          source: "mcp.chat-v2.engine-step",
+          hop: "user_server_hop",
+          transport: "http_stream",
+          normalized: stepNormalized,
+          context: {
+            promptIndex: traceTurn.promptIndex,
+            stepIndex,
+          },
+        });
+      }
       // PR 5b-followup-2: surface the error to `streamSink: "none"`
       // consumers (eval backend stream runner). The processStream /
       // tool-execution catch path doesn't have a structured body, so

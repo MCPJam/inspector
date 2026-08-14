@@ -61,6 +61,16 @@ describe("stream failure reporter", () => {
     });
   });
 
+  it("survives an error whose string coercion throws", () => {
+    createRequestStreamFailureReporter({} as never, "chat")(
+      failure({ error: Object.create(null) }),
+    );
+    expect(requestEvent).toHaveBeenCalledTimes(1);
+    expect(requestEvent.mock.calls[0][1].errorMessage).toBe(
+      "[unreadable error value]",
+    );
+  });
+
   it("caps the errorMessage at 500 chars", () => {
     createRequestStreamFailureReporter({} as never, "chat")(
       failure({ error: new Error("x".repeat(2000)) }),

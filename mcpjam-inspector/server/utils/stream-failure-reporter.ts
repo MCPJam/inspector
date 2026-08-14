@@ -57,8 +57,16 @@ function classify(e: StreamFailureEvent): RouteFailureReport {
 }
 
 function toPayload(e: StreamFailureEvent, report: RouteFailureReport) {
-  const rawMessage =
-    e.error instanceof Error ? e.error.message : String(e.error);
+  // Guarded extraction: a message getter or string coercion that throws
+  // (Proxy trap, null-proto object) must not lose the typed event after
+  // classification already succeeded — same precedent as
+  // reportRouteFailure's "[unreadable error value]" handling.
+  let rawMessage: string;
+  try {
+    rawMessage = e.error instanceof Error ? e.error.message : String(e.error);
+  } catch {
+    rawMessage = "[unreadable error value]";
+  }
   return {
     transport: e.transport,
     source: e.source,

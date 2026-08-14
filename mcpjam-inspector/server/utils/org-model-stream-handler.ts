@@ -410,15 +410,18 @@ export function handleLocalOrgChatModel(
   } catch (configErr) {
     // The response is still a 200 stream whose first chunk is the error, so
     // the HTTP failure events never see this — the typed event is the only
-    // machine-readable record.
-    failureReporter({
-      message: "[org/local] model config/allowlist failure",
-      error: configErr,
-      source: "web.chat-v2.org-local-config",
-      hop: "user_server_hop",
-      transport: "http_stream",
-      context: { providerKey: provider.providerKey, modelId },
-    });
+    // machine-readable record. Silent-cancel invariant: skip the report when
+    // the request was already aborted before validation failed.
+    if (!options.abortSignal?.aborted) {
+      failureReporter({
+        message: "[org/local] model config/allowlist failure",
+        error: configErr,
+        source: "web.chat-v2.org-local-config",
+        hop: "user_server_hop",
+        transport: "http_stream",
+        context: { providerKey: provider.providerKey, modelId },
+      });
+    }
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
       onFinish: async () => {
