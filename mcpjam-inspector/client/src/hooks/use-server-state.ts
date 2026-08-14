@@ -111,6 +111,9 @@ import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 export interface HostedServerWriteTarget {
@@ -913,6 +916,16 @@ export function useServerState({
     updateServerWithClientSecret: convexUpdateServerWithClientSecret,
     deleteServer: convexDeleteServer,
   } = useServerMutations();
+
+  // Which client the toast's "Change protocol version" should open. Held in a
+  // ref because the connect callback is memoized on a long dependency list and
+  // this is read only at click time — adding it as a dep would rebuild that
+  // callback on every host preview switch for a value nothing else uses.
+  const [previewedHostIdForToast] = usePreviewedHostId(
+    effectiveActiveProjectId ?? null
+  );
+  const previewedHostIdRef = useRef(previewedHostIdForToast);
+  previewedHostIdRef.current = previewedHostIdForToast;
 
   const hasSignedInUserRef = useRef(hasSignedInUser);
   hasSignedInUserRef.current = hasSignedInUser;
@@ -3528,23 +3541,46 @@ export function useServerState({
             `Failed to connect to ${formData.name}${
               result.error ? `: ${result.error}` : ""
             }`,
-            // For XAA servers, offer a shortcut to the XAA Debugger so the dev
-            // can step through the handshake and pinpoint the failing claim
-            // (subject not provisioned, audience/issuer mismatch, etc.).
-            formData.useXaa
+            // A pinned protocol version the server doesn't offer is the one
+            // connect failure with an exact fix, and the toast is where the
+            // user is actually looking when a connect fails — the server
+            // card's error area carries the same action, but nobody hunts for
+            // it while a toast is on screen telling them what went wrong.
+            isProtocolVersionPinFailure(result.normalized, result.error)
               ? {
                   action: {
-                    label: "Open XAA Debugger",
+                    label: "Change protocol version",
                     onClick: () => {
-                      dispatch({
-                        type: "SELECT_SERVER",
-                        name: formData.name,
+                      track("change_protocol_version_clicked", {
+                        location: "connect_failure_toast",
+                        has_host_id: Boolean(previewedHostIdRef.current),
                       });
-                      navigateApp(routePaths.xaaFlow);
+                      navigateApp(
+                        buildHostFocusTabPath(
+                          previewedHostIdRef.current,
+                          "protocol"
+                        )
+                      );
                     },
                   },
                 }
-              : undefined
+              : // For XAA servers, offer a shortcut to the XAA Debugger so the
+                // dev can step through the handshake and pinpoint the failing
+                // claim (subject not provisioned, audience/issuer mismatch).
+                formData.useXaa
+                ? {
+                    action: {
+                      label: "Open XAA Debugger",
+                      onClick: () => {
+                        dispatch({
+                          type: "SELECT_SERVER",
+                          name: formData.name,
+                        });
+                        navigateApp(routePaths.xaaFlow);
+                      },
+                    },
+                  }
+                : undefined
           );
         }
       } catch (error) {
