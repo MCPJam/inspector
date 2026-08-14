@@ -238,6 +238,26 @@ describe("project write routes: delegated org scope", () => {
       );
     });
 
+    it("translates a failure of the scope preflight like any upstream failure", async () => {
+      // The preflight is itself an upstream read. If it escaped the route's
+      // try block, a network blip would surface raw instead of as this
+      // route's established error vocabulary.
+      stubDelegatedKeyBoundTo("org_a");
+      convexQueryMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/proj_in_a",
+        { name: "Renamed" },
+        "sk_live_secret"
+      );
+
+      expect(res.status).toBeGreaterThanOrEqual(500);
+      const body = (await res.json()) as { code?: string };
+      expect(body.code).toBeTruthy();
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     it("leaves a session JWT caller able to update either org's project", async () => {
       const res = await request(
         "PATCH",
@@ -263,6 +283,42 @@ describe("project write routes: delegated org scope", () => {
       );
 
       expect(res.status).toBe(404);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("deletes a project inside the key's own org", async () => {
+      // The rejection above only proves the guard fires. This proves it is a
+      // GUARD and not a wall — a key must still be able to delete its own.
+      stubDelegatedKeyBoundTo("org_a");
+
+      const res = await request(
+        "DELETE",
+        "/api/v1/projects/proj_in_a",
+        undefined,
+        "sk_live_secret"
+      );
+
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledTimes(1);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "projects:deleteProject",
+        expect.objectContaining({ projectId: "proj_in_a" })
+      );
+    });
+
+    it("translates a failure of the scope preflight like any upstream failure", async () => {
+      stubDelegatedKeyBoundTo("org_a");
+      convexQueryMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+      const res = await request(
+        "DELETE",
+        "/api/v1/projects/proj_in_a",
+        undefined,
+        "sk_live_secret"
+      );
+
+      expect(res.status).toBeGreaterThanOrEqual(500);
+      expect(((await res.json()) as { code?: string }).code).toBeTruthy();
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
   });

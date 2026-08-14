@@ -176,8 +176,12 @@ projects.patch("/projects/:projectId", async (c) => {
   }
   const body = parseWithSchema(updateProjectSchema, raw);
   const token = await getConvexBearerForRequest(c);
-  await assertProjectWritableByCaller(c, token, projectId);
   try {
+    // INSIDE the try: the scope preflight is itself an upstream read, and a
+    // network failure of it must answer like every other upstream failure on
+    // this route rather than escaping raw. The guard's own 404 is unaffected —
+    // `translateConvexWriteError` returns a `WebRouteError` untouched.
+    await assertProjectWritableByCaller(c, token, projectId);
     await convexClient(token).mutation("projects:updateProject" as any, {
       projectId,
       ...body,
@@ -201,8 +205,9 @@ projects.delete("/projects/:projectId", async (c) => {
     );
   }
   const token = await getConvexBearerForRequest(c);
-  await assertProjectWritableByCaller(c, token, projectId);
   try {
+    // Inside the try for the same reason as the PATCH above.
+    await assertProjectWritableByCaller(c, token, projectId);
     await convexClient(token).mutation("projects:deleteProject" as any, {
       projectId,
     });
