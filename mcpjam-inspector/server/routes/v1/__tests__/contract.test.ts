@@ -84,8 +84,7 @@ describe("internal-code -> public-code mapping", () => {
 
   it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {
     const unmapped = Object.values(ErrorCode).filter(
-      (code) =>
-        !Object.prototype.hasOwnProperty.call(INTERNAL_TO_V1_CODE, code),
+      (code) => !Object.prototype.hasOwnProperty.call(INTERNAL_TO_V1_CODE, code)
     );
 
     expect([...unmapped].sort()).toEqual([...KNOWINGLY_UNMAPPED].sort());
@@ -96,7 +95,7 @@ describe("internal-code -> public-code mapping", () => {
     // credentials, so an API caller must not be told MCPJam broke.
     expect(mapInternalCode(ErrorCode.UPSTREAM_AUTH_FAILED)).toBe("FORBIDDEN");
     expect(mapInternalCode(ErrorCode.UPSTREAM_AUTH_FAILED)).not.toBe(
-      "INTERNAL_ERROR",
+      "INTERNAL_ERROR"
     );
   });
 

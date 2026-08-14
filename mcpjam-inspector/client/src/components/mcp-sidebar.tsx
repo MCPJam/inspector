@@ -21,6 +21,7 @@ import {
   Loader2,
   Layers,
   Cable,
+  MessagesSquare,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -223,6 +224,14 @@ export const navigationSections: NavSection[] = [
         url: "/evals",
         icon: FlaskConical,
         billingFeature: "evals",
+      },
+      {
+        // Cross-surface session feed (Playground + User Testing + Evals +
+        // Swarms). Route-guarded on the same flag (`SessionsRoute`).
+        title: "Sessions",
+        url: "/sessions",
+        icon: MessagesSquare,
+        featureFlag: "unified-sessions-enabled",
       },
     ],
   },

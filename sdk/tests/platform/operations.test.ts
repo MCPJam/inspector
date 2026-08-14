@@ -28,6 +28,7 @@ import {
   PlatformApiClient,
   PlatformApiError,
   ALL_OPERATIONS,
+  publishScenarioOperation,
   readServerResourceOperation,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -428,6 +429,36 @@ function makeClient(overrides: FixtureOverrides = {}): {
       expect(init?.method).toBe("POST");
       const serverId = decodeURIComponent(path.split("/")[6] ?? "");
       return Response.json({ serverId, status: "closed" });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/scenario$/.test(path)
+    ) {
+      expect(init?.method).toBe("PUT");
+      const environmentId = decodeURIComponent(path.split("/")[6] ?? "");
+      const requestBody =
+        init?.body === undefined
+          ? {}
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      // `env-existing` is already published: the route ignores create-time
+      // overrides and says so, exactly as the real API does.
+      const created = environmentId !== "env-existing";
+      const overridesSent = Object.keys(requestBody).length > 0;
+      return Response.json(
+        {
+          id: "scenario-1",
+          environmentId,
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          mode: created
+            ? ((requestBody.mode as string) ?? "project_members")
+            : "anyone_with_link",
+          accessVersion: 1,
+          link: "https://app.mcpjam.com/s/checkout?t=abc",
+          created,
+          ...(!created && overridesSent ? { overridesIgnored: true } : {}),
+          requestBody,
+        },
+        { status: created ? 201 : 200 }
+      );
     }
     if (/^\/api\/v1\/projects\/[^/]+\/chatboxes$/.test(path)) {
       return Response.json({ items: CHATBOXES });
@@ -1169,6 +1200,83 @@ describe("chatbox operations", () => {
   });
 });
 
+describe("publishScenarioOperation", () => {
+  it("forwards the create-time overrides verbatim in the PUT body", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-1",
+        name: "Checkout flow",
+        description: "Guided checkout walkthrough",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect(new URL(String(request?.[0])).pathname).toBe(
+      "/api/v1/projects/project-new/environments/env-1/scenario"
+    );
+    expect(JSON.parse(String((request?.[1] as RequestInit).body))).toEqual({
+      name: "Checkout flow",
+      description: "Guided checkout walkthrough",
+      mode: "invited_only",
+    });
+    expect(result.scenario.created).toBe(true);
+    expect(result.scenario.mode).toBe("invited_only");
+    expect(result.overridesIgnored).toBeUndefined();
+  });
+
+  it("sends no body at all when there are no overrides", async () => {
+    // The pre-override wire shape, preserved: a bodyless PUT is the common
+    // case and what existing callers already produce.
+    const { client, fetchMock } = makeClient();
+
+    await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({ environment: "env-1" }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect((request?.[1] as RequestInit).body).toBeUndefined();
+  });
+
+  it("hoists overridesIgnored when a republish discarded the overrides", async () => {
+    const { client } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-existing",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    // The response's mode is the real one — the caller asked for
+    // `invited_only` and must learn the link is NOT restricted.
+    expect(result.scenario.created).toBe(false);
+    expect(result.scenario.mode).toBe("anyone_with_link");
+    expect(result.overridesIgnored).toBe(true);
+  });
+
+  it("rejects a mode outside the enum before any request", async () => {
+    const { fetchMock } = makeClient();
+
+    expect(
+      publishScenarioOperation.inputSchema.safeParse({
+        environment: "env-1",
+        mode: "everyone",
+      }).success
+    ).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("plugin operations", () => {
   it("lists the project's live plugins with the project resolved by selector", async () => {
     const { client } = makeClient();
@@ -1392,6 +1500,64 @@ describe("operation catalog consistency", () => {
     cancel_journey_run: { run: "r" },
     publish_scenario: { environment: "e" },
     unpublish_scenario: { environment: "e" },
+    get_capabilities: {},
+    list_personas: {},
+    get_persona: { persona: "pe" },
+    create_persona: { name: "Ada", role: "buyer" },
+    update_persona: { persona: "pe", name: "Ada" },
+    delete_persona: { persona: "pe" },
+    generate_personas: { environmentId: "e" },
+    get_journey: { journey: "j" },
+    create_journey: {
+      goal: "buy a thing",
+      persona: "pe",
+      sessionsPerTarget: 1,
+      maxTurns: 8,
+    },
+    update_journey: { journey: "j", goal: "buy two things" },
+    archive_journey: { journey: "j" },
+    generate_journeys: {
+      environmentId: "e",
+      persona: { name: "Ada", role: "buyer" },
+    },
+    list_swarms: {},
+    get_swarm: { swarm: "sw" },
+    create_swarm: { name: "checkout", sessionsPerTarget: 1, maxTurns: 8 },
+    update_swarm: { swarm: "sw", name: "checkout v2" },
+    archive_swarm: { swarm: "sw" },
+    get_swarms_overview: {},
+    get_journey_run_scorecard: { run: "r" },
+    list_swarm_findings: {},
+    dismiss_swarm_finding: { finding: "f" },
+    undismiss_swarm_finding: { finding: "f" },
+    get_wave_insights: { wave: "w" },
+    request_wave_insights: { wave: "w" },
+    cancel_wave_insights: { wave: "w" },
+    update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
+    list_user_testing_sessions: { scenario: "cb" },
+    get_user_testing_session: { scenario: "cb", session: "s" },
+    get_user_testing_metrics: { scenario: "cb" },
+    get_user_testing_usage: { scenario: "cb" },
+    list_user_testing_findings: { scenario: "cb" },
+    get_user_testing_signals: { scenario: "cb" },
+    get_user_testing_insights: { scenario: "cb", window: "w" },
+    request_user_testing_insights: { scenario: "cb" },
+    cancel_user_testing_insights: { scenario: "cb", window: "w" },
+    dismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    undismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    set_user_testing_guest_execution: {
+      scenario: "cb",
+      enabled: true,
+      computerEnabled: false,
+      sharedSkillsEnabled: false,
+      dailyCreditCap: 100,
+      dailyComputerStartCap: 0,
+      maxConcurrentComputers: 0,
+    },
+    rotate_user_testing_link: { scenario: "cb" },
+    upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
+    remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
+    rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
     list_hosts: {},
     get_host: { host: "h" },
     set_host_servers: { host: "h", serverIds: [] },
@@ -1502,6 +1668,43 @@ describe("operation catalog consistency", () => {
       "use_sandbox_image",
       "reset_computer",
       "delete_sandbox_image",
+      // Swarms authoring. Creating a persona or a journey persists but starts
+      // nothing and spends nothing — `launch_journey_run` above is the call
+      // that costs.
+      "create_persona",
+      "update_persona",
+      "delete_persona",
+      "create_journey",
+      "update_journey",
+      "archive_journey",
+      "create_swarm",
+      "update_swarm",
+      "archive_swarm",
+      // Generation persists NOTHING — it returns drafts — but it runs a model
+      // on the organization's account, and a read that spends is a lie about
+      // what calling it costs.
+      "generate_personas",
+      "generate_journeys",
+      // Insights: dismissal is a judgement someone recorded, and requesting a
+      // pass spends against the org's shared daily budget.
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      // User testing writes. The exposure controls are the reason `risk`
+      // exists as a separate axis from `readOnly`: rotating a link and
+      // dismissing a finding are both writes, and only one of them can lock
+      // people out of a live scenario.
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "rotate_user_testing_link",
+      "upsert_user_testing_member",
+      "remove_user_testing_member",
+      "rebind_user_testing_scenario",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));

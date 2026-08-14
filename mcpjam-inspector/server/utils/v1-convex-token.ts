@@ -20,6 +20,13 @@ import {
   assertBearerToken,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import {
+  agentAttributionCacheKey,
+  agentAttributionHeaders,
+  stableAgentAttribution,
+  volatileAgentAttribution,
+  type AgentAttribution,
+} from "./agent-attribution.js";
 
 const MINT_TIMEOUT_MS = 10_000;
 // Re-mint when the cached token is within this window of expiry. Generous
@@ -34,9 +41,13 @@ const FALLBACK_TTL_MS = 60 * 60 * 1000;
 
 type CachedToken = { token: string; expiresAt: number };
 
-// Keyed by `${workosUserId}:${organizationId}` — the only inputs to the mint.
-// Tokens live ~2h server-side, so steady-state v1 traffic pays the extra
-// Convex round-trip roughly once per user+org per token lifetime.
+// Keyed by `${workosUserId}:${organizationId}:${surface}:${apiKeyId}` — the
+// inputs BAKED INTO the minted token. Attribution is part of the key because a
+// token carries it: sharing one across surfaces would label a CLI write as
+// Slack, and a wrong attribution is worse than none because it gets believed.
+// Only the stable half of an attribution is ever cached (see
+// `agentAttributionCacheKey`), so this still costs roughly one mint per
+// user+org+surface per ~2h token lifetime.
 const mintedTokenCache = new Map<string, CachedToken>();
 const inflightMints = new Map<string, Promise<CachedToken>>();
 
@@ -58,7 +69,8 @@ function delegationContext(c: Context): {
 
 async function mintDelegatedToken(
   workosUserId: string,
-  organizationId: string
+  organizationId: string,
+  attribution?: AgentAttribution
 ): Promise<CachedToken> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -88,6 +100,12 @@ async function mintDelegatedToken(
         Authorization: `Bearer ${serviceToken}`,
         "x-mcpjam-acting-as": workosUserId,
         "x-mcpjam-acting-in-org": organizationId,
+        // Which agent channel drove this. Sent on the MINT, alongside the
+        // existing delegation headers and under the same trust rule: only a
+        // holder of the service token can reach this endpoint, so the backend
+        // can stamp these claims on the token knowing an API caller could not
+        // have forged them. See ./agent-attribution.ts.
+        ...agentAttributionHeaders(attribution),
       },
       signal: controller.signal,
     });
@@ -153,7 +171,9 @@ const DELEGATED_AUTH_METHODS = new Set([
 
 function usesDelegatedToken(c: Context): boolean {
   const authMethod = c.get("authMethod");
-  return typeof authMethod === "string" && DELEGATED_AUTH_METHODS.has(authMethod);
+  return (
+    typeof authMethod === "string" && DELEGATED_AUTH_METHODS.has(authMethod)
+  );
 }
 
 /**
@@ -220,7 +240,11 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);
-  return getConvexBearerForDelegation(workosUserId, organizationId);
+  return getConvexBearerForDelegation(
+    workosUserId,
+    organizationId,
+    stableAgentAttribution(c)
+  );
 }
 
 /**
@@ -248,10 +272,48 @@ export function getConvexBearerThunkForRequest(
 ): () => Promise<string> {
   if (usesDelegatedToken(c)) {
     const { workosUserId, organizationId } = delegationContext(c);
-    return () => getConvexBearerForDelegation(workosUserId, organizationId);
+    // Read the attribution now, while the context is live — the thunk runs
+    // long after this request is gone and must never touch `c`.
+    const attribution = stableAgentAttribution(c);
+    return () =>
+      getConvexBearerForDelegation(workosUserId, organizationId, attribution);
   }
   const bearer = assertBearerToken(c);
   return async () => bearer;
+}
+
+/**
+ * The bearer for EXECUTING AN APPROVED PROPOSAL, minted fresh rather than
+ * cached.
+ *
+ * This is the one path that carries the volatile half of an attribution — the
+ * proposal's action id, and the request id of the execution — because it is
+ * the one path where they are the point: they are the join between "a human
+ * pressed Run it in Slack" and the row that changed. A cached token cannot
+ * carry them (it would stamp one request's ids on every later request sharing
+ * the cache key), so this deliberately pays a mint.
+ *
+ * The cost is proportionate. Execution already re-verifies membership,
+ * self-dispatches a whole operation and spends; one extra token exchange is
+ * noise against that, and unlike the read path it does not repeat per poll.
+ *
+ * A JWT caller has nothing to mint, so they get their own bearer verbatim and
+ * no attribution — which is correct: they are not a delegated agent.
+ */
+export async function getConvexBearerForApprovedAction(
+  c: Context,
+  agentActionId: string
+): Promise<string> {
+  if (!usesDelegatedToken(c)) {
+    return assertBearerToken(c);
+  }
+  const { workosUserId, organizationId } = delegationContext(c);
+  const minted = await mintDelegatedToken(
+    workosUserId,
+    organizationId,
+    volatileAgentAttribution(c, agentActionId)
+  );
+  return minted.token;
 }
 
 /**
@@ -263,9 +325,12 @@ export function getConvexBearerThunkForRequest(
  */
 export async function getConvexBearerForDelegation(
   workosUserId: string,
-  organizationId: string
+  organizationId: string,
+  attribution?: AgentAttribution
 ): Promise<string> {
-  const cacheKey = `${workosUserId}:${organizationId}`;
+  const cacheKey = `${workosUserId}:${organizationId}:${agentAttributionCacheKey(
+    attribution
+  )}`;
 
   const cached = mintedTokenCache.get(cacheKey);
   if (cached && cached.expiresAt - Date.now() > EXPIRY_SLACK_MS) {
@@ -277,7 +342,11 @@ export async function getConvexBearerForDelegation(
     return (await inflight).token;
   }
 
-  const mintPromise = mintDelegatedToken(workosUserId, organizationId)
+  const mintPromise = mintDelegatedToken(
+    workosUserId,
+    organizationId,
+    attribution
+  )
     .then((minted) => {
       mintedTokenCache.set(cacheKey, minted);
       return minted;

@@ -1693,8 +1693,8 @@ export function NewSwarmCreateFlow({
               </h2>
               <p className="text-sm leading-relaxed text-muted-foreground">
                 Bring in personas you already have, describe new ones, or both.
-                We infer the goals, the clients and a scoring rubric — you
-                confirm all of it next.
+                We infer the goals, the clients and the grading — you confirm
+                all of it next.
               </p>
               {/* The requirement belongs here, once, above the pair: neither
                   source is optional on its own — `canContinue` needs one of
