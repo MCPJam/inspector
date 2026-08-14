@@ -14,6 +14,9 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { ActionableFindingsPanel } from "@/components/shared/actionable-insights/actionable-findings-panel";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { formatRunId } from "./helpers";
 import {
   buildOpenAiSubmissionReport,
@@ -656,15 +659,46 @@ export function RunDetailView({
     />
   ) : null;
 
+  // The same actionable findings the swarm and user-testing surfaces render,
+  // projected from THIS run's serverQuality by the backend. It sits above the
+  // existing triage card rather than replacing it: triage is per-tool
+  // reference, this is the ordered list of what to change.
+  const actionableInsights = useInsightsEnvelope({
+    kind: "eval_run",
+    suiteRunId: selectedRunDetails._id ? String(selectedRunDetails._id) : null,
+  });
+  const actionableFindingsPanel =
+    actionableInsights && actionableInsights.findings.length > 0 ? (
+      <ErrorBoundary name="eval-actionable-findings" fallback={null}>
+        <div className="mb-3 rounded-lg border border-border/50 bg-card/40">
+          <ActionableFindingsPanel
+            envelope={actionableInsights}
+            context={{ rerunLabel: "this eval suite" }}
+          />
+        </div>
+      </ErrorBoundary>
+    ) : null;
+
   const insightRail = (
     <RunInsightRail
-      triageCard={serverQualityTriage}
+      triageCard={
+        actionableFindingsPanel ? (
+          <>
+            {actionableFindingsPanel}
+            {serverQualityTriage}
+          </>
+        ) : (
+          serverQualityTriage
+        )
+      }
       goalCompletionCard={goalCompletionPanel}
       embedded={embeddedInResultsSplit}
     />
   );
 
-  const hasInsightContent = Boolean(serverQualityTriage || goalCompletionPanel);
+  const hasInsightContent = Boolean(
+    serverQualityTriage || goalCompletionPanel || actionableFindingsPanel
+  );
 
   const triageFixCount = useMemo(
     () =>

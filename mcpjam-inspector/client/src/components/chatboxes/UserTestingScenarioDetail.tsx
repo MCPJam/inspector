@@ -74,6 +74,8 @@ import {
 import { buildChatboxLink } from "@/lib/chatbox-session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { ActionableFindingsPanel } from "@/components/shared/actionable-insights/actionable-findings-panel";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 
 /**
  * One User Testing scenario.
@@ -122,6 +124,13 @@ export function UserTestingScenarioDetail({
   const [isDeleting, setIsDeleting] = useState(false);
   const [nameEnvironmentOpen, setNameEnvironmentOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
+
+  // Actionable findings over the latest analyzed window. Members-only at the
+  // backend, so a guest viewer simply gets nothing rather than a refusal.
+  const actionableInsights = useInsightsEnvelope({
+    kind: "scenario",
+    chatboxId: isAuthenticated ? chatbox.chatboxId : null,
+  });
 
   // The environment row itself — for `origin` and `revision`, which the
   // chatbox settings envelope deliberately doesn't carry. Host-backed
@@ -814,6 +823,24 @@ export function UserTestingScenarioDetail({
                     name="user-testing-insights-rail"
                     fallback={null}
                   >
+                    {/* Repair tasks above the pattern rail: what to change,
+                        then what concentrated. Members only — the backend
+                        query refuses share-link guests outright. */}
+                    <ActionableFindingsPanel
+                      envelope={actionableInsights}
+                      context={{ rerunLabel: "this user-testing scenario" }}
+                      onOpenSession={(threadId) => {
+                        navigate(
+                          buildUserTestingScenarioPath(chatbox.chatboxId, {
+                            tab: "sessions",
+                            session: threadId,
+                            sel: selParam ?? undefined,
+                            view,
+                          }),
+                          { replace: true },
+                        );
+                      }}
+                    />
                     <RunInsightsProvider
                       surface={{
                         kind: "chatbox",

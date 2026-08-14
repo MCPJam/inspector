@@ -41,6 +41,9 @@ import {
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { SwarmTargetHealthStrip } from "@/components/swarms/swarm-target-health-strip";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { ActionableFindingsPanel } from "@/components/shared/actionable-insights/actionable-findings-panel";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
@@ -132,6 +135,15 @@ export function SwarmRunDetail({
       ? { projectId, swarmRunGroupId: waveGroupId }
       : "skip") as any
   ) as SwarmWaveSignals | null | undefined;
+
+  // Actionable findings resolve through ANY run of the wave — the backend
+  // walks from the run to its wave, so the first run is as good a handle as
+  // any and keeps this a single subscription rather than one per run.
+  const actionableInsights = useInsightsEnvelope({
+    kind: "journey_run",
+    projectId: queryable ? projectId : null,
+    runId: wave?.runs[0]?.runId ?? null,
+  });
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -419,7 +431,25 @@ export function SwarmRunDetail({
                     onOpenSessionsTab={() => handleTabChange("sessions")}
                     urlSelection={urlSelection}
                     onSelectionChange={handleSelectionChange}
-                    recommendationsSlot={<RunInsightsRecommendations />}
+                    recommendationsSlot={
+                      <>
+                        {/* Repair tasks first, patterns beneath: the rail
+                            explains what concentrated, this says what to
+                            change. Own boundary so an undeployed backend
+                            hides it instead of taking the tab down. */}
+                        <ErrorBoundary
+                          name="swarm-actionable-findings"
+                          fallback={null}
+                        >
+                          <ActionableFindingsPanel
+                            envelope={actionableInsights}
+                            context={{ rerunLabel: "this swarm wave" }}
+                            onOpenSession={handleOpenSession}
+                          />
+                        </ErrorBoundary>
+                        <RunInsightsRecommendations />
+                      </>
+                    }
                     checksExtras={
                       wave.runs.some((run) => run.findings.length > 0) ? (
                         <SwarmWaveFindingsList
