@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   compareThreadsForUsageList,
@@ -41,13 +48,67 @@ interface ChatboxUsagePanelProps {
  * surfaces share one body instead of two divergent copies of it.
  */
 /**
- * The scenario's traffic policy, fixed. With Insights on its own mount there
- * is no filter UI left here — no chips, no diagram, no view toggle — so the
- * only chip in play is the force-applied hide-synthetic one, and a whole flow
- * controller (view state, selection, chip ownership, a window keydown
- * listener) would be carried for nothing.
+ * The scenario's traffic policy: the force-applied hide-synthetic chip that
+ * every User Testing number is computed over. Insights own the rich chip UI on
+ * their own mount, so this panel carries no flow controller — just this policy
+ * plus the one rating filter below.
  */
-const SESSIONS_FILTER = withHideSynthetic(EMPTY_USAGE_FILTER);
+const SESSIONS_TRAFFIC_FILTER = withHideSynthetic(EMPTY_USAGE_FILTER);
+
+/**
+ * Rating filter options.
+ *
+ * Each bucket describes the session's WORST turn, matching the backend's
+ * single aggregation policy — "Low" means at least one turn was rated 1–2,
+ * not that the average was low.
+ */
+type RatingFilterValue = "all" | "low" | "neutral" | "high" | "none";
+
+const RATING_FILTER_LABELS: Record<RatingFilterValue, string> = {
+  all: "All ratings",
+  low: "Low (≤2)",
+  neutral: "Neutral (3)",
+  high: "High (≥4)",
+  none: "No feedback",
+};
+
+/**
+ * Fold the rating selection into a base filter.
+ *
+ * `none` is a PRESET (`no_feedback`), not a bucket chip: "nobody rated this"
+ * is the absence of a record, and the preset is the shared expression of that
+ * on both sides of the wire. The other three are `feedbackBucket` chips.
+ *
+ * Applied to two different bases: the traffic policy
+ * (`SESSIONS_TRAFFIC_FILTER`) for the query and the client-side match, and
+ * `EMPTY_USAGE_FILTER` for the list's empty-state copy — the list must see
+ * the USER'S selection (so "Low (≤2)" with no matches says "no sessions match
+ * the current filters", not "No conversations yet") but not the force-applied
+ * hide-synthetic policy chip, which would claim a filter the panel never
+ * showed.
+ */
+function buildRatingFilter(
+  rating: RatingFilterValue,
+  base: typeof SESSIONS_TRAFFIC_FILTER
+) {
+  if (rating === "all") return base;
+  if (rating === "none") {
+    return { ...base, preset: "no_feedback" as const };
+  }
+  const value =
+    rating === "low"
+      ? "negative"
+      : rating === "neutral"
+      ? "neutral"
+      : "positive";
+  return {
+    ...base,
+    chips: [
+      ...base.chips,
+      { kind: "dimension" as const, key: "feedbackBucket" as const, value },
+    ],
+  };
+}
 
 export function ChatboxUsagePanel({
   chatbox,
@@ -73,30 +134,41 @@ export function ChatboxUsagePanel({
   const setSelectedThreadId = useCallback(
     (threadId: string | null) =>
       setSelection({ chatboxId: chatbox.chatboxId, threadId }),
-    [chatbox.chatboxId],
+    [chatbox.chatboxId]
+  );
+
+  const [ratingFilter, setRatingFilter] = useState<RatingFilterValue>("all");
+  const sessionsFilter = useMemo(
+    () => buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
+    [ratingFilter]
+  );
+  // The user-visible half of the filter, for the list's empty-state copy.
+  const ratingOnlyFilter = useMemo(
+    () => buildRatingFilter(ratingFilter, EMPTY_USAGE_FILTER),
+    [ratingFilter]
   );
 
   const { threads } = useUsageInsights({
     sourceType: "chatbox",
     sourceId: chatbox.chatboxId,
-    filters: SESSIONS_FILTER,
+    filters: sessionsFilter,
     // Sessions only: the breakdown backs Insights, which is a different mount
     // now, so subscribing to it here would scan for a view nobody is looking
-    // at. (The thread-list query takes no filters — `filters` above only ever
-    // reaches the breakdown query.)
+    // at.
     threadsEnabled: true,
     breakdownEnabled: false,
   });
 
-  // Apply filter state here (chips + preset) so chips like "Hide synthetic"
-  // actually narrow the list — ShareUsageThreadList renders provided threads
-  // verbatim when the panel owns the data, so filtering has to happen here.
+  // Belt over the server's braces. The query already applied `sessionsFilter`
+  // inside its index walk (which is what makes the filter reach past the
+  // 100-row page); re-checking here catches a live update that arrives after
+  // the page was built — a session whose rating changes under an open filter.
   const sortedThreads = useMemo(() => {
     if (!threads) return undefined;
     return threads
-      .filter((t) => threadMatchesFilterState(t, SESSIONS_FILTER))
+      .filter((t) => threadMatchesFilterState(t, sessionsFilter))
       .sort(compareThreadsForUsageList);
-  }, [threads]);
+  }, [threads, sessionsFilter]);
 
   // Reset thread selection only on chatbox *switches*. Guarded by comparing
   // against the previous chatboxId so StrictMode's dev replay does not wipe a
@@ -158,18 +230,43 @@ export function ChatboxUsagePanel({
             <div className="flex h-full flex-col overflow-hidden">
               {/* min-h matches the thread-detail header across the resize
                   handle so the two border-b lines read as one. */}
-              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2" />
+              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+                <Select
+                  value={ratingFilter}
+                  onValueChange={(value) =>
+                    setRatingFilter(value as RatingFilterValue)
+                  }
+                >
+                  <SelectTrigger
+                    data-testid="chatbox-sessions-rating-filter"
+                    className="h-8 w-[min(100%,10rem)] text-xs"
+                    aria-label="Filter sessions by rating"
+                  >
+                    <SelectValue placeholder="All ratings" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(
+                      Object.keys(RATING_FILTER_LABELS) as RatingFilterValue[]
+                    ).map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {RATING_FILTER_LABELS[value]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 {/* `filterState` reaches an already-filtered list, so it only
-                    feeds the empty-state copy. Handing it the force-applied
-                    policy chip would tell a scenario with no visitor traffic
-                    that "no sessions match the current filters" and offer to
-                    clear chart chips this panel does not have. */}
+                    feeds the empty-state copy. It carries the rating selection
+                    (so an active filter with no matches reads as such) but NOT
+                    the force-applied hide-synthetic policy chip, which would
+                    tell a scenario with no visitor traffic that "no sessions
+                    match the current filters". */}
                 <ShareUsageThreadList
                   threads={sortedThreads}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={setSelectedThreadId}
-                  filterState={EMPTY_USAGE_FILTER}
+                  filterState={ratingOnlyFilter}
                 />
               </div>
             </div>
@@ -182,7 +279,7 @@ export function ChatboxUsagePanel({
                   threadId={selectedThreadId}
                   sessionLink={`${getShareableAppOrigin()}${buildUserTestingScenarioPath(
                     chatbox.chatboxId,
-                    { session: selectedThreadId },
+                    { tab: "sessions", session: selectedThreadId }
                   )}`}
                   promote={
                     chatbox.projectId

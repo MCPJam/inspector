@@ -153,15 +153,20 @@ export function useSuiteRunCostEstimate({
   caseIds,
   iterationOverride,
   planCount,
+  environmentIds,
 }: {
   enabled: boolean;
   suiteId: string | null | undefined;
   caseIds?: readonly string[];
   iterationOverride?: number;
   planCount?: number;
+  environmentIds?: readonly string[];
 }): RunCostEstimateState {
   // Structured for the same reason as `modelsKey` below.
   const caseIdsKey = caseIds ? JSON.stringify([...caseIds]) : "";
+  const environmentIdsKey = environmentIds
+    ? JSON.stringify([...environmentIds])
+    : "";
   const args = useMemo(
     () =>
       suiteId
@@ -170,10 +175,13 @@ export function useSuiteRunCostEstimate({
             ...(caseIds && caseIds.length > 0 ? { caseIds: [...caseIds] } : {}),
             ...(iterationOverride !== undefined ? { iterationOverride } : {}),
             ...(planCount !== undefined ? { planCount } : {}),
+            ...(environmentIds && environmentIds.length > 0
+              ? { environmentIds: [...environmentIds] }
+              : {}),
           }
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [suiteId, caseIdsKey, iterationOverride, planCount],
+    [suiteId, caseIdsKey, environmentIdsKey, iterationOverride, planCount],
   );
   return useFetchOnOpenEstimate({
     enabled: enabled && Boolean(suiteId),
@@ -181,7 +189,7 @@ export function useSuiteRunCostEstimate({
     args,
     argsKey: `${suiteId ?? ""}|${caseIdsKey}|${iterationOverride ?? ""}|${
       planCount ?? ""
-    }`,
+    }|${environmentIdsKey}`,
   });
 }
 

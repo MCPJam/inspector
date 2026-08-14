@@ -54,6 +54,10 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => mockConvexAuthState,
+  // `useChatboxTurnRating` runs unconditionally (hooks rule) even when the
+  // scenario has per-turn ratings off, so the double has to answer both.
+  useMutation: () => vi.fn().mockResolvedValue({ status: "ok" }),
+  useQuery: () => undefined,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -952,6 +956,17 @@ describe("ChatboxChatPage", () => {
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
 
+    // Settle the gate before reporting the 401. A server joins the authorizable
+    // set only once the requirement probe has answered for it, and it verifies
+    // its stored credential after that — so clicking earlier races both, and
+    // the resulting state depends on which promise won. An unblocked composer
+    // is the observable "everything has settled" signal.
+    await waitFor(() =>
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ chatboxComposerBlocked: false })
+      )
+    );
+
     await userEvent.click(
       screen.getByRole("button", { name: "Trigger OAuth" })
     );
@@ -1018,6 +1033,13 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage />);
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+
+    // See above: let the probe answer and the credentials verify before the 401.
+    await waitFor(() =>
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ chatboxComposerBlocked: false })
+      )
+    );
 
     await userEvent.click(
       screen.getByRole("button", { name: "Trigger targeted OAuth" })
@@ -1616,6 +1638,129 @@ describe("ChatboxChatPage", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Authorize" })
+      ).toBeInTheDocument();
+    });
+
+    it("still prompts when the 401 beats the requirement probe", async () => {
+      // A server joins the authorizable set only once the probe answers for it,
+      // and the probe retries — so a real 401 can arrive while the set is still
+      // empty. That escalation used to be dropped on the floor: it matched no
+      // server and returned silently. For a `discover` row this is the whole
+      // ballgame, because a runtime 401 is its only route to a prompt.
+      let resolveProbe: (value: unknown) => void = () => {};
+      mockCheckHostedServerOAuthRequirement.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveProbe = resolve;
+          })
+      );
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" })
+      );
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" })
+      ).not.toBeInTheDocument();
+
+      await act(async () => {
+        resolveProbe({
+          useOAuth: true,
+          requiresAuthorization: false,
+          effectiveAuthMethod: "discover",
+          serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+        });
+      });
+
+      expect(
+        await screen.findByRole("heading", { name: "Authorization Required" })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Authorize" })
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the runtime prompt when a late probe answer rebuilds the gate", async () => {
+      // The probe answering flips `authorizationRequiredUpfront`, which rebuilds
+      // the status map from the descriptors. That rebuild must not retract a
+      // prompt the wire already proved is needed. It used to: the ids meant to
+      // survive it were collected inside a `setState` updater, which React runs
+      // lazily during render, so the guarding set was still empty when read.
+      let resolveProbe: (value: unknown) => void = () => {};
+      mockCheckHostedServerOAuthRequirement.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveProbe = resolve;
+          })
+      );
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" })
+      );
+
+      // "No authorization needed" is the weakest possible answer, and still not
+      // enough to overturn a 401 already observed on the wire.
+      await act(async () => {
+        resolveProbe({
+          useOAuth: true,
+          requiresAuthorization: false,
+          effectiveAuthMethod: "discover",
+          serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+        });
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(
+        await screen.findByRole("heading", { name: "Authorization Required" })
+      ).toBeInTheDocument();
+    });
+
+    it("does not let a verification that started earlier erase a newer 401", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // Hold the credential check open so the 401 lands while it is in flight.
+      let resolveValidation: (value: unknown) => void = () => {};
+      mockValidateHostedServer.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveValidation = resolve;
+          })
+      );
+      writeSharedScenario();
+
+      render(<ChatboxChatPage />);
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+
+      await waitFor(() => expect(mockValidateHostedServer).toHaveBeenCalled());
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" })
+      );
+      expect(
+        await screen.findByRole("heading", { name: "Authorization Required" })
+      ).toBeInTheDocument();
+
+      // The verification now succeeds — but it was asking about a credential the
+      // 401 has since disproved, so its answer is stale and must not stand.
+      await act(async () => {
+        resolveValidation({ success: true, status: "connected", initInfo: null });
+      });
+
+      expect(
+        screen.getByRole("heading", { name: "Authorization Required" })
       ).toBeInTheDocument();
     });
 

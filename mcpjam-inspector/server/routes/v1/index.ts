@@ -17,6 +17,7 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
+import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
 import resources from "./resources.js";
@@ -27,14 +28,21 @@ import harness from "./harness.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
 import journeys from "./journeys.js";
+import personas from "./personas.js";
+import swarms from "./swarms.js";
+import swarmInsights from "./swarm-insights.js";
+import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
+import userTesting from "./user-testing.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import organizations from "./organizations.js";
 import projects from "./projects.js";
+import capabilities from "./capabilities.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
@@ -54,7 +62,6 @@ v1.route("/", publicModels);
 // the /api/web/* MCP operation routes.
 v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
-
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
   // allowlisted platform-tool routes; everything else is rejected at the
@@ -67,6 +74,7 @@ v1.use("*", async (c, next) => {
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
 v1.route("/", resources);
@@ -87,7 +95,22 @@ v1.route("/", plugins);
 // from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
 // Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
 // none should — a journey run spends hosted-model credits.
+// GENERATION MOUNTS FIRST, and the order is load-bearing rather than
+// stylistic: `/personas/generate` and `/journeys/generate` are static segments
+// that would otherwise be matched by the `:personaId` / `:journeyId` params in
+// the routers below, turning both endpoints into 404s for a resource called
+// "generate". Registering them ahead of the parameterised routes is the fix;
+// keeping them in their own module is what makes the requirement visible.
+v1.route("/", swarmGenerateV1);
 v1.route("/", journeys);
+// Personas and swarm containers — the authoring half of Swarms. Same beta
+// gate, same guest denial: authoring is a member-only surface end to end.
+v1.route("/", personas);
+v1.route("/", swarms);
+// The insights layer over runs: scorecards, findings, wave insights. Reads are
+// ungated (an empty result leaks nothing); REQUESTING wave insights spends
+// against the org's shared daily ledger.
+v1.route("/", swarmInsights);
 // Scenarios — publishing a project environment for user testing. WRITES, so
 // they live here rather than in the read-proxy catalog. Publishing is behind
 // the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
@@ -95,6 +118,11 @@ v1.route("/", journeys);
 // and the existing chatbox guest GETs (which share-link flows depend on) stay
 // exactly as they are until a guest security review says otherwise.
 v1.route("/", scenarios);
+// User testing — everything you do with a scenario ONCE IT EXISTS: read what
+// it produced, and control who can reach it. `scenarios.ts` above owns
+// publishing (keyed by environment, because the scenario does not exist yet);
+// this is keyed by the scenario. Guest-DENIED by default, same as publishing.
+v1.route("/", userTesting);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.
@@ -108,7 +136,17 @@ v1.route("/", agent);
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
+// Organizations — READ ONLY, and the only organization route there is. It
+// exists so a caller can discover the `organizationId` that `/v1/projects`
+// filters by; org/member/role/billing writes stay off every machine surface.
+// Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
+v1.route("/", organizations);
 v1.route("/", projects);
+// What the caller may do here, asked before they try. A planning read for
+// agents on the static surfaces (MCP catalog, CLI tree, agent registry), which
+// cannot advertise a per-org beta. Guest-DENIED by default like every other
+// project read.
+v1.route("/", capabilities);
 v1.route("/", tunnels);
 
 v1.onError((error, c) => v1OnError(error, c));

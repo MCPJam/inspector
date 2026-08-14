@@ -11,7 +11,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Loader2, Users } from "lucide-react";
+import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { HomeTab } from "./components/HomeTab";
@@ -36,6 +36,7 @@ import {
   useViewerProjectRole,
 } from "./hooks/useProjects";
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
+import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
@@ -107,6 +108,7 @@ import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
+import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -248,6 +250,7 @@ import {
   useHostMutations,
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
+import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -572,6 +575,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <SwarmsRoute />;
     case "environments":
       return <EnvironmentsRoute />;
+    case "sessions":
+      return <SessionsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -819,10 +824,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-        ? "pending"
-        : routeHosts.some((h) => h.hostId === idShapedHostId)
-          ? "live"
-          : "dead";
+      ? "pending"
+      : routeHosts.some((h) => h.hostId === idShapedHostId)
+      ? "live"
+      : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -1417,8 +1422,8 @@ export function ChatboxesRoute() {
   // a router (the legacy hash path), where `useParams` yields {} — fall back
   // to the pathname there. Deliberately NOT `useLocation`: that throws its
   // router invariant on the no-router path.
-  const rawScenarioId =
-    params.scenarioId ?? scenarioIdFromPathname(getRouteFallbackPathname());
+  const pathname = getRouteFallbackPathname();
+  const rawScenarioId = params.scenarioId ?? scenarioIdFromPathname(pathname);
   // `new` is the create route, never a scenario id. The dedicated
   // `user-testing/new` route already keeps it out of `params.scenarioId`, but
   // reserving the word here means route-ordering can't quietly turn the create
@@ -1434,7 +1439,8 @@ export function ChatboxesRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       scenarioId={scenarioId}
-      createOpen={isUserTestingCreatePath(getRouteFallbackPathname())}
+      createOpen={isUserTestingCreatePath(pathname)}
+      editOpen={isUserTestingEditPath(pathname)}
     />
   );
 }
@@ -1443,16 +1449,24 @@ function isUserTestingCreatePath(pathname: string): boolean {
   return pathname.replace(/\/+$/, "") === "/user-testing/new";
 }
 
+function isUserTestingEditPath(pathname: string): boolean {
+  return /^\/user-testing\/[^/]+\/edit$/.test(pathname.replace(/\/+$/, ""));
+}
+
 function getRouteFallbackPathname(): string {
   return typeof window === "undefined" ? "" : window.location.pathname;
 }
 
 /**
- * `/user-testing/<id>` → `<id>`. `/user-testing/new` is the create route, not
- * a scenario — it must never reach the chatbox query as an id.
+ * `/user-testing/<id>` or `/user-testing/<id>/edit` → `<id>`.
+ * `/user-testing/new` is the create route, not a scenario — it must never
+ * reach the chatbox query as an id.
  */
 function scenarioIdFromPathname(pathname: string): string | null {
-  const match = pathname.match(/^\/user-testing\/([^/]+)\/?$/);
+  const normalized = pathname.replace(/\/+$/, "");
+  const editMatch = normalized.match(/^\/user-testing\/([^/]+)\/edit$/);
+  if (editMatch?.[1] && editMatch[1] !== "new") return editMatch[1];
+  const match = normalized.match(/^\/user-testing\/([^/]+)$/);
   const segment = match?.[1];
   if (!segment || segment === "new") return null;
   return segment;
@@ -1625,6 +1639,52 @@ export function EnvironmentsRoute() {
       canManage={canManage}
       isAuthenticated={isAuthenticated}
     />
+  );
+}
+
+export function SessionsRoute() {
+  // The cross-surface Sessions feed. Flag-gated while the backing backend
+  // queries (`sessionsFeed:*`) roll out; row-level visibility (who sees whose
+  // Playground sessions, swarm's member gate) is entirely server-side, so no
+  // role gate here — the backend fail-softs a non-member to an empty page.
+  const { convexProjectId } = useAppRouteContext();
+  const unifiedSessionsEnabled = useUnifiedSessionsEnabledState();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /sessions directly. (Same tradeoff as SwarmsRoute.)
+  if (unifiedSessionsEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (unifiedSessionsEnabled === undefined) {
+    return null;
+  }
+
+  if (!convexProjectId) {
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Sessions needs a project"
+        description="Sign in and select a project to browse its sessions across Playground, User Testing, Evals, and Swarms."
+      />
+    );
+  }
+
+  return (
+    // Dark-ship guard: `usePaginatedQuery` against a not-yet-deployed backend
+    // query throws. Degrade to copy instead of white-screening the page.
+    <ErrorBoundary
+      name="sessions-panel"
+      fallback={
+        <EmptyState
+          icon={MessageSquare}
+          title="Sessions isn't available yet"
+          description="This project's deployment doesn't serve the unified sessions feed yet. It becomes available with the next backend release."
+        />
+      }
+    >
+      <SessionsPanel key={convexProjectId} projectId={convexProjectId} />
+    </ErrorBoundary>
   );
 }
 
@@ -2677,6 +2737,7 @@ export default function App() {
     organizationId: activeOrganizationId,
   });
   usePostHogOrgContext(activeOrganizationId);
+  useSentryOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
@@ -2951,7 +3012,7 @@ export default function App() {
   // hook for the full chain.
   const hostedClientCapabilities = useHostedClientCapabilities(
     activeHost?.clientCapabilities,
-    activeProject?.clientConfig,
+    activeProject?.clientConfig
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const projectServerConfigDto = useQuery(

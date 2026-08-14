@@ -512,7 +512,7 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 // PUR-11 seed backstop reads live catalog templates (chatgpt/claude/
-// claude-code) to seed a guest's first 3 clients. `getCatalogHost` /
+// cursor) to seed a guest's first 3 clients. `getCatalogHost` /
 // `getCatalogTemplate` are the REAL sdk functions running against this fake
 // "live" catalog — only the network-fetching hook is mocked.
 const seedCatalogFixture = {
@@ -551,18 +551,18 @@ const seedCatalogFixture = {
         clientCapabilities: {},
         hostContext: {},
       },
-      "claude-code": {
-        id: "claude-code",
-        label: "Claude Code",
-        provenance: "vendor-doc",
-        rendersMcpApps: false,
-        modelId: "anthropic/claude-haiku-4.5",
+      cursor: {
+        id: "cursor",
+        label: "Cursor",
+        provenance: "probe",
+        rendersMcpApps: true,
+        modelId: "anthropic/claude-sonnet-4.5",
         systemPrompt: "",
-        temperature: 1,
+        temperature: 0.7,
         requireToolApproval: false,
         serverIds: [],
         optionalServerIds: [],
-        connectionDefaults: { headers: {}, requestTimeout: 10000 },
+        connectionDefaults: { headers: {}, requestTimeout: 30000 },
         clientCapabilities: {},
         hostContext: {},
       },
@@ -695,9 +695,9 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
-  // PUR-11: guests land with 3 pre-selected clients (ChatGPT, Claude, Claude
-  // Code) instead of a single blank "MCPJam" host + a toggle to find first.
-  it("seeds 3 default clients (ChatGPT, Claude, Claude Code) for empty projects", async () => {
+  // PUR-11: guests land with 3 pre-selected clients (ChatGPT, Claude, Cursor)
+  // instead of a single blank "MCPJam" host + a toggle to find first.
+  it("seeds 3 default clients (ChatGPT, Claude, Cursor) for empty projects", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     mockCreateHost
@@ -710,8 +710,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-claude-code",
-        hostConfigId: "h-claude-code-config",
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
       });
 
     // So the grid-render assertion below is actually wired to what the seed
@@ -736,11 +736,11 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockCreateHost).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "default",
-        name: "Claude Code",
+        name: "Cursor",
         // The seed pins each template's default model — a modelless host
         // breaks synthetic/swarm runs (no picker fallback on that path).
         input: expect.objectContaining({
-          modelId: "anthropic/claude-haiku-4.5",
+          modelId: "anthropic/claude-sonnet-4.5",
         }),
       })
     );
@@ -754,7 +754,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
       "h-chatgpt",
       "h-claude",
-      "h-claude-code",
+      "h-cursor",
     ]);
 
     // The acceptance criterion end to end: once the host-list query catches
@@ -770,13 +770,13 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.hostList = [
       { hostId: "h-chatgpt", name: "ChatGPT" },
       { hostId: "h-claude", name: "Claude" },
-      { hostId: "h-claude-code", name: "Claude Code" },
+      { hostId: "h-cursor", name: "Cursor" },
     ];
     multiHostFixture.hosts = {
       "h-chatgpt": makeHost("h-chatgpt", "ChatGPT", { hostStyle: "chatgpt" }),
       "h-claude": makeHost("h-claude", "Claude", { hostStyle: "claude" }),
-      "h-claude-code": makeHost("h-claude-code", "Claude Code", {
-        hostStyle: "claude-code",
+      "h-cursor": makeHost("h-cursor", "Cursor", {
+        hostStyle: "cursor",
       }),
     };
     rerender(<PlaygroundMain {...defaultProps} />);
@@ -807,8 +807,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-claude-code",
-        hostConfigId: "h-claude-code-config",
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
       });
 
     render(<PlaygroundMain {...defaultProps} />);
@@ -820,7 +820,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
         "h-chatgpt",
         "h-claude",
-        "h-claude-code",
+        "h-cursor",
       ]);
     });
   });
@@ -968,8 +968,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-claude-code",
-        hostConfigId: "h-claude-code-config",
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
       });
 
     render(<PlaygroundMain {...defaultProps} />);
@@ -981,7 +981,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
         "h-chatgpt",
         "h-claude",
-        "h-claude-code",
+        "h-cursor",
       ]);
     });
   });
@@ -1018,7 +1018,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     await act(async () => {
       releaseCreate[0]({ hostId: "h-chatgpt" });
       releaseCreate[1]({ hostId: "h-claude" });
-      releaseCreate[2]({ hostId: "h-claude-code" });
+      releaseCreate[2]({ hostId: "h-cursor" });
     });
 
     await waitFor(() => {
@@ -1029,7 +1029,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockSetSelectedHostIds).not.toHaveBeenCalledWith([
       "h-chatgpt",
       "h-claude",
-      "h-claude-code",
+      "h-cursor",
     ]);
   });
 
@@ -1068,7 +1068,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     await act(async () => {
       releaseCreate[0]({ hostId: "h-chatgpt" });
       releaseCreate[1]({ hostId: "h-claude" });
-      releaseCreate[2]({ hostId: "h-claude-code" });
+      releaseCreate[2]({ hostId: "h-cursor" });
     });
 
     // The lineup still lands, and the auto-picked lead is kept rather than
@@ -1077,7 +1077,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(loadSelectedHostIds("default")).toEqual([
         "h-chatgpt",
         "h-claude",
-        "h-claude-code",
+        "h-cursor",
       ]);
     });
     expect(readPreviewedHostId()).toBe("h-chatgpt");
@@ -1096,8 +1096,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-first-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-first-claude-code",
-        hostConfigId: "h-first-claude-code-config",
+        hostId: "h-first-cursor",
+        hostConfigId: "h-first-cursor-config",
       })
       .mockResolvedValueOnce({
         hostId: "h-second-chatgpt",
@@ -1108,8 +1108,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-second-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-second-claude-code",
-        hostConfigId: "h-second-claude-code-config",
+        hostId: "h-second-cursor",
+        hostConfigId: "h-second-cursor-config",
       });
 
     const { rerender } = render(<PlaygroundMain {...defaultProps} />);
@@ -1121,7 +1121,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
       "h-first-chatgpt",
       "h-first-claude",
-      "h-first-claude-code",
+      "h-first-cursor",
     ]);
 
     rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
@@ -1141,12 +1141,12 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect.objectContaining({ projectId: "second", name: "Claude" })
     );
     expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "second", name: "Claude Code" })
+      expect.objectContaining({ projectId: "second", name: "Cursor" })
     );
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
       "h-second-chatgpt",
       "h-second-claude",
-      "h-second-claude-code",
+      "h-second-cursor",
     ]);
   });
 

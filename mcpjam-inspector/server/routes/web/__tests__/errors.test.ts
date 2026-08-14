@@ -7,13 +7,14 @@ vi.mock("@sentry/node", () => ({
 }));
 import * as Sentry from "@sentry/node";
 const captureException = vi.mocked(Sentry.captureException);
-import { originOf } from "@mcpjam/sdk";
+import { MCPAuthError, originOf } from "@mcpjam/sdk";
 import { InsufficientScopeError } from "@modelcontextprotocol/client";
 
 import {
   ErrorCode,
   WebRouteError,
   mapRuntimeError,
+  mapTargetServerError,
   webErrorFromRoute,
 } from "../errors.js";
 import { isOriginCaptureHandled } from "../../../utils/error-origin-capture.js";
@@ -42,6 +43,101 @@ describe("mapRuntimeError", () => {
     expect(mapped.details?.oauthRequired).toBeUndefined();
   });
 
+  describe("upstream auth rejections", () => {
+    // The SDK raises this exact shape from `MCPClientManager`'s connect path
+    // (`new MCPAuthError('Authentication failed for MCP server "…": …',
+    // authCheck.statusCode, { cause })`). 3,706 of them landed on
+    // `/api/web/tools/list` in 30 days, every one reported as a 500
+    // INTERNAL_ERROR — an MCPJam fault code for the user's server refusing our
+    // credentials.
+    function upstreamAuthError(statusCode?: number, detail = "") {
+      return new MCPAuthError(
+        `Authentication failed for MCP server "acme": Streamable HTTP error: ${detail}`,
+        statusCode,
+      );
+    }
+
+    // The spec's authorization error table is identical in 2025-03-26,
+    // 2025-06-18, 2025-11-25, 2026-07-28 and draft: 401 (token invalid), 403
+    // (insufficient permissions), 400 (malformed authorization request). All
+    // three are legitimate upstream auth rejections, so none of them may be
+    // reported as an MCPJam internal error.
+    it.each([401, 403, 400])(
+      "never reports an upstream %i auth rejection as 500 INTERNAL_ERROR",
+      (statusCode) => {
+        const mapped = mapRuntimeError(upstreamAuthError(statusCode));
+
+        expect(mapped.status).not.toBe(500);
+        expect(mapped.code).not.toBe(ErrorCode.INTERNAL_ERROR);
+      },
+    );
+
+    it("never reports a status-less auth rejection as 500 INTERNAL_ERROR", () => {
+      // `isAuthError` returns no statusCode when it recognized the failure by
+      // message alone, so the MCPAuthError the SDK builds carries none.
+      const mapped = mapRuntimeError(upstreamAuthError(undefined));
+
+      expect(mapped.status).not.toBe(500);
+      expect(mapped.code).not.toBe(ErrorCode.INTERNAL_ERROR);
+    });
+
+    it("keeps a clean upstream 401 on the existing 401 UNAUTHORIZED branch", () => {
+      const mapped = mapRuntimeError(upstreamAuthError(401));
+
+      expect(mapped.status).toBe(401);
+      expect(mapped.code).toBe(ErrorCode.UNAUTHORIZED);
+    });
+
+    it.each([403, 400, undefined])(
+      "maps an upstream %s auth rejection to 403 UPSTREAM_AUTH_FAILED",
+      (statusCode) => {
+        const mapped = mapRuntimeError(upstreamAuthError(statusCode));
+
+        expect(mapped.status).toBe(403);
+        expect(mapped.code).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+        expect(mapped.details?.upstreamAuthRequired).toBe(true);
+      },
+    );
+
+    it("does NOT widen the guest-retry 401 surface", () => {
+      // `authFetch` retries any 401 from `/api/web/*` for an actor with no
+      // WorkOS session (`shouldRetryApiAuth401`) by force-refreshing the guest
+      // token and replaying — and the hosted `webError` envelope cannot send
+      // the `X-MCP-Auth-Required: oauth` header that suppresses it. Sending
+      // these thousands of upstream rejections back as 401 would put every
+      // guest through a refresh + replay that cannot fix the failure.
+      for (const statusCode of [403, 400, undefined]) {
+        expect(mapRuntimeError(upstreamAuthError(statusCode)).status).not.toBe(
+          401,
+        );
+      }
+    });
+
+    it("still carries the normalized block and the effective origin", () => {
+      // The whole point of moving off INTERNAL_ERROR is attribution, so the
+      // envelope must keep saying whose failure this was: `user_config`, which
+      // is also what keeps the strict Sentry policy from paging us for it.
+      const mapped = mapRuntimeError(upstreamAuthError(403));
+
+      expect(mapped.normalized?.slug).toBeTruthy();
+      expect(originOf(mapped.normalized)).toBe("user_config");
+      expect(mapped.origin).toBe("user_config");
+    });
+
+    it("outranks transport noise quoted inside the auth message", () => {
+      // The connect path quotes BOTH the Streamable HTTP and the SSE failure in
+      // one message, so an auth rejection routinely carries "fetch failed" or
+      // "timed out" text. The SDK already classified it from the status codes;
+      // a substring match must not override that.
+      expect(
+        mapRuntimeError(upstreamAuthError(403, "fetch failed")).code,
+      ).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+      expect(
+        mapRuntimeError(upstreamAuthError(403, "the request timed out")).code,
+      ).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+    });
+  });
+
   it("maps ECONN* errno messages to 502", () => {
     expect(
       mapRuntimeError(new Error("connect ECONNREFUSED 127.0.0.1:8080")).status,
@@ -65,7 +161,15 @@ describe("mapRuntimeError", () => {
     expect(mapRuntimeError(new Error("socket hang up")).status).toBe(502);
   });
 
-  it("frames connection-class 502s as a target-server problem, preserving the raw error", () => {
+  it("keeps the shared mapper on 5xx, because it does not know the hop", () => {
+    // The 424 downgrade is opt-in per catch site (`mapTargetServerError`). The
+    // shared mapper also catches a failed fetch to MCPJam's own Convex
+    // deployment and the router-wide `web.onError`, where the hop is unknown —
+    // downgrading those would stop paging us during our own outage.
+    expect(mapRuntimeError(new Error("fetch failed")).status).toBe(502);
+  });
+
+  it("frames the connection class as a target-server problem, preserving the raw error", () => {
     // The raw errno text ("read ECONNRESET") in a client toast reads like an
     // MCPJam outage; the mapped message must name the target server as the
     // failing side while keeping the raw error for debugging.
@@ -74,6 +178,17 @@ describe("mapRuntimeError", () => {
     expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
     expect(mapped.message).toContain("read ECONNRESET");
     expect(mapped.message).toContain("not an MCPJam outage");
+  });
+
+  it("keeps timeout precedence and handles a null throw", () => {
+    // The timeout branch runs BEFORE the connection branch, so a message that
+    // satisfies both stays a 504 — the connection downgrade must not capture
+    // it. And a non-Error throw still has to land on the stable fallback.
+    expect(mapRuntimeError(new Error("Connection timed out")).status).toBe(504);
+
+    const mapped = mapRuntimeError(null);
+    expect(mapped.status).toBe(500);
+    expect(mapped.code).toBe(ErrorCode.INTERNAL_ERROR);
   });
 
   it("never returns a blank message for a blank-message error", () => {
@@ -136,6 +251,11 @@ describe("mapRuntimeError", () => {
         "https://rs.example/.well-known/oauth-protected-resource",
       errorDescription: undefined,
     });
+    // Regression guard for the generic upstream-auth branch added below it:
+    // `InsufficientScopeError` is also an auth rejection, so it would be
+    // swallowed as UPSTREAM_AUTH_FAILED (dropping the challenge the client
+    // needs to drive the step-up) if that branch ever moved ahead of this one.
+    expect(mapped.code).not.toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
   });
 
   it("recognizes a wrapped insufficient_scope challenge (cause chain) as 403", () => {
@@ -172,6 +292,131 @@ describe("mapRuntimeError", () => {
         (s) => original.propertyIsEnumerable(s),
       ),
     ).toEqual([]);
+  });
+});
+
+/**
+ * A connect failure as `MCPClientManager` actually raises it. The quoted
+ * server id is the part that matters: it is how a target-server failure is
+ * told apart from an MCPJam-internal one inside the same route catch.
+ */
+const TARGET_CONNECT_FAILURE =
+  'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: fetch failed. SSE error: fetch failed.';
+
+describe("mapTargetServerError", () => {
+  it("downgrades the connection class out of the 5xx range", () => {
+    // The range is the load-bearing part, not the digits: Cloudflare replaces
+    // an origin 5xx with its own error page, discarding the JSON envelope and
+    // the `x-mcpjam-error-origin` header, and the chat client then reports a
+    // user's unreachable MCP server as an MCPJam outage. A later "more
+    // specific" 5xx would silently restore that.
+    const mapped = mapTargetServerError(new Error(TARGET_CONNECT_FAILURE));
+    expect(mapped.status).toBe(424);
+    expect(mapped.status).toBeGreaterThanOrEqual(400);
+    expect(mapped.status).toBeLessThan(500);
+    expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
+  });
+
+  it("keeps an MCPJam-internal fetch failure at 502", () => {
+    // The hosted chat turn's catch spans more than its MCP work: it also
+    // covers `/stream/org/resolve`, which is OUR Convex deployment reached
+    // with a bare `fetch`. undici raises `TypeError("fetch failed")` with no
+    // server named. Downgrading that would silence the page during a Convex
+    // outage and tell the user their own server was down — both wrong, and
+    // the second one is the exact misattribution this whole change removes.
+    const mapped = mapTargetServerError(new Error("fetch failed"));
+    expect(mapped.status).toBe(502);
+    expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
+  });
+
+  it("keeps an internal errno failure at 502 too", () => {
+    // Same boundary, different symptom: a refused socket to an internal
+    // service names no server either.
+    expect(
+      mapTargetServerError(new Error("connect ECONNREFUSED 10.0.0.4:3210"))
+        .status,
+    ).toBe(502);
+  });
+
+  it("preserves the message, normalized block and origin the shared mapper attached", () => {
+    // The status is mutated on the mapped error rather than rebuilt: a fresh
+    // `WebRouteError` would drop `origin`, `normalized` and the cause link the
+    // capture dedupe walks — and `origin` is what the response header carries.
+    const mapped = mapTargetServerError(
+      new Error('Failed to connect to MCP server "srv-1": read ECONNRESET'),
+    );
+    expect(mapped.status).toBe(424);
+    expect(mapped.message).toContain("read ECONNRESET");
+    expect(mapped.message).toContain("not an MCPJam outage");
+    expect(mapped.normalized).toBeDefined();
+    expect(mapped.origin).toBe(originOf(mapped.normalized!));
+  });
+
+  it("downgrades a TARGET timeout too", () => {
+    // `classifyRuntimeError` tests "timed out" BEFORE the connection patterns,
+    // so a server that accepts the connection and then goes quiet — an
+    // overloaded or half-deployed one — exits as a 504 and never reaches the
+    // 502 branch. Cloudflare eats a 504 exactly as it eats a 502, so leaving
+    // this class behind kept the misattribution alive one branch over.
+    const mapped = mapTargetServerError(
+      new Error(
+        'Failed to connect to MCP server "srv-1" using HTTP transports: the request timed out',
+      ),
+    );
+    expect(mapped.status).toBe(424);
+    expect(mapped.code).toBe(ErrorCode.TIMEOUT);
+  });
+
+  it.each([
+    // The wrapper the manager actually builds, with the timeout text buried in
+    // one transport's leg. This is the realistic shape and the dangerous one:
+    // it is a CONNECT failure by structure and a TIMEOUT by substring, and the
+    // substring wins — so it never looks like the connection class at all.
+    'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: Request timed out. SSE error: Request timed out.',
+    // Auto-negotiation probing the modern era before either transport is up.
+    'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: Version negotiation probe timed out. SSE error: fetch failed.',
+    // Only the SSE leg times out; the first leg failed some other way.
+    'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: fetch failed. SSE error: the operation timed out.',
+  ])("downgrades a connect failure carrying timeout text: %s", (message) => {
+    expect(mapTargetServerError(new Error(message)).status).toBe(424);
+  });
+
+  it("keeps an MCPJam-internal timeout at 504", () => {
+    // The trade that makes the line above safe. Silence is weaker evidence
+    // than a refusal — it can be our own container starving rather than their
+    // server being slow — so only a timeout that NAMES the server it was
+    // reaching is downgraded. Ours keeps its 5xx and keeps paging.
+    expect(mapTargetServerError(new Error("Connection timed out")).status).toBe(
+      504,
+    );
+    expect(
+      mapTargetServerError(new Error("Convex request timed out after 10000ms"))
+        .status,
+    ).toBe(504);
+  });
+
+  it("touches ONLY the dependency classes", () => {
+    // Everything else is either not a dependency failure or not ours to
+    // relabel: auth rejections stay where the spec puts them, and an internal
+    // error stays a 500 so it keeps paging — even when a server is named,
+    // since naming one does not make an unclassified throw theirs.
+    expect(mapTargetServerError(new Error("kaboom")).status).toBe(500);
+    expect(
+      mapTargetServerError(new Error('MCP server "srv-1" broke us: kaboom'))
+        .status,
+    ).toBe(500);
+  });
+
+  it("leaves a pre-built WebRouteError alone", () => {
+    // A route that already decided its own status — including a deliberate
+    // 502 for an internal hop — passes through `mapRuntimeError` untouched,
+    // and this wrapper must not second-guess it.
+    const explicit = new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Convex is unreachable",
+    );
+    expect(mapTargetServerError(explicit).status).toBe(502);
   });
 });
 

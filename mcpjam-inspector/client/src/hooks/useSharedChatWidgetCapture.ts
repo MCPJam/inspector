@@ -15,6 +15,7 @@ import {
   sanitizeWidgetForBackend,
   type SharedChatWidgetSnapshotPayload,
 } from "@/shared/widget-snapshot";
+import { isStaleHostedAccessError } from "@/lib/hosted-access-errors";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
@@ -179,19 +180,6 @@ function shouldRetryPendingSnapshot(result: unknown, error: unknown): boolean {
 
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Session not found");
-}
-
-// Convex `ConvexError` payloads land on `err.data`. The backend throws
-// `{ code: 'chatbox_access_stale', currentAccessVersion }` when the client's
-// cached accessVersion no longer matches the chatbox doc — recovery is to
-// re-redeem, not to back off and retry locally.
-function isStaleHostedAccessError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const data = (error as { data?: unknown }).data;
-  if (!data || typeof data !== "object") return false;
-  return (
-    (data as { code?: unknown }).code === "chatbox_access_stale"
-  );
 }
 
 export function useSharedChatWidgetCapture({

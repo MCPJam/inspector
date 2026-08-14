@@ -8,6 +8,7 @@
  * - No Client ID Metadata Documents support
  */
 
+import { describeAuthenticatedRequestFailure } from "./shared/response-error.js";
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
 import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
@@ -39,7 +40,10 @@ import {
   buildResourceMetadataUrl,
   describeMetadataProbes,
 } from "./shared/urls.js";
-import { selectAuthorizationServerFromResourceMetadata } from "./shared/required-metadata.js";
+import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  selectAuthorizationServerFromResourceMetadata,
+} from "./shared/required-metadata.js";
 import {
   resolveDiscoveryResourceIndicator,
   resolveFlowResourceValue,
@@ -858,7 +862,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields per RFC 8414
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field",
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
@@ -1729,7 +1733,7 @@ export const createDebugOAuthStateMachine = (
                 updateState({
                   lastResponse: mcpResponseData,
                   httpHistory: updatedHistoryMcp,
-                  error: `Authenticated request failed: ${response.status} ${response.statusText}`,
+                  error: describeAuthenticatedRequestFailure(response),
                   isInitiatingAuth: false,
                 });
                 return;

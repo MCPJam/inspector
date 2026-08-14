@@ -69,7 +69,8 @@ import {
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
-import { isBedrockModelId, isMCPJamGuestAllowedModel } from "@/shared/types";
+import { isMCPJamGuestAllowedModel } from "@/shared/types";
+import { providerForModelId } from "@/shared/model-provider";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
@@ -626,38 +627,22 @@ export interface UseChatSessionReturn {
   inputDisabled: boolean;
 }
 
+/**
+ * Provider for a locked (guest / host-pinned) model id.
+ *
+ * Delegates to the shared classifier so this fallback agrees with the
+ * synthetic-model builder, the public eval API, and the backend mirror.
+ *
+ * TWO INTENTIONAL BEHAVIOR CHANGES from the switch this replaced: a bare
+ * unrecognized id now classifies as `ollama` rather than `openrouter` (bare
+ * ids are the Ollama BYOK shape everywhere else in the app, and no catalog id
+ * is bare), and `mistralai/...` resolves to `mistral` instead of falling
+ * through. `ollama` is also the last-resort answer for a blank id here — the
+ * locked model is display-only, and a null provider would have to be rendered
+ * as something regardless.
+ */
 function inferModelProviderFromId(modelId: string): ModelProvider {
-  // Org Bedrock models persist bare inference-profile ids (no "bedrock/"
-  // prefix), so recognize the id shape before prefix matching.
-  if (isBedrockModelId(modelId)) {
-    return "bedrock";
-  }
-
-  const providerPrefix = modelId.split("/")[0];
-
-  switch (providerPrefix) {
-    case "anthropic":
-    case "azure":
-    case "bedrock":
-    case "openai":
-    case "ollama":
-    case "deepseek":
-    case "google":
-    case "mistral":
-    case "moonshotai":
-    case "openrouter":
-    case "z-ai":
-    case "minimax":
-    case "qwen":
-    case "custom":
-      return providerPrefix;
-    case "x-ai":
-      return "xai";
-    case "meta-llama":
-      return "meta";
-    default:
-      return "openrouter";
-  }
+  return providerForModelId(modelId) ?? "ollama";
 }
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
@@ -715,6 +700,17 @@ interface PendingSessionHydration {
 }
 
 const MAX_LIVE_TRACE_EVENTS = 400;
+// Bounds `turnOrder`/`turns`/`requestPayloadHistory` for long-running agent
+// sessions. Without this, a session left open for many hours accumulates one
+// entry per turn — each carrying a full resolved model request (system
+// prompt + entire message history) — growing roughly quadratically and
+// eventually exhausting the renderer's V8 heap (see INSPECTOR-ELECTRON-VR).
+const MAX_LIVE_TRACE_TURNS = 200;
+// Backstop for `requestPayloadHistory` independent of the turn cap above: a
+// single turn can carry many steps (agent tool-call loops), each appending
+// its own full request payload keyed by turnId+stepIndex, so bounding by
+// turn count alone doesn't bound this array for a pathologically long turn.
+const MAX_LIVE_TRACE_REQUEST_PAYLOADS = 2 * MAX_LIVE_TRACE_TURNS;
 
 function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
   return {
@@ -778,8 +774,18 @@ async function resolveHydratedTurnTraces(
   if (raw.length === 0) {
     return [];
   }
+  // Rehydrating a session with more persisted turns than the live cap would
+  // otherwise recreate the same unbounded growth this cap prevents
+  // (INSPECTOR-ELECTRON-VR) — keep only the most recent turns, and skip
+  // fetching span blobs for the ones we're about to discard.
+  const boundedRaw =
+    raw.length > MAX_LIVE_TRACE_TURNS
+      ? [...raw]
+          .sort((left, right) => left.promptIndex - right.promptIndex)
+          .slice(-MAX_LIVE_TRACE_TURNS)
+      : raw;
   const results = await Promise.all(
-    raw.map(async (trace) => {
+    boundedRaw.map(async (trace) => {
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {
         try {
@@ -1083,6 +1089,57 @@ function upsertRequestPayloadEntry(
   );
 }
 
+// Drops the oldest turns once `turnOrder` exceeds MAX_LIVE_TRACE_TURNS,
+// keeping `turns` and `requestPayloadHistory` in sync with what's evicted.
+// Also applies a flat backstop cap to `requestPayloadHistory` in case a
+// single turn (still within the turn cap) accumulates many step entries.
+function trimLiveTraceTurns(
+  state: LiveTraceAccumulatorState
+): LiveTraceAccumulatorState {
+  let turnOrder = state.turnOrder;
+  let turns = state.turns;
+  let requestPayloadHistory = state.requestPayloadHistory;
+
+  if (turnOrder.length > MAX_LIVE_TRACE_TURNS) {
+    const dropCount = turnOrder.length - MAX_LIVE_TRACE_TURNS;
+    const droppedTurnIds = new Set(turnOrder.slice(0, dropCount));
+    turnOrder = turnOrder.slice(dropCount);
+
+    const nextTurns: Record<string, LiveTraceTurnState> = {};
+    for (const turnId of turnOrder) {
+      const turn = turns[turnId];
+      if (turn) {
+        nextTurns[turnId] = turn;
+      }
+    }
+    turns = nextTurns;
+
+    requestPayloadHistory = requestPayloadHistory.filter(
+      (entry) => !droppedTurnIds.has(entry.turnId)
+    );
+  }
+
+  if (requestPayloadHistory.length > MAX_LIVE_TRACE_REQUEST_PAYLOADS) {
+    requestPayloadHistory = requestPayloadHistory.slice(
+      -MAX_LIVE_TRACE_REQUEST_PAYLOADS
+    );
+  }
+
+  if (
+    turnOrder === state.turnOrder &&
+    requestPayloadHistory === state.requestPayloadHistory
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    turnOrder,
+    turns,
+    requestPayloadHistory,
+  };
+}
+
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
   event: LiveChatTraceEvent
@@ -1117,7 +1174,7 @@ function applyLiveTraceEvent(
     case "turn_start": {
       const turnExists = baseState.turnOrder.includes(event.turnId);
       const prev = baseState.turns[event.turnId];
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1135,12 +1192,12 @@ function applyLiveTraceEvent(
         },
         activeTurnId: event.turnId,
         activeTurnHasSnapshot: false,
-      };
+      });
     }
     case "request_payload": {
       const turnState = ensureTurnState(event.turnId, event.promptIndex);
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1161,7 +1218,7 @@ function applyLiveTraceEvent(
             payload: event.payload,
           }
         ),
-      };
+      });
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
@@ -1169,7 +1226,7 @@ function applyLiveTraceEvent(
         event.snapshot.promptIndex
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1199,12 +1256,12 @@ function applyLiveTraceEvent(
           baseState.activeTurnId === event.turnId ||
           baseState.activeTurnId === null,
         anySnapshotSeen: true,
-      };
+      });
     }
     case "turn_finish": {
       const turnState = ensureTurnState(event.turnId, event.promptIndex);
       const turnExists = baseState.turnOrder.includes(event.turnId);
-      return {
+      return trimLiveTraceTurns({
         ...baseState,
         turnOrder: turnExists
           ? baseState.turnOrder
@@ -1224,7 +1281,7 @@ function applyLiveTraceEvent(
           baseState.activeTurnId === event.turnId
             ? false
             : baseState.activeTurnHasSnapshot,
-      };
+      });
     }
     default:
       return baseState;

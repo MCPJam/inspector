@@ -87,6 +87,7 @@ export const routePaths = {
   userTesting: "/user-testing",
   swarms: "/swarms",
   environments: "/environments",
+  sessions: "/sessions",
   playground: "/playground",
   support: "/support",
   settings: "/settings",
@@ -119,15 +120,16 @@ export function buildHostComparePath(
   return `${routePaths.hostCompare}?${search.toString()}`;
 }
 
-
 /** The create route. A static segment, so it outranks `:scenarioId`. */
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
-/** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
-export type UserTestingDetailTab = "edit" | "sessions" | "insights";
+/**
+ * Detail sub-tabs on `/user-testing/:scenarioId`. Insights is the landing tab.
+ * Edit is a sibling route (`/edit`), not a tab.
+ */
+export type UserTestingDetailTab = "sessions" | "insights";
 
 const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
-  "edit",
   "sessions",
   "insights",
 ]);
@@ -155,7 +157,7 @@ export function buildUserTestingScenarioPath(
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "sessions") search.set("tab", opts.tab);
+  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
   // `flow` is the default; only the non-default view needs saying.
@@ -164,18 +166,37 @@ export function buildUserTestingScenarioPath(
   return query ? `${base}?${query}` : base;
 }
 
-/** Parse the sub-tab query on a scenario path. Unknown / missing → sessions. */
+/** Setup / share / preview for one scenario — sibling of the detail tabs. */
+export function buildUserTestingScenarioEditPath(scenarioId: string): string {
+  return `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}/edit`;
+}
+
+/**
+ * Legacy `?tab=edit` / `share` / `preview` query — Edit is now its own route.
+ * Callers should redirect these to {@link buildUserTestingScenarioEditPath}.
+ */
+export function isLegacyUserTestingEditTab(search: string): boolean {
+  const tab = new URLSearchParams(search).get("tab");
+  return tab === "edit" || tab === "share" || tab === "preview";
+}
+
+/**
+ * Parse the sub-tab query on a scenario path. Missing / unknown → insights.
+ * A `session` deep-link without an explicit tab still opens Sessions.
+ * Legacy edit/share/preview queries are NOT returned here — use
+ * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
+ */
 export function parseUserTestingDetailTab(
   search: string
 ): UserTestingDetailTab {
-  const tab = new URLSearchParams(search).get("tab");
-  // Legacy slugs: `share` / `preview` → Edit (Preview docks beside Edit);
-  // `clusters` → Insights (label aligned with Swarm run detail).
-  if (tab === "share" || tab === "preview") return "edit";
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab");
   if (tab === "clusters") return "insights";
-  return tab && USER_TESTING_DETAIL_TABS.has(tab)
-    ? (tab as UserTestingDetailTab)
-    : "sessions";
+  if (tab && USER_TESTING_DETAIL_TABS.has(tab)) {
+    return tab as UserTestingDetailTab;
+  }
+  if (params.get("session")) return "sessions";
+  return "insights";
 }
 
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
@@ -194,7 +215,7 @@ export function buildSwarmPath(
     tab?: SwarmDetailTab;
     session?: string;
     sel?: string;
-  } = {},
+  } = {}
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
@@ -206,12 +227,18 @@ export function buildSwarmPath(
 }
 
 /**
- * Parse the detail-tab query on a Swarm Run path. Unknown / missing / legacy
- * `overview` or `personas` → insights (personas now live on Insights).
+ * Parse the detail-tab query on a Swarm Run path. Missing / unknown →
+ * insights. Legacy `overview` / `personas` → insights (personas live there).
+ * A `session` deep-link without an explicit tab still opens Sessions.
  */
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
-  const value = new URLSearchParams(search).get("tab");
-  if (value === "sessions") return value;
+  const params = new URLSearchParams(search);
+  const value = params.get("tab");
+  if (value === "sessions") return "sessions";
+  if (value === "insights" || value === "personas" || value === "overview") {
+    return "insights";
+  }
+  if (params.get("session")) return "sessions";
   return "insights";
 }
 
@@ -560,7 +587,8 @@ export function useCurrentSearchParam(name: string): string | null {
   // and leave the component rendering the previous tab.
   useLayoutEffect(() => {
     if (locationContext || typeof window === "undefined") return;
-    const syncFallbackSearch = () => setFallbackSearch(getWindowFallbackSearch());
+    const syncFallbackSearch = () =>
+      setFallbackSearch(getWindowFallbackSearch());
     window.addEventListener("popstate", syncFallbackSearch);
     return () => {
       window.removeEventListener("popstate", syncFallbackSearch);

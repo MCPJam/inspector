@@ -176,7 +176,7 @@ is stable and machine-readable; `message` is human-readable and may change;
 | --- | --- | --- |
 | `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
 | `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
-| `FORBIDDEN` | 403 | Key is valid but not allowed to do this |
+| `FORBIDDEN` | 403 | Key is valid but not allowed to do this — or the **target MCP server** rejected the credentials MCPJam presented (retrying with a different MCPJam key will not help; reconnect or re-authorize the server) |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
 | `NOT_FOUND` | 404 | Unknown project, server, or resource |
 | `CONFLICT` | 409 | The resource isn't in a state that accepts this write — a stale `expectedRevision`, a duplicate name, or an environment that can't currently be launched. Re-read and retry |
@@ -215,6 +215,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | Endpoint | What it does |
 | --- | --- |
 | `GET /me` | The account behind the key |
+| `GET /organizations` | The organizations the caller belongs to — where `organizationId` comes from. A key is bound to one organization and only ever sees that one |
 | `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
 | `GET /projects/{projectId}/servers` | The project's saved MCP servers |
 | `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |

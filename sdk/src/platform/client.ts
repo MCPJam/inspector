@@ -23,9 +23,29 @@ import type {
   PlatformJourneyRunSession,
   PlatformJourneyRunCanceled,
   PlatformJourneyRunLaunched,
+  PlatformCapabilities,
+  PlatformFindingDismissed,
+  PlatformGenerationDrafts,
+  PlatformJourneyArchived,
+  PlatformPersona,
+  PlatformPersonaDeleted,
+  PlatformRunScorecard,
+  PlatformGuestExecution,
   PlatformScenario,
+  PlatformUserTestingInsightsRequested,
+  PlatformUserTestingScenario,
+  PlatformUserTestingSession,
+  PlatformUserTestingSessionDetail,
+  PlatformSwarm,
+  PlatformSwarmArchived,
+  PlatformSwarmFinding,
+  PlatformSwarmOverview,
+  PlatformWaveInsights,
+  PlatformWaveInsightsCanceled,
+  PlatformWaveInsightsRequested,
   PlatformScenarioDeleted,
   PlatformEnvironmentCreateBody,
+  PlatformEnvironmentCapabilities,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -38,10 +58,13 @@ import type {
   PlatformHostDetail,
   PlatformMe,
   PlatformModel,
+  PlatformOrganization,
   PlatformPage,
   PlatformPlugin,
   PlatformPluginVersion,
   PlatformProject,
+  PlatformServerConnection,
+  PlatformServerConnectionCreateBody,
   PlatformProjectServer,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
@@ -125,6 +148,12 @@ export class PlatformApiClient {
     return this.request("GET", "/models", {}, options);
   }
 
+  listOrganizations(
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformOrganization>> {
+    return this.request("GET", "/organizations", {}, options);
+  }
+
   listProjects(
     params: { organizationId?: string } = {},
     options?: RequestOptions
@@ -163,6 +192,77 @@ export class PlatformApiClient {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
+      {},
+      options
+    );
+  }
+
+  // ── Server connections ───────────────────────────────────────────────────
+  //
+  // The handoff-first flow: creating a request may answer with a `handoffUrl`
+  // the user must open, rather than with a finished connection. Callers poll
+  // `getServerConnection` until the status is terminal.
+
+  /**
+   * Start connecting an MCP server URL to a project.
+   *
+   * The response is the ONLY place a `handoffUrl` ever appears — the raw token
+   * behind it is minted once and never stored, so it cannot be re-fetched.
+   * Treat it as a private, single-person capability.
+   */
+  createServerConnection(
+    params: { body: PlatformServerConnectionCreateBody },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      "/server-connections",
+      { body: params.body },
+      options
+    );
+  }
+
+  /** Poll one request. Safe to call on a short interval: this path is metered
+   * on its own poll budget rather than the shared per-caller one, so polling
+   * responsively does not spend the budget your other calls need. A 429 here
+   * means the interval itself is too fast — honour `Retry-After`. */
+  getServerConnection(
+    params: { connectionRequestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "GET",
+      `/server-connections/${encodeURIComponent(params.connectionRequestId)}`,
+      {},
+      options
+    );
+  }
+
+  cancelServerConnection(
+    params: { connectionRequestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      `/server-connections/${encodeURIComponent(params.connectionRequestId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Ask for another validation attempt now instead of waiting out the backoff.
+   *
+   * Does not revive a terminal request: after `failed`, `expired`, or
+   * `cancelled`, the way forward is a new request.
+   */
+  retryServerConnectionValidation(
+    params: { connectionRequestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      `/server-connections/${encodeURIComponent(params.connectionRequestId)}/retry-validation`,
       {},
       options
     );
@@ -445,6 +545,28 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * What this deployment's environment surface supports.
+   *
+   * CALL THIS BEFORE SENDING `modelId`. The SDK ships independently of the
+   * backend, and a field an older deployment does not know is a hard validator
+   * error there rather than a silently ignored one. A deployment too old to
+   * answer reports `false` for everything, which is the correct assumption.
+   */
+  getEnvironmentCapabilities(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironmentCapabilities> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/capabilities`,
+      {},
+      options
+    );
+  }
+
   getEnvironment(
     params: { projectId: string; environmentId: string },
     options?: RequestOptions
@@ -493,8 +615,8 @@ export class PlatformApiClient {
 
   /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
-   * `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting a field
-   * leaves it alone.
+   * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
+   * a field leaves it alone.
    */
   updateEnvironment(
     params: {
@@ -1314,22 +1436,538 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Personas, swarms, generation (Swarms authoring) ─────────────────────
+  //
+  // The half of the loop that was missing: `/api/v1` could launch a journey
+  // and read its results but could not create one, because a journey needs a
+  // persona and there was no way to make a persona outside the app.
+  //
+  // Creates and updates are behind the `sandboxes-enabled` beta flag. Reads
+  // and the soft deletes are not — an org that has just lost the flag must
+  // still be able to see and clean up what it authored.
+
+  listPersonas(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformPersona>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/personas`,
+      {},
+      options
+    );
+  }
+
+  getPersona(
+    params: { projectId: string; personaId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPersona> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/personas/${encodeURIComponent(params.personaId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * IDEMPOTENT ON `options.idempotencyKey`, and worth passing even though
+   * creating a persona spends nothing: the server replays the key BEFORE it
+   * uniquifies the slug, so a retry without one leaves you with a second,
+   * near-identical persona named `…-2` rather than the row you already made.
+   */
+  createPersona(
+    params: {
+      projectId: string;
+      name: string;
+      role: string;
+      notes?: string;
+      avatarShape?: number;
+      avatarPalette?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPersona> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/personas`,
+      { body },
+      options
+    );
+  }
+
+  updatePersona(
+    params: {
+      projectId: string;
+      personaId: string;
+      name?: string;
+      role?: string;
+      notes?: string;
+      avatarShape?: number;
+      avatarPalette?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPersona> {
+    const { projectId, personaId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/personas/${encodeURIComponent(
+        personaId
+      )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * SOFT delete. The persona leaves the roster and cannot be used for new
+   * journeys, but historical runs and sessions keep resolving it — a finished
+   * run does not lose the character it ran as. A second call answers 404,
+   * which cleanup should read as success.
+   */
+  deletePersona(
+    params: { projectId: string; personaId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPersonaDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/personas/${encodeURIComponent(params.personaId)}`,
+      {},
+      options
+    );
+  }
+
+  getJourney(
+    params: { projectId: string; journeyId: string },
+    options?: RequestOptions
+  ): Promise<PlatformJourney> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journeys/${encodeURIComponent(params.journeyId)}`,
+      {},
+      options
+    );
+  }
+
+  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  createJourney(
+    params: {
+      projectId: string;
+      goal: string;
+      personaId: string;
+      sessionsPerTarget: number;
+      maxTurns: number;
+      name?: string;
+      swarmId?: string;
+      environmentIds?: string[];
+      serverAttachmentId?: string;
+      hostIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformJourney> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/journeys`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * `null` CLEARS a field; omitting it leaves it alone. That tri-state is the
+   * only way to say "stop fanning this journey out across environments".
+   *
+   * `sessionsPerTarget` and `maxTurns` must move together — they are one
+   * config object upstream, so a partial update would need a read-modify-write
+   * that could silently clobber a concurrent edit.
+   */
+  updateJourney(
+    params: {
+      projectId: string;
+      journeyId: string;
+      name?: string;
+      goal?: string;
+      environmentIds?: string[] | null;
+      serverAttachmentId?: string | null;
+      hostIds?: string[];
+      sessionsPerTarget?: number;
+      maxTurns?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformJourney> {
+    const { projectId, journeyId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/journeys/${encodeURIComponent(
+        journeyId
+      )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * ARCHIVES the journey. Its runs, sessions and scorecards stay readable —
+   * deleting the results of work that already happened is not what anyone
+   * means by removing a journey from their list.
+   */
+  archiveJourney(
+    params: { projectId: string; journeyId: string },
+    options?: RequestOptions
+  ): Promise<PlatformJourneyArchived> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journeys/${encodeURIComponent(params.journeyId)}`,
+      {},
+      options
+    );
+  }
+
+  listSwarms(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformSwarm>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/swarms`,
+      {},
+      options
+    );
+  }
+
+  getSwarm(
+    params: { projectId: string; swarmId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSwarm> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarms/${encodeURIComponent(params.swarmId)}`,
+      {},
+      options
+    );
+  }
+
+  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  createSwarm(
+    params: {
+      projectId: string;
+      name: string;
+      sessionsPerTarget: number;
+      maxTurns: number;
+      description?: string;
+      environmentIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSwarm> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/swarms`,
+      { body },
+      options
+    );
+  }
+
+  updateSwarm(
+    params: {
+      projectId: string;
+      swarmId: string;
+      name?: string;
+      description?: string | null;
+      environmentIds?: string[] | null;
+      sessionsPerTarget?: number;
+      maxTurns?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSwarm> {
+    const { projectId, swarmId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/swarms/${encodeURIComponent(
+        swarmId
+      )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * ARCHIVES the container. Journeys authored under it keep working and keep
+   * their `swarmId` — the reference is authoring provenance, not ownership.
+   */
+  archiveSwarm(
+    params: { projectId: string; swarmId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmArchived> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarms/${encodeURIComponent(params.swarmId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Draft personas with an LLM. NOTHING IS SAVED — feed what you want to keep
+   * to `createPersona`. That is also why there is no idempotency key: a call
+   * with no effect has no duplicate to prevent, and offering one would imply
+   * the drafts are stable across retries, which they are not.
+   *
+   * Exactly one grounding source: `serverAttachmentId` or `environmentId`.
+   */
+  generatePersonas(
+    params: {
+      projectId: string;
+      serverAttachmentId?: string;
+      environmentId?: string;
+      journeyCount?: number;
+      personaCount?: number;
+      description?: string;
+      existingPersonas?: Array<{ name: string; role: string }>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGenerationDrafts> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/personas/generate`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Draft journeys for a persona. The persona is passed BY VALUE, not by id:
+   * the create flow drafts a persona and its journeys before either exists,
+   * so requiring a saved persona would force you to keep a draft you may
+   * discard. Nothing is saved here either.
+   */
+  generateJourneys(
+    params: {
+      projectId: string;
+      persona: { name: string; role: string; notes?: string };
+      serverAttachmentId?: string;
+      environmentId?: string;
+      journeyCount?: number;
+      description?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGenerationDrafts> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/journeys/generate`,
+      { body },
+      options
+    );
+  }
+
+  // ── Swarm insights ──────────────────────────────────────────────────────
+  //
+  // Three different kinds of evidence, deliberately not merged into one run
+  // payload. The scorecard is deterministic and free; findings aggregate it
+  // across waves; wave insights are LLM prose that SPENDS against the org's
+  // shared daily ledger. Reach for the scorecard first — it is usually the
+  // whole answer.
+
+  getSwarmOverview(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmOverview> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/journeys-overview`,
+      {},
+      options
+    );
+  }
+
+  getJourneyRunScorecard(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformRunScorecard> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-runs/${encodeURIComponent(params.runId)}/scorecard`,
+      {},
+      options
+    );
+  }
+
+  listSwarmFindings(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformSwarmFinding>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/journey-findings`,
+      {},
+      options
+    );
+  }
+
+  dismissSwarmFinding(
+    params: { projectId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<PlatformFindingDismissed> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-findings/${encodeURIComponent(params.findingId)}/dismiss`,
+      {},
+      options
+    );
+  }
+
+  undismissSwarmFinding(
+    params: { projectId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<PlatformFindingDismissed> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-findings/${encodeURIComponent(params.findingId)}/undismiss`,
+      {},
+      options
+    );
+  }
+
+  getWaveInsights(
+    params: { projectId: string; waveId: string },
+    options?: RequestOptions
+  ): Promise<PlatformWaveInsights> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/waves/${encodeURIComponent(params.waveId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Request an LLM pass over a wave. Answers **202** — generation is
+   * scheduled, not done; poll `getWaveInsights`.
+   *
+   * SPENDS against the org's `insightsPerDay` ledger, which is SHARED with
+   * user-testing window insights. `force` regenerates over a wave that already
+   * has insights and spends again; the usual reason to reach for it is a
+   * caller that did not poll.
+   */
+  requestWaveInsights(
+    params: { projectId: string; waveId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformWaveInsightsRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/waves/${encodeURIComponent(params.waveId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /**
+   * Cancel an in-flight generation. The recovery path when a request was made
+   * by mistake or its runner went silent — without it a wave stuck `pending`
+   * can only be re-requested with `force`, which spends again.
+   */
+  cancelWaveInsights(
+    params: { projectId: string; waveId: string },
+    options?: RequestOptions
+  ): Promise<PlatformWaveInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/waves/${encodeURIComponent(params.waveId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * What this caller may do in the project — role, beta-gate state, plan
+   * limits, and the derived booleans to branch on.
+   *
+   * Ask this BEFORE planning work on a static surface (MCP catalog, CLI, agent
+   * registry), none of which can advertise a per-organization beta. It is
+   * descriptive: the write paths enforce independently, so a stale answer
+   * costs a clean 403 rather than an incorrect success.
+   */
+  getCapabilities(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformCapabilities> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/capabilities`,
+      {},
+      options
+    );
+  }
+
   // ── Scenarios (user testing) ────────────────────────────────────────────
   //
   // Both require project ADMIN. Publishing is additionally behind the
   // `sandboxes-enabled` beta flag; UNPUBLISHING deliberately is not, so an org
   // that loses the flag can still take a live scenario down.
 
+  /**
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the scenario is never briefly live in a wider mode than the
+   * caller asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`) — changing an existing scenario is
+   * `updateUserTestingScenario`.
+   */
   publishScenario(
-    params: { projectId: string; environmentId: string },
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
     options?: RequestOptions
-  ): Promise<PlatformScenario> {
+  ): Promise<PlatformScenario & { overridesIgnored?: boolean }> {
+    const { projectId, environmentId } = params;
+    // Explicit picks, not a rest spread: TypeScript's structural typing lets a
+    // wider object through, and the route's schema is strict — an unknown key
+    // forwarded here turns a valid publish into a 400.
+    const body = Object.fromEntries(
+      Object.entries({
+        name: params.name,
+        description: params.description,
+        mode: params.mode,
+      }).filter(([, value]) => value !== undefined)
+    );
     return this.request(
       "PUT",
       `/projects/${encodeURIComponent(
-        params.projectId
-      )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
-      {},
+        projectId
+      )}/environments/${encodeURIComponent(environmentId)}/scenario`,
+      // Bodyless when there is nothing to send — the common case, and what
+      // existing callers already put on the wire.
+      Object.keys(body).length > 0 ? { body } : {},
       options
     );
   }
@@ -1343,6 +1981,356 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
+      {},
+      options
+    );
+  }
+
+  // ── User testing ────────────────────────────────────────────────────────
+  //
+  // What a published scenario produced, and who may reach it. `publishScenario`
+  // above creates one (keyed by environment, because the scenario does not
+  // exist yet); everything here is keyed by the scenario.
+  //
+  // AUTHORIZATION DIFFERS from the rest of this client: these gate on the
+  // WORKSPACE role rather than the project role, and workspace MEMBERSHIP is
+  // enough for most of them — mode changes, renames, member edits and link
+  // rotation included. Only guest execution and rebinding need project
+  // ADMIN. A legacy
+  // workspace with no organization hard-denies delegated (`sk_`) callers
+  // entirely — a documented limitation, not a bug you can grant your way out
+  // of.
+
+  /**
+   * Publish an environment as a scenario.
+   *
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the scenario is never briefly live in a wider mode than you
+   * asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`), because re-applying `mode` would let a routine
+   * idempotent publish widen a scenario someone had narrowed by hand.
+   */
+  publishUserTestingScenario(
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformScenario & { overridesIgnored?: boolean }> {
+    const { projectId, environmentId, ...body } = params;
+    return this.request(
+      "PUT",
+      `/projects/${encodeURIComponent(
+        projectId
+      )}/environments/${encodeURIComponent(environmentId)}/scenario`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Edit a scenario. SINGLE-CONCERN: send `mode` on its own, or `name` and
+   * `description` together — never both. Identity and exposure are separate
+   * mutations upstream, so a mixed request would have to apply them in
+   * sequence, and a failure between the two leaves the scenario half-updated
+   * on the half that decides who can reach it.
+   */
+  updateUserTestingScenario(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformUserTestingScenario> {
+    const { projectId, scenarioId, ...body } = params;
+    return this.request(
+      "PATCH",
+      this.userTestingPath(projectId, scenarioId),
+      { body },
+      options
+    );
+  }
+
+  /** Session SUMMARIES. Transcripts are a separate, explicit read. */
+  listUserTestingSessions(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformUserTestingSession>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/sessions`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * One session's transcript, PAGED and projected to role + text + timing.
+   *
+   * These are real people's conversations with your product. The API never
+   * hands back the stored blob URL, so a caller cannot pass "read this
+   * transcript" onward as an unrevocable capability.
+   */
+  getUserTestingSession(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      sessionId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformUserTestingSessionDetail> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/sessions/${encodeURIComponent(params.sessionId)}`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getUserTestingMetrics(
+    params: { projectId: string; scenarioId: string; population?: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/metrics`,
+      {
+        query: params.population ? { population: params.population } : {},
+      },
+      options
+    );
+  }
+
+  /**
+   * Usage breakdown. Read `scan.truncated` before quoting any rate from this:
+   * true means the rates were computed over the most recent N sessions rather
+   * than all of them, and dropping the flag turns a conditional statistic into
+   * an unconditional claim.
+   */
+  getUserTestingUsage(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/usage`,
+      {},
+      options
+    );
+  }
+
+  listUserTestingFindings(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<Record<string, unknown>>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/findings`,
+      {},
+      options
+    );
+  }
+
+  /** Also how you learn the CURRENT window id, which the insights read takes. */
+  getUserTestingSignals(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/signals`,
+      {},
+      options
+    );
+  }
+
+  getUserTestingInsights(
+    params: { projectId: string; scenarioId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/windows/${encodeURIComponent(params.windowId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Ask a model to analyze the scenario's current window. **202** — scheduled,
+   * not done. SPENDS against the organization's daily insights budget, which
+   * is SHARED with swarm wave insights.
+   */
+  requestUserTestingInsights(
+    params: { projectId: string; scenarioId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformUserTestingInsightsRequested> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  cancelUserTestingInsights(
+    params: { projectId: string; scenarioId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
+      { body: { windowId: params.windowId } },
+      options
+    );
+  }
+
+  dismissUserTestingFinding(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.userTestingFindingAction(params, "dismiss", options);
+  }
+
+  undismissUserTestingFinding(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.userTestingFindingAction(params, "undismiss", options);
+  }
+
+  /**
+   * Replace the guest-execution caps.
+   *
+   * A full replacement, not a patch: these only mean something as a SET, and
+   * raising one while leaving a stale sibling behind produces a combination
+   * nobody chose. Project ADMIN.
+   */
+  setUserTestingGuestExecution(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      guestExecution: PlatformGuestExecution;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "PUT",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/guest-execution`,
+      { body: params.guestExecution },
+      options
+    );
+  }
+
+  /**
+   * Rotate the share link. DESTRUCTIVE and immediate: the old link stops
+   * working and every session on it dies. There is no rotating back.
+   */
+  rotateUserTestingLink(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/rotate-link`,
+      {},
+      options
+    );
+  }
+
+  /** Upsert by email, so re-inviting someone is not an error. */
+  upsertUserTestingMember(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      email: string;
+      sendInviteEmail?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    const { projectId, scenarioId, ...body } = params;
+    return this.request(
+      "PUT",
+      `${this.userTestingPath(projectId, scenarioId)}/members`,
+      { body },
+      options
+    );
+  }
+
+  removeUserTestingMember(
+    params: { projectId: string; scenarioId: string; member: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/members/${encodeURIComponent(params.member)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Point a scenario at a DIFFERENT environment, keeping its link, members and
+   * session history. The alternative — unpublish and republish — mints a new
+   * link, which means re-sharing it with everyone who had the old one.
+   */
+  rebindUserTestingScenario(
+    params: { projectId: string; scenarioId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/rebind`,
+      { body: { environmentId: params.environmentId } },
+      options
+    );
+  }
+
+  private userTestingPath(projectId: string, scenarioId: string): string {
+    return `/projects/${encodeURIComponent(
+      projectId
+    )}/user-testing/scenarios/${encodeURIComponent(scenarioId)}`;
+  }
+
+  private userTestingFindingAction(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    action: "dismiss" | "undismiss",
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId
+      )}/findings/${encodeURIComponent(params.findingId)}/${action}`,
       {},
       options
     );
@@ -1409,43 +2397,65 @@ export class PlatformApiClient {
       this.timeoutMs
     );
 
+    // BOTH THE FETCH AND THE BODY READ ARE INSIDE THIS `try`, and that is the
+    // point. Headers arriving is not the end of the request: a server can send
+    // them and then stall the body indefinitely. Releasing the deadline and the
+    // caller's signal at the end of the fetch — as this did — left
+    // `response.text()` bounded by NOTHING. Not `timeoutMs`, which had just been
+    // cleared; not the caller's abort, whose listener had just been removed. A
+    // stalling server held the caller forever, and a Ctrl-C could not take it
+    // back.
     let response: Response;
+    let raw: string;
     try {
-      response = await this.fetchFn(url, {
-        method,
-        headers,
-        body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (externalSignal?.aborted) {
-        // Caller-initiated abort: propagate, don't dress it up as an API error.
-        throw error;
+      try {
+        response = await this.fetchFn(url, {
+          method,
+          headers,
+          body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (externalSignal?.aborted) {
+          // Caller-initiated abort: propagate, don't dress it up as an API error.
+          throw error;
+        }
+        const aborted = controller.signal.aborted;
+        throw new PlatformApiError(
+          aborted
+            ? `Request to ${path} timed out after ${this.timeoutMs}ms`
+            : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
+                error
+              )}`,
+          aborted ? "TIMEOUT" : "NETWORK_ERROR",
+          { status: 0, endpoint: path, cause: error }
+        );
       }
-      const aborted = controller.signal.aborted;
-      throw new PlatformApiError(
-        aborted
-          ? `Request to ${path} timed out after ${this.timeoutMs}ms`
-          : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
-              error
-            )}`,
-        aborted ? "TIMEOUT" : "NETWORK_ERROR",
-        { status: 0, endpoint: path, cause: error }
-      );
+
+      try {
+        raw = await response.text();
+      } catch (error) {
+        // Same taxonomy as the fetch arm above, for the same reasons: a caller's
+        // abort is theirs to see, and our own deadline is a TIMEOUT rather than
+        // an unexplained read failure. Reporting a stalled body as
+        // INTERNAL_ERROR sends someone looking for a bug on our side.
+        if (externalSignal?.aborted) throw error;
+        if (controller.signal.aborted) {
+          throw new PlatformApiError(
+            `Request to ${path} timed out after ${this.timeoutMs}ms`,
+            "TIMEOUT",
+            { status: 0, endpoint: path, cause: error }
+          );
+        }
+        throw new PlatformApiError(
+          `Failed to read the MCPJam API response (${response.status}) for ${path}`,
+          "INTERNAL_ERROR",
+          { status: response.status, endpoint: path, cause: error }
+        );
+      }
     } finally {
       clearTimeout(timeoutHandle);
       externalSignal?.removeEventListener("abort", onExternalAbort);
-    }
-
-    let raw: string;
-    try {
-      raw = await response.text();
-    } catch (error) {
-      throw new PlatformApiError(
-        `Failed to read the MCPJam API response (${response.status}) for ${path}`,
-        "INTERNAL_ERROR",
-        { status: response.status, endpoint: path, cause: error }
-      );
     }
 
     let parsed: unknown;

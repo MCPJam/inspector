@@ -28,6 +28,7 @@ import App, {
   ScoreRunnerRoute,
   ServersRedirectRoute,
   ServersRoute,
+  SessionsRoute,
   SettingsRoute,
   SkillsRoute,
   SupportRoute,
@@ -115,13 +116,14 @@ const ROUTE_ELEMENTS: Record<
   // render ServersRoute while `pathnameToActiveTab` still resolves
   // "chat" → "playground" — sidebar/content mismatch).
   "chat/*": { element: <ChatAliasRoute /> },
-  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` one
-  // scenario's detail (share band + Sessions | Clusters). Same element: the
-  // route param is what selects the view, so a deep-linked scenario survives
-  // the auth-gate remounts a cold boot puts it through.
+  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` detail
+  // (Insights | Sessions); `/user-testing/:scenarioId/edit` setup/share.
+  // Same element: the route param is what selects the view, so a deep-linked
+  // scenario survives the auth-gate remounts a cold boot puts it through.
   "user-testing": { element: <ChatboxesRoute /> },
   // Static segment, so it outranks `:scenarioId` in React Router's matcher.
   "user-testing/new": { element: <ChatboxesRoute /> },
+  "user-testing/:scenarioId/edit": { element: <ChatboxesRoute /> },
   "user-testing/:scenarioId": { element: <ChatboxesRoute /> },
   // Old bookmarks and every session link copied before the rename. Search and
   // hash come along: `/chatboxes?host=X&session=Y` has to land on that
@@ -143,6 +145,10 @@ const ROUTE_ELEMENTS: Record<
   // enforces the `project-environments-enabled` flag itself (redirects when
   // off), so registration here does not expose the dark feature.
   environments: { element: <EnvironmentsRoute /> },
+  // `/sessions` — cross-surface project session feed. The route component
+  // enforces the `unified-sessions-enabled` flag itself (redirects when off),
+  // so registration here does not expose the dark feature.
+  sessions: { element: <SessionsRoute /> },
   playground: { element: <PlaygroundRoute /> },
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },

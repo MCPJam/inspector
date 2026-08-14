@@ -237,6 +237,7 @@ export const APP_SURFACES = [
     routePatterns: [
       "user-testing",
       "user-testing/new",
+      "user-testing/:scenarioId/edit",
       "user-testing/:scenarioId",
     ],
     navSegments: ["chatboxes"],
@@ -297,6 +298,32 @@ export const APP_SURFACES = [
     // `project-environments-enabled`, so advertising `/environments` would send
     // the agent to a surface that redirects on every flag-off project. Flip to
     // `true` when the flag is retired at GA.
+    showInAtlas: false,
+  },
+  {
+    id: "sessions",
+    canonicalPath: "/sessions",
+    routePatterns: ["sessions"],
+    navSegments: ["sessions"],
+    title: "Sessions",
+    purpose:
+      "Browse every conversation in the project in one feed — Playground chats, User Testing sessions, eval iterations, and swarm runs — filter by source, and search by title.",
+    userActivities: [
+      "Browse the project's sessions across all surfaces, newest first",
+      "Filter sessions by source (Playground, User Testing, Eval, Swarm) or status",
+      "Search sessions by title",
+      "Open a session to review its transcript",
+    ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Read-only browse surface behind a rollout flag; no agent automation until the unified feed is generally available.",
+    },
+    // The Atlas is intentionally STATIC — it cannot read
+    // `unified-sessions-enabled`, so advertising `/sessions` would send the
+    // agent to a surface that redirects on every flag-off project. Flip to
+    // `true` when the flag is retired at GA. (Same rationale as
+    // project-environments.)
     showInAtlas: false,
   },
   {

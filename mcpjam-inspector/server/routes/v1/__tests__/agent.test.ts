@@ -103,8 +103,9 @@ vi.mock("../../../services/hosted-model-catalog.js", () => ({
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual =
-    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
   return {
     ...actual,
     MCPClientManager: vi.fn().mockImplementation(() => ({
@@ -679,10 +680,10 @@ describe("agent tool surface", () => {
     const tool = tools[createEvalSuiteOperation.name]! as {
       execute: (input: unknown, ctx: unknown) => Promise<unknown>;
     };
-    const result = (await tool.execute(
-      VALID_CREATE_INPUT,
-      {}
-    )) as Record<string, unknown>;
+    const result = (await tool.execute(VALID_CREATE_INPUT, {})) as Record<
+      string,
+      unknown
+    >;
     expect(created).toEqual([
       {
         type: "eval_suite",
@@ -710,9 +711,7 @@ describe("agent tool surface", () => {
 // ---------------------------------------------------------------------------
 
 const SLACK_TOKEN = "slk_agent_gated_tools_test_token_0123456789";
-const SLACK_TOKEN_HASH = createHash("sha256")
-  .update(SLACK_TOKEN)
-  .digest("hex");
+const SLACK_TOKEN_HASH = createHash("sha256").update(SLACK_TOKEN).digest("hex");
 
 type GatedTool = {
   description: string;
@@ -1352,7 +1351,12 @@ describe("org capability policy", () => {
     // deployment does not cost a round trip on every turn.
     const { SlackBackendUnavailable } = (await import(
       "../../../services/slack-backend.js"
-    )) as { SlackBackendUnavailable: new (m: string, o?: { status?: number }) => Error };
+    )) as {
+      SlackBackendUnavailable: new (
+        m: string,
+        o?: { status?: number }
+      ) => Error;
+    };
     getOrgAgentPolicyMock.mockRejectedValue(
       new SlackBackendUnavailable("404", { status: 404 })
     );

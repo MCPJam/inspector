@@ -1,5 +1,5 @@
 /**
- * Criterion scorecard in the swarm Insights view.
+ * Criterion scorecard in the Insights workbench.
  *
  * What these pin is the thing the shared components cannot: criterion chips
  * are ORDINARY filter chips, not flow-owned, so clicking one DOES narrow the
@@ -7,9 +7,13 @@
  * diagram's own output and is deliberately withheld from the query that draws
  * it — mixing the two up would either collapse the diagram or make the facet
  * click do nothing.
+ *
+ * The scorecard is its own section above the session flow — not behind a
+ * Checks chip popover.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsightsWorkbench } from "../InsightsWorkbench";
 import { chipKey, type UsageFilterState } from "@/hooks/chatbox-usage-filters";
@@ -76,18 +80,6 @@ function withFacets(facets: CriterionFacet[] | undefined) {
   });
 }
 
-/**
- * The scorecard lives behind the statline's Checks chip.
- *
- * That is where it has always rendered on the surface a user actually sees —
- * the workbench dropped the scroll-area layout that also rendered it inline,
- * which had no production caller. Every assertion below is unchanged; they
- * just open the popover first.
- */
-async function openChecks(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: /Checks/ }));
-}
-
 function lastBreakdownFilters(): UsageFilterState {
   return (mockUseUsageInsights.mock.calls.at(-1)?.[0] as { filters: UsageFilterState })
     .filters;
@@ -103,6 +95,7 @@ function renderSwarmWorkbench(props: {
   journeyRunIds?: string[];
   urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
   onSelectionChange?: (themes: unknown) => void;
+  recommendationsSlot?: ReactNode;
 } = { projectId: "proj-1" }) {
   const { projectId, journeyRunIds, ...rest } = props;
   return render(
@@ -134,32 +127,36 @@ beforeEach(() => {
 });
 
 describe("InsightsWorkbench — criterion scorecard", () => {
-  it("renders one row per criterion, named by label then by predicate kind", async () => {
-    const user = userEvent.setup();
+  it("renders the scorecard as its own section above the session flow", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
+    expect(screen.getByTestId("swarm-insights-scorecard")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Checks/ })).toBeNull();
+    expect(screen.getByTestId("sankey")).toBeInTheDocument();
+  });
+
+  it("renders one row per criterion, named by label then by predicate kind", () => {
+    renderSwarmWorkbench({ projectId: "proj-1" });
     expect(screen.getByText("Quick resolution")).toBeInTheDocument();
     // No author label ⇒ the predicate kind's label, never the raw uuid.
     expect(screen.getByText("Tool was called at least once")).toBeInTheDocument();
   });
 
-  it("headlines a verdict-weighted score across every graded session", async () => {
-    const user = userEvent.setup();
+  it("headlines a verdict-weighted score across every graded session", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
     // 13 passed of 20 graded verdicts — the 2 ungraded are outside the
     // denominator, and the score is per-verdict, not per-criterion.
     expect(screen.getByText("Score 65%")).toBeInTheDocument();
     // Neither criterion has a clean sheet (6 fails and 1 fail respectively).
     expect(
-      screen.getByText(/0 \/ 2 criteria passing · 7\/20 graded checks failed/),
+      // Two denominators, two nouns: 2 is the number of CHECKS, 20 is the
+      // number of VERDICTS (pass+fail summed across both checks). Calling the
+      // second one "sessions" would overstate the sample by the rubric's size.
+      screen.getByText(/0 \/ 2 checks passing · 7\/20 graded checks failed/),
     ).toBeInTheDocument();
   });
 
-  it("reports ungraded separately instead of folding it into the fail count", async () => {
-    const user = userEvent.setup();
+  it("reports ungraded separately instead of folding it into the fail count", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
     // 6 failed out of the 10 GRADED — the 2 ungraded are named, not summed in.
     expect(screen.getByText(/6\/10 sessions failed/)).toBeInTheDocument();
     expect(screen.getByText(/2 not graded/)).toBeInTheDocument();
@@ -168,7 +165,6 @@ describe("InsightsWorkbench — criterion scorecard", () => {
   it("a fail click NARROWS the breakdown — criterion chips are not flow-owned", async () => {
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
     expect(lastBreakdownFilters().chips).toEqual([]);
 
     // The fail count is the primary affordance.
@@ -184,7 +180,6 @@ describe("InsightsWorkbench — criterion scorecard", () => {
   it("chips for two DIFFERENT criteria stack, so the cohort narrows", async () => {
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
     await user.click(
       screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
     );
@@ -203,7 +198,6 @@ describe("InsightsWorkbench — criterion scorecard", () => {
   it("clicking the same chip again removes it", async () => {
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
     await user.click(
       screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
     );
@@ -216,7 +210,6 @@ describe("InsightsWorkbench — criterion scorecard", () => {
   it("makes the ungraded count clickable — it is the question the number provokes", async () => {
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
     await user.click(
       screen.getByRole("button", { name: /Quick resolution: 2 not graded/ }),
     );
@@ -225,10 +218,8 @@ describe("InsightsWorkbench — criterion scorecard", () => {
     ]);
   });
 
-  it("names each button with its criterion so identical counts stay distinguishable", async () => {
-    const user = userEvent.setup();
+  it("names each button with its criterion so identical counts stay distinguishable", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await openChecks(user);
     // Both cards would otherwise expose bare "N failed" / "N passed" names.
     expect(
       screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
@@ -243,12 +234,108 @@ describe("InsightsWorkbench — criterion scorecard", () => {
   it("renders nothing at all when no run in the window carried a rubric", () => {
     withFacets([]);
     renderSwarmWorkbench({ projectId: "proj-1" });
+    expect(screen.queryByTestId("swarm-insights-scorecard")).not.toBeInTheDocument();
     expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Findings" })).toBeNull();
   });
 
   it("renders nothing when the server predates criterionBreakdown", () => {
     withFacets(undefined);
     renderSwarmWorkbench({ projectId: "proj-1" });
+    expect(screen.queryByTestId("swarm-insights-scorecard")).not.toBeInTheDocument();
     expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Findings" })).toBeNull();
+  });
+});
+
+describe("InsightsWorkbench — Findings", () => {
+  it("shows Findings when the scorecard renders", () => {
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    expect(screen.getByRole("heading", { name: "Findings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Scorecard" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Findings" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("shows Findings when only recommendations render", () => {
+    withFacets([]);
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+          <p>Patterns to investigate across sessions</p>
+        </div>
+      ),
+    });
+    expect(screen.getByRole("heading", { name: "Findings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recommendations" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Scorecard" })).toBeNull();
+  });
+
+  it("puts scorecard and recommendations in one Findings card", () => {
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+        </div>
+      ),
+    });
+    const body = screen
+      .getByTestId("swarm-insights-findings")
+      .querySelector("[data-slot=findings-body]");
+    expect(body).not.toBeNull();
+    expect(body).toHaveClass("rounded-lg", "border", "divide-y", "overflow-y-auto");
+    expect(body).toContainElement(
+      screen.getByRole("heading", { name: "Scorecard" }),
+    );
+    expect(body).toContainElement(
+      screen.getByRole("heading", { name: "Recommendations" }),
+    );
+  });
+
+  it("is expanded by default so scorecard and recommendations are visible", () => {
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+        </div>
+      ),
+    });
+    expect(screen.getByRole("button", { name: "Findings" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Scorecard" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Recommendations" })).toBeVisible();
+  });
+
+  it("collapses and expands from the keyboard-accessible toggle", async () => {
+    const user = userEvent.setup();
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+        </div>
+      ),
+    });
+    const toggle = screen.getByRole("button", { name: "Findings" });
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("heading", { name: "Scorecard" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Recommendations" })).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("heading", { name: "Scorecard" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Recommendations" }),
+    ).toBeInTheDocument();
   });
 });

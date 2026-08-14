@@ -90,9 +90,13 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   { path: "user-testing", kind: "screen", surfaceId: "chatboxes" },
   { path: "user-testing/new", kind: "screen", surfaceId: "chatboxes" },
-  // `:scenarioId` is the scenario's HOST id — chatboxes are 1:1 with hosts,
-  // and every existing deep link (and the agent's publish tool) already
-  // speaks hostId.
+  // `:scenarioId` is the scenario's chatbox id. Edit is a sibling screen
+  // (setup / share / preview), not a detail tab.
+  {
+    path: "user-testing/:scenarioId/edit",
+    kind: "screen",
+    surfaceId: "chatboxes",
+  },
   { path: "user-testing/:scenarioId", kind: "screen", surfaceId: "chatboxes" },
   {
     path: "chatboxes",
@@ -107,6 +111,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "screen",
     surfaceId: "project-environments",
   },
+  { path: "sessions", kind: "screen", surfaceId: "sessions" },
   { path: "playground", kind: "screen", surfaceId: "playground" },
   { path: "support", kind: "screen", surfaceId: "support" },
   { path: "settings", kind: "screen", surfaceId: "settings" },

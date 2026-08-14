@@ -35,13 +35,19 @@ import {
   type ThemeRef,
 } from "@/hooks/chatbox-usage-filters";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
-import { SWARM_QUERIES, type SwarmOverview } from "@/lib/swarm-api";
+import {
+  SWARM_QUERIES,
+  type SwarmOverview,
+  type SwarmWaveSignals,
+} from "@/lib/swarm-api";
+import { SwarmTargetHealthStrip } from "@/components/swarms/swarm-target-health-strip";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
-  RunInsightsChip,
+  RunInsightsProvider,
+  RunInsightsRecommendations,
 } from "@/components/shared/usage-insights/run-insights";
 import {
   groupRunsIntoSwarmWaves,
@@ -82,11 +88,19 @@ export function SwarmRunDetail({
 }: SwarmRunDetailProps) {
   const navigate = useAppNavigate();
   const tabParam = useCurrentSearchParam("tab");
-  const tab: SwarmDetailTab = parseSwarmDetailTab(
-    tabParam ? `?tab=${encodeURIComponent(tabParam)}` : "",
-  );
   const sessionParam = useCurrentSearchParam("session");
   const selParam = useCurrentSearchParam("sel");
+  // Pass both tab and session: a `?session=` deep-link without `tab` must open
+  // Sessions. Building `?tab=` alone used to strip session and land on Insights.
+  const tab: SwarmDetailTab = parseSwarmDetailTab(
+    (() => {
+      const search = new URLSearchParams();
+      if (tabParam) search.set("tab", tabParam);
+      if (sessionParam) search.set("session", sessionParam);
+      const query = search.toString();
+      return query ? `?${query}` : "";
+    })(),
+  );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
@@ -107,6 +121,17 @@ export function SwarmRunDetail({
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
     [overview, waves, swarmId]
   );
+
+  // Same subscription the insights rail mounts — Convex dedupes identical
+  // queries, so this costs nothing extra and keeps launch health on screen
+  // regardless of which tab is open.
+  const waveGroupId = wave?.runs[0]?.swarmRunGroupId;
+  const waveSignals = useQuery(
+    SWARM_QUERIES.getWaveSignals as any,
+    (queryable && waveGroupId
+      ? { projectId, swarmRunGroupId: waveGroupId }
+      : "skip") as any
+  ) as SwarmWaveSignals | null | undefined;
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -264,7 +289,7 @@ export function SwarmRunDetail({
         onBack={() => navigate(routePaths.swarms)}
         backTestId="swarm-run-detail-back"
         title={
-          <div className="flex min-w-0 items-baseline gap-x-2.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
             <h1
               className="truncate text-xl font-bold tracking-tight text-foreground"
               data-testid="swarm-run-detail-title"
@@ -277,6 +302,7 @@ export function SwarmRunDetail({
             >
               {formatSwarmAbsoluteTime(wave.createdAt)}
             </span>
+            <DetailPersonasChip wave={wave} onOpenPersona={onOpenPersona} />
           </div>
         }
         actions={
@@ -361,71 +387,93 @@ export function SwarmRunDetail({
         </div>
       ) : null}
 
+      {/* Launch outcomes, above the tabs and OUTSIDE the findings: a target
+          that never reached a session says nothing about the server's tools,
+          and used to be mined as if it did. */}
+      <SwarmTargetHealthStrip
+        targetHealth={waveSignals?.targetHealth}
+        terminal={waveSignals?.terminal ?? false}
+      />
+
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "insights" ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-4">
             <div className="min-h-0 flex-1 overflow-hidden">
-              <InsightsWorkbench
-                scope={
-                  projectId
-                    ? {
-                        kind: "swarm",
-                        projectId,
-                        ...(runIds.length ? { journeyRunIds: [...runIds] } : {}),
-                      }
-                    : null
-                }
-                cohortKey={`${projectId ?? ""}\0${runIds.join("\0")}`}
-                onOpenSession={handleOpenSession}
-                onOpenSessionsTab={() => handleTabChange("sessions")}
-                urlSelection={urlSelection}
-                onSelectionChange={handleSelectionChange}
-                personasSlot={
-                  <DetailPersonasChip
-                    wave={wave}
-                    onOpenPersona={onOpenPersona}
+              {projectId && wave.runs[0]?.swarmRunGroupId ? (
+                <RunInsightsProvider
+                  surface={{
+                    kind: "swarm",
+                    projectId,
+                    swarmRunGroupId: wave.runs[0].swarmRunGroupId,
+                  }}
+                  onOpenSession={handleOpenSession}
+                >
+                  <InsightsWorkbench
+                    scope={{
+                      kind: "swarm",
+                      projectId,
+                      ...(runIds.length ? { journeyRunIds: [...runIds] } : {}),
+                    }}
+                    cohortKey={`${projectId}\0${runIds.join("\0")}`}
+                    onOpenSession={handleOpenSession}
+                    onOpenSessionsTab={() => handleTabChange("sessions")}
+                    urlSelection={urlSelection}
+                    onSelectionChange={handleSelectionChange}
+                    recommendationsSlot={<RunInsightsRecommendations />}
+                    checksExtras={
+                      wave.runs.some((run) => run.findings.length > 0) ? (
+                        <SwarmWaveFindingsList
+                          runs={wave.runs}
+                          onOpenSession={handleOpenSession}
+                        />
+                      ) : null
+                    }
+                    autoBackfillTopicMap
+                    emptyState={
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        No sessions in this swarm run yet.
+                      </div>
+                    }
+                    testIdPrefix="swarm-insights"
                   />
-                }
-                strugglesSlot={
-                  projectId && wave.runs[0]?.swarmRunGroupId ? (
-                    <RunInsightsChip
-                      surface={{
-                        kind: "swarm",
-                        projectId,
-                        swarmRunGroupId: wave.runs[0].swarmRunGroupId,
-                      }}
-                      onOpenSession={handleOpenSession}
-                    />
-                  ) : null
-                }
-                checksExtras={
-                  wave.runs.some((run) => run.findings.length > 0) ? (
-                    <SwarmWaveFindingsList
-                      runs={wave.runs}
-                      onOpenSession={handleOpenSession}
-                    />
-                  ) : null
-                }
-                // A wave analyzed before the topic map existed backfills
-                // silently on first Clusters view, as it did before the
-                // workbench. The server mutation dedupes in-flight runs.
-                autoBackfillTopicMap
-                emptyState={
-                  // The workbench routes BOTH "nothing to scope to" and "no
-                  // sessions" here, and on this surface those are different
-                  // sentences: Swarms is sign-in-only, unlike User Testing, so
-                  // a signed-out viewer has no project — but a signed-in one
-                  // whose wave produced nothing analyzable must not be told to
-                  // sign in. The copy belongs to this surface, not the shared
-                  // workbench, which is why it arrives as a prop.
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    {projectId
-                      ? "No sessions in this swarm run yet."
-                      : "Sign in to view swarm insights."}
-                  </div>
-                }
-                testIdPrefix="swarm-insights"
-              />
+                </RunInsightsProvider>
+              ) : (
+                <InsightsWorkbench
+                  scope={
+                    projectId
+                      ? {
+                          kind: "swarm",
+                          projectId,
+                          ...(runIds.length
+                            ? { journeyRunIds: [...runIds] }
+                            : {}),
+                        }
+                      : null
+                  }
+                  cohortKey={`${projectId ?? ""}\0${runIds.join("\0")}`}
+                  onOpenSession={handleOpenSession}
+                  onOpenSessionsTab={() => handleTabChange("sessions")}
+                  urlSelection={urlSelection}
+                  onSelectionChange={handleSelectionChange}
+                  checksExtras={
+                    wave.runs.some((run) => run.findings.length > 0) ? (
+                      <SwarmWaveFindingsList
+                        runs={wave.runs}
+                        onOpenSession={handleOpenSession}
+                      />
+                    ) : null
+                  }
+                  autoBackfillTopicMap
+                  emptyState={
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                      {projectId
+                        ? "No sessions in this swarm run yet."
+                        : "Sign in to view swarm insights."}
+                    </div>
+                  }
+                  testIdPrefix="swarm-insights"
+                />
+              )}
             </div>
           </div>
         ) : null}
@@ -452,7 +500,7 @@ export function SwarmRunDetail({
   );
 }
 
-/** Compact persona chip for Insights — details remain available in a popover. */
+/** Compact persona chip in the detail header — names open from a popover. */
 function DetailPersonasChip({
   wave,
   onOpenPersona,

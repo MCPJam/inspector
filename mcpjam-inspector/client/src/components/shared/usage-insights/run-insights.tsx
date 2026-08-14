@@ -21,7 +21,13 @@
  * opening the summary, because a reader scanning for what to fix should not
  * have to read past a disclaimer to reach it.
  */
-import { useMemo, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import {
@@ -50,6 +56,7 @@ import {
   type ChatboxFinding,
   type ChatboxWindowSignals,
 } from "@/lib/chatbox-insights-api";
+import { InsightBannerShell } from "@/components/evals/insight-banner-shell";
 
 /**
  * Which surface's rail this is. The chatbox arm carries no group id: the rail
@@ -194,7 +201,11 @@ export function signalSentence(
     case "criterion_fail":
       return `"${c.subjectLabel}" failed in ${c.affectedSessions} of ${c.sliceTotal} graded sessions`;
     case "target_failures":
-      return `Failures concentrate on ${c.subjectLabel} (${c.affectedSessions} of ${c.sliceTotal})`;
+      // UNITS ARE SESSIONS. The detector used to have a second fire path off
+      // launch attempts, where this pair counted attempts and the bare
+      // "(1 of 2)" read as sessions. That path is gone (launch outcomes are
+      // reported as target health, never mined), so the noun is stated.
+      return `Tool errors concentrate on ${c.subjectLabel} in ${c.affectedSessions} of ${c.sliceTotal} ${plural(c.sliceTotal, "session")}`;
     case "persona_struggles":
       return `${c.subjectLabel} struggled in ${c.affectedSessions} of ${c.sliceTotal} sessions`;
     case "marginal_pass":
@@ -232,6 +243,29 @@ function ratioLabel(c: RailSignalCandidate): string {
 /** Hallucinated tools and failing criteria are the load-bearing problems. */
 function isBlockingShaped(detector: string): boolean {
   return detector === "hallucinated_tool" || detector === "criterion_fail";
+}
+
+/**
+ * A row may open into Why/Fix ONLY when it names a session that exhibits the
+ * anomaly.
+ *
+ * Cause and recommendation are the model's words. Behind an expander with no
+ * failing session to open, they are an unfalsifiable claim: the reader cannot
+ * check them, and the row's authority comes entirely from the confident prose.
+ * A contrast ("Clean 1") does not count — it proves the anomaly did NOT happen
+ * somewhere, which points at nothing to look at.
+ *
+ * The backend now enforces the same rule at both ends (`isGroundedCandidate`
+ * in the miners, `partitionByLoadedEvidence` before narration). This is the
+ * client's own check, not a mirror of theirs: an older server, a cached
+ * payload, or a future detector can still hand this component a row without
+ * exemplars, and it must degrade to the deterministic sentence rather than
+ * offer prose it cannot back.
+ */
+function canExpand(
+  signal: Pick<RailSignalCandidate, "exemplarSessionIds">,
+): boolean {
+  return signal.exemplarSessionIds.length > 0;
 }
 
 type Row = {
@@ -354,13 +388,13 @@ function useNarrationScope(
 /**
  * The rail itself: signals joined to narration and to registry findings.
  *
- * PURELY DRIVEN. Both entry points below own the data and the lifecycle and
- * hand them in, so the same rail can render standalone or inside the chip's
- * popover without a second subscription — and, more importantly, without a
- * second COPY of the lifecycle. An auto-request rejected before any row
- * exists (a daily limit, a guest refusal) leaves its error on the hook that
- * fired it; a body with its own hook would show neither the message nor the
- * retry, and the failure would be silent.
+ * PURELY DRIVEN. Entry points own the data and the lifecycle and hand them
+ * in, so the same rail can render standalone, under the top banner, or inside
+ * the legacy chip popover without a second subscription — and, more
+ * importantly, without a second COPY of the lifecycle. An auto-request
+ * rejected before any row exists (a daily limit, a guest refusal) leaves its
+ * error on the hook that fired it; a body with its own hook would show neither
+ * the message nor the retry, and the failure would be silent.
  */
 function RunInsightsBody({
   rail,
@@ -368,12 +402,18 @@ function RunInsightsBody({
   onOpenSession,
   canRequest,
   canDismiss,
+  hideSummary = false,
+  presentation = "card",
 }: {
   rail: ReturnType<typeof useRailData>;
   lifecycle: UseRunInsightsResult;
   onOpenSession: (sessionId: string) => void;
   canRequest: boolean;
   canDismiss: boolean;
+  /** When the summary already lives in {@link RunInsightsBanner}. */
+  hideSummary?: boolean;
+  /** `embedded` drops the outer card chrome for nesting under the banner. */
+  presentation?: "card" | "embedded";
 }) {
   const { signals, findings, cohort } = rail;
   const terminal = signals?.terminal === true;
@@ -452,12 +492,9 @@ function RunInsightsBody({
     caveats.push(`${insights.unnarratedCandidates.length} more not explained`);
   }
 
-  return (
-    <section
-      className="rounded-lg border border-border/60 bg-muted/20"
-      data-testid="run-insights"
-    >
-      {(insights?.summary || busy) && (
+  const body = (
+    <>
+      {!hideSummary && (insights?.summary || busy) ? (
         <div className="flex items-start gap-2 border-b border-border/40 px-3 py-2">
           {busy ? (
             <p
@@ -481,7 +518,7 @@ function RunInsightsBody({
             </button>
           ) : null}
         </div>
-      )}
+      ) : null}
 
       <div className="divide-y divide-border/40">
         {visible.map((row) => (
@@ -536,6 +573,19 @@ function RunInsightsBody({
         discovery={discovery ?? null}
         onOpenSession={onOpenSession}
       />
+    </>
+  );
+
+  if (presentation === "embedded") {
+    return <div data-testid="run-insights">{body}</div>;
+  }
+
+  return (
+    <section
+      className="rounded-lg border border-border/60 bg-muted/20"
+      data-testid="run-insights"
+    >
+      {body}
     </section>
   );
 }
@@ -574,6 +624,72 @@ function useRail(
   return { rail, lifecycle, canRequest, canDismiss };
 }
 
+type RunInsightsRailContextValue = ReturnType<typeof useRail> & {
+  onOpenSession: (sessionId: string) => void;
+};
+
+const RunInsightsRailContext =
+  createContext<RunInsightsRailContextValue | null>(null);
+
+function useRunInsightsRail(): RunInsightsRailContextValue {
+  const ctx = useContext(RunInsightsRailContext);
+  if (!ctx) {
+    throw new Error(
+      "RunInsightsBanner / RunInsightsRecommendations require RunInsightsProvider",
+    );
+  }
+  return ctx;
+}
+
+/**
+ * Owns the signals + narration lifecycle once for the Insights page so the
+ * summary banner and Recommendations section never fork a second auto-request.
+ */
+export function RunInsightsProvider({
+  surface,
+  onOpenSession,
+  canRequest = true,
+  canDismiss = true,
+  children,
+}: {
+  surface: RunInsightsSurface;
+  onOpenSession: (sessionId: string) => void;
+  canRequest?: boolean;
+  canDismiss?: boolean;
+  children: ReactNode;
+}) {
+  const railState = useRail(surface, canRequest, canDismiss);
+  return (
+    <RunInsightsRailContext.Provider
+      value={{ ...railState, onOpenSession }}
+    >
+      {children}
+    </RunInsightsRailContext.Provider>
+  );
+}
+
+function buildInsightRows(
+  rail: ReturnType<typeof useRailData>,
+  lifecycle: UseRunInsightsResult,
+): Row[] {
+  const { signals, findings } = rail;
+  const { insights } = lifecycle;
+  if (!signals) return [];
+  const insightBy = new Map(
+    (insights?.candidates ?? []).map((c) => [c.fingerprint, c]),
+  );
+  const findingBy = new Map((findings ?? []).map((f) => [f.fingerprint, f]));
+  return signals.candidates.map((signal) => {
+    const fingerprint = signalFingerprint(signal);
+    return {
+      fingerprint,
+      signal,
+      insight: insightBy.get(fingerprint),
+      finding: findingBy.get(fingerprint),
+    };
+  });
+}
+
 /** The rail, standalone. */
 export function RunInsights({
   surface,
@@ -609,7 +725,387 @@ export function RunInsights({
   );
 }
 
-/** Compact statline chip for the signal/finding detail popover. */
+function countActivePatterns(
+  signals: RailSignals | null | undefined,
+  findings: RailFinding[] | undefined,
+): number {
+  if (!signals || !findings) return 0;
+  const findingByFingerprint = new Map(
+    findings.map((finding) => [finding.fingerprint, finding]),
+  );
+  return signals.candidates.reduce((count, candidate) => {
+    const finding = findingByFingerprint.get(signalFingerprint(candidate));
+    return count + (finding && finding.status !== "resolved" ? 1 : 0);
+  }, 0);
+}
+
+/**
+ * Top-level Run insights summary — same {@link InsightBannerShell} chrome as
+ * the suite dashboard. Pattern findings live in
+ * {@link RunInsightsRecommendations} beside the scorecard.
+ */
+export function RunInsightsBanner() {
+  const {
+    rail,
+    lifecycle,
+    canRequest: mayRequest,
+  } = useRunInsightsRail();
+  const { signals, findings, cohort } = rail;
+  const { insights, busy, unavailable, error, request } = lifecycle;
+
+  const activeCount = useMemo(
+    () => countActivePatterns(signals, findings),
+    [signals, findings],
+  );
+
+  if (!signals) return null;
+
+  const summary = insights?.summary ?? null;
+
+  let body: ReactNode;
+  if (!signals.terminal) {
+    body = (
+      <p
+        className="min-w-0 flex-1 text-sm text-muted-foreground"
+        data-testid="run-insights-pending-run"
+      >
+        {cohort === "window"
+          ? "Insights appear once sessions settle."
+          : "Insights appear when the run finishes."}
+      </p>
+    );
+  } else if (busy && !summary) {
+    body = (
+      <p
+        className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground"
+        data-testid="run-insights-generating"
+      >
+        <Loader2 className="size-3.5 shrink-0 animate-spin" />
+        Working out what went wrong…
+      </p>
+    );
+  } else if (summary) {
+    body = <RunSummary summary={summary} />;
+  } else if (activeCount === 0) {
+    body = (
+      <p
+        className="min-w-0 flex-1 text-sm text-muted-foreground"
+        data-testid="run-insights-empty"
+      >
+        No anomalies detected across {signals.sessionCount} sessions.
+      </p>
+    );
+  } else {
+    body = (
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+        {activeCount} pattern{activeCount === 1 ? "" : "s"} detected
+        {busy ? " — working out what went wrong…" : "."}
+      </p>
+    );
+  }
+
+  return (
+    <InsightBannerShell
+      label="Run insights"
+      testId="run-insights-banner"
+      trailing={
+        !busy && summary && !error && !unavailable && mayRequest ? (
+          <button
+            type="button"
+            className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
+            onClick={() => request(true)}
+            data-testid="run-insights-regenerate"
+          >
+            Redo
+          </button>
+        ) : undefined
+      }
+    >
+      <div className="min-w-0 flex-1">{body}</div>
+    </InsightBannerShell>
+  );
+}
+
+/**
+ * Scorecard-adjacent Recommendations: pattern findings as expandable rows.
+ * Card chrome lives on Findings; this is a subsection, not a second card.
+ */
+export function RunInsightsRecommendations() {
+  const {
+    rail,
+    lifecycle,
+    canRequest,
+    canDismiss: mayDismiss,
+    onOpenSession,
+  } = useRunInsightsRail();
+  const { signals, cohort } = rail;
+  const { insights, busy, error, request } = lifecycle;
+
+  const rows = useMemo(
+    () => buildInsightRows(rail, lifecycle),
+    [rail, lifecycle],
+  );
+  const [showAll, setShowAll] = useState(false);
+
+  if (!signals || !signals.terminal) return null;
+  if (rows.length === 0 && !busy && !error) return null;
+
+  const visible = showAll ? rows : rows.slice(0, VISIBLE_ROWS);
+  const caveats: string[] = [];
+  if (
+    signals.judgeCoverage &&
+    signals.judgeCoverage.graded === 0 &&
+    signals.judgeCoverage.total > 0
+  ) {
+    caveats.push("no judge verdicts — goal completion not assessed");
+  }
+  if (cohort === "window" && signals.feedbackCount === 0) {
+    caveats.push("no feedback left yet");
+  }
+  if (
+    signals.feedbackTruncated ||
+    (insights && "feedbackTruncated" in insights && insights.feedbackTruncated)
+  ) {
+    caveats.push("some ratings unread");
+  }
+  if (signals.lowConfidence) caveats.push("most sessions still analyzing");
+  if (signals.truncated) caveats.push("newest sessions only");
+
+  return (
+    <div data-testid="run-insights-recommendations">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 pt-2.5 pb-2">
+        <h3 className="text-sm font-semibold tracking-tight">Recommendations</h3>
+        <span className="text-xs text-muted-foreground">
+          Patterns to investigate across sessions
+        </span>
+      </div>
+      <div>
+        {busy && rows.length === 0 ? (
+          <p
+            className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground"
+            data-testid="run-insights-generating"
+          >
+            <Loader2 className="size-3.5 animate-spin" />
+            Working out what went wrong…
+          </p>
+        ) : null}
+        {rows.length > 0 ? (
+          <div className="divide-y divide-border/50">
+            {visible.map((row) => (
+              <RecommendationRow
+                key={row.fingerprint}
+                row={row}
+                cohort={cohort}
+                canDismiss={mayDismiss}
+                onOpenSession={onOpenSession}
+              />
+            ))}
+          </div>
+        ) : null}
+        <div className="flex flex-col gap-1 border-t bg-muted/30 px-3 py-1.5">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-[11px] text-muted-foreground">
+              {signals.sessionCount} sessions
+              {caveats.length > 0 ? ` · ${caveats.join(" · ")}` : ""}
+            </p>
+            {rows.length > VISIBLE_ROWS ? (
+              <button
+                type="button"
+                className="shrink-0 text-[11px] font-medium text-primary hover:underline"
+                onClick={() => setShowAll((prev) => !prev)}
+                data-testid="run-insights-toggle"
+              >
+                {showAll ? "Show fewer" : `Show all ${rows.length}`}
+              </button>
+            ) : null}
+          </div>
+          {error ? (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid="run-insights-error"
+            >
+              {error}{" "}
+              {canRequest ? (
+                <button
+                  type="button"
+                  className="font-medium text-primary hover:underline"
+                  onClick={() => request(true)}
+                  data-testid="run-insights-retry"
+                >
+                  Try again
+                </button>
+              ) : null}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Scorecard-shaped expandable pattern row. */
+function RecommendationRow({
+  row,
+  cohort,
+  canDismiss,
+  onOpenSession,
+}: {
+  row: Row;
+  cohort: "run" | "window";
+  canDismiss: boolean;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const dismissMut = useMutation(SWARM_MUTATIONS.dismissFinding as any);
+  const undismissMut = useMutation(SWARM_MUTATIONS.undismissFinding as any);
+  const [dismissedOptimistic, setDismissedOptimistic] = useState<
+    boolean | null
+  >(null);
+
+  const { signal, insight, finding } = row;
+  const dismissed =
+    dismissedOptimistic ?? Boolean(finding && finding.dismissedAt !== null);
+  const chip = finding ? STATUS_CHIP[finding.status] : undefined;
+  const affected = signal.affectedSessions;
+  const headline = signalSentence(signal, { cohort });
+  // Gated on a failing exemplar and nothing else — see `canExpand`. An
+  // exemplar alone is worth opening for (the session chips are the point);
+  // prose without one is not.
+  const hasDetail = canExpand(signal);
+  // Evidence can disappear under an OPEN row: signals are a live subscription,
+  // and a refresh that drops the exemplars would otherwise leave the model's
+  // prose on screen with nothing behind it. Derived, not stored, so the row
+  // closes the moment it stops qualifying.
+  const isExpanded = hasDetail && expanded;
+
+  const toggleDismiss = () => {
+    if (!finding) return;
+    const next = !dismissed;
+    setDismissedOptimistic(next);
+    const mut = next ? dismissMut : undismissMut;
+    mut({ findingId: finding.findingId } as any).catch(() => {
+      setDismissedOptimistic(!next);
+    });
+  };
+
+  return (
+    <div
+      className={cn(dismissed && "opacity-50")}
+      data-testid="run-insight"
+      data-detector={signal.detector}
+      data-dismissed={dismissed ? "true" : "false"}
+    >
+      <div className="flex items-center gap-3 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => hasDetail && setExpanded((prev) => !prev)}
+          disabled={!hasDetail}
+          aria-expanded={hasDetail ? isExpanded : undefined}
+          aria-label={headline}
+          className={cn(
+            "flex h-6 min-w-7 shrink-0 items-center justify-center rounded border px-1 font-mono text-xs font-semibold tabular-nums transition-colors",
+            "disabled:cursor-default",
+            isBlockingShaped(signal.detector)
+              ? "border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20"
+              : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20",
+          )}
+          data-testid="run-insight-count"
+        >
+          {affected}
+        </button>
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          onClick={() => hasDetail && setExpanded((prev) => !prev)}
+          aria-expanded={hasDetail ? isExpanded : undefined}
+          data-testid="run-insight-headline"
+        >
+          <span className="min-w-0 flex-1 truncate text-xs font-medium" title={headline}>
+            {headline}
+          </span>
+          {hasDetail ? (
+            <ChevronRight
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                isExpanded && "rotate-90",
+              )}
+              aria-hidden="true"
+            />
+          ) : null}
+        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {chip ? (
+            <span
+              className={cn(
+                "rounded border px-1 py-0 text-[10px] font-medium",
+                chip.className,
+              )}
+              data-testid="run-insight-status"
+            >
+              {chip.label}
+              {finding && finding.occurrenceCount > 1
+                ? ` ×${finding.occurrenceCount}`
+                : ""}
+            </span>
+          ) : null}
+          {finding && canDismiss ? (
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={toggleDismiss}
+              data-testid="run-insight-dismiss"
+            >
+              {dismissed ? "Undo" : "Dismiss"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {isExpanded ? (
+        <div
+          className="space-y-1 border-t border-border/40 bg-muted/20 px-3 py-2 pl-12"
+          data-testid="run-insight-detail"
+        >
+          {insight?.rootCause ? (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground/80">Why: </span>
+              {insight.rootCause}
+            </p>
+          ) : null}
+          {insight?.recommendation ? (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground/80">Fix: </span>
+              {insight.recommendation}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {signal.exemplarSessionIds.map((sessionId, i) => (
+              <SessionChip
+                key={sessionId}
+                label={`Session ${i + 1}`}
+                onClick={() => onOpenSession(sessionId)}
+              />
+            ))}
+            {/* Contrast chips ride ALONGSIDE failing ones, never alone. A
+                lone "Clean 1" reads as evidence for a claim while pointing at
+                a session where the problem did not happen. */}
+            {signal.exemplarSessionIds.length > 0
+              ? signal.contrastSessionIds.map((sessionId, i) => (
+                  <SessionChip
+                    key={sessionId}
+                    label={`Clean ${i + 1}`}
+                    onClick={() => onOpenSession(sessionId)}
+                    subtle
+                  />
+                ))
+              : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** @deprecated Prefer {@link RunInsightsBanner}. Kept for focused lifecycle tests. */
 export function RunInsightsChip({
   surface,
   onOpenSession,
@@ -625,10 +1121,8 @@ export function RunInsightsChip({
   // `PopoverContent` on close, and a hook mounted in there would lose its
   // once-per-cohort and permission latches every time — re-firing on reopen a
   // request a guest was already refused. The chip is mounted as long as the
-  // statline is, and it HANDS the lifecycle to the body rather than letting it
-  // start a second one: a request rejected before any row exists leaves its
-  // error on the hook that fired it, and a body with its own copy would show
-  // neither the message nor the retry.
+  // parent is, and it HANDS the lifecycle to the body rather than letting it
+  // start a second one.
   const {
     rail,
     lifecycle,
@@ -637,16 +1131,10 @@ export function RunInsightsChip({
   } = useRail(surface, canRequest, canDismiss);
   const { signals, findings, cohort } = rail;
 
-  const activeCount = useMemo(() => {
-    if (!signals || !findings) return 0;
-    const findingByFingerprint = new Map(
-      findings.map((finding) => [finding.fingerprint, finding]),
-    );
-    return signals.candidates.reduce((count, candidate) => {
-      const finding = findingByFingerprint.get(signalFingerprint(candidate));
-      return count + (finding && finding.status !== "resolved" ? 1 : 0);
-    }, 0);
-  }, [signals, findings]);
+  const activeCount = useMemo(
+    () => countActivePatterns(signals, findings),
+    [signals, findings],
+  );
 
   if (!signals) return null;
   if (!signals.terminal) {
@@ -747,12 +1235,15 @@ function InsightRow({
   const dismissed =
     dismissedOptimistic ?? Boolean(finding && finding.dismissedAt !== null);
   const chip = finding ? STATUS_CHIP[finding.status] : undefined;
-  const hasDetail = Boolean(
-    insight?.rootCause ||
-      insight?.recommendation ||
-      signal.exemplarSessionIds.length ||
-      signal.contrastSessionIds.length,
-  );
+  // Gated on a failing exemplar and nothing else — see `canExpand`. An
+  // exemplar alone is worth opening for (the session chips are the point);
+  // prose without one is not.
+  const hasDetail = canExpand(signal);
+  // Evidence can disappear under an OPEN row: signals are a live subscription,
+  // and a refresh that drops the exemplars would otherwise leave the model's
+  // prose on screen with nothing behind it. Derived, not stored, so the row
+  // closes the moment it stops qualifying.
+  const isExpanded = hasDetail && expanded;
 
   const toggleDismiss = () => {
     if (!finding) return;
@@ -776,6 +1267,7 @@ function InsightRow({
           type="button"
           className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
+          aria-expanded={hasDetail ? isExpanded : undefined}
           data-testid="run-insight-headline"
         >
           <span
@@ -794,7 +1286,7 @@ function InsightRow({
             <ChevronRight
               className={cn(
                 "mt-1 size-3 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-90",
+                isExpanded && "rotate-90",
               )}
               aria-hidden="true"
             />
@@ -826,7 +1318,7 @@ function InsightRow({
         ) : null}
       </div>
 
-      {expanded ? (
+      {isExpanded ? (
         <div
           className="mt-1 space-y-1 pl-3.5"
           data-testid="run-insight-detail"
@@ -851,14 +1343,19 @@ function InsightRow({
                 onClick={() => onOpenSession(sessionId)}
               />
             ))}
-            {signal.contrastSessionIds.map((sessionId, i) => (
-              <SessionChip
-                key={sessionId}
-                label={`Clean ${i + 1}`}
-                onClick={() => onOpenSession(sessionId)}
-                subtle
-              />
-            ))}
+            {/* Contrast chips ride ALONGSIDE failing ones, never alone. A
+                lone "Clean 1" reads as evidence for a claim while pointing at
+                a session where the problem did not happen. */}
+            {signal.exemplarSessionIds.length > 0
+              ? signal.contrastSessionIds.map((sessionId, i) => (
+                  <SessionChip
+                    key={sessionId}
+                    label={`Clean ${i + 1}`}
+                    onClick={() => onOpenSession(sessionId)}
+                    subtle
+                  />
+                ))
+              : null}
           </div>
         </div>
       ) : null}
