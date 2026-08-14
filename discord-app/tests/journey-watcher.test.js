@@ -38,7 +38,7 @@ test("edits the status to a mixed verdict and posts scorecard evidence", async (
 				criteria: [{ label: "checkout completed", passCount: 6, failCount: 4 }],
 			}),
 			listJourneyRunSessions: async () => [
-				{ personaLabel: "Impatient admin", status: "failed" },
+				{ personaLabel: "Impatient admin", outcome: "failed" },
 			],
 		},
 		ctx: {},

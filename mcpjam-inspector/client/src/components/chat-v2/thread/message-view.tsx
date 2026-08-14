@@ -80,6 +80,13 @@ interface MessageViewProps {
    */
   renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
   /**
+   * Optional slot rendered below each ASSISTANT message — the per-turn rating
+   * widget. Sibling of the hover-only copy actions below, deliberately OUTSIDE
+   * that block: a rating prompt nobody can see until they hover is a rating
+   * nobody leaves.
+   */
+  renderAssistantTurnFooter?: (message: UIMessage) => React.ReactNode;
+  /**
    * When provided, user messages gain a pencil action that swaps the bubble
    * for an inline editor. Saving rewinds the thread to this message and
    * re-runs the turn from the edited text. Omit it (compare mode, read-only
@@ -213,6 +220,9 @@ function areMessageViewPropsEqual(
     prev.claudeFooterMode === next.claudeFooterMode &&
     prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
+    // Without this the memo freezes the footer: the rating widget's status
+    // lives in the host's callback identity, so a submit would never repaint.
+    prev.renderAssistantTurnFooter === next.renderAssistantTurnFooter &&
     prev.onEditUserMessage === next.onEditUserMessage &&
     prev.editDisabled === next.editDisabled &&
     isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
@@ -448,6 +458,7 @@ function MessageViewImpl({
   claudeFooterMode = "none",
   mcpjamFooterActive = false,
   renderUserMessageActions,
+  renderAssistantTurnFooter,
   onEditUserMessage,
   editDisabled = false,
   senderAvatar,
@@ -676,6 +687,7 @@ function MessageViewImpl({
             />
           </div>
         ) : null}
+        {renderAssistantTurnFooter?.(message)}
       </div>
     </article>
   );

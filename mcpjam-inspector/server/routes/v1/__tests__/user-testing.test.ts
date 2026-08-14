@@ -66,7 +66,7 @@ function call(
   router: Parameters<Hono["route"]>[1],
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
 ) {
   return makeApp(router).request(path, {
     method,
@@ -79,13 +79,16 @@ function call(
   });
 }
 
+// Mirrors the `getChatbox` SETTINGS ENVELOPE, which deliberately carries no
+// `accessVersion` — that field only travels on the publish/rebind projection.
+// A stub that invented one here would let the routes appear to serve a value
+// the real upstream never sends.
 const scenarioRow = (projectId = PROJECT) => ({
   _id: SCENARIO,
   projectId,
   workspaceId: "ws_1",
   name: "Checkout",
   mode: "invited_only",
-  accessVersion: 3,
 });
 
 /**
@@ -190,13 +193,13 @@ describe("publish (scenarios.ts)", () => {
         // regression that dropped `description` would leave this green.
         description: "Checkout flow, mobile web",
         mode: "invited_only",
-      }
+      },
     );
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledTimes(1);
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      Record<string, unknown>
+      Record<string, unknown>,
     ];
     expect(args).toMatchObject({
       environmentId: "env_1",
@@ -225,11 +228,11 @@ describe("publish (scenarios.ts)", () => {
       scenarios,
       "PUT",
       `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
-      { name: "Checkout", mode: "invited_only" }
+      { name: "Checkout", mode: "invited_only" },
     ).then(() => {
       const [, args] = mutationMock.mock.calls[0] as [
         string,
-        Record<string, unknown>
+        Record<string, unknown>,
       ];
       expect(args).not.toHaveProperty("description");
     });
@@ -254,7 +257,7 @@ describe("publish (scenarios.ts)", () => {
       scenarios,
       "PUT",
       `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
-      { mode: "invited_only" }
+      { mode: "invited_only" },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -273,7 +276,7 @@ describe("publish (scenarios.ts)", () => {
         method: "PUT",
         body: "not json",
         headers: { "content-type": "application/json" },
-      }
+      },
     );
     expect(res.status).toBe(400);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -290,7 +293,7 @@ describe("publish (scenarios.ts)", () => {
         scenarios,
         "PUT",
         `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
-        body
+        body,
       );
       expect(res.status).toBe(400);
     }
@@ -313,7 +316,7 @@ describe("publish (scenarios.ts)", () => {
     const res = await call(
       scenarios,
       "PUT",
-      `/api/v1/projects/${PROJECT}/environments/env_1/scenario`
+      `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
     );
     expect(res.status).toBe(201);
   });
@@ -335,9 +338,16 @@ describe("scenario update", () => {
 
   it("routes a mode change to setChatboxMode and nothing else", async () => {
     mutationMock.mockResolvedValue(null);
-    await call(userTesting, "PATCH", BASE, { mode: "invited_only" });
+    const res = await call(userTesting, "PATCH", BASE, {
+      mode: "invited_only",
+    });
     expect(mutationMock).toHaveBeenCalledTimes(1);
     expect(mutationMock.mock.calls[0]?.[0]).toBe("chatboxes:setChatboxMode");
+    // No `accessVersion` in the response. The mutation bumps it upstream, but
+    // the settings envelope the route re-reads does not carry the value — an
+    // always-null field would document a revocation signal never delivered.
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("accessVersion");
   });
 
   it("routes a rename to updateChatbox and nothing else", async () => {
@@ -377,7 +387,7 @@ describe("session transcript", () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify([{ role: "user", content: "hello" }]), {
         status: 200,
-      })
+      }),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const raw = await res.text();
@@ -417,15 +427,15 @@ describe("session transcript", () => {
           Array.from({ length: 120 }, (_, index) => ({
             role: "user",
             content: `m${index}`,
-          }))
+          })),
         ),
-        { status: 200 }
-      )
+        { status: 200 },
+      ),
     );
     const res = await call(
       userTesting,
       "GET",
-      `${BASE}/sessions/sess_1?limit=50`
+      `${BASE}/sessions/sess_1?limit=50`,
     );
     const body = (await res.json()) as {
       messages: unknown[];
@@ -447,7 +457,7 @@ describe("session transcript", () => {
     const res = await call(
       userTesting,
       "GET",
-      `${BASE}/sessions/sess_1?cursor=oops`
+      `${BASE}/sessions/sess_1?cursor=oops`,
     );
     expect(res.status).toBe(400);
   });
@@ -489,7 +499,7 @@ describe("session transcript", () => {
       new Response(oversizedTranscriptStream(), {
         status: 200,
         headers: { "content-length": String(64 * 1024 * 1024) },
-      })
+      }),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as { transcriptUnavailable?: boolean };
@@ -510,7 +520,7 @@ describe("session transcript", () => {
       },
     });
     fetchMock.mockResolvedValue(
-      new Response(oversizedTranscriptStream(), { status: 200 })
+      new Response(oversizedTranscriptStream(), { status: 200 }),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as {
@@ -540,10 +550,10 @@ describe("session transcript", () => {
           Array.from({ length: 200 }, (_, index) => ({
             role: "user",
             content: "x".repeat(1024) + index,
-          }))
+          })),
         ),
-        { status: 200 }
-      )
+        { status: 200 },
+      ),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as {
@@ -601,7 +611,7 @@ describe("exposure controls", () => {
     expect(mutationMock).toHaveBeenCalledTimes(1);
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      { guestExecution: Record<string, unknown> }
+      { guestExecution: Record<string, unknown> },
     ];
     expect(args.guestExecution).toEqual(caps);
   });
@@ -631,16 +641,57 @@ describe("exposure controls", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
-  it("surfaces the admin gate as 403, not a 404", async () => {
-    // The caller is already a workspace member (Convex confirmed it to serve
-    // the preflight), so "requires admin" is actionable and reveals nothing.
-    mutationMock.mockRejectedValue(
-      Object.assign(new Error("Requires admin"), {
-        data: { code: "FORBIDDEN", message: "Requires admin" },
-      })
-    );
+  it("rotates the link without minting an accessVersion it never had", async () => {
+    // The mutation returns the settings envelope: a `link` object and NO
+    // `accessVersion` (only publish/rebind return one). The old response
+    // reported `accessVersion: null` forever while documenting it as the
+    // revocation signal.
+    mutationMock.mockResolvedValue({
+      link: { token: "tok", path: "/s/tok", url: "https://app.test/s/tok" },
+      members: [],
+    });
     const res = await call(userTesting, "POST", `${BASE}/rotate-link`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.rotated).toBe(true);
+    expect(body).not.toHaveProperty("accessVersion");
+  });
+
+  it("404s rotate's REAL insufficient-role refusal — it is not an admin gate", async () => {
+    // `rotateChatboxLink` gates at `requireWorkspaceRole(..., 'guest')` and
+    // throws PLAIN errors ("Not a member of this workspace"), never a
+    // ConvexError with a FORBIDDEN code — a previous version of this test
+    // mocked that fictional shape and asserted a 403 the mutation can never
+    // produce. The real refusal means the caller cannot see the workspace at
+    // all, so the translator's prose fallback collapses it to the same
+    // neutral 404 as a missing scenario. (In production Convex redacts the
+    // plain error to "Server Error" before it reaches us; the preflight
+    // normally answers first with its own 404 either way.)
+    mutationMock.mockRejectedValue(new Error("Not a member of this workspace"));
+    const res = await call(userTesting, "POST", `${BASE}/rotate-link`);
+    expect(res.status).toBe(404);
+  });
+
+  it("surfaces guest-execution's REAL admin refusal as 403, not a 404", async () => {
+    // `setChatboxGuestExecution` is the exposure control that genuinely
+    // requires project admin, and its refusal is a plain error naming the
+    // requirement. The caller is already a workspace member (Convex confirmed
+    // it to serve the preflight), so "only project admins" is actionable and
+    // reveals nothing new.
+    mutationMock.mockRejectedValue(
+      new Error("Only project admins can configure guest execution"),
+    );
+    const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, {
+      enabled: true,
+      computerEnabled: false,
+      sharedSkillsEnabled: false,
+      dailyCreditCap: 100,
+      dailyComputerStartCap: 0,
+      maxConcurrentComputers: 0,
+    });
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/project admins/i);
   });
 });
 
@@ -657,7 +708,7 @@ describe("findings", () => {
     const res = await call(
       userTesting,
       "POST",
-      `${BASE}/findings/finding_1/dismiss`
+      `${BASE}/findings/finding_1/dismiss`,
     );
     expect(res.status).toBe(200);
     expect(mutationMock).toHaveBeenCalledTimes(1);
@@ -671,7 +722,7 @@ describe("findings", () => {
     const res = await call(
       userTesting,
       "POST",
-      `${BASE}/findings/finding_1/dismiss`
+      `${BASE}/findings/finding_1/dismiss`,
     );
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -711,7 +762,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     // problem, not an incident — and 502-vs-404 must not distinguish
     // "malformed" from "missing".
     failAllQueries(
-      new Error("ArgumentValidationError: Value does not match validator")
+      new Error("ArgumentValidationError: Value does not match validator"),
     );
     const res = await call(userTesting, "GET", `${BASE}/usage`);
     expect(res.status).toBe(404);
@@ -752,7 +803,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     const res = await call(
       userTesting,
       "GET",
-      `${BASE}/metrics?population=fake`
+      `${BASE}/metrics?population=fake`,
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { message: string };
@@ -806,5 +857,96 @@ describe("deleted transcript blob", () => {
     expect(body.messageCount).toBeNull();
     expect(body.messages).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET scenario detail (insights envelope)", () => {
+  it("returns the scenario with its envelope, members only by construction", async () => {
+    const envelope = {
+      schemaVersion: 1,
+      scope: {
+        kind: "user_testing_window",
+        id: "grp_1",
+        scenarioId: SCENARIO,
+        windowStartAt: 1,
+        windowEndAt: 2,
+      },
+      status: "completed",
+      reasonCode: null,
+      retryable: false,
+      error: null,
+      generatedAt: 5,
+      updatedAt: 6,
+      summary: "One tool keeps failing.",
+      coverage: {
+        unit: "sessions",
+        analyzed: 3,
+        total: 3,
+        feedbackCount: 1,
+        truncated: false,
+        lowConfidence: false,
+      },
+      findings: [],
+      truncation: {
+        truncated: false,
+        omittedFindings: 0,
+        omittedEvidence: 0,
+        contractTruncated: false,
+      },
+    };
+    answerQueries({
+      getChatbox: { ...scenarioRow(), environmentId: "env_9" },
+      getScenarioInsightsEnvelope: envelope,
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      id: SCENARIO,
+      projectId: PROJECT,
+      name: "Checkout",
+      environmentId: "env_9",
+    });
+    expect(body.insights).toEqual(envelope);
+  });
+
+  it("still returns the scenario when the envelope query finds nothing", async () => {
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getScenarioInsightsEnvelope: null,
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(200);
+    expect((await res.json()).insights).toBeUndefined();
+  });
+
+  it("degrades to the bare scenario when the members-only envelope REFUSES", async () => {
+    // The envelope needs workspace membership; the preflight only proved the
+    // scenario is visible. In production that refusal arrives redacted and is
+    // indistinguishable from a crash, so failing here would answer 502 (and
+    // page someone) for an ordinary permission outcome.
+    queryMock.mockImplementation((name: string) => {
+      const fn = String(name).split(":").pop() ?? "";
+      if (fn === "getChatbox") return Promise.resolve(scenarioRow());
+      return Promise.reject(new Error("Server Error"));
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.id).toBe(SCENARIO);
+    expect(body.insights).toBeUndefined();
+  });
+
+  it("404s across projects WITHOUT ever reading insights", async () => {
+    // The assertion that matters is the second one: without it this test
+    // passes even if the project comparison were deleted, because an
+    // unmocked envelope query resolves to null and 404s anyway.
+    answerQueries({ getChatbox: scenarioRow(OTHER_PROJECT) });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(404);
+    const insightReads = queryMock.mock.calls.filter((call) =>
+      String(call[0]).includes("getScenarioInsightsEnvelope"),
+    );
+    expect(insightReads).toHaveLength(0);
   });
 });

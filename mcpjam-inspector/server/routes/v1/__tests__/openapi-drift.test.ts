@@ -49,6 +49,11 @@ const BODYLESS_WRITES = new Set([
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
+  // Insights envelope surfaces (actionable-insights program, pre-GA): the
+  // scenario detail + eval-run insights retry ship behind the staged rollout
+  // and get documented at GA together with the envelope schema.
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "post /projects/{projectId}/eval-runs/{runId}/insights",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
