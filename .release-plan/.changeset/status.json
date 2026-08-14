@@ -5,6 +5,16 @@
         {
           "name": "@mcpjam/inspector",
           "type": "minor"
+        }
+      ],
+      "summary": "Release the latest Inspector updates.\n\n- Group scorecards and recommendations under Findings, and keep Insights visible when queries fail.\n- Default guest multi-host Playground sessions to ChatGPT, Claude, and Cursor.",
+      "id": "inspector-release-2026-08-13"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
         },
         {
           "name": "@mcpjam/sdk",
@@ -15,64 +25,38 @@
           "type": "minor"
         }
       ],
-      "summary": "Give an environment its own model, and hold a client to pinning one.\n\nAn environment now carries an optional `modelId` that OVERRIDES the model pinned on the client it selects. Absent means inherit, not \"no model\" — so `POST /environments/:id/resolve` answers with both: `modelId` (the stored override, when set), `effectiveModelId` (what will actually run), and `modelSource` (`\"environment\"` or `\"host\"`), which is the distinction an editor needs and could not previously make. `PATCH` takes `modelId: null` to clear the override and fall back to the client's; an empty string is rejected rather than treated as a clear, and the id is trimmed at the write boundary because it is stored and compared verbatim downstream.\n\nBoth halves of that resolution can be empty, and an environment that names no model cannot launch at all. The backend refuses it with `ENV_MODEL_REQUIRED`, which now reaches callers as a 409 carrying `details.reason: \"environment_model_required\"` — the same shape from the v1 resolve route and from the eval runner's launch path, so a caller branching on the slug gets one answer whichever surface refused it. Previously the runner leaked it as a bare Convex rejection that read as an internal fault.\n\nThe forward-client invariant closes the other end: a client created through `POST /hosts` must pin a model, by explicit `config` or by template, because every environment that selects it inherits that model. The check is a refinement over the passthrough config record, not a second copy of `ensureHostConfigV2` — the XOR message still wins for a degenerate `config: {}`, whose real problem is that it picked neither branch. In the client builder, clearing the model of a client that HAD one is now a blocking save error; a client that was already modelless stays a warning, so legacy rows do not strand an unrelated rename behind a model choice. Existing rows are otherwise untouched — the invariant binds new clients only.\n\n`GET /environments/capabilities` reports `modelOverrides` and `modelMatrix` for version skew, not feature flagging: the SDK and CLI ship independently of the platform, and an unknown field is a hard validator error there rather than a silently ignored one. The CLI asks only when model input was actually supplied, so an ordinary `environments create` costs no extra round trip, and a deployment too old to answer reports `false` for everything. `mcpjam environments create/update` gain `--model` and `--clear-model`. The operation is excluded from the agent registry — it is a compatibility probe, not an action, and the write paths already ask it on the caller's behalf.\n\nModel attribution on eval sessions is now the model that ran. The hosted runner persists the RESOLVED id — the one the `/stream` call billed — and the local runner persists `test.model` only when the case actually needs a model, on both the success and the throw path: a model-free case reaches the runner with a display-only sentinel, and labelling a session with it would name a model that never ran. The Explore table labels each case row from the iterations' own snapshots rather than the case's current authored model, so a finished environment-backed run is no longer relabelled with whatever the case would run today, and a row whose iterations span two models is marked mixed instead of picking one.\n\nProvider classification moves to one canonical module (`shared/model-provider.ts`). The same question — given only this id, which provider serves it — was answered slightly differently in at least four places, and the divergences were real: `meta-llama/…` classified as `meta-llama` here and `meta` there, `mistralai/…` fell through to Ollama, and a bare unknown id became `openrouter` in chat but `ollama` in the runner. The module is pure and is the source of truth; the backend keeps a hand-mirrored copy (Convex cannot import from this repo) checked against the same fixture vectors, so changing one fails the other's parity test.\n\nSwarm launch waves stop scheduling once an organization hits its credit limit. Every remaining launch would be rejected for the same reason, so the wave now costs one round trip instead of N and shows one banner instead of N identical ones. Requests already in flight are allowed to settle rather than cancelled — a launch is a POST that may already have created a durable run row, and aborting the client half would leave one running with nobody watching. The wave's `launchJourney` prop also regains `environmentIds` in its type, which a conditional spread had been hiding from excess property checking while the call site passed it.",
-      "id": "environment-model-override"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Say why the server rejected the OAuth debugger's authenticated request.\n\nThe debugger's last step sends an authenticated MCP request with the token it just obtained — `initialize` before 2026-07-28, `tools/list` after. When the server refuses, the flow error was built from the status line alone — \"Authenticated request failed: 400 Bad Request\" — while the body naming the cause sat unread in `mcpResponseData`, which the same update writes to `lastResponse`. On screen the reason was one panel away; in error reporting it was gone, so an aggregate of these 400s said only that servers were rejecting us.\n\nThe reason is now appended when the body carries one: `extractResponseErrorReason` reads the JSON-RPC `{ error: { message } }` an MCP server rejects with, the OAuth `error`/`error_description` pair, a lone `message`, and a plain-text body — the last being what a server behind a gateway usually returns. Candidates are trimmed and a blank one counts as absent, so precedence falls through to a field that says something and a blank `error_description` cannot compose a dangling `\": \"`. A body that explains nothing yields `undefined` rather than an empty suffix.\n\nBecause that text is chosen by the server under test — and MCPJam is routinely pointed at half-built servers that echo the bearer token back in an error body — the reason is redacted through `sanitizeTraceErrorMessage` before it becomes `state.error`, rather than at each place that renders it. `state.error` is toasted, folded into conformance step results, and reported; the OAuth conformance text formatter prints step errors verbatim. The full body stays readable in HTTP history either way.\n\nThe redactor also owns the 300-character cap that keeps an HTML error page from becoming the message, and the extractor deliberately returns text neither capped nor scanned. Capping first is unsafe: `sanitizeTraceErrorMessage` closes an unterminated JSON value or URL userinfo only when it is the one that cut the text, so a reason cut beforehand looks whole to it, and a credential whose closing quote or `@` sat just past the cap keeps its raw prefix. Scanning first is merely wasteful: a body is server-controlled and can be megabytes, and `trace.ts` re-derives this on every projection, so the whitespace collapse that keeps the error on one line runs last, on the capped output. The redactor bounds its own scan at `MAX_SCANNED`, so a megabyte body costs one slice. `trace.ts` shares the extractor and sanitizes its own result the same way, so registration failures gain the same guard.\n\nBecause the redactor is what bounds these strings, `trace.ts` now caps a derived step error itself in raw-history mode (`sanitize: false`), which skips redaction: that error is drawn from the response body, and a gateway's error page would otherwise become a step's one-line error in full. The untruncated body stays on the HTTP history entry, which is where raw mode means to keep it. It collapses that error onto one line in both modes for the same reason — a registration failure's `error_description` can be a multi-line list, and a step error is a line. `toSingleLine` is shared, and runs last in either path: collapsing shortens the text, so doing it first can drop a message back under `MAX_SCANNED` and disarm the very tail guards above.\n\n`trace.ts` already had this extraction for registration failures and now shares it, gaining the plain-text case it lacked — that path previously fell through to `HTTP 400 Bad Request`, discarding the same text for the same reason.\n\nAll four protocol machines (2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28) end on this step and now report it identically, through `describeAuthenticatedRequestFailure`.",
-      "id": "oauth-authenticated-request-reason"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop reporting missing-issuer metadata failures as MCPJam errors.\n\nRFC 8414 makes `issuer` REQUIRED, and every debug OAuth machine rejects an authorization-server metadata document that omits it. That check stays, and the message stays on screen — but it describes a spec violation in the server under test, not a fault in MCPJam, and only the 2026-07-28 machine reads the field afterwards (it compares the issuer to the authorization-server URL and to the callback `iss`). On the other three eras the failure was arriving as an MCPJam alert, burying real step failures under other projects' bugs.\n\nThe step-failure reporter now skips it, alongside the `Warning: `-prefixed advisories it already skipped, and treats it the same way for recurrence: it still replaces the previous message, so a genuine failure that follows one counts as new.\n\nThe SDK exports `AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER` and the machines throw it, so the match cannot drift out of sync with the message they actually produce.",
-      "id": "oauth-missing-issuer-unreported"
+      "summary": "Organizations are discoverable, and projects can be created and renamed from MCP.\n\n`GET /v1/organizations` closes a hole rather than adding a capability. `GET /v1/projects` has always taken an `organizationId` filter and `POST /v1/projects` has always accepted one in its body, but no machine surface could produce such an id: `/v1/me` returns none, there was no SDK method, no route, and no CLI command, and the only reader of the backing query was the browser app shell. The endpoint is read-only and reaches REST, the SDK (`listOrganizations`), the CLI (`mcpjam organizations list`) and the MCP catalog (`list_organizations`). `mcpjam projects list` gains the `--organization-id` flag the operation already supported, so the round trip — list organizations, then filter projects by one — is finally typeable.\n\nThe response is a hand-written DTO (`id`, `name`, `plan`, `myRole`, `isCreator`, `logoUrl`, `createdAt`), not the query's payload. That payload is shaped for the org switcher and carries Stripe ids, seat counts, trial and dunning clocks; listing the public fields explicitly means a column added to the organizations table cannot become part of an API response by default.\n\nThe security-relevant piece is the org-scope clamp. Unlike every other v1 read, the backing query takes no organization argument — it answers for the acting human — so a delegated `sk_` token, which is org-scoped by construction everywhere else, would otherwise carry every sibling organization of whoever minted the key straight through. The route intersects the result with the token's organization, mirroring how the Convex `/v1/projects` route rejects a filter outside the key's scope. A session-JWT caller is confined to nothing and still sees all of theirs. Guests are default-denied, like `/me`.\n\n`create_project` and `update_project` move into the MCP catalog. The previous exclusion — \"project lifecycle writes are intentionally outside the unattended MCP catalog\" — was stricter than what the enterprise MCP servers it was modelled on actually ship: of sixteen surveyed, eleven expose container creation, including GitHub (`create_repository`) and Sentry (`create_project` / `update_project`). Both operations are cheap, both are visible in the UI immediately, and neither destroys anything: `update_project`'s schema has no `servers` key at all, so the backend's destructive server-map replace is unreachable from this surface. They announce as plain writes — `readOnlyHint: false`, `destructiveHint: false` — and their descriptions were rewritten to read as tool descriptions, since that is what they now are.\n\n`delete_project` stays off MCP, and its exclusion reason no longer borrows the blanket one its siblings shared: deleting cascades across every project-owned resource and cannot be undone, which is the same line GitHub draws by omitting `delete_repository`. It remains available on REST and the CLI. The workspace chat and Slack/Discord agent surfaces are unchanged — their project-lifecycle exclusions are about a turn already being pinned to one project, which the MCP catalog is not — and organization, member, role, invite and billing writes stay off every machine surface.\n\nThe project WRITE routes gain the org clamp they never had. This is a pre-existing gap the MCP flip would otherwise have widened: the backend resolves project access from the acting USER — `createProject` calls `requireOrgRole` against the requested organization, the update and delete mutations resolve access the same way, and `userMutation` never reads the delegated-org claim — so a key bound to organization A, minted by someone who also belongs to B, could create in B or rename and delete B's projects. The gateway now enforces what the key promises: `POST /v1/projects` rejects a mismatched `organizationId` and, more importantly, FILLS IN the key's organization when none is given, since the backend's fallback is the user's default organization and that need not be the key's. `PATCH` and `DELETE` answer 404 — not 403, which would confirm the project exists to a caller who may not see it — for a project outside the key's organization. Session-JWT callers are untouched throughout: they are confined to nothing and keep full access to every organization they belong to. The underlying Convex mutations remain unclamped for anything that reaches them without going through `/api/v1`.",
+      "id": "project-crud-mcp-and-organizations-read"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.36.0",
+      "oldVersion": "2.37.0",
       "changesets": [
-        "environment-model-override",
-        "oauth-missing-issuer-unreported"
+        "inspector-release-2026-08-13",
+        "project-crud-mcp-and-organizations-read"
       ],
-      "newVersion": "2.37.0"
+      "newVersion": "2.38.0"
     },
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "4.0.0",
+      "oldVersion": "4.1.0",
       "changesets": [
-        "environment-model-override",
-        "oauth-authenticated-request-reason",
-        "oauth-missing-issuer-unreported"
+        "project-crud-mcp-and-organizations-read"
       ],
-      "newVersion": "4.1.0"
+      "newVersion": "4.2.0"
     },
     {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.20.1",
+      "oldVersion": "3.21.0",
       "changesets": [
-        "environment-model-override"
+        "project-crud-mcp-and-organizations-read"
       ],
-      "newVersion": "3.21.0"
+      "newVersion": "3.22.0"
     },
     {
       "name": "@mcpjam/mcp",

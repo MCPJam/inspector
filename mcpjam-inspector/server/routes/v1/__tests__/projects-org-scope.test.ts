@@ -4,18 +4,18 @@ import { Hono } from "hono";
 /**
  * The org clamp on the project WRITE routes.
  *
- * The backend does not apply one: `projects:createProject` checks the acting
- * USER's membership in the requested org (`requireOrgRole`), the update/delete
- * mutations resolve project access from the same user, and `userMutation`
- * never reads the delegated-org claim. So an `sk_` key bound to org A, minted
- * by someone who also belongs to org B, could reach B's projects — the key's
- * promised scope is not the scope actually enforced.
+ * The backend enforces the delegated org claim inside membership resolution
+ * (`delegatedScopeAllowsOrganization` → `getOrgMembership`), so these gateway
+ * checks are defense-in-depth plus two things the chokepoint cannot give:
+ * a clean 404/403 in this route's own vocabulary, and — the load-bearing one
+ * — the POST fill-in, without which an org-less `create_project` falls back
+ * to the acting user's DEFAULT org and gets REJECTED by the chokepoint
+ * instead of landing in the key's org.
  *
- * The gateway enforces it instead, mirroring the clamp the Convex
- * `/v1/projects` READ route already applies. These tests are the proof, and
- * the session-JWT cases are here to prove the clamp does NOT overreach: a
- * signed-in person is confined to nothing and must keep full access to every
- * org they belong to.
+ * These tests pin the gateway behavior alone (Convex is mocked, so the
+ * backend chokepoint is deliberately out of frame). The session-JWT cases
+ * prove the clamp does NOT overreach: a signed-in person is confined to
+ * nothing and must keep full access to every org they belong to.
  */
 
 const {

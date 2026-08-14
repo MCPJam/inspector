@@ -1,82 +1,51 @@
-diff --git a/.changeset/environment-model-override.md b/.changeset/environment-model-override.md
+diff --git a/.changeset/inspector-release-2026-08-13.md b/.changeset/inspector-release-2026-08-13.md
 deleted file mode 100644
-index ff9e7aeaf..000000000
---- a/.changeset/environment-model-override.md
+index 51726514b..000000000
+--- a/.changeset/inspector-release-2026-08-13.md
 +++ /dev/null
-@@ -1,21 +0,0 @@
+@@ -1,8 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Release the latest Inspector updates.
+-
+-- Group scorecards and recommendations under Findings, and keep Insights visible when queries fail.
+-- Default guest multi-host Playground sessions to ChatGPT, Claude, and Cursor.
+diff --git a/.changeset/project-crud-mcp-and-organizations-read.md b/.changeset/project-crud-mcp-and-organizations-read.md
+deleted file mode 100644
+index 5a773314e..000000000
+--- a/.changeset/project-crud-mcp-and-organizations-read.md
++++ /dev/null
+@@ -1,19 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
 -"@mcpjam/sdk": minor
 -"@mcpjam/cli": minor
 ----
 -
--Give an environment its own model, and hold a client to pinning one.
+-Organizations are discoverable, and projects can be created and renamed from MCP.
 -
--An environment now carries an optional `modelId` that OVERRIDES the model pinned on the client it selects. Absent means inherit, not "no model" — so `POST /environments/:id/resolve` answers with both: `modelId` (the stored override, when set), `effectiveModelId` (what will actually run), and `modelSource` (`"environment"` or `"host"`), which is the distinction an editor needs and could not previously make. `PATCH` takes `modelId: null` to clear the override and fall back to the client's; an empty string is rejected rather than treated as a clear, and the id is trimmed at the write boundary because it is stored and compared verbatim downstream.
+-`GET /v1/organizations` closes a hole rather than adding a capability. `GET /v1/projects` has always taken an `organizationId` filter and `POST /v1/projects` has always accepted one in its body, but no machine surface could produce such an id: `/v1/me` returns none, there was no SDK method, no route, and no CLI command, and the only reader of the backing query was the browser app shell. The endpoint is read-only and reaches REST, the SDK (`listOrganizations`), the CLI (`mcpjam organizations list`) and the MCP catalog (`list_organizations`). `mcpjam projects list` gains the `--organization-id` flag the operation already supported, so the round trip — list organizations, then filter projects by one — is finally typeable.
 -
--Both halves of that resolution can be empty, and an environment that names no model cannot launch at all. The backend refuses it with `ENV_MODEL_REQUIRED`, which now reaches callers as a 409 carrying `details.reason: "environment_model_required"` — the same shape from the v1 resolve route and from the eval runner's launch path, so a caller branching on the slug gets one answer whichever surface refused it. Previously the runner leaked it as a bare Convex rejection that read as an internal fault.
+-The response is a hand-written DTO (`id`, `name`, `plan`, `myRole`, `isCreator`, `logoUrl`, `createdAt`), not the query's payload. That payload is shaped for the org switcher and carries Stripe ids, seat counts, trial and dunning clocks; listing the public fields explicitly means a column added to the organizations table cannot become part of an API response by default.
 -
--The forward-client invariant closes the other end: a client created through `POST /hosts` must pin a model, by explicit `config` or by template, because every environment that selects it inherits that model. The check is a refinement over the passthrough config record, not a second copy of `ensureHostConfigV2` — the XOR message still wins for a degenerate `config: {}`, whose real problem is that it picked neither branch. In the client builder, clearing the model of a client that HAD one is now a blocking save error; a client that was already modelless stays a warning, so legacy rows do not strand an unrelated rename behind a model choice. Existing rows are otherwise untouched — the invariant binds new clients only.
+-The security-relevant piece is the org-scope clamp. Unlike every other v1 read, the backing query takes no organization argument — it answers for the acting human — so a delegated `sk_` token, which is org-scoped by construction everywhere else, would otherwise carry every sibling organization of whoever minted the key straight through. The route intersects the result with the token's organization, mirroring how the Convex `/v1/projects` route rejects a filter outside the key's scope. A session-JWT caller is confined to nothing and still sees all of theirs. Guests are default-denied, like `/me`.
 -
--`GET /environments/capabilities` reports `modelOverrides` and `modelMatrix` for version skew, not feature flagging: the SDK and CLI ship independently of the platform, and an unknown field is a hard validator error there rather than a silently ignored one. The CLI asks only when model input was actually supplied, so an ordinary `environments create` costs no extra round trip, and a deployment too old to answer reports `false` for everything. `mcpjam environments create/update` gain `--model` and `--clear-model`. The operation is excluded from the agent registry — it is a compatibility probe, not an action, and the write paths already ask it on the caller's behalf.
+-`create_project` and `update_project` move into the MCP catalog. The previous exclusion — "project lifecycle writes are intentionally outside the unattended MCP catalog" — was stricter than what the enterprise MCP servers it was modelled on actually ship: of sixteen surveyed, eleven expose container creation, including GitHub (`create_repository`) and Sentry (`create_project` / `update_project`). Both operations are cheap, both are visible in the UI immediately, and neither destroys anything: `update_project`'s schema has no `servers` key at all, so the backend's destructive server-map replace is unreachable from this surface. They announce as plain writes — `readOnlyHint: false`, `destructiveHint: false` — and their descriptions were rewritten to read as tool descriptions, since that is what they now are.
 -
--Model attribution on eval sessions is now the model that ran. The hosted runner persists the RESOLVED id — the one the `/stream` call billed — and the local runner persists `test.model` only when the case actually needs a model, on both the success and the throw path: a model-free case reaches the runner with a display-only sentinel, and labelling a session with it would name a model that never ran. The Explore table labels each case row from the iterations' own snapshots rather than the case's current authored model, so a finished environment-backed run is no longer relabelled with whatever the case would run today, and a row whose iterations span two models is marked mixed instead of picking one.
+-`delete_project` stays off MCP, and its exclusion reason no longer borrows the blanket one its siblings shared: deleting cascades across every project-owned resource and cannot be undone, which is the same line GitHub draws by omitting `delete_repository`. It remains available on REST and the CLI. The workspace chat and Slack/Discord agent surfaces are unchanged — their project-lifecycle exclusions are about a turn already being pinned to one project, which the MCP catalog is not — and organization, member, role, invite and billing writes stay off every machine surface.
 -
--Provider classification moves to one canonical module (`shared/model-provider.ts`). The same question — given only this id, which provider serves it — was answered slightly differently in at least four places, and the divergences were real: `meta-llama/…` classified as `meta-llama` here and `meta` there, `mistralai/…` fell through to Ollama, and a bare unknown id became `openrouter` in chat but `ollama` in the runner. The module is pure and is the source of truth; the backend keeps a hand-mirrored copy (Convex cannot import from this repo) checked against the same fixture vectors, so changing one fails the other's parity test.
--
--Swarm launch waves stop scheduling once an organization hits its credit limit. Every remaining launch would be rejected for the same reason, so the wave now costs one round trip instead of N and shows one banner instead of N identical ones. Requests already in flight are allowed to settle rather than cancelled — a launch is a POST that may already have created a durable run row, and aborting the client half would leave one running with nobody watching. The wave's `launchJourney` prop also regains `environmentIds` in its type, which a conditional spread had been hiding from excess property checking while the call site passed it.
-diff --git a/.changeset/oauth-authenticated-request-reason.md b/.changeset/oauth-authenticated-request-reason.md
-deleted file mode 100644
-index 36599fc4a..000000000
---- a/.changeset/oauth-authenticated-request-reason.md
-+++ /dev/null
-@@ -1,19 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Say why the server rejected the OAuth debugger's authenticated request.
--
--The debugger's last step sends an authenticated MCP request with the token it just obtained — `initialize` before 2026-07-28, `tools/list` after. When the server refuses, the flow error was built from the status line alone — "Authenticated request failed: 400 Bad Request" — while the body naming the cause sat unread in `mcpResponseData`, which the same update writes to `lastResponse`. On screen the reason was one panel away; in error reporting it was gone, so an aggregate of these 400s said only that servers were rejecting us.
--
--The reason is now appended when the body carries one: `extractResponseErrorReason` reads the JSON-RPC `{ error: { message } }` an MCP server rejects with, the OAuth `error`/`error_description` pair, a lone `message`, and a plain-text body — the last being what a server behind a gateway usually returns. Candidates are trimmed and a blank one counts as absent, so precedence falls through to a field that says something and a blank `error_description` cannot compose a dangling `": "`. A body that explains nothing yields `undefined` rather than an empty suffix.
--
--Because that text is chosen by the server under test — and MCPJam is routinely pointed at half-built servers that echo the bearer token back in an error body — the reason is redacted through `sanitizeTraceErrorMessage` before it becomes `state.error`, rather than at each place that renders it. `state.error` is toasted, folded into conformance step results, and reported; the OAuth conformance text formatter prints step errors verbatim. The full body stays readable in HTTP history either way.
--
--The redactor also owns the 300-character cap that keeps an HTML error page from becoming the message, and the extractor deliberately returns text neither capped nor scanned. Capping first is unsafe: `sanitizeTraceErrorMessage` closes an unterminated JSON value or URL userinfo only when it is the one that cut the text, so a reason cut beforehand looks whole to it, and a credential whose closing quote or `@` sat just past the cap keeps its raw prefix. Scanning first is merely wasteful: a body is server-controlled and can be megabytes, and `trace.ts` re-derives this on every projection, so the whitespace collapse that keeps the error on one line runs last, on the capped output. The redactor bounds its own scan at `MAX_SCANNED`, so a megabyte body costs one slice. `trace.ts` shares the extractor and sanitizes its own result the same way, so registration failures gain the same guard.
--
--Because the redactor is what bounds these strings, `trace.ts` now caps a derived step error itself in raw-history mode (`sanitize: false`), which skips redaction: that error is drawn from the response body, and a gateway's error page would otherwise become a step's one-line error in full. The untruncated body stays on the HTTP history entry, which is where raw mode means to keep it. It collapses that error onto one line in both modes for the same reason — a registration failure's `error_description` can be a multi-line list, and a step error is a line. `toSingleLine` is shared, and runs last in either path: collapsing shortens the text, so doing it first can drop a message back under `MAX_SCANNED` and disarm the very tail guards above.
--
--`trace.ts` already had this extraction for registration failures and now shares it, gaining the plain-text case it lacked — that path previously fell through to `HTTP 400 Bad Request`, discarding the same text for the same reason.
--
--All four protocol machines (2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28) end on this step and now report it identically, through `describeAuthenticatedRequestFailure`.
-diff --git a/.changeset/oauth-missing-issuer-unreported.md b/.changeset/oauth-missing-issuer-unreported.md
-deleted file mode 100644
-index 93f2464ad..000000000
---- a/.changeset/oauth-missing-issuer-unreported.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": patch
-----
--
--Stop reporting missing-issuer metadata failures as MCPJam errors.
--
--RFC 8414 makes `issuer` REQUIRED, and every debug OAuth machine rejects an authorization-server metadata document that omits it. That check stays, and the message stays on screen — but it describes a spec violation in the server under test, not a fault in MCPJam, and only the 2026-07-28 machine reads the field afterwards (it compares the issuer to the authorization-server URL and to the callback `iss`). On the other three eras the failure was arriving as an MCPJam alert, burying real step failures under other projects' bugs.
--
--The step-failure reporter now skips it, alongside the `Warning: `-prefixed advisories it already skipped, and treats it the same way for recurrence: it still replaces the previous message, so a genuine failure that follows one counts as new.
--
--The SDK exports `AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER` and the machines throw it, so the match cannot drift out of sync with the message they actually produce.
+-The project WRITE routes gain the org clamp they never had. This is a pre-existing gap the MCP flip would otherwise have widened: the backend resolves project access from the acting USER — `createProject` calls `requireOrgRole` against the requested organization, the update and delete mutations resolve access the same way, and `userMutation` never reads the delegated-org claim — so a key bound to organization A, minted by someone who also belongs to B, could create in B or rename and delete B's projects. The gateway now enforces what the key promises: `POST /v1/projects` rejects a mismatched `organizationId` and, more importantly, FILLS IN the key's organization when none is given, since the backend's fallback is the user's default organization and that need not be the key's. `PATCH` and `DELETE` answer 404 — not 403, which would confirm the project exists to a caller who may not see it — for a project outside the key's organization. Session-JWT callers are untouched throughout: they are confined to nothing and keep full access to every organization they belong to. The underlying Convex mutations remain unclamped for anything that reaches them without going through `/api/v1`.
 diff --git a/cli/package.json b/cli/package.json
-index 82c691a0a..b983cbefa 100644
+index b983cbefa..8e803110f 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.20.1",
-+  "version": "3.21.0",
+-  "version": "3.21.0",
++  "version": "3.22.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -84,21 +53,21 @@ index 82c691a0a..b983cbefa 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^4.0.0",
-+    "@mcpjam/sdk": "^4.1.0",
+-    "@mcpjam/sdk": "^4.1.0",
++    "@mcpjam/sdk": "^4.2.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index c00444dcc..8e1094b9e 100644
+index 8e1094b9e..fa0dbeffa 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.36.0",
-+  "version": "2.37.0",
+-  "version": "2.37.0",
++  "version": "2.38.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -106,24 +75,24 @@ index c00444dcc..8e1094b9e 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^4.0.0",
-+    "@mcpjam/sdk": "^4.1.0",
+-    "@mcpjam/sdk": "^4.1.0",
++    "@mcpjam/sdk": "^4.2.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index d4aff1851..21b530fb7 100644
+index 21b530fb7..155edc2bb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -60,9 +60,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.20.1",
-+      "version": "3.21.0",
+-      "version": "3.21.0",
++      "version": "3.22.0",
        "dependencies": {
--        "@mcpjam/sdk": "^4.0.0",
-+        "@mcpjam/sdk": "^4.1.0",
+-        "@mcpjam/sdk": "^4.1.0",
++        "@mcpjam/sdk": "^4.2.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
@@ -131,8 +100,8 @@ index d4aff1851..21b530fb7 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.36.0",
-+      "version": "2.37.0",
+-      "version": "2.37.0",
++      "version": "2.38.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -140,636 +109,29 @@ index d4aff1851..21b530fb7 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^4.0.0",
-+        "@mcpjam/sdk": "^4.1.0",
+-        "@mcpjam/sdk": "^4.1.0",
++        "@mcpjam/sdk": "^4.2.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -935,7 +935,7 @@
-       "version": "0.9.31",
-       "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
-       "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/@adobe/css-tools": {
-@@ -1737,7 +1737,7 @@
-       "version": "4.1.2",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
-       "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@csstools/css-calc": "^3.0.0",
-@@ -1751,7 +1751,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -1761,7 +1761,7 @@
-       "version": "6.8.1",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
-       "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@asamuzakjp/nwsapi": "^2.3.9",
-@@ -1775,7 +1775,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -1785,7 +1785,7 @@
-       "version": "2.3.9",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
-       "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/@aws-crypto/crc32": {
-@@ -3126,7 +3126,7 @@
-       "version": "6.0.2",
-       "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
-       "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3146,7 +3146,7 @@
-       "version": "3.2.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
-       "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3170,7 +3170,7 @@
-       "version": "4.1.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
-       "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3198,7 +3198,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
-       "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3221,7 +3221,7 @@
-       "version": "1.1.3",
-       "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
-       "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3246,7 +3246,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
-       "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -5625,7 +5625,7 @@
-       "version": "1.15.0",
-       "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
-       "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
-@@ -7149,7 +7149,7 @@
-       "version": "0.3.11",
-       "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
-       "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@jridgewell/gen-mapping": "^0.3.5",
-@@ -9371,7 +9371,7 @@
-       "version": "1.59.1",
-       "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
-       "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "dependencies": {
-         "playwright": "1.59.1"
-@@ -14876,6 +14876,7 @@
-       "version": "19.2.14",
-       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
-       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "csstype": "^3.2.2"
-@@ -14885,7 +14886,7 @@
-       "version": "19.2.3",
-       "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
-       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "peerDependencies": {
-         "@types/react": "^19.2.0"
-@@ -17541,7 +17542,7 @@
-       "version": "1.0.3",
-       "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
-       "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "require-from-string": "^2.0.2"
-@@ -17769,7 +17770,7 @@
-       "version": "1.1.2",
-       "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
-       "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/bundle-name": {
-@@ -18861,7 +18862,7 @@
-       "version": "3.2.1",
-       "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
-       "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "mdn-data": "2.27.1",
-@@ -18882,7 +18883,7 @@
-       "version": "5.3.7",
-       "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
-       "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@asamuzakjp/css-color": "^4.1.1",
-@@ -18898,7 +18899,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -19469,7 +19470,7 @@
-       "version": "6.0.1",
-       "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
-       "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "whatwg-mimetype": "^5.0.0",
-@@ -19483,7 +19484,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
-       "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=20"
-@@ -19580,7 +19581,7 @@
-       "version": "10.6.0",
-       "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
-       "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/decimal.js-light": {
-@@ -21011,6 +21012,7 @@
-       "version": "0.1.13",
-       "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
-       "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "dependencies": {
-@@ -21021,6 +21023,7 @@
-       "version": "0.6.3",
-       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
-       "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "dependencies": {
-@@ -23785,7 +23788,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
-       "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@exodus/bytes": "^1.6.0"
-@@ -23852,7 +23855,7 @@
-       "version": "7.0.2",
-       "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
-       "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "agent-base": "^7.1.0",
-@@ -23866,7 +23869,7 @@
-       "version": "7.1.4",
-       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
-       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">= 14"
-@@ -24678,7 +24681,7 @@
-       "version": "1.0.1",
-       "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
-       "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/is-promise": {
-@@ -26082,7 +26085,7 @@
-       "version": "27.4.0",
-       "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
-       "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@acemir/cssom": "^0.9.28",
-@@ -26122,7 +26125,7 @@
-       "version": "7.1.4",
-       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
-       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">= 14"
-@@ -26132,7 +26135,7 @@
-       "version": "7.0.6",
-       "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
-       "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "agent-base": "^7.1.2",
-@@ -26146,7 +26149,7 @@
-       "version": "8.20.0",
-       "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
-       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=10.0.0"
-@@ -26540,7 +26543,7 @@
-       "version": "1.32.0",
-       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
-       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MPL-2.0",
-       "dependencies": {
-         "detect-libc": "^2.0.3"
-@@ -26573,6 +26576,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26593,6 +26597,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26613,6 +26618,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26633,6 +26639,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26653,6 +26660,7 @@
-       "cpu": [
-         "arm"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26673,6 +26681,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26693,6 +26702,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26713,6 +26723,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26733,6 +26744,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26753,6 +26765,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26773,6 +26786,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -27745,7 +27759,7 @@
-       "version": "2.27.1",
-       "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
-       "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "CC0-1.0"
-     },
-     "node_modules/media-typer": {
-@@ -30555,7 +30569,7 @@
-       "version": "8.0.0",
-       "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
-       "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "entities": "^6.0.0"
-@@ -31431,7 +31445,7 @@
-       "version": "2.3.1",
-       "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
-       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=6"
-@@ -32854,7 +32868,7 @@
-       "version": "7.8.2",
-       "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
-       "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "dependencies": {
-         "tslib": "^2.1.0"
-@@ -32945,7 +32959,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
-       "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "ISC",
-       "dependencies": {
-         "xmlchars": "^2.2.0"
-@@ -33618,7 +33632,7 @@
-       "version": "0.6.1",
-       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
-       "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-3-Clause",
-       "engines": {
-         "node": ">=0.10.0"
-@@ -33637,7 +33651,7 @@
-       "version": "0.5.21",
-       "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
-       "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "buffer-from": "^1.0.0",
-@@ -34334,7 +34348,7 @@
-       "version": "3.2.4",
-       "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
-       "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/synckit": {
-@@ -34481,7 +34495,7 @@
-       "version": "5.46.1",
-       "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
-       "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-2-Clause",
-       "dependencies": {
-         "@jridgewell/source-map": "^0.3.3",
-@@ -34565,7 +34579,7 @@
-       "version": "2.20.3",
-       "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
-       "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/test-exclude": {
-@@ -34823,7 +34837,7 @@
-       "version": "7.0.28",
-       "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
-       "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "tldts-core": "^7.0.28"
-@@ -34836,7 +34850,7 @@
-       "version": "7.0.28",
-       "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
-       "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/tmp": {
-@@ -34940,7 +34954,7 @@
-       "version": "6.0.1",
-       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
-       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-3-Clause",
-       "dependencies": {
-         "tldts": "^7.0.5"
-@@ -34953,7 +34967,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
-       "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "punycode": "^2.3.1"
-@@ -35316,7 +35330,7 @@
-       "version": "4.21.0",
-       "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
-       "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "esbuild": "~0.27.0",
-@@ -35499,7 +35513,7 @@
-       "version": "5.9.3",
-       "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
-       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "bin": {
-         "tsc": "bin/tsc",
-@@ -36510,7 +36524,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
-       "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "xml-name-validator": "^5.0.0"
-@@ -36586,7 +36600,7 @@
-       "version": "8.0.1",
-       "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
-       "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-2-Clause",
-       "engines": {
-         "node": ">=20"
-@@ -36691,7 +36705,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
-       "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=18"
-@@ -36701,7 +36715,7 @@
-       "version": "15.1.0",
-       "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
-       "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "tr46": "^6.0.0",
-@@ -37572,7 +37586,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
-       "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "engines": {
-         "node": ">=18"
-@@ -37592,7 +37606,7 @@
-       "version": "2.2.0",
-       "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
-       "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/xpath": {
-@@ -37825,7 +37839,7 @@
+@@ -37839,7 +37839,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "4.0.0",
-+      "version": "4.1.0",
+-      "version": "4.1.0",
++      "version": "4.2.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 6bbec114d..6d9bfa65f 100644
+index 6d9bfa65f..d71d0e50b 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "4.0.0",
-+  "version": "4.1.0",
+-  "version": "4.1.0",
++  "version": "4.2.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
