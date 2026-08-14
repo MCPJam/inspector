@@ -1932,16 +1932,42 @@ export class PlatformApiClient {
   // `sandboxes-enabled` beta flag; UNPUBLISHING deliberately is not, so an org
   // that loses the flag can still take a live scenario down.
 
+  /**
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the scenario is never briefly live in a wider mode than the
+   * caller asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`) — changing an existing scenario is
+   * `updateUserTestingScenario`.
+   */
   publishScenario(
-    params: { projectId: string; environmentId: string },
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
     options?: RequestOptions
-  ): Promise<PlatformScenario> {
+  ): Promise<PlatformScenario & { overridesIgnored?: boolean }> {
+    const { projectId, environmentId } = params;
+    // Explicit picks, not a rest spread: TypeScript's structural typing lets a
+    // wider object through, and the route's schema is strict — an unknown key
+    // forwarded here turns a valid publish into a 400.
+    const body = Object.fromEntries(
+      Object.entries({
+        name: params.name,
+        description: params.description,
+        mode: params.mode,
+      }).filter(([, value]) => value !== undefined)
+    );
     return this.request(
       "PUT",
       `/projects/${encodeURIComponent(
-        params.projectId
-      )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
-      {},
+        projectId
+      )}/environments/${encodeURIComponent(environmentId)}/scenario`,
+      // Bodyless when there is nothing to send — the common case, and what
+      // existing callers already put on the wire.
+      Object.keys(body).length > 0 ? { body } : {},
       options
     );
   }
