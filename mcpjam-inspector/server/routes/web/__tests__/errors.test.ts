@@ -338,3 +338,47 @@ describe("webError origin header", () => {
     );
   });
 });
+
+describe("protocol version pin status", () => {
+  /**
+   * `ProtocolVersionPinUnsupported` as the SDK raises it. Note what it does
+   * NOT contain: no errno, no "fetch failed", no "refused", no "timed out".
+   * Writing a message a person can read is what moved this class out of every
+   * branch the mapper keys on wording.
+   */
+  const PIN_FAILURE =
+    'MCP server "champions" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.';
+
+  it("answers 4xx so the edge cannot eat it", () => {
+    // The range is the load-bearing part. Cloudflare replaces an origin 5xx
+    // with its own error page, discarding both the sentence that names the
+    // version and the `x-mcpjam-error-origin` header — so the browser sees a
+    // bare 5xx and reports the user's own configuration as an MCPJam outage.
+    const mapped = mapRuntimeError(new Error(PIN_FAILURE));
+
+    expect(mapped.status).toBe(424);
+    expect(mapped.status).toBeGreaterThanOrEqual(400);
+    expect(mapped.status).toBeLessThan(500);
+  });
+
+  it("does not fall through to the 500 catch-all", () => {
+    // The regression this exists to catch: with the slug branch removed, this
+    // message matches nothing and lands on `500 INTERNAL_ERROR`, which is
+    // exactly where it sat when the class was first introduced.
+    expect(mapRuntimeError(new Error(PIN_FAILURE)).code).not.toBe(
+      ErrorCode.INTERNAL_ERROR,
+    );
+  });
+
+  it("keeps the message and the slug intact", () => {
+    // The status is the only thing this branch changes; the sentence is what
+    // the chat banner and the server card both read.
+    const mapped = mapRuntimeError(new Error(PIN_FAILURE));
+
+    expect(mapped.message).toContain("2026-07-28");
+    expect(mapped.normalized?.slug).toBe("sdk/protocol_version_pin_unsupported");
+    // `user_config`, so it never reaches a paging bucket on the server side
+    // either — the status fix and the origin fix have to agree.
+    expect(originOf(mapped.normalized)).toBe("user_config");
+  });
+});

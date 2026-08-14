@@ -12,6 +12,7 @@ import {
   markOriginCaptureHandled,
   maybeCaptureOriginError,
 } from "../../utils/error-origin-capture.js";
+import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -440,6 +441,32 @@ function classifyRuntimeError(error: unknown): WebRouteError {
       // already turns it into `X-MCP-Auth-Required: oauth`, which is exactly
       // the retry suppression this classification wants.
       { upstreamAuthRequired: true },
+      normalized
+    );
+  }
+
+  // A pinned protocol version the server does not offer. Classified from the
+  // SLUG, not from the wording — the describer already resolved it, and it is
+  // the one signal here that cannot drift as the sentence is edited.
+  //
+  // 424, and ahead of every branch below, because this failure has no words
+  // any of them look for: no errno, no "fetch failed", no "refused". Left to
+  // fall through it lands on the 500 catch-all, and a 5xx is precisely what
+  // Cloudflare replaces with its own error page — discarding the message that
+  // names the version AND the `x-mcpjam-error-origin` header, so the browser
+  // sees a bare 5xx and reports the user's own configuration as an MCPJam
+  // outage. Writing a clearer message is what moved this class out of the
+  // connection branch in the first place; the status has to follow it.
+  //
+  // `SERVER_UNREACHABLE` is the closest existing code — we could not use this
+  // server — and the chat formatter recognizes the pinned-version case ahead
+  // of the generic "may be offline" copy, so the specific message still wins.
+  if (normalized.slug === PROTOCOL_VERSION_PIN_SLUG) {
+    return new WebRouteError(
+      424,
+      ErrorCode.SERVER_UNREACHABLE,
+      message,
+      undefined,
       normalized
     );
   }

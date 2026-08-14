@@ -1,14 +1,9 @@
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 
-/**
- * Catalog slug for "this connection pins an MCP protocol version the server
- * does not offer" — the SDK's `ProtocolVersionPinUnsupported`.
- *
- * Named here rather than inlined at each surface because two of them key off
- * it, and a typo'd slug fails silently: the affordance simply never appears,
- * with nothing to notice in review.
- */
-export const PROTOCOL_VERSION_PIN_SLUG = "sdk/protocol_version_pin_unsupported";
+// Re-exported from `shared/` so the web route (which maps this slug to a 4xx
+// so the response survives Cloudflare) and these surfaces cannot drift apart.
+export { PROTOCOL_VERSION_PIN_SLUG } from "@/shared/protocol-version-pin";
+import { PROTOCOL_VERSION_PIN_SLUG } from "@/shared/protocol-version-pin";
 
 /**
  * Is this failure a version pin the user can fix in one dropdown?
