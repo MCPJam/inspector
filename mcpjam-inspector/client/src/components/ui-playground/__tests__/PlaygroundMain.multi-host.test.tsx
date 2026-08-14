@@ -695,8 +695,8 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
-  // PUR-11: guests land with 3 pre-selected clients (ChatGPT, Claude, Claude
-  // Code) instead of a single blank "MCPJam" host + a toggle to find first.
+  // PUR-11: guests land with 3 pre-selected clients (ChatGPT, Claude, Cursor)
+  // instead of a single blank "MCPJam" host + a toggle to find first.
   it("seeds 3 default clients (ChatGPT, Claude, Cursor) for empty projects", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
