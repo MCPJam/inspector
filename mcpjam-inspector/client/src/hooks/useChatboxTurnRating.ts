@@ -506,7 +506,10 @@ export function useChatboxTurnRating({
       }
       return IDLE;
     },
-    [states, persistedByTurn]
+    // `scoreKey` is a real input (it namespaces the lookup key), not merely
+    // reachable through `persistedByTurn`'s identity — listing it keeps this
+    // correct even if that memo is ever stabilized.
+    [states, persistedByTurn, scoreKey]
   );
 
   return { observeChatSession, getState, submit };

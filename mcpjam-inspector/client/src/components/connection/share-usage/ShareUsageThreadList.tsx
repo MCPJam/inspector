@@ -195,9 +195,11 @@ export function ThreadCard({
                 fact the color carries.
 
                 A thumbs session has no meaningful average, so it shows its
-                tallies instead; a session holding both shows the stars'
-                average WITH the thumb tallies, because dropping either half
-                would under-report how many turns were judged. */}
+                tallies instead; a session holding both shows the BLENDED
+                average (thumbs projected onto the 1–5 axis, down→1/up→5 —
+                `summary.avg` is not a stars-only number) WITH the thumb
+                tallies, because dropping either half would under-report how
+                many turns were judged. */}
             {headline === null ? (
               `${rating}/5`
             ) : headline.kind === "thumbs" ? (
