@@ -1949,9 +1949,16 @@ export class PlatformApiClient {
     },
     options?: RequestOptions
   ): Promise<PlatformScenario & { overridesIgnored?: boolean }> {
-    const { projectId, environmentId, ...overrides } = params;
+    const { projectId, environmentId } = params;
+    // Explicit picks, not a rest spread: TypeScript's structural typing lets a
+    // wider object through, and the route's schema is strict — an unknown key
+    // forwarded here turns a valid publish into a 400.
     const body = Object.fromEntries(
-      Object.entries(overrides).filter(([, value]) => value !== undefined)
+      Object.entries({
+        name: params.name,
+        description: params.description,
+        mode: params.mode,
+      }).filter(([, value]) => value !== undefined)
     );
     return this.request(
       "PUT",
