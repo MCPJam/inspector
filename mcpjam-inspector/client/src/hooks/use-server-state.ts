@@ -111,6 +111,10 @@ import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import { attributeToServer } from "@/lib/server-error-copy";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 export interface HostedServerWriteTarget {
@@ -931,6 +935,16 @@ export function useServerState({
     updateServerWithClientSecret: convexUpdateServerWithClientSecret,
     deleteServer: convexDeleteServer,
   } = useServerMutations();
+
+  // Which client the toast's "Change protocol version" should open. Held in a
+  // ref because the connect callback is memoized on a long dependency list and
+  // this is read only at click time — adding it as a dep would rebuild that
+  // callback on every host preview switch for a value nothing else uses.
+  const [previewedHostIdForToast] = usePreviewedHostId(
+    effectiveActiveProjectId ?? null
+  );
+  const previewedHostIdRef = useRef(previewedHostIdForToast);
+  previewedHostIdRef.current = previewedHostIdForToast;
 
   const hasSignedInUserRef = useRef(hasSignedInUser);
   hasSignedInUserRef.current = hasSignedInUser;
@@ -3200,6 +3214,13 @@ export function useServerState({
 
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
+      // Snapshot the client BEFORE the first await, not when the toast is
+      // built. This connect resolves its protocol pin from whichever client is
+      // previewed as it starts, then spends seconds inside
+      // `syncServerToConvex` / `guardedTestConnection` — long enough for the
+      // user to switch clients. Capturing at the end would name a client that
+      // had nothing to do with the failure, and whose dropdown cannot fix it.
+      const hostIdAtConnectStart = previewedHostIdRef.current;
       if (notifyIfClientConfigSyncPending()) {
         return;
       }
@@ -3707,23 +3728,47 @@ export function useServerState({
             `Failed to connect to ${formData.name}${
               result.error ? `: ${result.error}` : ""
             }`,
-            // For XAA servers, offer a shortcut to the XAA Debugger so the dev
-            // can step through the handshake and pinpoint the failing claim
-            // (subject not provisioned, audience/issuer mismatch, etc.).
-            formData.useXaa
+            // A pinned protocol version the server doesn't offer is the one
+            // connect failure with an exact fix, and the toast is where the
+            // user is actually looking when a connect fails — the server
+            // card's error area carries the same action, but nobody hunts for
+            // it while a toast is on screen telling them what went wrong.
+            isProtocolVersionPinFailure(result.normalized, result.error)
               ? {
                   action: {
-                    label: "Open XAA Debugger",
+                    label: "Change protocol version",
+                    // `hostIdAtConnectStart`, bound before the first await: the
+                    // pin that failed was resolved from the client active
+                    // THEN, and both the connect itself and the toast that
+                    // follows easily outlive a client switch.
                     onClick: () => {
-                      dispatch({
-                        type: "SELECT_SERVER",
-                        name: formData.name,
+                      track("change_protocol_version_clicked", {
+                        location: "connect_failure_toast",
+                        has_host_id: Boolean(hostIdAtConnectStart),
                       });
-                      navigateApp(routePaths.xaaFlow);
+                      navigateApp(
+                        buildHostFocusTabPath(hostIdAtConnectStart, "protocol")
+                      );
                     },
                   },
                 }
-              : undefined
+              : // For XAA servers, offer a shortcut to the XAA Debugger so the
+                // dev can step through the handshake and pinpoint the failing
+                // claim (subject not provisioned, audience/issuer mismatch).
+                formData.useXaa
+                ? {
+                    action: {
+                      label: "Open XAA Debugger",
+                      onClick: () => {
+                        dispatch({
+                          type: "SELECT_SERVER",
+                          name: formData.name,
+                        });
+                        navigateApp(routePaths.xaaFlow);
+                      },
+                    },
+                  }
+                : undefined
           );
         }
       } catch (error) {
@@ -4650,11 +4695,46 @@ export function useServerState({
     ): Promise<EnsureServerConnectionResult> => {
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
+      // Snapshot before anything awaits. `reportError` runs at the END of a
+      // reconnect that resolved its pin from the client active at the START,
+      // and the toast it raises then lives ~8s beyond that — two windows in
+      // which the user can switch clients and be sent to the one client that
+      // provably did not cause this.
+      const hostIdAtReconnectStart = previewedHostIdRef.current;
 
       const reportError = (errorMessage: string) => {
-        if (!suppressErrors) {
-          toast.error(errorMessage);
+        if (suppressErrors) return;
+        // Reconnect is the path a user takes right AFTER changing the protocol
+        // version, so it is the likeliest place to meet a pin the server
+        // doesn't offer — and its toast carries the bare message, with no
+        // action of its own. Matched on the message because that is all this
+        // helper receives; the clause is MCPJam's own wording.
+        if (isProtocolVersionPinFailure(undefined, errorMessage)) {
+          toast.error(errorMessage, {
+            action: {
+              label: "Change protocol version",
+              onClick: () => {
+                track("change_protocol_version_clicked", {
+                  location: "reconnect_failure_toast",
+                  has_host_id: Boolean(hostIdAtReconnectStart),
+                });
+                navigateApp(
+                  buildHostFocusTabPath(hostIdAtReconnectStart, "protocol")
+                );
+              },
+            },
+          });
+          return;
         }
+        // Name the server for everything else. The route stopped prefixing its
+        // payload with "Connection failed for server X:" — that preamble
+        // buried the sentence and repeated the name against errors that
+        // already carry it — but a generic failure ("Connection refused") then
+        // says nothing about WHICH server, and several can fail at once.
+        //
+        // So it is added here, in the copy layer, and only when the message
+        // does not already name the server: attribution without the stutter.
+        toast.error(attributeToServer(serverName, errorMessage));
       };
 
       if (isClientConfigSyncPending) {
