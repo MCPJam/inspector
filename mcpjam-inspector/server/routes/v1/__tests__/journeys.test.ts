@@ -369,10 +369,10 @@ describe("POST .../journeys/:journeyId/runs", () => {
   });
 
   const launch = (init: RequestInit = {}) =>
-    makeApp().request(
-      `/api/v1/projects/${PROJECT}/journeys/${JOURNEY}/runs`,
-      { method: "POST", ...init }
-    );
+    makeApp().request(`/api/v1/projects/${PROJECT}/journeys/${JOURNEY}/runs`, {
+      method: "POST",
+      ...init,
+    });
 
   it("202s with the run id, and accepts NO body at all", async () => {
     // The common case is a bodyless POST. `c.req.json()` throws on an empty

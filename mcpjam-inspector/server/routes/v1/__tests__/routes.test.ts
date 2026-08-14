@@ -12,8 +12,9 @@ const { runServerDoctorMock, validateGuestTokenMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual =
-    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
   return {
     ...actual,
     runServerDoctor: runServerDoctorMock,
@@ -53,7 +54,9 @@ function post(
   body: Record<string, unknown>,
   token?: string
 ): Promise<Response> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   return Promise.resolve(
     app.request(path, {

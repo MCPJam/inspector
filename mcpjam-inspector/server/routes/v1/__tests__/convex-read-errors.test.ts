@@ -34,8 +34,35 @@ describe("classifyConvexReadError", () => {
   it.each([
     "Not a member of this project",
     "Insufficient project permissions: requires admin",
+    // The user-testing reads authorize at WORKSPACE scope; before these
+    // wordings were matched, a cross-workspace probe answered 502 — a paging
+    // Sentry event and an existence oracle (404 = missing, 502 = exists).
+    "Not a member of this workspace",
+    "Insufficient workspace permissions: requires member",
+    // `resolveAuthorizedChatSession`'s refusal, same oracle on session ids.
+    "ChatSession not found or unauthorized",
   ])("reads %s as a membership refusal", (message) => {
     expect(classifyConvexReadError(new Error(message)).kind).toBe("membership");
+  });
+
+  it("reads an ArgumentValidationError as invalid-argument", () => {
+    // A caller-shaped id `v.id(...)` rejected before the handler ran. Not an
+    // incident — classifying it upstream turned every stale-id retry loop
+    // into a stream of 5xx Sentry events.
+    expect(
+      classifyConvexReadError(
+        new Error("ArgumentValidationError: Value does not match validator")
+      ).kind
+    ).toBe("invalid-argument");
+  });
+
+  it("reads production's redacted 'Server Error' as its own kind", () => {
+    // Production Convex collapses plain server-side errors — membership
+    // refusals included — to this string. Only the call site knows whether
+    // 404 or 502 is the safe reading, so it is neither by default.
+    expect(
+      classifyConvexReadError(new Error("[Request ID: abc] Server Error")).kind
+    ).toBe("redacted");
   });
 
   it.each([
@@ -49,25 +76,94 @@ describe("classifyConvexReadError", () => {
     );
   });
 
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["an Error with no message", new Error("")],
+    ["a thrown string", "boom"],
+  ])("falls back to upstream for %s", (_label, thrown) => {
+    // The signature takes `unknown`, so these are reachable inputs, and the
+    // fallback has to be the CAUTIOUS one. Any of them landing in `membership`
+    // would answer 404 — telling a caller their resource is gone on the
+    // strength of an error we could not read at all.
+    expect(classifyConvexReadError(thrown).kind).toBe("upstream");
+  });
+
   it("does NOT read a bare 'not found' as membership", () => {
     // A renamed or undeployed Convex function says this. Calling it membership
     // would answer 404 — telling a caller their resource is gone during an
     // outage of ours.
-    expect(classifyConvexReadError(new Error("journeys:nope not found")).kind).toBe(
-      "upstream"
-    );
+    expect(
+      classifyConvexReadError(new Error("journeys:nope not found")).kind
+    ).toBe("upstream");
   });
 });
 
 describe("translateConvexReadError", () => {
-  it("maps the three kinds to 404 / 401 / 502", () => {
+  it("maps the kinds to 404 / 401 / 502", () => {
     expect(translate("Not a member of this project").status).toBe(404);
     expect(translate("token expired").status).toBe(401);
     expect(translate("boom").status).toBe(502);
   });
 
+  it("answers 502 to an unreadable throw rather than guessing", () => {
+    // `null` and a message-less Error are both reachable through the `unknown`
+    // signature. 502 is the honest answer — we do not know what happened, and
+    // the alternative reading (404) would report a resource as gone.
+    expect(translateConvexReadError(null, { scope: "v1.test" }).status).toBe(
+      502
+    );
+    expect(
+      translateConvexReadError(new Error(""), { scope: "v1.test" }).status
+    ).toBe(502);
+  });
+
+  it("answers 404 to a validator-rejected argument, without logging", () => {
+    const err = translateConvexReadError(
+      new Error("ArgumentValidationError: Value does not match validator"),
+      { scope: "v1.test", notFoundMessage: "Scenario not found" }
+    );
+    expect(err.status).toBe(404);
+    expect(err.message).toBe("Scenario not found");
+    // Not an incident: a malformed caller id must not page anyone.
+    expect(errorMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 502 to a redacted 'Server Error' by default", () => {
+    // Post-preflight reads: a redacted error there is a genuine incident, and
+    // 404 would hide it.
+    expect(translate("[Request ID: abc] Server Error").status).toBe(502);
+  });
+
+  it("answers 404 to a redacted 'Server Error' when the call site is a preflight", () => {
+    const err = translateConvexReadError(
+      new Error("[Request ID: abc] Server Error"),
+      {
+        scope: "v1.test",
+        notFoundMessage: "Scenario not found",
+        redactedIsRefusal: true,
+      }
+    );
+    expect(err.status).toBe(404);
+    expect(err.message).toBe("Scenario not found");
+    // And SILENTLY. A cross-workspace probe is someone typing an id they do
+    // not have access to; paging on each one turns a routine refusal into an
+    // alert stream, which is how the real incidents get lost.
+    expect(errorMock).not.toHaveBeenCalled();
+  });
+
+  it("still answers 502 to a network failure even at a preflight", () => {
+    // An outage must not read as mass deletion: `redactedIsRefusal` covers
+    // only the shape production redaction produces, never transport errors.
+    const err = translateConvexReadError(new Error("fetch failed"), {
+      scope: "v1.test",
+      redactedIsRefusal: true,
+    });
+    expect(err.status).toBe(502);
+  });
+
   it("never puts upstream text in the 502 RESPONSE", () => {
-    const err = translate("ArgumentValidationError: secret-arg-value");
+    const err = translate("upstream exploded: secret-arg-value");
     expect(err.message).toBe("Upstream request failed");
     expect(err.message).not.toContain("secret-arg-value");
   });
@@ -131,6 +227,8 @@ describe("translateConvexReadError", () => {
 
   it("passes a WebRouteError straight through", () => {
     const already = translate("boom");
-    expect(translateConvexReadError(already, { scope: "v1.test" })).toBe(already);
+    expect(translateConvexReadError(already, { scope: "v1.test" })).toBe(
+      already
+    );
   });
 });

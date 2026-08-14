@@ -61,6 +61,56 @@ import {
   updateProjectServerOperation,
   deleteProjectServerOperation,
   deleteProjectOperation,
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  deletePersonaOperation,
+  generatePersonasOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  archiveJourneyOperation,
+  generateJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  archiveSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -145,34 +195,79 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+
+  // ── Swarms and user testing ─────────────────────────────────────────────
+  //
+  // Advertised to EVERY caller, including organizations without the
+  // `sandboxes-enabled` beta, and that is a deliberate trade rather than an
+  // oversight. This catalog is static — one tool list, built with no
+  // organization in hand — so the alternative to advertising a beta is not
+  // advertising it selectively, it is not advertising it at all. That is what
+  // used to happen, and it meant an agent working for a flagged org had no
+  // tools for a product the org had paid attention to.
+  //
+  // What an unflagged caller gets instead is a clean FEATURE_UNAVAILABLE from
+  // the write, with a real message. The CLI reached this conclusion first
+  // (`cli/src/lib/op-bindings.ts`): a command that answers "not available for
+  // your organization" is a better answer than a command that does not exist.
+  //
+  // `get_capabilities` is what makes it survivable in practice. An agent can
+  // ask what it may do here BEFORE it plans, instead of discovering the gate
+  // halfway through a task it has already described to someone.
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  deletePersonaOperation,
+  generatePersonasOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  archiveJourneyOperation,
+  generateJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  archiveSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
-  launch_journey_run: "Pre-GA product — expose at GA.",
-  cancel_journey_run: "Pre-GA product — expose with the launch it pairs with.",
-  // Scenarios (user testing) and journeys (Swarms) are held out of this
-  // catalog WHOLESALE until GA — a CATALOG policy, not the flag.
-  //
-  // The distinction matters, because a maintainer who reads "flag-gated" here
-  // will reach for the flag when deciding what to expose, and the flag does
-  // not cover most of this list. `sandboxes-enabled` gates only the
-  // exposure-CREATING writes (publish, launch, authoring); the reads,
-  // `cancel_journey_run` and `unpublish_scenario` are deliberately ungated, so
-  // an organization that has just lost the flag can still see what is running,
-  // stop it, and take a live scenario down. None of them ever answers
-  // FEATURE_UNAVAILABLE. What keeps them out is that this catalog is STATIC —
-  // one tool list for every caller, built with no organization in hand — so a
-  // beta cannot be advertised selectively here at all.
-  publish_scenario:
-    "Pre-GA product, and publishing exposes an environment publicly — not an unattended-catalog action.",
-  unpublish_scenario:
-    "Pre-GA product — expose at GA, with its publish counterpart.",
-  list_journeys: "Pre-GA product — expose at GA.",
-  list_journey_runs: "Pre-GA product — expose at GA.",
-  get_journey_run: "Pre-GA product — expose at GA.",
-  list_journey_run_sessions: "Pre-GA product — expose at GA.",
-
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
   // Its create/update siblings moved INTO the catalog; this reason had to stop
   // being the blanket one they shared, because that rationale is no longer
@@ -268,12 +363,21 @@ if (
 }
 
 /**
- * Operations that PERMANENTLY destroy a known resource. They carry an
- * explicit `destructiveHint: true` (unlike `mayBeDestructive` ops, whose
- * effects are merely unknowable). Kept here rather than on the SDK operation
- * so the wire contract stays surface-agnostic.
+ * Operations that PERMANENTLY destroy a known resource, DERIVED from the
+ * catalog's own `risk` metadata rather than listed here. They advertise an
+ * explicit `destructiveHint: true`, unlike `mayBeDestructive` operations,
+ * whose effects are merely unknowable to us.
+ *
+ * Deriving is the whole point of that field: it exists so five surfaces make
+ * one decision from one place instead of each re-deriving it, and a hand-kept
+ * copy here reinstates exactly the drift it was added to remove — the next
+ * operation shipped with `risk: "destructive"` and forgotten in this list would
+ * silently advertise `destructiveHint: false`.
+ *
+ * `LEGACY_DESTRUCTIVE_NAMES` covers the operations that predate `risk`. It
+ * shrinks to nothing as those are backfilled; it does not grow.
  */
-const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
+const LEGACY_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
   deleteProjectServerOperation.name,
@@ -281,6 +385,32 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   // Cancelling a run terminates in-flight work — state-changing, so clients
   // should be able to confirm before it fires.
   cancelEvalRunOperation.name,
+]);
+
+const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  ALL_OPERATIONS.filter(
+    (operation) =>
+      operation.risk === "destructive" ||
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
+  ).map((operation) => operation.name)
+);
+
+/**
+ * Destructive operations a client must NOT auto-retry.
+ *
+ * `idempotentHint: true` is a promise that repeating the call is safe after a
+ * dropped response. It is false for both kinds below, in opposite ways: the
+ * soft deletes answer not-found on a second call, so an auto-retrying client
+ * surfaces a spurious error for work that succeeded; and rotating a share link
+ * MINTS A NEW ONE each time, so a retry invalidates the link the first call
+ * just handed back.
+ */
+const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
+  deletePersonaOperation.name,
+  archiveJourneyOperation.name,
+  archiveSwarmOperation.name,
+  removeUserTestingMemberOperation.name,
+  rotateUserTestingLinkOperation.name,
 ]);
 
 /**
@@ -359,7 +489,15 @@ export function operationAnnotations(
   }
   // Known-destructive deletes: announce it explicitly so clients can confirm.
   if (DESTRUCTIVE_OPERATION_NAMES.has(operation.name)) {
-    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true };
+    return {
+      readOnlyHint: false,
+      destructiveHint: true,
+      // Only claim idempotent when a repeat is genuinely safe. A soft delete
+      // answers not-found on the second call and a link rotation mints a new
+      // link, so promising idempotency for those turns a dropped response into
+      // either a spurious error or an invalidated link.
+      idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE_NAMES.has(operation.name),
+    };
   }
   // Operations whose effects are unknowable upstream (call_server_tool runs
   // arbitrary third-party tools) omit destructive/idempotent hints on
