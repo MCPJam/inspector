@@ -140,13 +140,13 @@ function openGradingEditor() {
 }
 
 describe("SwarmsTab — journey grading editor", () => {
-  it("labels the trigger with the journey's current criterion count", () => {
+  it("labels the trigger with the journey's current check count", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     expect(screen.getByTestId("journey-grading-trigger")).toHaveTextContent(
-      "1 criterion"
+      "1 check"
     );
   });
 

@@ -65,8 +65,66 @@ export interface SystemLogContext extends CommonLogContext {
 
 export type BaseLogContext = RequestLogContext | SystemLogContext;
 
+/**
+ * A failure that HTTP status cannot see: an SSE `{type:"error"}` chunk after
+ * 200 headers, or a JSON-RPC error envelope returned over HTTP 200. The
+ * middleware's streaming branch returns before any `http.request.failed` /
+ * `http.request.completed` emission, so a request gets exactly one of the
+ * HTTP events OR (possibly) this one — never both. Registered in BOTH event
+ * maps: chat requests emit through `getRequestLogger` (full request
+ * envelope), while evals/swarm engine runs emit through `getSystemLogger`
+ * (`requestId: null`, omitted-not-fabricated).
+ *
+ * Emitted only via `server/utils/stream-failure-reporter.ts`, which runs
+ * `reportRouteFailure` first — so `origin` here is always the EFFECTIVE
+ * value the Sentry capture decision was made on (post `mcpjam_internal`
+ * promotion), the same axis as `http.request.failed.origin`.
+ */
+type RouteOperationFailedFields = {
+  /** How the failure was carried to the client. */
+  transport: "http_stream" | "rpc_envelope";
+  /**
+   * Stable catch-site id, e.g. "mcp.chat-v2.backend-stream". The same string
+   * `reportRouteFailure` tags Sentry with (as `route:${source}`).
+   */
+  source: string;
+  /** Whose hop failed, as declared at the call site. */
+  hop: "user_server_hop" | "mcpjam_internal";
+  /** Effective origin from the capture decision — see the doc block above. */
+  origin: ErrorOrigin;
+  /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
+  slug?: string;
+  /**
+   * Structured code when one exists: a backend denial code
+   * ("user_rate_limit"), a JSON-RPC error code as a string ("-32000"), or a
+   * route ErrorCode. Omitted otherwise.
+   */
+  errorCode?: string;
+  /** Capped at 500 chars; scrubbed by scrubLogPayload on emit. */
+  errorMessage: string;
+  /** rpc_envelope only: the JSON-RPC method that failed ("tools/call", …). */
+  rpcMethod?: string;
+};
+
 export type RequestEventMap = {
-  "http.request.completed": { statusCode: number };
+  /**
+   * 4xx responses land here, not on `http.request.failed` — a 4xx is a
+   * declared client outcome, not a server failure. But "declared outcome"
+   * does not mean "uninteresting": an abnormal RATE of one class (the 401
+   * half of the 2026-08-06 incident, a 429 storm from our own guard) is an
+   * incident signal, and the class monitors fingerprint on
+   * `coalesce(errorMessage, errorCode, route+status)`. The optional error
+   * fields below exist so 4xx classes are sliceable by typed code and
+   * origin instead of collapsing into one `route 401` bucket per route.
+   * They are populated only for status >= 400.
+   */
+  "http.request.completed": {
+    statusCode: number;
+    errorCode?: string;
+    errorMessage?: string;
+    origin?: ErrorOrigin;
+    slug?: string;
+  };
   /**
    * `errorCode` is the route's own `ErrorCode` (SERVER_UNREACHABLE, TIMEOUT, …)
    * whenever one is known, and only falls back to a `classifyError` bucket for
@@ -93,7 +151,23 @@ export type RequestEventMap = {
     slug?: string;
   };
   "http.stream.opened": { statusCode: number };
-  "http.stream.closed": { statusCode: number; durationMs: number };
+  /**
+   * Lifecycle, not failure: every wrapped stream emits exactly one of these,
+   * whatever ends it. `outcome` is the only record of HOW a streaming
+   * response died — the middleware's streaming branch returns before any
+   * `http.request.failed`/`completed` emission, and a producer error or a
+   * client disconnect used to skip the old flush()-only hook entirely,
+   * leaving zero rows for the most common streaming failure. Aborts are
+   * deliberately an `outcome` here and never a failure event: a user closing
+   * a tab is normal operation, but its rate is a useful denominator.
+   */
+  "http.stream.closed": {
+    statusCode: number;
+    durationMs: number;
+    outcome: "completed" | "aborted" | "errored";
+    /** errored only; capped at 500 chars, scrubbed on emit. */
+    errorMessage?: string;
+  };
   "mcp.oauth.proxy.failed": {
     targetUrlHost: string;
     oauthPhase: "metadata" | "proxy" | "token";
@@ -141,6 +215,9 @@ export type RequestEventMap = {
     sourceType?: "chatbox" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
+    // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
+    // of the same name on `http.request.failed` / `route.operation.failed` —
+    // never join the two in an APL query.
     origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval" | "swarm";
   };
   "widget.resource.served": {
@@ -185,6 +262,7 @@ export type RequestEventMap = {
     statusCode: number;
     errorCode: string;
   };
+  "route.operation.failed": RouteOperationFailedFields;
 };
 
 export type SystemEventMap = {
@@ -243,6 +321,7 @@ export type SystemEventMap = {
     latencyP50Ms: number;
     latencyP95Ms: number;
   };
+  "route.operation.failed": RouteOperationFailedFields;
 };
 
 export type LogEventName = keyof RequestEventMap | keyof SystemEventMap;
@@ -285,6 +364,42 @@ export function resolveEnvironment(): Environment {
   return "dev";
 }
 
+/**
+ * Baked into the bundle by `server/tsup.config.ts` (`define`). MUST stay a
+ * literal `process.env.X` member expression — esbuild's `define` is a
+ * syntactic substitution and cannot see through a dynamic
+ * `process.env[name]` lookup. Under tsx in dev the define is absent and this
+ * reads the real environment, where npm provides `npm_package_version`.
+ *
+ * This is the canonical copy; `server/sentry.ts` (release tag) and
+ * `server/utils/health-payload.ts` (`/health` version) resolve through it so
+ * the three surfaces can never disagree about what build is running.
+ */
+const BAKED_VERSION = process.env.MCPJAM_INSPECTOR_VERSION;
+
+function blankToNull(value: string | undefined): string | null {
+  // Container platforms materialize a declared-but-unset variable as "",
+  // which ?? does not catch.
+  return value === undefined || value.trim() === "" ? null : value;
+}
+
+export function resolveAppVersion(): string | null {
+  return blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version);
+}
+
+/**
+ * The git-sha vars only exist on repo-connected builds. Production deploys
+ * via `railway up` (a directory upload with no git metadata), so neither is
+ * set there and every prod row carried `release: null` — which made the
+ * "did a deploy cause this?" triage step in the alert runbooks impossible.
+ * The baked package version is the fallback: prod deploys are releases, so
+ * version boundaries ARE deploy boundaries, and it matches what `/health`
+ * reports, so log rows and the canary correlate directly.
+ */
 export function resolveRelease(): string | null {
-  return process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_SHA ?? null;
+  return (
+    blankToNull(process.env.RAILWAY_GIT_COMMIT_SHA) ??
+    blankToNull(process.env.GIT_SHA) ??
+    resolveAppVersion()
+  );
 }

@@ -8,8 +8,8 @@ import {
 } from "@/hooks/chatbox-usage-filters";
 import type { CriterionFacet } from "@/hooks/useUsageInsights";
 import {
-  PREDICATE_KIND_LABELS,
-  type PredicateKind,
+  formatCriterion,
+  isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
 
 /** Keep the scorecard headline and compact statline on one calculation. */
@@ -200,7 +200,13 @@ export function CriterionScorecard({
         <div className="border-t bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground">
           {totalGraded === 0
             ? "No completed grades yet"
-            : `${cleanCount} / ${facets.length} criteria passing · ${totalFail}/${totalGraded} graded checks failed`}
+            : /* Two different denominators, so they need two different nouns.
+                 The first is per-CHECK (how many checks have a clean sheet);
+                 the second is per-VERDICT — `totalGraded` sums pass+fail
+                 across every check on every session, so with 3 checks over 10
+                 sessions it is 30, not 10. Calling that "sessions" would
+                 overstate the sample by the rubric's size. */
+              `${cleanCount} / ${facets.length} checks passing · ${totalFail}/${totalGraded} graded checks failed`}
         </div>
       </div>
     </div>
@@ -208,19 +214,22 @@ export function CriterionScorecard({
 }
 
 /**
- * What to call a criterion on screen.
+ * What to call a check on screen.
  *
  * The author's `label` wins. Failing that, the predicate KIND's label — the
  * facet row carries no predicate arguments, so this is as specific as the
  * server-side data allows. Failing even that, the raw id: ugly, but it names
- * a real row, which beats inventing a friendlier name for a criterion no run
- * in the window defines.
+ * a real row, which beats inventing a friendlier name for a check no run in
+ * the window defines.
+ *
+ * The label rules themselves are delegated to `formatCriterion` so they stay
+ * defined once and cannot drift between the authoring form, the run
+ * scorecard, and this table. Only the unknown-kind escape hatch is local:
+ * `formatCriterion` has no id to fall back to.
  */
 function criterionDisplayName(facet: CriterionFacet): string {
-  const label = facet.label?.trim();
-  if (label) return label;
-  if (facet.kind && facet.kind in PREDICATE_KIND_LABELS) {
-    return PREDICATE_KIND_LABELS[facet.kind as PredicateKind];
+  if (facet.kind !== undefined && isKnownPredicateKind(facet.kind)) {
+    return formatCriterion({ ...facet, kind: facet.kind });
   }
-  return facet.criterionId;
+  return facet.label?.trim() || facet.criterionId;
 }

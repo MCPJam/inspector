@@ -400,6 +400,87 @@ export function createApiClient(options = {}) {
 	}
 
 	/**
+	 * One journey run (the Swarms product).
+	 *
+	 * Deliberately NOT folded into `getEvalRun`. The two share a shape at a
+	 * glance and disagree on everything that matters: a journey run's status
+	 * vocabulary is completed/partial/failed/rate_limited, a deliberate stop
+	 * arrives as `canceled: true` rather than a status, and a run that
+	 * "completed" can still have had most of its sessions fail. A watcher that
+	 * treated them as one type would report a rate-limited fan-out as a pass.
+	 *
+	 * @param {string} runId
+	 * @param {SurfaceContext} ctx
+	 * @param {RequestOptions} [opts]
+	 * @returns {Promise<any>}
+	 */
+	async function getJourneyRun(runId, ctx, opts = {}) {
+		const config = getConfig(ctx, opts);
+		return requestJson(
+			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/journey-runs/${encodeURIComponent(runId)}`,
+			{
+				apiKey: config.apiKey,
+				headers: config.headers,
+				timeoutMs: RUN_TIMEOUT_MS,
+				fetchImpl: opts.fetchImpl,
+			},
+		);
+	}
+
+	/**
+	 * The sessions a journey run produced — one per persona attempt against
+	 * each target. This is a journey run's equivalent of eval ITERATIONS, and
+	 * the rename is the point: a session is a conversation, not a repeat of the
+	 * same case.
+	 *
+	 * @param {string} runId
+	 * @param {SurfaceContext} ctx
+	 * @param {RequestOptions} [opts]
+	 * @returns {Promise<Array<Record<string, any>>>}
+	 */
+	async function listJourneyRunSessions(runId, ctx, opts = {}) {
+		const config = getConfig(ctx, opts);
+		const query = opts.limit
+			? `?limit=${encodeURIComponent(String(opts.limit))}`
+			: "";
+		const payload = await requestJson(
+			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/journey-runs/${encodeURIComponent(runId)}/sessions${query}`,
+			{
+				apiKey: config.apiKey,
+				headers: config.headers,
+				timeoutMs: RUN_TIMEOUT_MS,
+				fetchImpl: opts.fetchImpl,
+			},
+		);
+		return Array.isArray(payload?.items) ? payload.items : [];
+	}
+
+	/**
+	 * A journey run's deterministic rubric scorecard.
+	 *
+	 * The first thing to reach for when explaining a failure: no model is
+	 * involved, so the counts are the counts. Answers 404 when the run had no
+	 * rubric, which callers should treat as "no scorecard", not as an error.
+	 *
+	 * @param {string} runId
+	 * @param {SurfaceContext} ctx
+	 * @param {RequestOptions} [opts]
+	 * @returns {Promise<any>}
+	 */
+	async function getJourneyRunScorecard(runId, ctx, opts = {}) {
+		const config = getConfig(ctx, opts);
+		return requestJson(
+			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/journey-runs/${encodeURIComponent(runId)}/scorecard`,
+			{
+				apiKey: config.apiKey,
+				headers: config.headers,
+				timeoutMs: RUN_TIMEOUT_MS,
+				fetchImpl: opts.fetchImpl,
+			},
+		);
+	}
+
+	/**
 	 * @param {SurfaceContext} ctx
 	 * @param {RequestOptions} [opts]
 	 * @returns {Promise<Array<{id: string, name: string}>>}
@@ -440,6 +521,9 @@ export function createApiClient(options = {}) {
 		getEvalRun,
 		listEvalRunIterations,
 		getEvalRunSteps,
+		getJourneyRun,
+		listJourneyRunSessions,
+		getJourneyRunScorecard,
 		listProjects,
 	};
 }
@@ -452,5 +536,8 @@ export const {
 	getEvalRun,
 	listEvalRunIterations,
 	getEvalRunSteps,
+	getJourneyRun,
+	listJourneyRunSessions,
+	getJourneyRunScorecard,
 	listProjects,
 } = defaultApiClient;

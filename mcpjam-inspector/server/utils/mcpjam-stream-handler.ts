@@ -30,7 +30,11 @@ import {
   describeError,
   type NormalizedError,
 } from "@mcpjam/sdk";
-import { maybeCaptureOriginError } from "./error-origin-capture.js";
+import {
+  createSystemStreamFailureReporter,
+  oncePerTurn,
+  type StreamFailureReporter,
+} from "./stream-failure-reporter.js";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
@@ -683,6 +687,14 @@ export interface MCPJamHandlerOptions {
    */
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
   /**
+   * Typed-telemetry seam for mid-stream failures (route.operation.failed).
+   * Routes with a Hono context pass `createRequestStreamFailureReporter(c)`
+   * so the event carries the full request envelope; when absent the engine
+   * falls back to the system reporter, so no caller can silently lose
+   * events. See stream-failure-reporter.ts.
+   */
+  failureReporter?: StreamFailureReporter;
+  /**
    * Browser-rendered MCP App eval PR 2 — optional per-step hook that narrows
    * the *advertised* tool set the model sees this step. Called inside
    * `processOneStep` after the active tool subset is resolved, with
@@ -804,6 +816,9 @@ interface StepContext {
   // processOneStep, processStream/tool-execution catch, outer
   // agentic-loop catch). Optional.
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
+  // Typed mid-stream failure telemetry; threaded from runChatEngineLoop
+  // (already oncePerTurn-wrapped and fallback-resolved there).
+  failureReporter: StreamFailureReporter;
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
@@ -2111,6 +2126,7 @@ async function processOneStep(
     onToolResult,
     // PR 5b-followup-2 structured-error callback.
     onEngineError,
+    failureReporter,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
   } = ctx;
@@ -2374,30 +2390,45 @@ async function processOneStep(
     // working correctly, so only they skip the boundary.
     const isRecognizedDenial =
       isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
-    maybeCaptureOriginError(new Error(parsed.message), normalized, {
-      source: "route:mcp.chat-v2.backend-stream",
-      // The boundary is declared for a genuine TRANSPORT failure only, and
-      // NOT for `isJsonDenial`. A denial is an HTTP 200 carrying a structured
-      // refusal (`{ok:false, code:"user_rate_limit"}`) — the backend working
-      // correctly, and a routine, user-owned outcome. Promoting it would page
-      // the team on every ordinary spend-limit rejection, which is precisely
-      // the noise class this work removes.
-      //
-      // On a real failure the declaration earns its place twice: it tags the
-      // event with the boundary the rest of the codebase triages on, and it
-      // escalates an unrecognized status from our own backend, which
-      // `describeBackendStreamFailure` leaves `ambiguous` because it
-      // classifies the response alone and cannot know whose backend answered.
-      ...(isRecognizedDenial
-        ? {}
-        : { boundary: "mcpjam_internal" as const }),
-      extra: {
-        httpStatus: res.status,
-        code: parsed.code,
-        isJsonDenial,
-        isRecognizedDenial,
-      },
-    });
+    // Through the reporter, not a bare capture call: reportRouteFailure runs
+    // the same maybeCaptureOriginError decision (source becomes the identical
+    // `route:mcp.chat-v2.backend-stream` Sentry tag), then a free-form Axiom
+    // row, then the typed route.operation.failed event — the only record of
+    // this failure that monitors can key on, since the response is a 200
+    // stream the HTTP events never see.
+    //
+    // The hop is `mcpjam_internal` for a genuine TRANSPORT failure only, and
+    // NOT for `isRecognizedDenial`. A denial is an HTTP 200 carrying a
+    // structured refusal (`{ok:false, code:"user_rate_limit"}`) — the backend
+    // working correctly, and a routine, user-owned outcome. Promoting it
+    // would page the team on every ordinary spend-limit rejection, which is
+    // precisely the noise class this work removes. On a real failure the
+    // internal hop earns its place twice: it tags the event with the boundary
+    // the rest of the codebase triages on, and it escalates an unrecognized
+    // status from our own backend, which `describeBackendStreamFailure`
+    // leaves `ambiguous` because it classifies the response alone and cannot
+    // know whose backend answered.
+    // Silent-cancel invariant: a fired abort can race this site (res.text()
+    // rejecting into the generic fallback, or the failure landing while the
+    // client is already gone). An aborted turn must not inflate the
+    // operation-failure rate.
+    if (!abortSignal?.aborted) {
+      failureReporter({
+        message: "[mcpjam-stream-handler] backend stream failed",
+        error: new Error(parsed.message),
+        source: "mcp.chat-v2.backend-stream",
+        hop: isRecognizedDenial ? "user_server_hop" : "mcpjam_internal",
+        transport: "http_stream",
+        normalized,
+        ...(parsed.code ? { errorCode: parsed.code } : {}),
+        context: {
+          httpStatus: res.status,
+          code: parsed.code,
+          isJsonDenial,
+          isRecognizedDenial,
+        },
+      });
+    }
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,
       ...(parsed.code ? { code: parsed.code } : {}),
@@ -2865,6 +2896,32 @@ async function processOneStep(
         errorText,
       });
     emitError(writer, errorText);
+      // Site (2) holds a real error. An earlier comment deferred capture to
+      // "the chat route's stream onError" — but runChatEngineLoop's
+      // createUIMessageStream passes only `execute`, so no such onError
+      // exists on this path and the failure was never classified or
+      // recorded. The reporter closes that hole: capture decision, free-form
+      // row, and the typed route.operation.failed event (the response is a
+      // 200 stream, so the HTTP failure events never see this).
+      const stepNormalized = describeError(error);
+      // Same silent-cancel guard as the outer loop's catch (which checks
+      // `isAbortError(error) || abortSignal?.aborted`): a non-AbortError that
+      // lands after the signal fired belongs to a turn the client already
+      // cancelled.
+      if (!abortSignal?.aborted) {
+        failureReporter({
+          message: "[mcpjam-stream-handler] engine step failed",
+          error,
+          source: "mcp.chat-v2.engine-step",
+          hop: "user_server_hop",
+          transport: "http_stream",
+          normalized: stepNormalized,
+          context: {
+            promptIndex: traceTurn.promptIndex,
+            stepIndex,
+          },
+        });
+      }
       // PR 5b-followup-2: surface the error to `streamSink: "none"`
       // consumers (eval backend stream runner). The processStream /
       // tool-execution catch path doesn't have a structured body, so
@@ -2875,9 +2932,7 @@ async function processOneStep(
         rawText: errorText,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
-        // Site (2) holds a real error — no capture here, the chat route's
-        // stream `onError` owns that decision for this path.
-        normalized: describeError(error),
+        normalized: stepNormalized,
       });
       return { shouldContinue: false, didEmitFinish: false };
     }
@@ -3006,6 +3061,7 @@ export async function runChatEngineLoop(
     onStepFinish,
     // PR 5b-followup-2 callback.
     onEngineError,
+    failureReporter: failureReporterOption,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
     abortSignal,
@@ -3014,6 +3070,13 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
+  // One typed route.operation.failed per turn, whatever combination of the
+  // three failure sites fires; the system fallback covers eval/swarm runs
+  // that have no request context. Later failures in the same turn still get
+  // classified (capture-deduped) and keep their free-form rows.
+  const failureReporter = oncePerTurn(
+    failureReporterOption ?? createSystemStreamFailureReporter("chat-engine"),
+  );
   const resolvedEndpointPath = endpointPath ?? "/stream";
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -3358,6 +3421,7 @@ export async function runChatEngineLoop(
           // the two `processOneStep` error sites (non-OK Convex
           // response + processStream/tool catch).
           onEngineError,
+          failureReporter,
           // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
           prepareAdvertisedTools,
           abortSignal,
@@ -3439,10 +3503,24 @@ export async function runChatEngineLoop(
       if (isAbortError(error) || abortSignal?.aborted) {
         aborted = true;
       } else {
-        logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
         const failAbs = Date.now();
         const errorText =
           error instanceof Error ? error.message : String(error);
+        const loopNormalized = describeError(error);
+        // Reporter, not a bare logger.error: the old call captured to Sentry
+        // unconditionally — paging on user-fault failures — and left no typed
+        // record a monitor could read (the response is a 200 stream). The
+        // reporter classifies first, pages only on origin=mcpjam, keeps the
+        // free-form row, and emits route.operation.failed.
+        failureReporter({
+          message: "[mcpjam-stream-handler] Error in agentic loop",
+          error,
+          source: "mcp.chat-v2.agentic-loop",
+          hop: "user_server_hop",
+          transport: "http_stream",
+          normalized: loopNormalized,
+          context: { promptIndex: traceTurn.promptIndex },
+        });
         pushAiSdkTrailingErrorSpan(
           traceTurn.turnSpans,
           traceTurn.turnStartedAt,
@@ -3471,7 +3549,7 @@ export async function runChatEngineLoop(
           message: errorText,
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
-          normalized: describeError(error),
+          normalized: loopNormalized,
         });
       }
     } finally {

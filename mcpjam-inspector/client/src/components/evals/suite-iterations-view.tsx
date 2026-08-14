@@ -1597,7 +1597,7 @@ export function SuiteIterationsView({
 
               {/* ── Checks ───────────────────────────────────────────── */}
               <SettingsSection
-                label="Default global gates"
+                label="Default checks"
                 labelAccessory={<GlobalGatesSectionInfoHint />}
                 layout="inline"
                 inlineSlot={
