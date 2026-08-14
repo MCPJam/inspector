@@ -119,14 +119,16 @@ Tool results are JSON payloads describing the target server. Errors come back as
 
 ## Relationship to the hosted MCP server
 
-MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** — projects, saved servers, eval suites and runs — behind OAuth. The two are complementary:
+MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** — organizations, projects, saved servers, eval suites and runs — behind OAuth. The two are complementary:
 
 | | `mcpjam mcp` (this page) | `mcp.mcpjam.com` |
 |---|---|---|
 | Runs | Locally, spawned by your MCP client | Hosted |
 | Auth | None | MCPJam account (OAuth) |
-| Scope | Test any server reachable from your machine, including local stdio | Servers and evals saved in your projects |
+| Scope | Test any server reachable from your machine, including local stdio | Organizations, projects, servers, and evals saved in your account |
 | Transport to MCPJam | stdio | Streamable HTTP |
+
+The hosted server exposes platform tools including `list_organizations` (discover the `organizationId` that project tools take), `list_projects`, `create_project`, and `update_project`. `delete_project` is intentionally not exposed over MCP — use the REST API or the CLI for destructive project operations.
 
 ## Troubleshooting
 
