@@ -4013,6 +4013,54 @@ describe("syncServerToConvex name-collision recovery", () => {
     });
   });
 
+  it("names the taken workspace name instead of telling the user to try again", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockConvexQuery.mockResolvedValue([
+      {
+        _id: "srv_sibling",
+        projectId: "other-project",
+        name: "Excalidraw (App)",
+      },
+    ]);
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [],
+    });
+
+    let saved: boolean | undefined;
+    await act(async () => {
+      saved = await result.current.saveServerConfigWithoutConnecting({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+        // Header secrets route the save through the path whose create resolves
+        // back to the sibling's row, which is the one that fails on a twin.
+        secretPatch: { headers: { authorization: "bearer token" } },
+      });
+    });
+
+    expect(saved).toBe(false);
+    expect(toastError).toHaveBeenCalledWith(
+      errorToastMessage(
+        'A server named "Excalidraw (App)" already exists in this workspace. Choose a different name.'
+      ),
+      { duration: 8000 }
+    );
+    // Retrying cannot clear a name the workspace has given away.
+    expect(toastError).not.toHaveBeenCalledWith(
+      errorToastMessage("Could not save the server. Please try again."),
+      { duration: 8000 }
+    );
+    expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+  });
+
   it("refuses to save when the active project belongs to another organization", async () => {
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";

@@ -1652,7 +1652,12 @@ export function useServerState({
         projectId: string;
         serverId?: string | null;
         exactServerId?: boolean;
-      }
+      },
+      // Fires when the save is abandoned because the workspace already gave
+      // this name to another project's server. Callers that show the failure
+      // need it to tell a name the user can fix apart from a write that is
+      // worth retrying; both otherwise arrive as an absent id.
+      onWorkspaceNameConflict?: () => void
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
@@ -1810,6 +1815,7 @@ export function useServerState({
             existingProjectId: twin.projectId,
           }
         );
+        onWorkspaceNameConflict?.();
       };
 
       // Existing-server edits from a hosted UI carry the exact authorized row
@@ -3788,6 +3794,7 @@ export function useServerState({
         hostedProjectId &&
         hostedProjectId !== "none"
       ) {
+        let workspaceNameTaken = false;
         try {
           const syncedServerId = await syncServerToConvex(
             serverName,
@@ -3813,9 +3820,22 @@ export function useServerState({
                   ...options.hostedWriteTarget,
                   exactServerId: true,
                 }
-              : undefined
+              : undefined,
+            () => {
+              workspaceNameTaken = true;
+            }
           );
           if (!syncedServerId) {
+            // A name the workspace has already given to another project's
+            // server is the user's to fix, and no retry will clear it. Say so
+            // instead of "try again", and leave it out of the error channel —
+            // the sync path already warned with the project that holds it.
+            if (workspaceNameTaken) {
+              toast.error(
+                `A server named "${serverName}" already exists in this workspace. Choose a different name.`
+              );
+              return false;
+            }
             logger.error("Failed to sync server to Convex", {
               error: "Server sync returned no server id",
             });
