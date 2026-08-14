@@ -32,6 +32,10 @@ function getPathsAtDepth(
     ) {
       paths.push(currentPath);
     }
+    // Nodes at or beyond maxDepth are collapsed from their ancestor above,
+    // so descending further only risks a stack overflow on deeply nested
+    // values without changing which paths get collapsed.
+    return paths;
   }
 
   if (typeof value === "object" && value !== null) {
@@ -139,10 +143,16 @@ export function useJsonTreeState({
       if (initialized || initialCollapsedPaths !== undefined) return;
 
       if (defaultExpandDepth !== undefined) {
-        const pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
-        const newCollapsed = new Set(pathsToCollapse);
-        setCollapsedPaths(newCollapsed);
-        onCollapseChange?.(newCollapsed);
+        try {
+          const pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
+          const newCollapsed = new Set(pathsToCollapse);
+          setCollapsedPaths(newCollapsed);
+          onCollapseChange?.(newCollapsed);
+        } catch {
+          // Defensive fallback: if computing collapse paths fails on
+          // pathological input, leave everything expanded instead of
+          // crashing the surrounding view.
+        }
       }
       setInitialized(true);
     },
