@@ -108,6 +108,16 @@ export function useChatboxTurnRating({
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staleAttemptRef = useRef(0);
   const scheduleStaleRefreshRef = useRef<(() => void) | null>(null);
+  // A mutation can reject AFTER the page is gone. Without this the rejection
+  // handler would re-arm timers and re-ask for a redeem for a chat nobody is
+  // looking at.
+  const unmountedRef = useRef(false);
+  useEffect(
+    () => () => {
+      unmountedRef.current = true;
+    },
+    []
+  );
   const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
   useEffect(() => {
     onStaleHostedAccessRef.current = onStaleHostedAccess;
@@ -148,6 +158,14 @@ export function useChatboxTurnRating({
     return map;
   }, [persisted, chatSessionId]);
 
+  // Read inside `setState` without making it a dependency — the merge below
+  // needs the persisted comment, but re-creating `setState` on every query
+  // round-trip would churn `runSubmit`'s identity too.
+  const persistedByTurnRef = useRef(persistedByTurn);
+  useEffect(() => {
+    persistedByTurnRef.current = persistedByTurn;
+  }, [persistedByTurn]);
+
   /**
    * `comment: undefined` means "leave the stored comment alone" — the same
    * contract the mutation uses. Merging rather than overwriting keeps a turn's
@@ -160,9 +178,25 @@ export function useChatboxTurnRating({
       ...prev,
       [key]: {
         ...next,
-        comment: next.comment === undefined ? prev[key]?.comment : next.comment,
+        comment:
+          next.comment === undefined
+            ? // The optimistic map may hold nothing yet — the first star click
+              // on a REHYDRATED turn has no prior optimistic entry, so fall
+              // through to what the server already told us.
+              prev[key]?.comment ?? persistedByTurnRef.current.get(key)?.comment
+            : next.comment,
       },
     }));
+  }, []);
+
+  /** Forget a key entirely, so it falls back to the persisted read. */
+  const clearState = useCallback((key: string) => {
+    setStates((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }, []);
 
   const runSubmit = useCallback(
@@ -174,14 +208,21 @@ export function useChatboxTurnRating({
         // Identity is momentarily absent (mid-redeem). The replay path clears
         // the queue before calling in, so returning bare would drop the rating
         // AND leave its key stuck on `pending` — a permanent spinner over a
-        // discarded submission. Put it back for the next accessVersion.
+        // discarded submission. Put it back, and arm the backoff so this
+        // settles even if identity never returns.
         staleQueueRef.current.set(key, pending);
+        scheduleStaleRefreshRef.current?.();
         return;
       }
       // Identity moved on to a DIFFERENT chatbox while this attempt was
       // queued. Drop it: the rating belongs to a conversation no longer on
-      // screen, and the server would reject it anyway.
-      if (pending.chatboxId !== liveChatboxId) return;
+      // screen, and the server would reject it anyway. Clear the key rather
+      // than returning bare — leaving it on `pending` would show a permanent
+      // spinner if the tester ever navigated back.
+      if (pending.chatboxId !== liveChatboxId) {
+        clearState(key);
+        return;
+      }
 
       setState(key, {
         value: pending.value,
@@ -253,7 +294,7 @@ export function useChatboxTurnRating({
         });
       }
     },
-    [setState, submitScore]
+    [clearState, setState, submitScore]
   );
 
   /**
@@ -265,6 +306,7 @@ export function useChatboxTurnRating({
    */
   useEffect(() => {
     scheduleStaleRefreshRef.current = () => {
+      if (unmountedRef.current) return;
       if (staleTimerRef.current !== null) return;
       const attempt = staleAttemptRef.current;
       if (attempt >= STALE_REFRESH_BACKOFF_MS.length) {
@@ -283,6 +325,7 @@ export function useChatboxTurnRating({
       staleAttemptRef.current = attempt + 1;
       staleTimerRef.current = setTimeout(() => {
         staleTimerRef.current = null;
+        if (unmountedRef.current) return;
         if (staleQueueRef.current.size === 0) return;
         onStaleHostedAccessRef.current?.();
         scheduleStaleRefreshRef.current?.();
@@ -293,12 +336,18 @@ export function useChatboxTurnRating({
         clearTimeout(staleTimerRef.current);
         staleTimerRef.current = null;
       }
+      // Null the ref too: a mutation rejecting after unmount still holds a
+      // reference to the rejection handler, which calls through this.
+      scheduleStaleRefreshRef.current = null;
     };
   }, [setState]);
 
   // Replay whatever was queued as soon as the accessVersion advances.
   useEffect(() => {
-    if (accessVersion === undefined) return;
+    // BOTH halves of the identity, and `chatboxId` in the deps: a blip where
+    // the chatbox goes missing and comes back with the SAME accessVersion
+    // would otherwise never re-run this, stranding the queue forever.
+    if (!chatboxId || accessVersion === undefined) return;
     const queued = Array.from(staleQueueRef.current.values());
     if (queued.length === 0) return;
     staleQueueRef.current.clear();
@@ -311,7 +360,7 @@ export function useChatboxTurnRating({
     for (const pending of queued) {
       void runSubmit(pending, 0);
     }
-  }, [accessVersion, runSubmit]);
+  }, [chatboxId, accessVersion, runSubmit]);
 
   const submit = useCallback(
     (args: {

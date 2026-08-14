@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Switch } from "@mcpjam/design-system/switch";
 
 import {
@@ -24,33 +24,45 @@ export function ChatboxPerTurnFeedbackToggle({
 }) {
   const { updateChatbox } = useChatboxMutations();
   const stored = chatbox.chatUi?.surfaces?.perTurnFeedback?.enabled === true;
-  // Optimistic, because the switch has to move under the finger; reverted on
-  // failure so the control never claims a setting the server refused.
-  const [pending, setPending] = useState<boolean | null>(null);
-  const enabled = pending ?? stored;
-  const saving = pending !== null;
+
+  // Optimistic display value. Held until the SERVER's value catches up, not
+  // cleared when the mutation resolves: `chatbox` arrives through a reactive
+  // query, so dropping the override on resolve makes the switch snap back to
+  // the old setting for the frame or two before the update lands.
+  const [optimistic, setOptimistic] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const enabled = optimistic ?? stored;
+
+  useEffect(() => {
+    if (optimistic !== null && stored === optimistic) setOptimistic(null);
+  }, [optimistic, stored]);
+
+  // Synchronous in-flight latch. A `saving` STATE check cannot serialize this:
+  // two `onCheckedChange` calls in the same tick both read the pre-commit
+  // value, start two mutations, and let out-of-order responses persist the
+  // opposite of the last click. A ref is set before the await, so the second
+  // caller sees it.
+  const inFlightRef = useRef(false);
 
   const handleChange = async (next: boolean) => {
-    // One write in flight at a time. Without this, a double-click starts two
-    // mutations that share `pending`: the first response clears the optimistic
-    // value the second click set, and out-of-order writes can leave the stored
-    // setting disagreeing with the last click. The switch is disabled while
-    // saving, and this guard closes the gap for a programmatic caller.
-    if (saving) return;
-    setPending(next);
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setSaving(true);
+    setOptimistic(next);
     try {
       await updateChatbox({
         chatboxId: chatbox.chatboxId,
         chatUi: { surfaces: { perTurnFeedback: { enabled: next } } },
       } as any);
     } catch (err) {
-      setPending(null);
+      setOptimistic(null);
       toast.error(
         convexErrMessage(err, "Failed to update the per-turn ratings setting")
       );
-      return;
+    } finally {
+      inFlightRef.current = false;
+      setSaving(false);
     }
-    setPending(null);
   };
 
   return (

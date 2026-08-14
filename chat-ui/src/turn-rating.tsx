@@ -95,15 +95,18 @@ export function TurnRating({
     // also writes a comment is a rating most testers never leave; the comment
     // is a second, optional submit on top.
     //
-    // The draft comment rides along when there is one. Omitting it means "leave
-    // the stored comment alone" to the backend, but the host's optimistic state
-    // would still show the turn as uncommented until the next round-trip — so
-    // revising the stars on an annotated turn would blank the annotation on
-    // screen while the server quietly kept it.
-    const trimmed = draftComment.trim();
+    // The SAVED comment rides along — `comment`, not `draftComment`. Omitting
+    // it means "leave the stored comment alone" to the backend, but the host's
+    // optimistic state would still show the turn as uncommented until the next
+    // round-trip, blanking an annotation the server quietly kept.
+    //
+    // Deliberately not the draft: text someone typed and has not sent is not a
+    // rating they submitted, and changing their mind about the stars is not
+    // consent to publish it. The draft stays in the editor for `submitComment`.
+    const saved = comment?.trim() ?? "";
     onSubmit?.({
       value: next,
-      ...(trimmed.length > 0 ? { comment: draftComment } : {}),
+      ...(saved.length > 0 ? { comment } : {}),
     });
   }
 

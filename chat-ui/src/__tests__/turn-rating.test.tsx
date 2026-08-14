@@ -117,6 +117,25 @@ describe("TurnRating", () => {
     expect(onSubmit).toHaveBeenCalledWith({ value: 4 });
   });
 
+  it("does not publish an unsent draft when the stars change", () => {
+    // Typing is not submitting. Changing your mind about the stars is not
+    // consent to send text you were still writing — the draft stays in the
+    // editor for the explicit Send.
+    const onSubmit = vi.fn();
+    render(<TurnRating onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "2 of 5" }));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "half-written thought" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "3 of 5" }));
+
+    expect(onSubmit).toHaveBeenLastCalledWith({ value: 3 });
+    expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe(
+      "half-written thought"
+    );
+  });
+
   it("keeps the editor and the draft open when a comment save fails", () => {
     const onSubmit = vi.fn();
     const { rerender } = render(<TurnRating onSubmit={onSubmit} />);

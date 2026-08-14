@@ -311,6 +311,162 @@ describe("useChatboxTurnRating", () => {
     );
   });
 
+  it("replays when identity returns on the SAME accessVersion", async () => {
+    // A blip where chatboxId goes missing and comes back unchanged would never
+    // re-run a replay effect keyed only on accessVersion — the rating would sit
+    // in `pending` forever.
+    mockSubmitScore.mockRejectedValueOnce(staleError());
+
+    const { result, rerender } = renderHook(
+      (props: { chatboxId: string | undefined }) =>
+        useChatboxTurnRating({
+          enabled: true,
+          chatboxId: props.chatboxId,
+          accessVersion: 1,
+          onStaleHostedAccess: () => {},
+        }),
+      { initialProps: { chatboxId: "cbx_1" as string | undefined } }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 2,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+
+    mockSubmitScore.mockResolvedValue({ status: "ok" });
+    // Identity drops and returns — accessVersion never moves.
+    rerender({ chatboxId: undefined });
+    await flushMicrotasks();
+    rerender({ chatboxId: "cbx_1" });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "submitted"
+    );
+  });
+
+  it("clears state for a retry dropped by a chatbox switch", async () => {
+    // Dropping the retry is right — the rating is for a conversation no longer
+    // on screen — but leaving the key on `pending` would show a permanent
+    // spinner if the tester navigated back.
+    vi.useFakeTimers();
+    mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+    const { result, rerender } = renderHook(
+      (props: { chatboxId: string }) =>
+        useChatboxTurnRating({
+          enabled: true,
+          chatboxId: props.chatboxId,
+          accessVersion: 1,
+        }),
+      { initialProps: { chatboxId: "cbx_1" } }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 3,
+      });
+    });
+    await flushMicrotasks();
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "pending"
+    );
+
+    rerender({ chatboxId: "cbx_2" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "idle"
+    );
+  });
+
+  it("keeps a rehydrated comment when the first action is a star change", async () => {
+    // The optimistic map is empty on that first click, so the merge has to
+    // reach past it to what the server already reported.
+    mockUseQuery.mockReturnValue([
+      { turnId: TURN_ID, value: 2, comment: "lost my order" },
+    ]);
+
+    const { result } = renderHook(() =>
+      useChatboxTurnRating({
+        enabled: true,
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.observeChatSession(CHAT_SESSION_ID);
+    });
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 5,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      comment: "lost my order",
+    });
+  });
+
+  it("does not re-ask for a redeem after unmount", async () => {
+    // A mutation can reject after the page is gone; the rejection handler must
+    // not re-arm timers or ask for a redeem for a chat nobody is looking at.
+    vi.useFakeTimers();
+    let rejectWrite: ((reason: unknown) => void) | undefined;
+    mockSubmitScore.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectWrite = reject;
+        })
+    );
+    const onStaleHostedAccess = vi.fn();
+
+    const { result, unmount } = renderHook(() =>
+      useChatboxTurnRating({
+        enabled: true,
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        onStaleHostedAccess,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 1,
+      });
+    });
+    await flushMicrotasks();
+
+    unmount();
+    rejectWrite?.(staleError());
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+
+    // One ask is the direct `onStaleHostedAccess` call in the catch; what must
+    // NOT happen is the backoff re-arming afterwards.
+    expect(onStaleHostedAccess.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
   it("drops a queued retry once the active chatbox changes", async () => {
     // A retry that fires after a chatbox switch would submit the old session
     // and turn under the new chatbox's credentials. The server rejects that,

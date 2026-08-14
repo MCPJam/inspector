@@ -124,6 +124,7 @@ import {
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -572,25 +573,13 @@ export function ChatTabV2({
     return map;
   }, [messages]);
 
-  // Same ordinal, addressed from the ASSISTANT side: a response belongs to the
-  // turn its preceding prompt opened, which is exactly what the backend
-  // records on `chatSessionTurnTraces`. Assistant messages before any user
-  // message (a seeded greeting) belong to no turn and are absent from the map,
-  // so a rating widget never renders under them.
-  const assistantPromptIndexById = useMemo(() => {
-    const map = new Map<string, number>();
-    let userOrdinal = -1;
-    for (const msg of messages) {
-      if (msg.role === "user") {
-        userOrdinal += 1;
-        continue;
-      }
-      if (msg.role === "assistant" && userOrdinal >= 0) {
-        map.set(msg.id, userOrdinal);
-      }
-    }
-    return map;
-  }, [messages]);
+  // The same ordinal addressed from the ASSISTANT side — see
+  // `buildAssistantPromptIndex` for why the counting rule is the server's, not
+  // the renderer's.
+  const assistantPromptIndexById = useMemo(
+    () => buildAssistantPromptIndex(messages),
+    [messages]
+  );
 
   // promptIndex → server-minted turnId. Live turns arrive via `turn_start`
   // trace events; rehydrated sessions get theirs from the persisted

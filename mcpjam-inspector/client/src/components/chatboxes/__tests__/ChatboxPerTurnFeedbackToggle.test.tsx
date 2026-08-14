@@ -5,7 +5,13 @@
  * optimistic, so two clicks racing one `pending` slot can leave the switch
  * showing one thing and the server storing another.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 
@@ -49,6 +55,15 @@ describe("ChatboxPerTurnFeedbackToggle", () => {
     expect(toggle()).toHaveAttribute("data-state", "unchecked");
   });
 
+  it("reads off when the chat UI envelope is explicitly null", () => {
+    render(
+      <ChatboxPerTurnFeedbackToggle
+        chatbox={{ ...chatbox(), chatUi: null } as ChatboxSettings}
+      />
+    );
+    expect(toggle()).toHaveAttribute("data-state", "unchecked");
+  });
+
   it("writes only the perTurnFeedback surface", () => {
     render(<ChatboxPerTurnFeedbackToggle chatbox={chatbox(false)} />);
     fireEvent.click(toggle());
@@ -58,10 +73,14 @@ describe("ChatboxPerTurnFeedbackToggle", () => {
     });
   });
 
-  it("ignores a second click while the first write is in flight", async () => {
-    // Both clicks share one `pending` slot: the first response would clear the
-    // second's optimistic value, and out-of-order writes could store the
-    // opposite of the last click.
+  it("serializes two dispatches that land in the same tick", async () => {
+    // The in-flight latch is a REF, not state: two `onCheckedChange` calls in
+    // one tick both read the pre-commit `saving`, so a state check would let
+    // both through and out-of-order responses could persist the opposite of
+    // the last click. Fired without an intervening act() flush precisely so
+    // the `disabled` attribute is not what's under test — a user click on a
+    // disabled switch never reaches the handler, which would make this pass
+    // even with the latch removed.
     let resolveWrite: (() => void) | undefined;
     updateChatboxMock.mockImplementation(
       () =>
@@ -71,12 +90,34 @@ describe("ChatboxPerTurnFeedbackToggle", () => {
     );
 
     render(<ChatboxPerTurnFeedbackToggle chatbox={chatbox(false)} />);
-    fireEvent.click(toggle());
-    fireEvent.click(toggle());
+    const control = toggle();
+    act(() => {
+      control.click();
+      control.click();
+    });
 
     expect(updateChatboxMock).toHaveBeenCalledTimes(1);
     resolveWrite?.();
     await waitFor(() => expect(toggle()).not.toBeDisabled());
+  });
+
+  it("holds the optimistic value until the server's catches up", async () => {
+    // `chatbox` arrives through a reactive query. Clearing the override when
+    // the mutation resolves snaps the switch back to the old setting for the
+    // frame or two before the update lands.
+    updateChatboxMock.mockResolvedValue(undefined);
+    const { rerender } = render(
+      <ChatboxPerTurnFeedbackToggle chatbox={chatbox(false)} />
+    );
+
+    fireEvent.click(toggle());
+    await waitFor(() => expect(toggle()).not.toBeDisabled());
+
+    // Mutation resolved, reactive value has NOT arrived yet.
+    expect(toggle()).toHaveAttribute("data-state", "checked");
+
+    rerender(<ChatboxPerTurnFeedbackToggle chatbox={chatbox(true)} />);
+    expect(toggle()).toHaveAttribute("data-state", "checked");
   });
 
   it("reverts the switch when the write fails", async () => {

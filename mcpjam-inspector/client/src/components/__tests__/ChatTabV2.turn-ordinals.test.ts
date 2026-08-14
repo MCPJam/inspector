@@ -9,30 +9,16 @@
  */
 import { describe, expect, it } from "vitest";
 import type { ModelMessage } from "ai";
+import type { UIMessage } from "@ai-sdk/react";
 import { getPromptIndex } from "../../../../server/utils/live-chat-trace-stream";
+// The PRODUCTION helper `ChatTabV2` calls — not a copy. A copy could not catch
+// the divergence this file exists to prevent.
+import { buildAssistantPromptIndex } from "../chat-v2/turn-ordinals";
 
-type TestMessage = { id: string; role: "user" | "assistant" | "system" };
+type TestMessage = Pick<UIMessage, "id" | "role">;
 
-/**
- * The mapping `ChatTabV2` builds (`assistantPromptIndexById`), extracted so the
- * convention can be tested without mounting the whole chat surface.
- */
-function assistantPromptIndexById(
-  messages: TestMessage[]
-): Map<string, number> {
-  const map = new Map<string, number>();
-  let userOrdinal = -1;
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      userOrdinal += 1;
-      continue;
-    }
-    if (msg.role === "assistant" && userOrdinal >= 0) {
-      map.set(msg.id, userOrdinal);
-    }
-  }
-  return map;
-}
+const assistantPromptIndexById = (messages: TestMessage[]) =>
+  buildAssistantPromptIndex(messages);
 
 describe("assistant prompt ordinals", () => {
   it("assigns each response the ordinal of the prompt that opened its turn", () => {
@@ -56,6 +42,20 @@ describe("assistant prompt ordinals", () => {
     ]);
     expect(map.has("a0")).toBe(false);
     expect(map.get("a1")).toBe(0);
+  });
+
+  it("skips a message with no id rather than mapping undefined", () => {
+    const map = assistantPromptIndexById([
+      { id: "u1", role: "user" },
+      { id: "", role: "assistant" },
+      { id: "a1", role: "assistant" },
+    ] as TestMessage[]);
+    expect(map.has("")).toBe(false);
+    expect(map.get("a1")).toBe(0);
+  });
+
+  it("returns an empty map for an empty thread", () => {
+    expect(assistantPromptIndexById([]).size).toBe(0);
   });
 
   it("counts prompts exactly as the server does", () => {
