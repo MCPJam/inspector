@@ -1269,6 +1269,7 @@ function InsightRow({
           type="button"
           className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
+          aria-expanded={isExpanded}
           data-testid="run-insight-headline"
         >
           <span

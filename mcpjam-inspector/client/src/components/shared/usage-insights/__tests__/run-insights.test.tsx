@@ -322,6 +322,26 @@ describe("evidence integrity", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("reports its disclosure state to assistive tech, evidence and all", () => {
+    state.dto = completed();
+    const { refresh } = renderRefreshableInsights();
+    const headline = () => screen.getByTestId("run-insight-headline");
+    expect(headline()).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(headline());
+    expect(headline()).toHaveAttribute("aria-expanded", "true");
+
+    // Evidence pulled out from under an open row: the panel closes, and the
+    // announced state has to close with it.
+    state.signals = unevidenced();
+    refresh();
+    expect(headline()).toHaveAttribute("aria-expanded", "false");
+
+    state.signals = signals();
+    refresh();
+    expect(headline()).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("closes an OPEN row when its evidence disappears under it", () => {
     // Signals are a live subscription. Without this, a refresh that dropped
     // the exemplars left the model's Why/Fix on screen with nothing behind
