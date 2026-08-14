@@ -462,12 +462,6 @@ export interface SwarmWaveTargetHealth {
   succeeded: number;
   failed: number;
   rateLimited: number;
-  /** Representative refusal for this target, verbatim from the attempt row —
-   * every attempt against a refusing target carries the same one. Render
-   * through `humanizeSwarmAttemptError`, never raw: rows written before the
-   * runner started sanitizing still hold a full provider envelope. */
-  errorCode?: string;
-  errorMessage?: string;
 }
 
 /** Result of `swarmWaveInsights:getWaveSignals` (null ⇒ unknown wave id). */

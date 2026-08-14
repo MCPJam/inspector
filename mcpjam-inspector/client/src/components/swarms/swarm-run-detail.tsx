@@ -99,7 +99,7 @@ export function SwarmRunDetail({
       if (sessionParam) search.set("session", sessionParam);
       const query = search.toString();
       return query ? `?${query}` : "";
-    })()
+    })(),
   );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
@@ -140,10 +140,10 @@ export function SwarmRunDetail({
           tab: next,
           sel: selParam ?? undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   const handleShare = useCallback(async () => {
@@ -167,10 +167,10 @@ export function SwarmRunDetail({
           tab: "sessions",
           session: sessionId,
           sel: selParam ?? undefined,
-        })
+        }),
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   /**
@@ -183,31 +183,31 @@ export function SwarmRunDetail({
       buildSwarmPath(swarmId, {
         tab,
         sel: selParam ?? undefined,
-      })
+      }),
     );
   }, [navigate, selParam, swarmId, tab]);
 
   const handleSelectionChange = useCallback(
-    (
-      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null
-    ) => {
+    (themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null) => {
       navigate(
         buildSwarmPath(swarmId, {
           tab,
           session: sessionParam ?? undefined,
           sel: themes ? serializeSelectionParam(themes) : undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, sessionParam, swarmId, tab]
+    [navigate, sessionParam, swarmId, tab],
   );
 
   const launchableJourneyIds = useMemo(() => {
     if (!wave) return [];
     return [
       ...new Set(
-        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId)
+        wave.runs
+          .filter((r) => !r.journeyArchived)
+          .map((r) => r.journeyRefId)
       ),
     ];
   }, [wave]);
@@ -271,7 +271,9 @@ export function SwarmRunDetail({
       ? Math.min(100, Math.round((live.done / live.total) * 100))
       : 0;
   const runIds = wave.runs.map((r) => r.runId);
-  const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
+  const runLabels = new Map(
+    wave.runs.map((r) => [r.runId, r.journeyName])
+  );
   const goalLabels = new Map(
     wave.runs.map((r) => [r.journeyRefId, r.journeyName])
   );
@@ -511,8 +513,7 @@ function DetailPersonasChip({
     for (const run of wave.runs) {
       const existing = byName.get(run.personaName);
       if (existing) existing.journeyCount += 1;
-      else
-        byName.set(run.personaName, { name: run.personaName, journeyCount: 1 });
+      else byName.set(run.personaName, { name: run.personaName, journeyCount: 1 });
     }
     return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [wave.runs]);
@@ -525,14 +526,15 @@ function DetailPersonasChip({
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
-          aria-label={`${rows.length} ${
-            rows.length === 1 ? "persona" : "personas"
-          }`}
+          aria-label={`${rows.length} ${rows.length === 1 ? "persona" : "personas"}`}
         >
           {rows.length} {rows.length === 1 ? "persona" : "personas"}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 max-w-[90vw] p-3">
+      <PopoverContent
+        align="start"
+        className="w-72 max-w-[90vw] p-3"
+      >
         <div
           className="flex flex-wrap items-center gap-1.5"
           data-testid="swarm-run-detail-personas"

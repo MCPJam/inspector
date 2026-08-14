@@ -13,37 +13,11 @@
  * wave read as an outage.
  */
 import { cn } from "@/lib/utils";
-import {
-  humanizeSwarmAttemptError,
-  UNKNOWN_ATTEMPT_ERROR_MESSAGE,
-} from "@/shared/swarm-attempt-error";
 import type { SwarmWaveTargetHealth } from "@/lib/swarm-api";
 
 /** A target is worth a row only once something did not simply succeed. */
 function hasTrouble(row: SwarmWaveTargetHealth): boolean {
   return row.failed > 0 || row.rateLimited > 0;
-}
-
-/**
- * The refusal, prettified through the SHARED humanizer — same path the live
- * Running step takes. Never rendered raw: rows written before the runner
- * started sanitizing still hold a full `swarm-agent <url> failed (429): {...}`
- * envelope, and a recognized code alone is enough for the humanizer to name a
- * sandbox failure with no stored message at all.
- *
- * `null` when the humanizer can only reach its unknown-reason fallback. Unlike
- * a per-attempt view, this strip has ALREADY said what happened in its chips —
- * "1 rate limited" followed by "The session failed for an unknown reason"
- * reads as a contradiction, and an unrecognized `errorCode` with no stored
- * message lands exactly there.
- */
-export function targetFailureReason(row: SwarmWaveTargetHealth): string | null {
-  if (!row.errorCode && !row.errorMessage) return null;
-  const { message } = humanizeSwarmAttemptError(
-    row.errorMessage,
-    row.errorCode
-  );
-  return message === UNKNOWN_ATTEMPT_ERROR_MESSAGE ? null : message;
 }
 
 export function SwarmTargetHealthStrip({
@@ -72,14 +46,12 @@ export function SwarmTargetHealthStrip({
         Some launches did not reach a session
       </span>
       {troubled.map((row) => {
-        const reason = targetFailureReason(row);
         return (
           <span
             key={`${row.subjectKind}:${row.subjectId}`}
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
             data-testid="swarm-target-health-row"
             data-subject-id={row.subjectId}
-            {...(reason ? { title: reason } : {})}
           >
             <span className="font-medium text-foreground/80">
               {row.subjectLabel}
@@ -107,14 +79,6 @@ export function SwarmTargetHealthStrip({
                 data-testid="swarm-target-health-rate-limited"
               >
                 {row.rateLimited} rate limited
-              </span>
-            ) : null}
-            {reason ? (
-              <span
-                className="max-w-[28rem] truncate"
-                data-testid="swarm-target-health-reason"
-              >
-                {reason}
               </span>
             ) : null}
           </span>

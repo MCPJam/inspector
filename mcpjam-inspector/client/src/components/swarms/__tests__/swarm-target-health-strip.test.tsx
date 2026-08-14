@@ -47,52 +47,6 @@ describe("SwarmTargetHealthStrip", () => {
     );
   });
 
-  it("humanizes the stored refusal instead of printing it raw", () => {
-    render(
-      <SwarmTargetHealthStrip
-        targetHealth={[
-          health({
-            errorMessage:
-              "swarm-agent https://agent.example failed (429): rate limit exceeded",
-          }),
-        ]}
-        terminal
-      />
-    );
-    const reason = screen.getByTestId("swarm-target-health-reason");
-    expect(reason).not.toHaveTextContent("swarm-agent https://agent.example");
-    expect(reason.textContent ?? "").not.toBe("");
-  });
-
-  it("renders a reason from a RECOGNIZED code with no stored message", () => {
-    render(
-      <SwarmTargetHealthStrip
-        targetHealth={[health({ errorCode: "sandbox_at_capacity" })]}
-        terminal
-      />
-    );
-    expect(screen.getByTestId("swarm-target-health-reason")).toHaveTextContent(
-      /at capacity/i
-    );
-  });
-
-  it("shows no reason rather than a non-answer beside the chips", () => {
-    // An unrecognized code with no message humanizes to "The session failed
-    // for an unknown reason" — printed next to a "1 rate limited" chip that
-    // just said what happened, it reads as a contradiction. The chips carry
-    // the outcome; a sentence that adds nothing is worse than no sentence.
-    render(
-      <SwarmTargetHealthStrip
-        targetHealth={[health({ errorCode: "some_unmapped_code" })]}
-        terminal
-      />
-    );
-    expect(screen.getByTestId("swarm-target-health-row")).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("swarm-target-health-reason")
-    ).not.toBeInTheDocument();
-  });
-
   it("stays silent while the wave is still running", () => {
     // Mid-run counts move: an attempt about to be retried reads as a failure
     // until it isn't, and an outage banner over a healthy run is worse than

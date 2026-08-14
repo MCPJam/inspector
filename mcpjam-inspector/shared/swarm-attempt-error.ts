@@ -37,20 +37,6 @@ const URL_PATTERN = /https?:\/\/\S+/g;
 
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
 
-/**
- * What comes back when nothing in the row could be turned into a sentence — an
- * unrecognized `errorCode` with no stored message, or a message that scrubbed
- * away to nothing.
- *
- * Exported so callers can DETECT the non-answer rather than print it. A per-
- * attempt view still shows it (something did fail, and saying so is honest),
- * but a surface that already states the outcome another way — a "rate limited"
- * chip, say — only contradicts itself by adding "failed for an unknown reason"
- * beside it.
- */
-export const UNKNOWN_ATTEMPT_ERROR_MESSAGE =
-  "The session failed for an unknown reason.";
-
 export type SwarmAttemptErrorInfo = {
   /** Clean, user-facing sentence. Always non-empty. */
   message: string;
@@ -185,7 +171,7 @@ export function humanizeSwarmAttemptError(
       ...(isRerunnableXaaFailure(errorCode) ? { rerunnable: true } : {}),
     };
   }
-  if (!input) return { message: UNKNOWN_ATTEMPT_ERROR_MESSAGE };
+  if (!input) return { message: "The session failed for an unknown reason." };
 
   let body = input;
   let httpStatus: number | undefined;
@@ -200,7 +186,7 @@ export function humanizeSwarmAttemptError(
   if (!parsed) {
     const cleaned = scrub(body) || scrub(input);
     return {
-      message: (cleaned || UNKNOWN_ATTEMPT_ERROR_MESSAGE).slice(
+      message: (cleaned || "The session failed for an unknown reason.").slice(
         0,
         MAX_ATTEMPT_ERROR_CHARS
       ),
