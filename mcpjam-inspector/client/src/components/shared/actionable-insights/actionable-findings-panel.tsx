@@ -253,6 +253,14 @@ function FindingRow({
                   {target.currentDefinition.inputSchemaJson}
                 </pre>
               ) : null}
+              {/* An output_schema repair needs the output schema in front of
+                  it; showing only the input one made the "pinned definition"
+                  incomplete for exactly the finding that targets it. */}
+              {target.currentDefinition?.outputSchemaJson ? (
+                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
+                  {target.currentDefinition.outputSchemaJson}
+                </pre>
+              ) : null}
               <div className="mt-1 font-mono text-[10px] text-muted-foreground/70">
                 snapshot {target.snapshotHash}
               </div>
@@ -397,11 +405,34 @@ export function ActionableFindingsPanel({
         </button>
       ) : null}
 
+      {/* Says what was actually dropped. A contract-only clip previously
+          reported "0 findings, 0 evidence records", which reads as a bug. */}
       {envelope.truncation.truncated ? (
         <p className="px-3 pb-1 text-[11px] text-muted-foreground">
-          Some findings or evidence were omitted for size (
-          {envelope.truncation.omittedFindings} findings,{" "}
-          {envelope.truncation.omittedEvidence} evidence records).
+          {[
+            envelope.truncation.omittedFindings > 0
+              ? `${envelope.truncation.omittedFindings} findings`
+              : null,
+            envelope.truncation.omittedEvidence > 0
+              ? `${envelope.truncation.omittedEvidence} evidence records`
+              : null,
+          ].filter(Boolean).length > 0
+            ? `Omitted for size: ${[
+                envelope.truncation.omittedFindings > 0
+                  ? `${envelope.truncation.omittedFindings} findings`
+                  : null,
+                envelope.truncation.omittedEvidence > 0
+                  ? `${envelope.truncation.omittedEvidence} evidence records`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(", ")}.`
+            : "A tool definition was shortened for size."}
+          {envelope.truncation.contractTruncated &&
+          (envelope.truncation.omittedFindings > 0 ||
+            envelope.truncation.omittedEvidence > 0)
+            ? " A tool definition was also shortened."
+            : ""}
         </p>
       ) : null}
     </div>

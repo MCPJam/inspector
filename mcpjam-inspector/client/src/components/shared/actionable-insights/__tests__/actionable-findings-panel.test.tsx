@@ -117,7 +117,7 @@ describe("ownership and affordances", () => {
     );
   });
 
-  it("never offers a server-fix prompt for agent, test, or environment work", () => {
+  it("never offers a server-fix prompt for agent or test work", () => {
     for (const [actionTarget, expected] of [
       ["agent_configuration", "Copy agent/prompt fix"],
       ["eval_case", "Copy test fix"],
@@ -196,6 +196,34 @@ describe("ordering", () => {
     );
     const rows = screen.getAllByTestId("actionable-finding");
     expect(rows[0]).toHaveAttribute("data-actionability", "ready");
+  });
+
+  it("ranks investigations above environment rows, matching the sections", () => {
+    // These disagreed: environment sorted higher but rendered lower, so with
+    // more findings than fit, environment rows survived the cut over
+    // investigations and still appeared last.
+    render(
+      <ActionableFindingsPanel
+        envelope={envelope({
+          findings: [
+            finding({
+              id: "rf_env",
+              actionTarget: "environment",
+              actionability: "informational",
+              target: undefined,
+            }),
+            finding({
+              id: "rf_investigate",
+              actionTarget: "investigate",
+              actionability: "investigate",
+              target: undefined,
+            }),
+          ],
+        })}
+      />,
+    );
+    const rows = screen.getAllByTestId("actionable-finding");
+    expect(rows[0]).toHaveAttribute("data-action-target", "investigate");
   });
 
   it("never titles a section 'fix your MCP server' over non-server work", () => {
@@ -282,6 +310,25 @@ describe("lifecycle states", () => {
     expect(screen.getByTestId("actionable-findings-empty")).toHaveTextContent(
       /did not see everything/i,
     );
+  });
+
+  it("describes a contract-only clip without claiming findings were dropped", () => {
+    render(
+      <ActionableFindingsPanel
+        envelope={envelope({
+          truncation: {
+            truncated: true,
+            omittedFindings: 0,
+            omittedEvidence: 0,
+            contractTruncated: true,
+          },
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/tool definition was shortened/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/0 findings/)).not.toBeInTheDocument();
   });
 
   it("reports omissions when the payload was compacted", () => {

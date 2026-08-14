@@ -183,8 +183,11 @@ const GROUP_RANK: Record<string, number> = {
   server_investigate: 1,
   agent_configuration: 2,
   eval_case: 3,
-  environment: 4,
-  investigate: 5,
+  // Investigations rank above environment/informational rows, matching the
+  // section order below them. They disagreed before, so with more findings
+  // than fit, environment rows survived the cut and still rendered last.
+  investigate: 4,
+  environment: 5,
 };
 
 export function findingGroup(finding: ActionableFinding): string {
