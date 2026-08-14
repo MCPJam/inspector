@@ -152,6 +152,15 @@ function deriveCapabilities(row: CapabilitiesRow) {
      * can do all of them — and none of them check the beta flag. Guest
      * execution is NOT here: it is the one exposure control that genuinely
      * needs admin, split out below.
+     *
+     * KNOWN IMPRECISION, deliberate: workspace access resolves per WORKSPACE
+     * (`resolveWorkspaceAccess`), and a non-admin org member is refused on a
+     * PRIVATE workspace without an explicit grant. This endpoint answers per
+     * project and cannot see per-scenario workspace grants, so a member may
+     * read `true` here and still 404 on one specific private scenario. That
+     * is the descriptive-not-authoritative contract this file's header
+     * states — the alternative, reporting admin-only, denied the capability
+     * to every member for every scenario, which is the larger lie.
      */
     changeUserTestingExposure: isMember,
     /**
