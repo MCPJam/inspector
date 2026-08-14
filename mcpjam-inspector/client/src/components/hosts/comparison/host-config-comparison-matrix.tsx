@@ -175,16 +175,29 @@ export function HostConfigComparisonMatrix({
         // to the nearest *transformed* ancestor's box rather than the true
         // scrolling ancestor when the two don't coincide, which un-pins the
         // header. Keeping them coincident here is what the original PR shipped
-        // with — this only replaces its fixed `max-h-[70vh]` with a height that
-        // tracks how much space is actually left below the search/selector row.
-        "flex min-h-60 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
+        // with.
+        //
+        // `max-h-full` (not `flex-1`): the parent div hands us the space left
+        // below the search/selector row as a definite height via its own
+        // flex-1, and we only want to cap ourselves at that — not force-fill
+        // it. `flex-1` always grows to the full available height regardless of
+        // content, so filtering the table down to a couple of rows left a
+        // dead band of `bg-card` the same size as the original page-gap bug,
+        // just moved inside the border. `max-h-full` lets a short result hug
+        // its own content and only claims the full height when the table
+        // actually needs it.
+        "flex max-h-full min-h-60 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
         mobileOptimized && "max-w-full"
       )}
     >
       <div
         data-testid="compare-matrix-scroll"
         className={cn(
-          "min-h-0 flex-1 overflow-auto",
+          // No `flex-1` here either — this box shrinks to fit inside the
+          // card's (possibly content-hugged) height, which is what lets
+          // `overflow-auto` show a scrollbar only once the table actually
+          // exceeds that height, not unconditionally.
+          "min-h-0 overflow-auto",
           mobileOptimized && "max-w-full [-webkit-overflow-scrolling:touch]"
         )}
       >

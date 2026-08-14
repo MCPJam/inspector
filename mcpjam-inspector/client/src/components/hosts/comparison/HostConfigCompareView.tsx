@@ -660,32 +660,43 @@ export function HostConfigCompareView({
                     configs…
                   </div>
                 )}
-                {viewMode === "table" ? (
-                  <HostConfigComparisonMatrix
-                    subjects={orderedSubjects}
-                    fields={compareFields}
-                    divergingOnly={divergingOnly}
-                    supportFilter={effectiveSupportFilter}
-                    searchQuery={fieldSearchQuery}
-                    showDescriptions={showDescriptions}
-                    themeMode={themeMode}
-                    mobileOptimized={presetOnly}
-                    onRemoveHost={
-                      selectedHostIdSet.size > 1 ? handleToggleHost : undefined
-                    }
-                    verifyBaseUrl={verifyBaseUrl}
-                  />
-                ) : (
-                  <HostCapabilityListView
-                    subjects={orderedSubjects}
-                    fields={compareFields}
-                    divergingOnly={divergingOnly}
-                    supportFilter={effectiveSupportFilter}
-                    searchQuery={fieldSearchQuery}
-                    themeMode={themeMode}
-                    mobileOptimized={presetOnly}
-                  />
-                )}
+                {/* This div (not the matrix itself) is what claims "the space
+                    left below the search/selector rows" via flex-1 — the
+                    matrix then caps itself at 100% of *this* height instead
+                    of forcing itself to fill it, so a filtered-down table with
+                    only a few rows hugs its own content instead of leaving a
+                    bordered dead zone the same size as the old page gap. List
+                    view is unaffected: it never forced itself to fill height,
+                    so this wrapper is just a transparent sizing passthrough
+                    for it. */}
+                <div className="min-h-0 flex-1">
+                  {viewMode === "table" ? (
+                    <HostConfigComparisonMatrix
+                      subjects={orderedSubjects}
+                      fields={compareFields}
+                      divergingOnly={divergingOnly}
+                      supportFilter={effectiveSupportFilter}
+                      searchQuery={fieldSearchQuery}
+                      showDescriptions={showDescriptions}
+                      themeMode={themeMode}
+                      mobileOptimized={presetOnly}
+                      onRemoveHost={
+                        selectedHostIdSet.size > 1 ? handleToggleHost : undefined
+                      }
+                      verifyBaseUrl={verifyBaseUrl}
+                    />
+                  ) : (
+                    <HostCapabilityListView
+                      subjects={orderedSubjects}
+                      fields={compareFields}
+                      divergingOnly={divergingOnly}
+                      supportFilter={effectiveSupportFilter}
+                      searchQuery={fieldSearchQuery}
+                      themeMode={themeMode}
+                      mobileOptimized={presetOnly}
+                    />
+                  )}
+                </div>
               </>
             )}
           </>

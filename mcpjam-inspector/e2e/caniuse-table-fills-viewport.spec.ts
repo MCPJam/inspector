@@ -109,3 +109,33 @@ test("caniuse compare table fills the viewport and keeps its header pinned", asy
     ).toBeLessThanOrEqual(20);
   }).toPass({ timeout: 20_000 });
 });
+
+// The property above ("reaches the viewport bottom") only exercises a table
+// long enough to overflow. Filtering down to a couple of rows is a distinct
+// case that isn't covered by that test at all: an earlier version of this fix
+// made the card `flex-1` (always fill the remaining height, regardless of
+// content) instead of capping at it — which fixed the long-table dead space
+// below the card, but reintroduced the same dead space *inside* the
+// bordered card for a short, filtered result. The card must hug its content
+// when the content doesn't need the full height.
+test("caniuse compare table hugs its content instead of stretching when filtered to a few rows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await page.goto("/embed/host-compare?capability=elicitation");
+
+  const card = page.getByTestId("compare-matrix");
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  const headerCell = page.locator("table thead th").first();
+  await expect(headerCell).toBeVisible({ timeout: 30_000 });
+
+  await expect(async () => {
+    const cardBox = (await card.boundingBox())!;
+    const tableBox = (await page.locator("table").boundingBox())!;
+    const slack = cardBox.height - tableBox.height;
+    expect(
+      slack,
+      `card should hug its filtered-down content instead of stretching to fill the viewport; card=${Math.round(cardBox.height)}px table=${Math.round(tableBox.height)}px slack=${Math.round(slack)}px`
+    ).toBeLessThan(120);
+  }).toPass({ timeout: 30_000 });
+});
