@@ -170,6 +170,32 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       },
       { error: thrown instanceof Error ? thrown : undefined },
     );
+  } else if (effectiveStatus >= 400) {
+    // 4xx: a declared client outcome, deliberately NOT `http.request.failed`
+    // — but typed anyway. `classifyRuntimeError` checks 401 before every
+    // other branch, so an MCP auth incident can arrive here entirely as
+    // 401s (measured on the 08-06 route: 2,328 401s next to 4,932 500s),
+    // and #3948 moved the largest upstream-auth class to 403. Without
+    // code/origin/slug those classes fingerprint as one `route 401` bucket
+    // per route and rate spikes are undiagnosable.
+    const webErrorMeta =
+      c.var.webErrorMeta?.status === effectiveStatus
+        ? c.var.webErrorMeta
+        : undefined;
+    const errorCode = thrown ? classifyError(thrown) : webErrorMeta?.code;
+    const rawErrorMessage = thrown
+      ? thrown instanceof Error
+        ? thrown.message
+        : String(thrown)
+      : webErrorMeta?.message;
+    const errorMessage = rawErrorMessage?.slice(0, 500);
+    reqLogger.event("http.request.completed", {
+      statusCode: effectiveStatus,
+      ...(errorCode ? { errorCode } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
+      ...(webErrorMeta?.origin ? { origin: webErrorMeta.origin } : {}),
+      ...(webErrorMeta?.slug ? { slug: webErrorMeta.slug } : {}),
+    });
   } else {
     reqLogger.event("http.request.completed", {
       statusCode: effectiveStatus,

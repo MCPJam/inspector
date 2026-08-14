@@ -66,7 +66,24 @@ export interface SystemLogContext extends CommonLogContext {
 export type BaseLogContext = RequestLogContext | SystemLogContext;
 
 export type RequestEventMap = {
-  "http.request.completed": { statusCode: number };
+  /**
+   * 4xx responses land here, not on `http.request.failed` — a 4xx is a
+   * declared client outcome, not a server failure. But "declared outcome"
+   * does not mean "uninteresting": an abnormal RATE of one class (the 401
+   * half of the 2026-08-06 incident, a 429 storm from our own guard) is an
+   * incident signal, and the class monitors fingerprint on
+   * `coalesce(errorMessage, errorCode, route+status)`. The optional error
+   * fields below exist so 4xx classes are sliceable by typed code and
+   * origin instead of collapsing into one `route 401` bucket per route.
+   * They are populated only for status >= 400.
+   */
+  "http.request.completed": {
+    statusCode: number;
+    errorCode?: string;
+    errorMessage?: string;
+    origin?: ErrorOrigin;
+    slug?: string;
+  };
   /**
    * `errorCode` is the route's own `ErrorCode` (SERVER_UNREACHABLE, TIMEOUT, …)
    * whenever one is known, and only falls back to a `classifyError` bucket for

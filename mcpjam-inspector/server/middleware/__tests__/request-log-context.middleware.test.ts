@@ -214,6 +214,102 @@ describe("requestLogContextMiddleware", () => {
     );
   });
 
+  // 4xx classes are incident signals at abnormal RATES (the 401 half of the
+  // 2026-08-06 incident; #3948's 403 reclassification), and the Axiom class
+  // monitors fingerprint on coalesce(errorMessage, errorCode, route+status).
+  // Untyped 4xx rows collapse into one bucket per route.
+  it("types a returned 4xx with the route's own code, origin, and slug", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/tools/list", (c) => {
+      c.set("webErrorMeta", {
+        status: 403,
+        code: "UPSTREAM_AUTH_FAILED",
+        message: "Authentication failed for MCP server acme",
+        origin: "user_config",
+        slug: "auth/upstream_rejected",
+      });
+      return c.json({ code: "UPSTREAM_AUTH_FAILED" }, 403);
+    });
+
+    await app.request("/api/web/tools/list");
+
+    const completed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.completed");
+    expect(completed).toHaveLength(1);
+    const payload = completed[0][2] as any;
+    expect(payload.statusCode).toBe(403);
+    expect(payload.errorCode).toBe("UPSTREAM_AUTH_FAILED");
+    expect(payload.errorMessage).toBe(
+      "Authentication failed for MCP server acme",
+    );
+    expect(payload.origin).toBe("user_config");
+    expect(payload.slug).toBe("auth/upstream_rejected");
+  });
+
+  it("leaves a metaless 4xx bare rather than inventing a code", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.use("/api/*", async (c) => c.json({ error: "unauthorized" }, 401));
+    app.get("/api/web/test", (c) => c.json({ ok: true }));
+
+    await app.request("/api/web/test");
+
+    const payload = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.completed")[0][2] as any;
+    expect(payload.statusCode).toBe(401);
+    expect(payload.errorCode).toBeUndefined();
+    expect(payload.errorMessage).toBeUndefined();
+    expect(payload.origin).toBeUndefined();
+  });
+
+  it("never attaches error fields to a 2xx", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/ok", (c) => {
+      // Meta from an earlier failed attempt inside the same request must not
+      // leak onto a response that ultimately succeeded.
+      c.set("webErrorMeta", {
+        status: 200,
+        code: "UNAUTHORIZED",
+        message: "no bearer",
+      });
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/ok");
+
+    const payload = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.completed")[0][2] as any;
+    expect(payload.statusCode).toBe(200);
+    expect(payload.errorCode).toBeUndefined();
+    expect(payload.errorMessage).toBeUndefined();
+  });
+
+  it("ignores stale webErrorMeta from a different status on a 4xx", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/mixed4xx", (c) => {
+      c.set("webErrorMeta", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+        message: "fetch failed",
+      });
+      return c.json({ error: "nope" }, 404);
+    });
+
+    await app.request("/api/web/mixed4xx");
+
+    const payload = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.completed")[0][2] as any;
+    expect(payload.statusCode).toBe(404);
+    expect(payload.errorCode).toBeUndefined();
+  });
+
   it("ignores stale webErrorMeta from a different status", async () => {
     // A route may emit a 4xx webError and then fail with an unrelated 500;
     // attributing the earlier code to the later failure would be a lie.
