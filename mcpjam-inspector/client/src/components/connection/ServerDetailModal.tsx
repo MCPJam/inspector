@@ -726,7 +726,7 @@ export function ServerDetailModal({
                   ) : isConnected && !formState.hasChanges ? (
                     "Reconnect"
                   ) : (
-                    "Save Changes"
+                    "Save & Connect"
                   )}
                 </Button>
               </DialogFooter>

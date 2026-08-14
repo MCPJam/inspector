@@ -564,14 +564,14 @@ describe("ServerDetailModal", () => {
       />
     );
 
-    // Edit a field so the form has changes and "Save Changes" is active
+    // Edit a field so the form has changes and "Save & Connect" is active
     // (connected servers with no changes show "Reconnect" instead).
     const nameInput = screen.getByDisplayValue("test-server");
     await user.clear(nameInput);
     await user.type(nameInput, "test-server-renamed");
 
     const form = screen
-      .getByRole("button", { name: "Save Changes" })
+      .getByRole("button", { name: "Save & Connect" })
       .closest("form");
 
     expect(form).not.toBeNull();
@@ -699,7 +699,7 @@ describe("ServerDetailModal", () => {
     const input = screen.getByDisplayValue("test-server");
     await user.type(input, "-edited");
 
-    const saveButton = screen.getByRole("button", { name: "Save Changes" });
+    const saveButton = screen.getByRole("button", { name: "Save & Connect" });
     fireEvent.click(saveButton);
 
     await waitFor(() => {
@@ -709,7 +709,7 @@ describe("ServerDetailModal", () => {
     resolveSubmit?.({ ok: true, serverName: "test-server" });
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Save Changes" })
+        screen.getByRole("button", { name: "Save & Connect" })
       ).toBeEnabled();
     });
   });
@@ -741,7 +741,7 @@ describe("ServerDetailModal", () => {
       const nameInput = screen.getByDisplayValue("test-server");
       fireEvent.change(nameInput, { target: { value: name } });
       const form = screen
-        .getByRole("button", { name: "Save Changes" })
+        .getByRole("button", { name: "Save & Connect" })
         .closest("form");
       expect(form).not.toBeNull();
       fireEvent.submit(form!);
