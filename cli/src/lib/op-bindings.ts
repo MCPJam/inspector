@@ -23,6 +23,11 @@
 export type CliBinding = { command: string } | { excluded: string };
 
 export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
+  // ── Organizations ───────────────────────────────────────────────────────
+  // Read-only, and the only organization command there is. Member, role,
+  // invite and billing writes are account administration and stay in the app.
+  list_organizations: { command: "organizations list" },
+
   // ── Projects and servers ────────────────────────────────────────────────
   list_projects: { command: "projects list" },
   create_project: { command: "projects create" },
@@ -30,6 +35,15 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_project: { command: "projects delete" },
   list_project_servers: { command: "projects servers" },
   create_project_server: { command: "projects server add" },
+  connect_project_server: { command: "projects server connect" },
+  // Its OWN command, not `server connect`. `connect` does poll this operation
+  // while it waits, but `--no-wait` and Ctrl-C both hand back a request id, and
+  // pointing the binding at `connect` claimed a command that could not follow
+  // one — re-running `connect` starts a second request rather than reading the
+  // first.
+  get_project_server_connection_status: {
+    command: "projects server connect-status",
+  },
   get_project_server: { command: "projects server get" },
   update_project_server: { command: "projects server update" },
   delete_project_server: { command: "projects server remove" },
@@ -85,6 +99,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   set_host_servers: { command: "hosts servers" },
   duplicate_host: { command: "hosts duplicate" },
   list_project_environments: { command: "environments list" },
+  get_project_environment_capabilities: {
+    excluded:
+      "Not a user-facing command: it answers 'does this deployment accept a model override?', which `environments create --model` / `environments update --model|--clear-model` already ask on the caller's behalf before writing. A standalone command would only invite people to check by hand what the write already checks.",
+  },
   get_project_environment: { command: "environments get" },
   resolve_project_environment: { command: "environments resolve" },
   create_project_environment: { command: "environments create" },

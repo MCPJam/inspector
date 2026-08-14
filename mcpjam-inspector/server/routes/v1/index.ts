@@ -17,6 +17,7 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
+import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
 import resources from "./resources.js";
@@ -34,6 +35,7 @@ import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import organizations from "./organizations.js";
 import projects from "./projects.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
@@ -67,6 +69,7 @@ v1.use("*", async (c, next) => {
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
 v1.route("/", resources);
@@ -108,6 +111,11 @@ v1.route("/", agent);
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
+// Organizations — READ ONLY, and the only organization route there is. It
+// exists so a caller can discover the `organizationId` that `/v1/projects`
+// filters by; org/member/role/billing writes stay off every machine surface.
+// Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
+v1.route("/", organizations);
 v1.route("/", projects);
 v1.route("/", tunnels);
 

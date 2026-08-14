@@ -55,6 +55,8 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   listHostsOperation,
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -392,6 +394,56 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // project and one that guesses at it.
   { operation: listProjectServersOperation, tier: "direct" },
   {
+    // GATED, because the registry's own rule says anything reaching outside
+    // MCPJam is gated — and this one genuinely does. An earlier revision
+    // argued itself into `direct` on the theory that the handoff page is the
+    // real approval: the operation "cannot connect anything on its own". That
+    // is true for the OAuth path and FALSE for the other one. A server whose
+    // discovered auth method is `none`, named alongside a project, runs
+    // discovering → validating → ready with no handoff page and no human step
+    // — the server lands in the project, enabled, on nothing but the model's
+    // say-so. Prompt-injected content plus a project name learned from
+    // `list_projects` is all that takes. The dial at the target also fires the
+    // moment the model calls, human or no human. In-app chat already requires
+    // approval for this operation (`APPROVAL_REQUIRED_IDS`); the tier now
+    // agrees with it.
+    //
+    // The OAuth path does end up asking twice. That is the acceptable cost:
+    // the first click authorizes "start probing this URL as me", the second
+    // authorizes the credential — different questions, and only the flow
+    // itself knows in advance whether the second one will exist.
+    //
+    // The link staying private remains the adapter's job, not the tier's: the
+    // agent adapter strips `handoffUrl` from model-visible text and moves it
+    // into a structured part, so the surfaces deliver it ephemerally instead
+    // of a model pasting it into a thread.
+    operation: connectProjectServerOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const url = named(input, "url");
+        let host: string | undefined;
+        try {
+          host = url ? new URL(url).host : undefined;
+        } catch {
+          host = undefined;
+        }
+        const project = named(input, "project");
+        return `Connect MCP server ${host ?? "(unparseable url)"}${
+          project ? ` to project ${project}` : ""
+        }`;
+      },
+      buttonLabel: "Start the connection",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `connect_project_server` starts a connection and usually cannot finish it: an OAuth server needs the person to authorize in a browser. Say that a private authorization button will be shown, and NEVER write the authorization URL into your reply — the surface delivers it privately, and repeating it in a channel would let anyone there authorize on the requester's behalf.",
+      "- After connecting, poll `get_project_server_connection_status` rather than assuming success. `ready` means the server was validated with real credentials; `awaiting_authorization` means the person has not finished yet.",
+    ],
+  },
+  { operation: getProjectServerConnectionStatusOperation, tier: "direct" },
+  {
     operation: diagnoseServerOperation,
     tier: "direct",
     promptNotes: [
@@ -600,6 +652,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "The turn already runs as a resolved actor; re-reading identity adds no capability.",
   list_projects:
     "The turn is pinned to one project; project shopping is not a turn concern.",
+  list_organizations:
+    "The turn is pinned to one project inside one organization; organization shopping is a step further out than even project shopping, and nothing the agent can do with the answer stays inside the turn.",
   list_models:
     "Model choice belongs to the host that started the turn, not the turn itself.",
 
@@ -642,6 +696,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Attachment changes silently redirect every later run of the suite.",
   resolve_project_environment:
     "Resolution detail the agent has no use for; get_environment suffices.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not an action. It answers whether this platform accepts an environment model override — a question the write paths already ask on the caller's behalf, and one the agent could do nothing useful with.",
 
   // Agent Plugins. Read-only inventory, shipped for the MCP catalog surface
   // first; registering them here is a deliberate widening of the public

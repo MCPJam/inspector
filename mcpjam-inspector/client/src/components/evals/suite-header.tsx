@@ -650,6 +650,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               <SuiteRunCostEstimateHint
                 suiteId={suite._id}
                 planCount={countSuiteRunPlans(suite)}
+                environmentIds={suite.environmentIds}
                 // Structural blockers only: with no cases there is nothing to
                 // price, and with no servers configured Run all can never
                 // launch. The transient blockers (a rerun/replay in flight, a

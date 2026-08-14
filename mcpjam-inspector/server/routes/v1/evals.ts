@@ -78,6 +78,7 @@ import {
   hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
 } from "@/shared/types";
+import { classifyModelIdProvider } from "@/shared/model-provider";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 // BYOK statics + the hosted snapshot — hosted display rows were removed from
@@ -390,18 +391,17 @@ function normalizeCreateTestsToRunTests(
 ): RunEvalsRequest["tests"] {
   return tests.map((test) => {
     const runs = test.runs ?? 1;
-    const model = test.model ?? suite.model;
-    let provider = test.provider ?? suite.provider;
-    if (!provider) {
-      provider = model.includes("/") ? model.split("/")[0] : undefined;
-    }
-    if (!provider) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `Cannot derive a provider for test "${test.title}". Pass a suite-level "provider", a per-test "provider", or a "provider/model" id.`
-      );
-    }
+    // Trimmed — and rejected when blank — for the same reason as
+    // `toPersistedModelEntry`: this id is what gets stored on the case and
+    // handed to the provider, and an explicit `provider` would otherwise carry
+    // a blank model past validation.
+    const model = requireNonBlankModelId(test.model ?? suite.model);
+    // The CANONICAL resolver, not a prefix split. Splitting derived
+    // "meta-llama" and "mistralai" as providers (they are aliases for `meta`
+    // and `mistral`) and refused every `custom:<slug>:<model>` id outright,
+    // because it has no slash. It is total for a non-blank id, so there is no
+    // "couldn't derive it" case left to raise here.
+    const provider = deriveProvider(model, test.provider ?? suite.provider);
     const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
     return {
       title: test.title,
@@ -794,7 +794,11 @@ function assertScheduleSurvivesEnvironmentChange(
   // launches ONE environment and the launch check rejects an unpinned
   // multi-environment suite — every scheduled run would fail until the
   // schedule paused itself on consecutive failures.
-  if (schedule.enabled === true && nextEnvironmentIds.length > 1 && !pinSurvives) {
+  if (
+    schedule.enabled === true &&
+    nextEnvironmentIds.length > 1 &&
+    !pinSurvives
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -1292,28 +1296,106 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
 }
 
 /**
- * Resolve a model id's provider. Handles a `provider/model` prefix directly,
- * and looks a BARE id (e.g. "claude-sonnet-4-5") up in the model catalog —
- * suite execution configs store bare ids, so a slash check alone would fail to
- * derive a provider and leave new cases model-less.
+ * The provider for `id` when it can be ATTRIBUTED, else undefined.
+ *
+ * Three sources, most specific first:
+ *
+ *  1. the shared catalog, for BOTH bare and qualified ids. The catalog carries
+ *     more vendors than the classifier's prefix map does, so gating this lookup
+ *     on "no slash" would answer `cohere/command-a` from the map's catch-all
+ *     (Ollama) while the catalog is sitting right there knowing it is Cohere;
+ *  2. the shared classifier, so this route agrees with
+ *     `buildSyntheticModelDefinition`, the chat-session fallback, and the
+ *     backend mirror on prefixes and aliases — `meta-llama/...` is `meta`, not
+ *     `meta-llama`, and `mistralai/...` is `mistral`;
+ *  3. the id's own vendor prefix, for a qualified id neither of the first two
+ *     recognizes. The classifier's final answer for those is its bare-id
+ *     catch-all (`ollama`), which is right for `llama3` and wrong for
+ *     `newvendor/some-model` — a literal prefix is the vendor the author wrote.
+ *
+ * Undefined ONLY for a bare id nothing recognizes, where `ollama` is the
+ * classifier's guess rather than knowledge. Callers that must store a provider
+ * take that guess (`providerForModelId`); callers that can defer instead defer.
  */
-function providerForModelId(modelId: string): string | undefined {
-  if (modelId.includes("/")) return modelId.split("/")[0];
+function attributedProvider(id: string): string | undefined {
   const match = MODEL_LOOKUP.find(
-    (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
+    (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`)
   );
-  return match ? String(match.provider) : undefined;
+  if (match) return String(match.provider);
+  const classified = classifyModelIdProvider(id)?.provider;
+  if (classified && classified !== "ollama") return classified;
+  // `> 0`, not `>= 0`: a leading slash makes the prefix empty, and an empty
+  // provider is worse than the catch-all it would replace.
+  const slash = id.indexOf("/");
+  if (slash > 0) return id.slice(0, slash);
+  // A bare id nothing above recognized. `classified` is `ollama` here — the
+  // classifier's catch-all — and returning it would make this function total,
+  // which is the whole distinction it exists to draw.
+  return undefined;
+}
+
+/**
+ * Resolve a model id's provider, for a caller that must persist one.
+ *
+ * TOTAL for any non-blank id: an unattributable BARE id falls back to the
+ * classifier's `ollama` catch-all, since the open-namespace providers are the
+ * only ones where an id we cannot place is still plausibly runnable. Blank ids
+ * are rejected up front, as a 400, rather than reported as an unresolvable
+ * provider — so callers never need a "couldn't derive it" branch.
+ */
+function providerForModelId(modelId: string): string {
+  // Trim FIRST, exactly as `classifyModelIdProvider` does. Without it a padded
+  // bare catalog id misses the lookup and falls through to the classifier's
+  // bare-id catch-all, so `" claude-sonnet-4-5 "` would be attributed to
+  // Ollama rather than to its real vendor.
+  const id = requireNonBlankModelId(modelId);
+  return attributedProvider(id) ?? "ollama";
+}
+
+/**
+ * A persisted `{ model, provider }` entry from an authored one.
+ *
+ * The id is TRIMMED for the value we STORE, not merely for the provider lookup.
+ * It is persisted verbatim, sent to the provider verbatim, and compared
+ * verbatim against environment and host model ids downstream, so keeping
+ * `" gpt-4o "` would mint a model that resolves to the right provider and then
+ * matches nothing. Same normalization as `withTrimmedModelId` on the host write
+ * boundary and the backend's `normalizeModelId`; only ever a trim.
+ */
+function toPersistedModelEntry(entry: { model: string; provider?: string }): {
+  model: string;
+  provider: string;
+} {
+  return {
+    model: requireNonBlankModelId(entry.model),
+    provider: deriveProvider(entry.model, entry.provider),
+  };
+}
+
+/**
+ * The trimmed id, or a 400.
+ *
+ * `z.string().min(1)` accepts `"   "`, and an EXPLICIT provider makes
+ * {@link deriveProvider} return without ever inspecting the model — so a
+ * whitespace-only id paired with `provider: "openai"` would otherwise persist
+ * as `{ model: "", provider: "openai" }`: a case that passes validation and
+ * then has no model to run. Blank is rejected here rather than silently
+ * normalized, because there is no id to fall back to.
+ */
+function requireNonBlankModelId(model: string): string {
+  const id = model.trim();
+  if (!id) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Model id cannot be blank."
+    );
+  }
+  return id;
 }
 
 function deriveProvider(model: string, explicit: string | undefined): string {
-  if (explicit) return explicit;
-  const provider = providerForModelId(model);
-  if (provider) return provider;
-  throw new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    `Cannot derive a provider for model "${model}". Pass provider, or a "provider/model" id.`
-  );
+  return explicit || providerForModelId(model);
 }
 
 // Public case body (create + update share this; create requires title).
@@ -1446,13 +1528,10 @@ const generateCasesSchema = z
   // Same mutual exclusion the run-create schema enforces: an environment's
   // closed server set is the point, so a `servers` override alongside it would
   // have to be silently dropped.
-  .refine(
-    (body) => !body.environmentId || (body.servers?.length ?? 0) === 0,
-    {
-      message:
-        "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
-    }
-  );
+  .refine((body) => !body.environmentId || (body.servers?.length ?? 0) === 0, {
+    message:
+      "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
+  });
 
 /**
  * Build createTestCase / updateTestCase mutation args from the public case
@@ -1528,10 +1607,7 @@ function buildCaseMutationArgs(
   }
 
   if (body.models !== undefined) {
-    args.models = body.models.map((m) => ({
-      model: m.model,
-      provider: deriveProvider(m.model, m.provider),
-    }));
+    args.models = body.models.map(toPersistedModelEntry);
   } else if (opts.forCreate) {
     args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
   }
@@ -1933,12 +2009,12 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     undefined,
     undefined,
     {
-        serverNames,
-        // v1 eval API has no host-persona input — no enterprise policy to
-        // enforce; the issuer makes per-server XAA servers mint instead of
-        // failing with 'Missing XAA issuer'.
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      }
+      serverNames,
+      // v1 eval API has no host-persona input — no enterprise policy to
+      // enforce; the issuer makes per-server XAA servers mint instead of
+      // failing with 'Missing XAA issuer'.
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+    }
   );
 
   // Author-only is fully synchronous: the manager is only needed to resolve
@@ -2285,12 +2361,27 @@ async function defaultCaseModels(
     const cfg: any = await convex.query("hostConfigsV2:getSuiteConfig" as any, {
       suiteId,
     });
-    const modelId = cfg?.modelId;
-    if (typeof modelId === "string" && modelId.length > 0) {
+    // Trim BEFORE the emptiness test, not after: a whitespace-only config id is
+    // no id. It cannot currently reach the return (`providerForModelId` also
+    // rejects blanks, so the provider lookup fails first and this falls through
+    // to "no default"), but that makes the guard here correct only by way of
+    // another function's behaviour. Testing the value actually returned keeps it
+    // true locally.
+    const modelId =
+      typeof cfg?.modelId === "string" ? (cfg.modelId as string).trim() : "";
+    if (modelId) {
       // Suite configs store bare ids (e.g. "claude-sonnet-4-5"); resolve the
       // provider via the catalog so the new case isn't persisted model-less.
-      const provider = providerForModelId(modelId);
-      if (provider) return [{ model: modelId, provider }];
+      //
+      // ATTRIBUTED, not total: pinning a case to a provider is a durable write,
+      // and the classifier's `ollama` catch-all is a guess. A suite default we
+      // cannot place (an org BYOK id, a catalog-only id) falls through to "no
+      // default", which is not a failure — it is the case inheriting the suite
+      // model at run time, where the runner can see keys this route cannot.
+      const provider = attributedProvider(modelId);
+      if (provider) {
+        return [{ model: modelId, provider }];
+      }
     }
   } catch {
     // No resolvable suite model — the case inherits the suite default at run.
@@ -2915,10 +3006,8 @@ evals.post(
     }
 
     const caseModels =
-      body.caseModels?.map((m) => ({
-        model: m.model,
-        provider: deriveProvider(m.model, m.provider),
-      })) ?? (await defaultCaseModels(readClient, suiteId));
+      body.caseModels?.map(toPersistedModelEntry) ??
+      (await defaultCaseModels(readClient, suiteId));
 
     // A caseMix only counts when it requests at least one case (a bucket > 0).
     // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated

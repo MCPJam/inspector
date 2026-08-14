@@ -3,6 +3,7 @@ import {
   callServerToolOperation,
   closeTunnelOperation,
   createEvalSuiteOperation,
+  createHostOperation,
   cancelEvalRunOperation,
   createTunnelOperation,
   diagnoseServerOperation,
@@ -212,7 +213,13 @@ const PLUGIN_VERSION = {
   bundleHash: "hash-abc",
   manifestHash: "hash-manifest",
   status: "ready",
-  componentCounts: { skills: 1, servers: 1, apps: 0, assets: 0, unsupported: 0 },
+  componentCounts: {
+    skills: 1,
+    servers: 1,
+    apps: 0,
+    assets: 0,
+    unsupported: 0,
+  },
   servers: [
     {
       componentId: "psc-1",
@@ -1184,8 +1191,8 @@ describe("plugin operations", () => {
     );
 
     expect(result).toEqual(PLUGIN_VERSION);
-    const paths = fetchMock.mock.calls.map((call) =>
-      new URL(String(call[0])).pathname
+    const paths = fetchMock.mock.calls.map(
+      (call) => new URL(String(call[0])).pathname
     );
     expect(paths).toEqual(["/api/v1/plugin-versions/pv-1"]);
   });
@@ -1315,6 +1322,7 @@ describe("operation catalog consistency", () => {
   const MINIMAL_INPUTS: Record<string, Record<string, unknown>> = {
     get_me: {},
     list_models: {},
+    list_organizations: {},
     list_projects: {},
     create_project: { name: "p" },
     update_project: { project: "p", name: "renamed" },
@@ -1327,6 +1335,8 @@ describe("operation catalog consistency", () => {
     update_project_server: { serverId: "s", body: { name: "renamed" } },
     delete_project_server: { serverId: "s" },
     show_servers: {},
+    connect_project_server: { url: "https://example.com/mcp" },
+    get_project_server_connection_status: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -1390,6 +1400,7 @@ describe("operation catalog consistency", () => {
     update_host: { host: "h", name: "renamed" },
     delete_host: { host: "h" },
     list_project_environments: {},
+    get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
     get_project_environment: { environment: "e" },
@@ -1453,6 +1464,8 @@ describe("operation catalog consistency", () => {
       "close_tunnel",
       "create_project_server",
       "update_project_server",
+      // Creates a connection request, and possibly a disabled server row.
+      "connect_project_server",
       "delete_project_server",
       "create_project",
       "update_project",
@@ -1589,5 +1602,61 @@ describe("server live operations", () => {
       { client }
     );
     expect(resource.result.requestBody).toEqual({ uri: "file:///a" });
+  });
+});
+
+describe("createHostOperation input", () => {
+  const CONFIG = { hostStyle: "claude", systemPrompt: "" } as const;
+
+  it("requires a pinned model on the config branch", () => {
+    // The forward-client invariant: a client minted without a model cannot back
+    // a headless environment, and the failure would surface at LAUNCH rather
+    // than here. Checked in the schema so an SDK caller is told by the contract
+    // instead of by a 400 it never predicted.
+    expect(
+      createHostOperation.inputSchema.safeParse({ name: "h", config: CONFIG })
+        .success
+    ).toBe(false);
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        config: { ...CONFIG, modelId: "   " },
+      }).success
+    ).toBe(false);
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        config: { ...CONFIG, modelId: "anthropic/claude-sonnet-4-5" },
+      }).success
+    ).toBe(true);
+  });
+
+  it("reports a degenerate `config: {}` the way the ROUTE does", () => {
+    // `{}` is truthy but picks neither branch. The route answers "provide
+    // exactly one of template or a non-empty config", and that 400 is the one a
+    // caller actually receives — a schema that instead complained about the
+    // missing model would predict an error the surface never returns.
+    const result = createHostOperation.inputSchema.safeParse({
+      name: "h",
+      config: {},
+    });
+    expect(result.success).toBe(false);
+    const messages = result.success
+      ? []
+      : result.error.issues.map((issue) => issue.message);
+    expect(messages).toEqual([
+      "Provide exactly one of `template` or a non-empty `config`.",
+    ]);
+  });
+
+  it("keeps the template branch model-free", () => {
+    // A template carries its own model; the guard is on the config the caller
+    // hands over verbatim.
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        template: "claude",
+      }).success
+    ).toBe(true);
   });
 });

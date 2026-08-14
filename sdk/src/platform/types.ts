@@ -26,6 +26,28 @@ export interface PlatformMe {
   updatedAt: number | null;
 }
 
+/**
+ * An organization the caller belongs to — the ids `list_projects` and
+ * `create_project` take as `organizationId`.
+ *
+ * Deliberately thin. The backing query is the browser app shell's, so it
+ * carries billing and Stripe fields this transport DTO drops: an organization
+ * on the machine surfaces is a SCOPE (an id, a name, and enough context to
+ * pick between two of them), not an account-management object.
+ */
+export interface PlatformOrganization {
+  id: string;
+  name: string;
+  /** Billing plan slug (`free` / `team` / `enterprise`) when resolved. */
+  plan: string | null;
+  /** Caller's role in the organization (`owner` / `admin` / `member`). */
+  myRole: string | null;
+  /** Whether the caller created the organization. */
+  isCreator: boolean;
+  logoUrl: string | null;
+  createdAt: number | null;
+}
+
 /** A hosted model catalog entry. Unknown additive fields are tolerated. */
 export interface PlatformModel {
   id: string;
@@ -383,6 +405,14 @@ export interface PlatformEnvironment {
   hostId: string;
   /** Set only when the environment pins a standalone server group. */
   serverAttachmentId?: string;
+  /**
+   * The environment's model OVERRIDE, if it sets one.
+   *
+   * ABSENT means the environment INHERITS the model pinned by its host — not
+   * that it has no model. To learn what will actually run, resolve the
+   * environment and read `effectiveModelId`.
+   */
+  modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
   /**
    * Pinned plugin VERSIONS. Narrow by design: a version is pinnable only when
@@ -411,6 +441,8 @@ export interface PlatformEnvironmentCreateBody {
   description?: string;
   hostId: string;
   serverAttachmentId?: string;
+  /** Model to run instead of the host's; omit to inherit the host's. */
+  modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
   pluginVersionIds?: string[];
   /** Project-shared `PlatformImage` id to pin; omit for the default image. */
@@ -430,10 +462,32 @@ export interface PlatformEnvironmentUpdateBody {
   description?: string;
   hostId?: string;
   serverAttachmentId?: string | null;
+  /**
+   * New model override, or `null` to CLEAR it and fall back to the host's
+   * model. Omit to leave unchanged. An empty string is rejected — it is not a
+   * way to clear.
+   */
+  modelId?: string | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
   pluginVersionIds?: string[] | null;
   /** New sandbox-image pin, or null to clear it. Omit to leave unchanged. */
   sandboxImageId?: string | null;
+}
+
+/**
+ * What this deployment's environment surface supports.
+ *
+ * FOR VERSION SKEW, not feature flagging. The SDK ships independently of the
+ * backend, so a client that would send `modelId` must first confirm the
+ * deployment accepts it — an unknown field is a hard validator error there, not
+ * a silently ignored one. A deployment too old to answer reports `false` for
+ * everything.
+ */
+export interface PlatformEnvironmentCapabilities {
+  /** `modelId` is accepted on create and update. */
+  modelOverrides: boolean;
+  /** Environment cells may vary by model on one host (the compare grid). */
+  modelMatrix: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
@@ -453,6 +507,20 @@ export interface PlatformEnvironmentResolved {
   hostName: string;
   /** The host's config at resolve time — hosts rotate configs live. */
   hostConfigId: string;
+  /** The environment's stored override, when it sets one. */
+  modelId?: string;
+  /**
+   * The model this environment WILL RUN — the override if it has one, else the
+   * host config's. Always present on a successful resolve: an environment with
+   * no model anywhere cannot be resolved for launch at all, and fails with a
+   * 409 carrying `details.reason: "environment_model_required"`.
+   *
+   * Optional in the type only for deploy skew, where the backend predates the
+   * field.
+   */
+  effectiveModelId?: string;
+  /** Which of the two supplied {@link effectiveModelId}. */
+  modelSource?: "environment" | "host";
   serverAttachmentId?: string;
   /** The closed NON-plugin server set. */
   selectedServerIds: string[];
@@ -956,4 +1024,84 @@ export interface PlatformJourneyRunCanceled {
   alreadyCanceled: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
+}
+
+// ---------------------------------------------------------------------------
+// Server connections
+// ---------------------------------------------------------------------------
+
+/**
+ * One saved server a URL could refer to, offered when it matches more than one.
+ *
+ * Present only on an `AMBIGUOUS_SERVER` error. Without it that refusal is a
+ * dead end on every surface that is not a browser: the caller is told to
+ * re-send with a `serverId` and has no way to discover which ids exist.
+ */
+export interface PlatformServerConnectionCandidate {
+  id: string;
+  name: string;
+  /** Redacted — query values are replaced, because a keyed-endpoint URL's
+   * query can be the credential itself. */
+  url: string;
+}
+
+export interface PlatformServerConnectionError {
+  code: string;
+  message: string;
+  /** Whether retrying THIS request could succeed. False for a denied consent
+   * or an unsupported auth method, where only a different action helps. */
+  retryable: boolean;
+  candidates?: PlatformServerConnectionCandidate[];
+}
+
+/**
+ * The state of one "connect this MCP server" request.
+ *
+ * Returned by every server-connection route, so a caller polls the same shape
+ * it created. `handoffUrl` is the exception that proves the rule: it appears
+ * only in the CREATE response, because the raw handoff token exists exactly
+ * once and nothing stores it.
+ */
+export interface PlatformServerConnection {
+  connectionRequestId: string;
+  status:
+    | "discovering"
+    | "awaiting_project"
+    | "awaiting_authorization"
+    | "authorizing"
+    | "validating"
+    | "ready"
+    | "failed"
+    | "expired"
+    | "cancelled";
+  /**
+   * Where the user finishes in a browser. Present for BOTH
+   * `awaiting_project` and `awaiting_authorization` — choosing a project needs
+   * a page just as much as granting consent does.
+   *
+   * TREAT THIS AS PRIVATE. It is a capability for one person: never post it to
+   * a shared channel, and never let a model echo it into prose.
+   */
+  handoffUrl?: string;
+  expiresAt: string;
+  projectId?: string;
+  serverId?: string;
+  server?: {
+    id: string;
+    name: string;
+    url: string;
+    enabled: boolean;
+  };
+  error?: PlatformServerConnectionError;
+}
+
+/** Body for `POST /server-connections`. */
+export interface PlatformServerConnectionCreateBody {
+  url: string;
+  projectId?: string;
+  /** Disambiguates when a project has several saved servers on one URL. */
+  serverId?: string;
+  /** Used only when a server row is created; ignored on reuse. */
+  name?: string;
+  reauthorize?: boolean;
 }

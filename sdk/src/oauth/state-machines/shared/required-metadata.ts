@@ -30,6 +30,18 @@
  * warn-and-continue behavior.
  */
 
+/**
+ * Rejection message for authorization-server metadata without RFC 8414's
+ * REQUIRED `issuer`. Every era's machine throws it verbatim.
+ *
+ * A constant rather than four literals because consumers match on the exact
+ * text: the inspector keeps this failure out of its own error reporting (it is
+ * the server under test that is nonconforming, not MCPJam), and a rephrasing on
+ * one side would silently break that match. One export, no drift.
+ */
+export const AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER =
+  "Authorization server metadata missing required 'issuer' field";
+
 export type RequiredMetadataEnforcement =
   /** Fail closed. The default, and what every connect-like path uses. */
   | "reject"

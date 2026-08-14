@@ -1,175 +1,73 @@
-diff --git a/.changeset/chat-error-payload-wall.md b/.changeset/chat-error-payload-wall.md
+diff --git a/.changeset/inspector-release-2026-08-13.md b/.changeset/inspector-release-2026-08-13.md
 deleted file mode 100644
-index 426975c67..000000000
---- a/.changeset/chat-error-payload-wall.md
+index 51726514b..000000000
+--- a/.changeset/inspector-release-2026-08-13.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
+@@ -1,8 +0,0 @@
 ----
--"@mcpjam/inspector": patch
+-"@mcpjam/inspector": minor
 ----
 -
--Stop rendering a gateway's HTML error page into the chat.
+-Release the latest Inspector updates.
 -
--When an upstream hop fails, the response body is an HTML document, and the AI SDK surfaces the failure as `new Error(await response.text())` — so the entire page landed in `error.message` and rendered verbatim, filling the chat with a wall of red markup and pushing the conversation off screen. A user demoed exactly this on a call: a 502 whose only readable content was the phrase "Bad Gateway" buried in the middle of a stylesheet.
--
--An opaque or oversized payload is now summarized to one line — "The request failed with HTTP 502. An upstream service returned an error page instead of a response." — with the original body preserved in the existing "More details" collapsible. The copy says "an upstream service" rather than "the server" because the page comes from whichever hop failed, and naming "the server" in an MCP debugger reads as an accusation against the user's MCP server.
--
--The status is read from the page's `<title>` and `<h1>` — both, in order, since a generic `<title>Error</title>` over an `<h1>503 Service Unavailable</h1>` is a real page shape — rather than by scanning the document for any three-digit number (the page that prompted this carries `500` and `404` inside a stylesheet). Detection covers bodies that are not well-formed documents: truncated or streamed responses that never reach `</html>`, and pages behind a comment or an XML declaration.
--
--Ordinary error text is untouched: only genuinely opaque or oversized bodies take this path. The error card and its details pane also gained height caps, so a message that slips past the formatter costs a scrollbar rather than the viewport.
-diff --git a/.changeset/hosts-deleted-permalink-loop.md b/.changeset/hosts-deleted-permalink-loop.md
+-- Group scorecards and recommendations under Findings, and keep Insights visible when queries fail.
+-- Default guest multi-host Playground sessions to ChatGPT, Claude, and Cursor.
+diff --git a/.changeset/project-crud-mcp-and-organizations-read.md b/.changeset/project-crud-mcp-and-organizations-read.md
 deleted file mode 100644
-index 86d48f5aa..000000000
---- a/.changeset/hosts-deleted-permalink-loop.md
+index 5a773314e..000000000
+--- a/.changeset/project-crud-mcp-and-organizations-read.md
 +++ /dev/null
-@@ -1,15 +0,0 @@
+@@ -1,19 +0,0 @@
 ----
--"@mcpjam/inspector": patch
-----
--
--Fix a client permalink for a deleted client hanging the app.
--
--Client URLs are permalinks, so a bookmark or history entry for `/hosts/:hostId` outlives the client itself. Opening one after the client was deleted — or opening a teammate's link while signed into a different project — put `HostsRoute` and `HostsTab` in a fight over the same id. The route synced the id out of the URL into shared state and into the project's persisted "previewed client"; `HostsTab` reconciled both against the loaded client list, found the id missing, and cleared them; the route then synced the id straight back from the URL, and around again.
--
--The corrective `navigate('/hosts')` never landed. It is a React Router transition, so the stream of higher-priority state updates from that ping-pong starved it indefinitely. The usual symptom was silent: the page looked normal while the tab pegged a CPU core (a harness reproduction rendered over 17,000 times in two seconds). When the updates happened to chain synchronously it instead tripped React's nested-update limit and the app fell through to the route error screen with "Maximum update depth exceeded" — the shape reported by a self-hosted user in Sentry.
--
--`HostsRoute` now resolves the URL id against the client list before it syncs or persists anything, and treats an id the list doesn't contain as unopenable. Nothing writes the dead id back, so there is nothing for `HostsTab` to fight, and the route bounces once to the client list at `/hosts` with a toast explaining the client no longer exists. The bounce uses `replace`, so the dead URL leaves the history stack instead of sitting one Back press away.
--
--The check waits for the client list to finish loading before calling any id dead — the list is empty for a beat on every cold start, and bouncing during that window would break working deep links. During that same window the id is merely unverified, so it opens the canvas immediately (no flash of the client list on a normal permalink) but is not yet written to the project's saved "previewed client" — that store is on disk, so closing the tab mid-load would otherwise leave a possibly-deleted client filed as the project's preview and reopen it on the next visit.
--
--Returning to the same dead link later in the session bounces again rather than going quiet, so the explanation isn't shown only to whoever hits it first.
-diff --git a/.changeset/inspector-error-origin-pipeline.md b/.changeset/inspector-error-origin-pipeline.md
-deleted file mode 100644
-index 66493e4fe..000000000
---- a/.changeset/inspector-error-origin-pipeline.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Make #mcpjam-alerts trustworthy: page on MCPJam's failures, and only those.
--
--Server error envelopes now ask one question — whose fault is this? — and act on the answer. `origin: "mcpjam"` captures to Sentry; everything else is recorded in Axiom (`http.request.failed` carries `origin` and `slug`) without paging, so the volume of each bucket is measurable before anything is promoted into the alerting path.
--
--This closes a structural blindness and a noise problem that were two halves of the same accident. `/api/web/*` never rethrows, so `app.onError -> logger.error -> Sentry` was unreachable for the entire hosted surface and hosted connect 502s were invisible. Meanwhile every catch-site under `/api/mcp/*` called `logger.error`, which captures unconditionally, so a user's dead MCP server — or a conformance probe doing exactly its job — raised an issue and posted to the channel.
--
--Also: chat failures reach the client error sinks at all now (they previously hit a rate-limit filter that no-op'd everything else, so a 502 left no client trace), a non-OK response from MCPJam's own chat backend is classified even though no `Error` object exists at that site, and `ErrorCard` says whether a failure was MCPJam's or not.
-diff --git a/.changeset/oauth-client-trace-error-redaction.md b/.changeset/oauth-client-trace-error-redaction.md
-deleted file mode 100644
-index 021df0bd7..000000000
---- a/.changeset/oauth-client-trace-error-redaction.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Redact credentials echoed into the OAuth trace entries the client builds itself.
--
--`projectOAuthTraceSnapshot({ sanitize })` covers everything derived from a state machine's HTTP history, but not the trace steps the client writes directly — `failOAuthTraceStep` and the OAuth proxy's transport-failure entry. The refresh flow produces *only* those, so it had no error redaction at all: an authorization server that echoes a `refresh_token` back in `error_description` put it verbatim into a persisted, copyable trace.
--
--Both sites now go through `traceOAuthErrorMessage` in the new `lib/oauth/trace-redaction.ts`, gated on `SANITIZE_OAUTH_TRACES` the same way `traceOAuthValue`/`traceOAuthHeaders` already are — local dev still shows the server's raw text, which is the point of the inspector. The redactor itself is the debugger's existing `sanitizeStepError`, moved rather than rewritten: it already handles URL userinfo, named parameters, echoed `Authorization` headers, JSON credential fields, and truncation tails, and it deliberately preserves diagnostic wording like "Bearer token is expired". `debug-state-machine-adapter.ts` re-exports it, so its callers and tests are unchanged.
--
--Also documents `serializeBody` as a live-data path that must never be redacted, matching the note already on `parseOAuthResponseBody`.
-diff --git a/.changeset/oauth-executor-redaction-sentinel.md b/.changeset/oauth-executor-redaction-sentinel.md
-deleted file mode 100644
-index 0ee29c72e..000000000
---- a/.changeset/oauth-executor-redaction-sentinel.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
+-"@mcpjam/inspector": minor
 -"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
 ----
 -
--Fail loudly when a redaction sentinel reaches the OAuth state machine as a credential.
+-Organizations are discoverable, and projects can be created and renamed from MCP.
 -
--The factory already wraps every machine's request executor for SSRF, which makes it the one place that sees every executor result across all four protocol eras. It now also inspects `OAuthRequestResult.body` for the sentinel shapes this codebase's redactors emit (`[redacted]`, and the `abcd...[redacted]...yz` truncation form) in `access_token`, `refresh_token`, `id_token`, and `client_secret`, and throws `OAuthRedactedCredentialError` naming the field and a query/fragment-free request target. Clean results are returned unchanged, by identity.
+-`GET /v1/organizations` closes a hole rather than adding a capability. `GET /v1/projects` has always taken an `organizationId` filter and `POST /v1/projects` has always accepted one in its body, but no machine surface could produce such an id: `/v1/me` returns none, there was no SDK method, no route, and no CLI command, and the only reader of the backing query was the browser app shell. The endpoint is read-only and reaches REST, the SDK (`listOrganizations`), the CLI (`mcpjam organizations list`) and the MCP catalog (`list_organizations`). `mcpjam projects list` gains the `--organization-id` flag the operation already supported, so the round trip — list organizations, then filter projects by one — is finally typeable.
 -
--The point is the seam, not the sentinel. A redaction sentinel is a non-empty string, so it passes every truthiness check and is spent as a credential; the first signal is a `401 invalid_token` from the resource server, three layers from the cause. `OAuthRedactedCredentialError` says what actually happened. The check reads `result.body` because that is where the real executor puts response fields — a guard written against `result.access_token` would look correct and never fire.
+-The response is a hand-written DTO (`id`, `name`, `plan`, `myRole`, `isCreator`, `logoUrl`, `createdAt`), not the query's payload. That payload is shaped for the org switcher and carries Stripe ids, seat counts, trial and dunning clocks; listing the public fields explicitly means a column added to the organizations table cannot become part of an API response by default.
 -
--The match is deliberately narrow: an opaque token is an arbitrary string, so anything looser would break real logins. This is defense in depth for known shapes, not a substitute for keeping trace transformations out of live-data paths.
-diff --git a/.changeset/oauth-trace-state-error-fallback.md b/.changeset/oauth-trace-state-error-fallback.md
-deleted file mode 100644
-index f48d4d3f3..000000000
---- a/.changeset/oauth-trace-state-error-fallback.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
+-The security-relevant piece is the org-scope clamp. Unlike every other v1 read, the backing query takes no organization argument — it answers for the acting human — so a delegated `sk_` token, which is org-scoped by construction everywhere else, would otherwise carry every sibling organization of whoever minted the key straight through. The route intersects the result with the token's organization, mirroring how the Convex `/v1/projects` route rejects a filter outside the key's scope. A session-JWT caller is confined to nothing and still sees all of theirs. Guests are default-denied, like `/me`.
 -
--Redact the `state.error` fallback in OAuth trace projection.
+-`create_project` and `update_project` move into the MCP catalog. The previous exclusion — "project lifecycle writes are intentionally outside the unattended MCP catalog" — was stricter than what the enterprise MCP servers it was modelled on actually ship: of sixteen surveyed, eleven expose container creation, including GitHub (`create_repository`) and Sentry (`create_project` / `update_project`). Both operations are cheap, both are visible in the UI immediately, and neither destroys anything: `update_project`'s schema has no `servers` key at all, so the backend's destructive server-map replace is unreachable from this surface. They announce as plain writes — `readOnlyHint: false`, `destructiveHint: false` — and their descriptions were rewritten to read as tool descriptions, since that is what they now are.
 -
--`projectOAuthTraceSnapshot` read `state.error` in three places and only sanitized two of them. The unsanitized one is the step-level fallback: when the failing step already has an `httpHistory` entry, `inferHttpHistoryEntryError` returns nothing (it only mines responses for `request_client_registration`), the "no entry for the current step" branch is skipped because the entry exists, and the step's `error` fell through to the raw string. An authorization server that echoes a credential back in `error_description` landed it verbatim in rendered, copied, and persisted traces.
+-`delete_project` stays off MCP, and its exclusion reason no longer borrows the blanket one its siblings shared: deleting cascades across every project-owned resource and cannot be undone, which is the same line GitHub draws by omitting `delete_repository`. It remains available on REST and the CLI. The workspace chat and Slack/Discord agent surfaces are unchanged — their project-lifecycle exclusions are about a turn already being pinned to one project, which the MCP catalog is not — and organization, member, role, invite and billing writes stay off every machine surface.
 -
--The projection of `state.error` is now computed once, next to the snapshot's own `error` field, and every consumer reads that variable. `state.error` is read raw exactly once in the file, so the redaction policy has a single place to keep in sync rather than three branches to remember.
-diff --git a/.changeset/sdk-connect-error-provenance.md b/.changeset/sdk-connect-error-provenance.md
-deleted file mode 100644
-index 69649e788..000000000
---- a/.changeset/sdk-connect-error-provenance.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Report a refused connection as a refused connection.
--
--Connecting to a host that nothing is listening on classified as `transport/fetch_failed` — "we could not reach it", which tells a developer nothing they did not already know. The specific reason was present the whole time and discarded three separate ways:
--
--- The HTTP connect paths rethrew a readable summary with no `cause`, so the underlying error object (and its errno) was unreachable. Both throw sites now preserve it, and the combined Streamable-HTTP+SSE failure additionally keeps the Streamable attempt on a non-enumerable `streamableCause` for when the two transports failed for different reasons.
--- `extractNodeErrno` returned the first string `code` it found and stopped. A wrapper that stamps its own domain code on the outside of the chain — the MCP SDK's `ERA_NEGOTIATION_FAILED` — therefore shadowed the real `ECONNREFUSED` one hop below it. Unrecognized codes no longer end the walk; they are still returned when the chain holds no errno at all.
--- `describeError` matched undici's generic `fetch failed` before looking for an errno spelled out in the same message ("... connect ECONNREFUSED 127.0.0.1:9999"). An errno in the text now wins over the generic phrase.
--
--A refused port now resolves to `transport/econnrefused`, whose guidance names the actual next step. One documented limit remains: a server pinned to Streamable HTTP (`disableSseFallback`) still reports `transport/fetch_failed`, because the upstream era-negotiation probe drops both the cause and the errno text before MCPJam sees the failure.
-diff --git a/.changeset/sdk-error-origin.md b/.changeset/sdk-error-origin.md
-deleted file mode 100644
-index 5656eb2b5..000000000
---- a/.changeset/sdk-error-origin.md
-+++ /dev/null
-@@ -1,14 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Record who has to act on an error, not just what went wrong.
--
--Every catalog entry now carries an `origin`: `user_server`, `user_config`, `mcpjam`, or `ambiguous`. MCPJam is a debugger, so pointing it at a broken server is the product working rather than an incident — this is the field that lets a failure be shown plainly to the user without alerting the MCPJam team, and lets the failures that *are* ours stop hiding inside that noise.
--
--- `origin` is optional on the published `ErrorCatalogEntry` type so external callers can still construct one, and required in practice: a test asserts every catalog slug declares it. Read it through the new `originOf()`, which defaults missing or unknown values to `ambiguous` — payloads cross versions, and an older normalized error has no origin at all. `isNormalizedError` deliberately does not require the field, so those payloads still pass the wire guard.
--- `describeError(error, context)` and `describeAsSlug(slug, error, context)` accept an optional `credentialOwner`. Auth and provider failures default to `user_config` because the credential is normally the user's; hosted paths that refresh their own tokens or bill a managed provider key pass `credentialOwner: "mcpjam"` so the same failure is correctly recorded as MCPJam's. Nothing else is reassigned — a managed-credential caller hitting a refused port still gets `user_config`.
--
--Two classifications are worth calling out because the obvious reading is wrong. `jsonrpc/invalid_request` and `jsonrpc/header_mismatch` are `ambiguous`, not `user_server`: MCPJam builds that envelope, so a serialization bug of ours lands there, and filing it under the user would make the one class of bug that affects every user the class we never see. `internal/unknown` is `ambiguous` rather than `mcpjam` for the mirror-image reason — every unrecognized failure from an arbitrary server lands there, and treating it as ours would rebuild the noise problem.
--
--Origin is a routing signal, not display copy. User-facing text should keep coming from each entry's `oneLine` / `likelyCauses` / `nextSteps`, which already describe cases the wire cannot disambiguate — a refused port is "nothing is running there" or "the port is wrong", and no origin value can tell you which.
-diff --git a/.changeset/sdk-insufficient-scope-extract.md b/.changeset/sdk-insufficient-scope-extract.md
-deleted file mode 100644
-index 0a0b3a0b2..000000000
---- a/.changeset/sdk-insufficient-scope-extract.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Export the SEP-2350 challenge extractor, so there is one copy of it.
--
--The SDK recognized an upstream `InsufficientScopeError` (`isInsufficientScopeError`) and the Inspector server separately walked the same cause chain to pull the `WWW-Authenticate` fields off it. Two hand-maintained copies of one recognizer, and they had already drifted: only the host-side copy knew that `resourceMetadataUrl` arrives as a `URL` object at runtime rather than a string, so the SDK-side reader would have silently dropped the real production value.
--
--`extractInsufficientScopeChallenge` and its `InsufficientScopeChallenge` type are now exported from `@mcpjam/sdk`, and both recognizers share one cause-chain walk with its cycle guard.
--
--Behavior is preserved on both sides, including the difference between them: `isInsufficientScopeError` still returns `true` for a branded error carrying no challenge fields — the transport-fallback protection cares that the class was seen, not that it was actionable — while `extractInsufficientScopeChallenge` returns `undefined` for that case and keeps walking, so a branded but empty wrapper cannot hide a populated challenge deeper in the chain. Detection remains strictly by class brand or `.name`; an unrelated error that happens to carry a `requiredScope` field still cannot masquerade as a step-up challenge.
+-The project WRITE routes gain the org clamp they never had. This is a pre-existing gap the MCP flip would otherwise have widened: the backend resolves project access from the acting USER — `createProject` calls `requireOrgRole` against the requested organization, the update and delete mutations resolve access the same way, and `userMutation` never reads the delegated-org claim — so a key bound to organization A, minted by someone who also belongs to B, could create in B or rename and delete B's projects. The gateway now enforces what the key promises: `POST /v1/projects` rejects a mismatched `organizationId` and, more importantly, FILLS IN the key's organization when none is given, since the backend's fallback is the user's default organization and that need not be the key's. `PATCH` and `DELETE` answer 404 — not 403, which would confirm the project exists to a caller who may not see it — for a project outside the key's organization. Session-JWT callers are untouched throughout: they are confined to nothing and keep full access to every organization they belong to. The underlying Convex mutations remain unclamped for anything that reaches them without going through `/api/v1`.
+diff --git a/cli/package.json b/cli/package.json
+index b983cbefa..8e803110f 100644
+--- a/cli/package.json
++++ b/cli/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/cli",
+-  "version": "3.21.0",
++  "version": "3.22.0",
+   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+   "type": "module",
+   "main": "dist/index.js",
+@@ -17,7 +17,7 @@
+     "prepublishOnly": "npm run build"
+   },
+   "dependencies": {
+-    "@mcpjam/sdk": "^4.1.0",
++    "@mcpjam/sdk": "^4.2.0",
+     "@modelcontextprotocol/server": "2.0.0",
+     "commander": "^12.1.0",
+     "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 96e64bb65..745dfe2cb 100644
+index 8e1094b9e..fa0dbeffa 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.35.0",
-+  "version": "2.35.1",
+-  "version": "2.37.0",
++  "version": "2.38.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -177,21 +75,33 @@ index 96e64bb65..745dfe2cb 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^3.0.0",
-+    "@mcpjam/sdk": "^3.1.0",
+-    "@mcpjam/sdk": "^4.1.0",
++    "@mcpjam/sdk": "^4.2.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index a57b5af36..548ffbcff 100644
+index 21b530fb7..155edc2bb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
+@@ -60,9 +60,9 @@
+     },
+     "cli": {
+       "name": "@mcpjam/cli",
+-      "version": "3.21.0",
++      "version": "3.22.0",
+       "dependencies": {
+-        "@mcpjam/sdk": "^4.1.0",
++        "@mcpjam/sdk": "^4.2.0",
+         "@modelcontextprotocol/server": "2.0.0",
+         "commander": "^12.1.0",
+         "posthog-node": "^5.24.10",
 @@ -389,7 +389,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.35.0",
-+      "version": "2.35.1",
+-      "version": "2.37.0",
++      "version": "2.38.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -199,8 +109,8 @@ index a57b5af36..548ffbcff 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^3.0.0",
-+        "@mcpjam/sdk": "^3.1.0",
+-        "@mcpjam/sdk": "^4.1.0",
++        "@mcpjam/sdk": "^4.2.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -208,20 +118,20 @@ index a57b5af36..548ffbcff 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "3.0.0",
-+      "version": "3.1.0",
+-      "version": "4.1.0",
++      "version": "4.2.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 99731620f..f773d2ef4 100644
+index 6d9bfa65f..d71d0e50b 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "3.0.0",
-+  "version": "3.1.0",
+-  "version": "4.1.0",
++  "version": "4.2.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

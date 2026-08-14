@@ -51,7 +51,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
   "get /me": "getMe",
   "get /models": "listModels",
+  "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
+
+  // Server connections
+  "post /server-connections": "createServerConnection",
+  "get /server-connections/{requestId}": "getServerConnection",
+  "post /server-connections/{requestId}/cancel": "cancelServerConnection",
+  "post /server-connections/{requestId}/retry-validation":
+    "retryServerConnectionValidation",
 
   // Projects
   "get /projects": "listProjects",
@@ -91,6 +99,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
 
   // Project environments
   "get /projects/{projectId}/environments": "listEnvironments",
+  "get /projects/{projectId}/environments/capabilities":
+    "getEnvironmentCapabilities",
   "post /projects/{projectId}/environments": "createEnvironment",
   "get /projects/{projectId}/environments/{environmentId}": "getEnvironment",
   "patch /projects/{projectId}/environments/{environmentId}":

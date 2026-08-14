@@ -10,6 +10,7 @@
 import {
   callServerToolOperation,
   checkHostCompatibilityOperation,
+  connectProjectServerOperation,
   createEvalCaseOperation,
   createEvalSuiteOperation,
   createProjectServerOperation,
@@ -18,6 +19,9 @@ import {
   diagnoseServerOperation,
   getMeOperation,
   listModelsOperation,
+  listOrganizationsOperation,
+  createProjectOperation,
+  updateProjectOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
   getChatboxOperation,
@@ -28,6 +32,7 @@ import {
   getEvalSuiteOperation,
   getEnvironmentOperation,
   getPluginVersionOperation,
+  getProjectServerConnectionStatusOperation,
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
@@ -75,12 +80,31 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 > = [
   getMeOperation,
   listModelsOperation,
+  // The organization read exists to make the two operations below usable: an
+  // `organizationId` was previously undiscoverable from any machine surface.
+  listOrganizationsOperation,
   listProjectsOperation,
+  // Project create/update are HERE, alongside the list, and the industry norm
+  // is why. A survey of 16 enterprise MCP servers found container creation is
+  // mainstream — GitHub ships `create_repository`, Sentry `create_project` and
+  // `update_project`, as do Linear, Supabase, Asana and Monday — while DELETE
+  // of a top-level container is near-universally withheld (GitHub omits
+  // `delete_repository` deliberately). Excluding create/update was stricter
+  // than what those servers ship, for no benefit a caller could see: both are
+  // cheap, both are visible in the UI immediately, and neither destroys
+  // anything. `delete_project` stays excluded below — that is the line.
+  createProjectOperation,
+  updateProjectOperation,
   listProjectServersOperation,
   createProjectServerOperation,
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Connecting a server is on the unattended surface deliberately: the flow
+  // cannot complete without a person at a browser, so the most an MCP host can
+  // do with it is produce a private link for the requester to open.
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -150,12 +174,16 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   list_journey_run_sessions: "Pre-GA product — expose at GA.",
 
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
-  create_project:
-    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
-  update_project:
-    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  // Its create/update siblings moved INTO the catalog; this reason had to stop
+  // being the blanket one they shared, because that rationale is no longer
+  // true of project lifecycle as a category. What is true of delete
+  // specifically: it cascades across every project-owned resource — servers,
+  // credentials, suites, runs, hosts — and nothing on this surface can undo
+  // it. Every enterprise MCP server surveyed draws the same line (GitHub ships
+  // `create_repository` and omits `delete_repository`). Deleting stays on REST
+  // and the CLI, for humans who mean it.
   delete_project:
-    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+    "Deleting a project cascades across every project-owned resource and cannot be undone; industry MCP servers ship container create but not delete. Available on REST and the CLI for humans who mean it.",
   validate_server:
     "Server validation is available through the dedicated server diagnostics surface.",
   export_server:
@@ -186,6 +214,8 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   delete_host:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not an action: it answers whether this platform accepts an environment model override, which the write paths already ask on the caller's behalf.",
   create_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   update_project_environment:

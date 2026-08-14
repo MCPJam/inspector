@@ -10,6 +10,7 @@ import { registerHostsCommands } from "../src/commands/hosts.js";
 import { registerJourneysCommands } from "../src/commands/journeys.js";
 import { registerScenariosCommands } from "../src/commands/scenarios.js";
 import { registerImagesCommands } from "../src/commands/images.js";
+import { registerOrganizationsCommands } from "../src/commands/organizations.js";
 import { registerProjectsCommands } from "../src/commands/projects.js";
 import { registerTunnelCommands } from "../src/commands/tunnel.js";
 
@@ -25,6 +26,7 @@ import { registerTunnelCommands } from "../src/commands/tunnel.js";
 /** A program carrying every command group that binds platform operations. */
 function buildPlatformProgram(): Command {
   const program = new Command().name("mcpjam").exitOverride();
+  registerOrganizationsCommands(program);
   registerProjectsCommands(program);
   registerEvalCommands(program);
   registerChatCommands(program);

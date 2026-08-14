@@ -84,6 +84,7 @@ import {
 } from "@/components/swarms/swarm-intensity";
 import {
   SWARM_QUERIES,
+  LaunchJourneyRunError,
   SwarmGenerateError,
   generateSwarmPersonaBatch,
 } from "@/lib/swarm-api";
@@ -260,20 +261,39 @@ function EnvironmentGroundingHint({
   );
 }
 
-/** Run `worker` over `items`, at most `limit` at a time. */
+/**
+ * Run `worker` over `items`, at most `limit` at a time, and STOP SCHEDULING
+ * once `worker` reports the wave is doomed.
+ *
+ * The stop signal exists for one failure: an organization that hits its credit
+ * limit. Every remaining launch in the wave will be rejected for exactly the
+ * same reason, so firing them costs a round-trip each and produces N identical
+ * banners. A worker returns `"stop"` and no further item is picked up.
+ *
+ * Requests ALREADY in flight are not cancelled here — a launch is a POST that
+ * may have already created a durable run row, and aborting the client half
+ * would leave one running with nobody watching. They are allowed to settle;
+ * the caller deduplicates their errors so one billing message is shown, not
+ * `limit` of them.
+ */
 async function runWithConcurrency<T>(
   items: T[],
   limit: number,
-  worker: (item: T) => Promise<void>
+  worker: (item: T) => Promise<void | "stop">
 ): Promise<void> {
   let cursor = 0;
+  let stopped = false;
   const runners = Array.from(
     { length: Math.min(limit, items.length) },
     async () => {
       while (cursor < items.length) {
+        if (stopped) return;
         const index = cursor;
         cursor += 1;
-        await worker(items[index]);
+        if ((await worker(items[index])) === "stop") {
+          stopped = true;
+          return;
+        }
       }
     }
   );
@@ -346,7 +366,15 @@ export function NewSwarmCreateFlow({
   ) => Promise<void>;
   launchJourney: (
     journeyId: string,
-    opts?: { swarmRunGroupId?: string }
+    /**
+     * `environmentIds` was MISSING here while the call site below passed it —
+     * and type-checked anyway, because a conditional spread defeats excess
+     * property checking. The per-run environment fan-out (which now also
+     * carries the model matrix: two cells on one client differ only by their
+     * environment id) was therefore invisible to this interface, one rename
+     * away from being silently dropped.
+     */
+    opts?: { swarmRunGroupId?: string; environmentIds?: string[] }
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -611,11 +639,7 @@ export function NewSwarmCreateFlow({
     if (resolvedEnvironmentIds) return resolvedEnvironmentIds;
     if (!composeMode) return targetState.environmentIds;
     return [];
-  }, [
-    composeMode,
-    resolvedEnvironmentIds,
-    targetState.environmentIds,
-  ]);
+  }, [composeMode, resolvedEnvironmentIds, targetState.environmentIds]);
   const envListForPayload = useMemo(() => {
     const byId = new Map(envList.map((e) => [e.environmentId, e]));
     for (const env of createdEnvOverlay) {
@@ -645,7 +669,9 @@ export function NewSwarmCreateFlow({
         ...[...targetState.stack.hostIds].sort(),
         targetState.stack.serverAttachmentId ?? "",
         targetState.stack.computerEnvironmentId ?? "",
-        `skills:${(targetState.stack.skillSelection?.skillIds ?? []).join(",")}`,
+        `skills:${(targetState.stack.skillSelection?.skillIds ?? []).join(
+          ","
+        )}`,
         targetState.customized ? "custom" : "seeded",
       ].join("|"),
     [composeMode, targetState]
@@ -716,8 +742,8 @@ export function NewSwarmCreateFlow({
     generating || materializing || serverBlock !== null
       ? false
       : wantsGenerate
-        ? canGenerate
-        : reusedIds.length > 0;
+      ? canGenerate
+      : reusedIds.length > 0;
 
   /** Why the primary button is disabled, or a short summary when it isn't. */
   const continueHint = (() => {
@@ -742,7 +768,9 @@ export function NewSwarmCreateFlow({
       return `${reused} existing · ${fresh} new on next step`;
     }
     if (wantsGenerate) {
-      return `${fresh} new ${fresh === 1 ? "persona" : "personas"} on next step`;
+      return `${fresh} new ${
+        fresh === 1 ? "persona" : "personas"
+      } on next step`;
     }
     return `${reused} ${reused === 1 ? "persona" : "personas"} selected`;
   })();
@@ -910,8 +938,8 @@ export function NewSwarmCreateFlow({
       persistedTargetsRef.current = null;
       persistedEnvironmentKeyRef.current = null;
       persistedRunGroupIdRef.current = null;
-    persistedSwarmIdRef.current = null;
-    flowIdRef.current = null;
+      persistedSwarmIdRef.current = null;
+      flowIdRef.current = null;
       // Avatar looks are minted NOW, not at persist time, so the Confirm
       // preview shows the look the persona will actually be saved with.
       setProposed(
@@ -1047,6 +1075,20 @@ export function NewSwarmCreateFlow({
       setErrorMessage(null);
 
       let firstError: string | null = null;
+      /**
+       * Set when a launch came back 402. Distinct from `firstError` because it
+       * changes what the summary SAYS: "some runs were rejected" is advice to
+       * retry, and retrying a credit limit cannot work.
+       */
+      let billingBlocked = false;
+      /**
+       * The 402's own message, kept SEPARATE from `firstError`. The billing
+       * summary has to state the hard stop, and `firstError` may already hold
+       * an unrelated transient failure that settled first — rendering that one
+       * under "Launched N of M" is precisely the retry-this advice the billing
+       * branch exists to avoid.
+       */
+      let billingError: string | null = null;
       let targets: LaunchTarget[] = [];
       let launched = 0;
       const runLabels = new Map<string, string>();
@@ -1307,11 +1349,28 @@ export function NewSwarmCreateFlow({
                 }
               }
             } catch (err) {
+              // BILLING is terminal for the WHOLE wave, not for this target.
+              // Every sibling would be rejected identically, so stop
+              // scheduling and report the limit ONCE — `firstError` already
+              // deduplicates the message for the launches that were in flight
+              // when the first 402 came back.
+              if (err instanceof LaunchJourneyRunError && err.status === 402) {
+                billingBlocked = true;
+                // Recorded on its OWN slot so the billing summary always says
+                // "credit limit" even when an unrelated failure settled first,
+                // and `??=` on both so each keeps the earliest of its kind.
+                // `firstError` still gets it as a fallback: when the 402 is the
+                // only failure and nothing launched, it is the whole story.
+                billingError ??= err.message;
+                firstError ??= err.message;
+                return "stop";
+              }
               firstError ??= errorMessageOf(
                 err,
                 "A run could not be launched."
               );
             }
+            return undefined;
           }
         );
       } catch (err) {
@@ -1348,11 +1407,23 @@ export function NewSwarmCreateFlow({
         );
         return;
       }
-      toast[launched === targets.length ? "success" : "warning"](
-        launched === targets.length
-          ? `Launched ${launched} ${launched === 1 ? "run" : "runs"}`
-          : `Launched ${launched} of ${targets.length} runs`
-      );
+      if (launched === targets.length) {
+        toast.success(
+          `Launched ${launched} ${launched === 1 ? "run" : "runs"}`
+        );
+      } else if (billingBlocked) {
+        // ONE billing message for the whole wave. The count matters here in a
+        // way it doesn't for other partial failures: the remaining runs were
+        // never attempted, so "N of M" would read as M-N transient failures
+        // to retry rather than as a hard stop.
+        toast.warning(
+          `Launched ${launched} of ${targets.length} runs — ${
+            billingError ?? "the organization's credit limit was reached."
+          }`
+        );
+      } else {
+        toast.warning(`Launched ${launched} of ${targets.length} runs`);
+      }
       // Stay in the wizard on Running — Overview gets the runs when the user
       // leaves. Labels are handed off then so session grouping still names them.
       launchedRunLabelsRef.current = runLabels;
@@ -1465,8 +1536,7 @@ export function NewSwarmCreateFlow({
     [onOpenSession]
   );
 
-  const activeStepIndex =
-    step === "describe" ? 0 : step === "confirm" ? 1 : 2;
+  const activeStepIndex = step === "describe" ? 0 : step === "confirm" ? 1 : 2;
 
   const goToStep = useCallback(
     (index: number) => {
@@ -1552,7 +1622,9 @@ export function NewSwarmCreateFlow({
                           </button>
                         </BreadcrumbLink>
                       ) : (
-                        <span className="text-muted-foreground/70">{label}</span>
+                        <span className="text-muted-foreground/70">
+                          {label}
+                        </span>
                       )}
                     </BreadcrumbItem>
                   </Fragment>
@@ -1645,9 +1717,7 @@ export function NewSwarmCreateFlow({
             <div
               className={cn(
                 "grid gap-6",
-                personaList.length > 0
-                  ? "md:grid-cols-2 md:gap-8"
-                  : ""
+                personaList.length > 0 ? "md:grid-cols-2 md:gap-8" : ""
               )}
             >
               {personaList.length > 0 ? (
@@ -1778,7 +1848,10 @@ export function NewSwarmCreateFlow({
                   swarm's insights. The hint says so out loud — the placement
                   alone would imply a narrower blast radius than it has. */}
               {onSetInsightsTuning ? (
-                <div className="space-y-2" data-testid="new-swarm-insight-grouping">
+                <div
+                  className="space-y-2"
+                  data-testid="new-swarm-insight-grouping"
+                >
                   <Label>Insight grouping</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     <ClusterTuningControl
@@ -1810,10 +1883,7 @@ export function NewSwarmCreateFlow({
                   {SWARM_INTENSITY_ORDER.map((value) => {
                     const option = SWARM_INTENSITY_PRESETS[value];
                     const selected = pushIntensity === value;
-                    const sessions = estimateSwarmSessions(
-                      option,
-                      targetCount
-                    );
+                    const sessions = estimateSwarmSessions(option, targetCount);
                     return (
                       <button
                         key={value}

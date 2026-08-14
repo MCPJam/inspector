@@ -9,6 +9,7 @@
  * - No Client ID Metadata Documents support
  */
 
+import { describeAuthenticatedRequestFailure } from "./shared/response-error.js";
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
 import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
@@ -35,6 +36,7 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
+import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./shared/required-metadata.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -492,7 +494,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field",
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
@@ -1413,7 +1415,7 @@ export const createDebugOAuthStateMachine = (
                 updateState({
                   lastResponse: mcpResponseData,
                   httpHistory: updatedHistoryMcp,
-                  error: `Authenticated request failed: ${response.status} ${response.statusText}`,
+                  error: describeAuthenticatedRequestFailure(response),
                   isInitiatingAuth: false,
                 });
                 return;

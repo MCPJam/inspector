@@ -674,7 +674,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       "Swarm run-2b"
     );
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
-    expect(await screen.findByTestId("swarm-insights-statline")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
     expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();

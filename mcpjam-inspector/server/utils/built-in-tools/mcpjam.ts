@@ -31,7 +31,9 @@
 import { tool, type ToolSet } from "ai";
 import {
   callServerToolOperation,
+  connectProjectServerOperation,
   diagnoseServerOperation,
+  getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
   getChatboxOperation,
   getEvalIterationTraceOperation,
@@ -69,6 +71,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Connecting a server from in-app chat produces a private link the user
+  // opens in the same browser they are already signed into.
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -128,6 +134,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   // wander out of the surface the person is looking at.
   get_me: "The chat surface already knows who is signed in.",
   list_models: "Model choice is the chat UI's own control, not a tool call.",
+  list_organizations:
+    "Chat runs inside an organization the app shell already names in its switcher; listing the others would only invite the model to reference a scope this window is not in.",
 
   // Project and org lifecycle. The UI has dedicated flows with confirmations,
   // and these reshape what the rest of the app is showing.
@@ -165,6 +173,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Re-wiring a host's server set is an administrative action.",
   duplicate_host: "Host administration has its own tab.",
   list_project_environments: "Environments have their own tab.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not a user-facing action: it answers whether this platform accepts a model override, which every write path already asks on the caller's behalf.",
   get_project_environment: "Environments have their own tab.",
   resolve_project_environment: "Resolution detail with no chat-facing use.",
   create_project_environment: "Environment authoring has its own editor.",
@@ -240,6 +250,10 @@ const APPROVAL_REQUIRED_IDS = new Set([
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,
+  // Belongs with its create/update/delete siblings and then some: the URL is
+  // supplied by whoever is talking to the model, this server dials it, and a
+  // completed flow adds a server row to the user's project.
+  connectProjectServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted

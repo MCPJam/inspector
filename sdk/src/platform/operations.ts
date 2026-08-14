@@ -51,6 +51,7 @@ import type {
   PlatformJourneyRunLaunched,
   PlatformScenario,
   PlatformScenarioDeleted,
+  PlatformEnvironmentCapabilities,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -61,6 +62,7 @@ import type {
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
+  PlatformOrganization,
   PlatformPage,
   PlatformMe,
   PlatformModel,
@@ -68,6 +70,7 @@ import type {
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
+  PlatformServerConnection,
   PlatformTunnelGrant,
 } from "./types.js";
 
@@ -102,6 +105,21 @@ export const listModelsOperation: PlatformOperation<
   inputSchema: z.object({}),
   async execute(_input, { client, signal }) {
     return client.listModels({ signal });
+  },
+};
+
+export const listOrganizationsOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformPage<PlatformOrganization>
+> = {
+  name: "list_organizations",
+  title: "List MCPJam organizations",
+  description:
+    "List the organizations the caller belongs to. Use this to discover the organization id that list_projects filters by and create_project takes. An organization-scoped API key only ever sees its own organization.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.listOrganizations({ signal });
   },
 };
 
@@ -167,7 +185,14 @@ export const listProjectsOperation: PlatformOperation<
 const createProjectInput = z.object({
   name: z.string().trim().min(1),
   description: z.string().optional(),
-  organizationId: z.string().trim().min(1).optional(),
+  organizationId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Organization to create the project in, from list_organizations. Defaults to the caller's own organization."
+    ),
   icon: z.string().optional(),
   visibility: z.enum(["public", "private"]).optional(),
 });
@@ -179,7 +204,8 @@ export const createProjectOperation: PlatformOperation<
 > = {
   name: "create_project",
   title: "Create an MCPJam project",
-  description: "Create a new project in an accessible organization.",
+  description:
+    "Create an empty project in an organization the caller belongs to. The new project starts with no MCP servers; add them with create_project_server or connect_project_server. Counts against the organization plan's project limit.",
   readOnly: false,
   inputSchema: createProjectInput,
   async execute(input, { client, signal }) {
@@ -211,7 +237,8 @@ export const updateProjectOperation: PlatformOperation<
 > = {
   name: "update_project",
   title: "Update an MCPJam project",
-  description: "Update project metadata without replacing its server set.",
+  description:
+    "Rename a project or change its description, icon or visibility. Metadata only — this never adds, removes or edits the project's MCP server configurations, which have their own operations.",
   readOnly: false,
   inputSchema: updateProjectInput,
   async execute(input, { client, signal }) {
@@ -3004,16 +3031,41 @@ const createHostInput = z
       .describe("Theme stamped into the seeded host config (template only)."),
     config: z
       .record(z.string(), z.unknown())
-      .refine((value) => Object.keys(value).length > 0, {
-        message: "`config` must be a non-empty host config object.",
-      })
       .optional()
       .describe(
-        "Full host config v2 to use verbatim (alternative to template)."
+        "Full host config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`."
       ),
   })
-  .refine((value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1, {
-    message: "Provide exactly one of `template` or a non-empty `config`.",
+  // ONE `superRefine`, shaped exactly like the route's, because the route's 400
+  // is the error the caller actually receives and the schema must not predict a
+  // different one. A field-level `.refine` on `config` cannot do that: it fails
+  // before object-level checks run, so a degenerate `config: {}` would be
+  // reported here as "config must be non-empty" while the route reports the XOR.
+  // Counting the branch from a NON-EMPTY config makes `{}` read as "you picked
+  // neither branch", and the early return keeps the model check off a request
+  // that has no config branch to pin a model on.
+  .superRefine((value, ctx) => {
+    const hasConfig =
+      value.config !== undefined && Object.keys(value.config).length > 0;
+    if ((value.template ? 1 : 0) + (hasConfig ? 1 : 0) !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide exactly one of `template` or a non-empty `config`.",
+      });
+      return;
+    }
+    // Mirrors the v1 route's forward-client invariant. Enforced here too so an
+    // SDK/agent caller is told by the schema rather than by a 400 the published
+    // contract never predicted.
+    const modelId = hasConfig ? value.config!.modelId : undefined;
+    if (hasConfig && !(typeof modelId === "string" && modelId.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config", "modelId"],
+        message:
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+      });
+    }
   });
 export type CreateHostInput = z.infer<typeof createHostInput>;
 
@@ -3024,7 +3076,7 @@ export const createHostOperation: PlatformOperation<
   name: "create_host",
   title: "Create an MCPJam host",
   description:
-    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`). Returns the created host.",
+    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`, which must pin a non-empty `modelId`). Returns the created host.",
   readOnly: false,
   inputSchema: createHostInput,
   async execute(input, { client, signal }) {
@@ -3337,6 +3389,49 @@ export const listEnvironmentsOperation: PlatformOperation<
   },
 };
 
+const environmentCapabilitiesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type EnvironmentCapabilitiesInput = z.infer<
+  typeof environmentCapabilitiesInput
+>;
+
+export type EnvironmentCapabilitiesResult = {
+  project: SelectedProjectInfo;
+  capabilities: PlatformEnvironmentCapabilities;
+};
+
+export const getEnvironmentCapabilitiesOperation: PlatformOperation<
+  EnvironmentCapabilitiesInput,
+  EnvironmentCapabilitiesResult
+> = {
+  name: "get_project_environment_capabilities",
+  title: "Check what an MCPJam deployment's environment surface supports",
+  description:
+    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
+  readOnly: true,
+  inputSchema: environmentCapabilitiesInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      capabilities: await client.getEnvironmentCapabilities(
+        { projectId: project.id },
+        { signal }
+      ),
+    };
+  },
+};
+
 const environmentSelectorInput = z.object({
   project: z
     .string()
@@ -3462,6 +3557,14 @@ const createEnvironmentInput = z.object({
     .describe(
       "Optional standalone server group to pin. Omit to fall back to the host config's own servers."
     ),
+  modelId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
+    ),
   skillSelection: skillSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
   sandboxImageId: z
@@ -3503,6 +3606,7 @@ export const createEnvironmentOperation: PlatformOperation<
           ...(input.serverAttachmentId !== undefined
             ? { serverAttachmentId: input.serverAttachmentId }
             : {}),
+          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
           ...(input.skillSelection !== undefined
             ? { skillSelection: input.skillSelection }
             : {}),
@@ -3557,6 +3661,15 @@ const updateEnvironmentInput = z
       .describe(
         "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged."
       ),
+    modelId: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        "New model override, or null to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
+      ),
     skillSelection: skillSelectionInput
       .nullable()
       .optional()
@@ -3585,12 +3698,13 @@ const updateEnvironmentInput = z
       value.description !== undefined ||
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
+      value.modelId !== undefined ||
       value.skillSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
@@ -3602,7 +3716,7 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   inputSchema: updateEnvironmentInput,
   async execute(input, { client, signal }) {
@@ -3627,6 +3741,7 @@ export const updateEnvironmentOperation: PlatformOperation<
     if (input.hostId !== undefined) body.hostId = input.hostId;
     if (input.serverAttachmentId !== undefined)
       body.serverAttachmentId = input.serverAttachmentId;
+    if (input.modelId !== undefined) body.modelId = input.modelId;
     if (input.skillSelection !== undefined)
       body.skillSelection = input.skillSelection;
     if (input.pluginVersionIds !== undefined)
@@ -4732,15 +4847,168 @@ export const unpublishScenarioOperation: PlatformOperation<
  * agent, and in-app chat) partition this list and their tests fail when an
  * operation is neither exposed nor explicitly excluded.
  */
+const connectProjectServerInput = z.object({
+  // Validated HERE rather than left to the API. This is the field a model or a
+  // CLI flag fills in, and rejecting `not-a-url` or `file:///etc/passwd` at the
+  // keyboard is both a better error and one fewer caller-supplied string that
+  // reaches an egress guard to be refused. The guard still runs — this is the
+  // outer of two checks, never a replacement for it.
+  url: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (value) => {
+        try {
+          const parsed = new URL(value);
+          return parsed.protocol === "http:" || parsed.protocol === "https:";
+        } catch {
+          return false;
+        }
+      },
+      { message: "Must be an http:// or https:// URL." }
+    )
+    .describe("The MCP server URL to connect (http or https)."),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or id. Omit to let the person choose in the browser — this never defaults to a project on their behalf."
+    ),
+  serverId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Disambiguates when the project already has several saved servers on this URL. Supply one of the ids from an AMBIGUOUS_SERVER error."
+    ),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Name for the server if a new one is created. Ignored when an existing server is reused."
+    ),
+  reauthorize: z
+    .boolean()
+    .optional()
+    .describe("Force a fresh authorization instead of reusing one in flight."),
+});
+
+export type ConnectProjectServerInput = z.infer<
+  typeof connectProjectServerInput
+>;
+
+const getProjectServerConnectionStatusInput = z.object({
+  connectionRequestId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The connection request id returned by connect_project_server."),
+});
+
+export type GetProjectServerConnectionStatusInput = z.infer<
+  typeof getProjectServerConnectionStatusInput
+>;
+
+/**
+ * Connect an MCP server URL to a project — the handoff-first flow.
+ *
+ * WHAT MAKES THIS OPERATION UNUSUAL: it usually cannot finish on its own. A
+ * server that needs OAuth needs a human at a browser, and a request with no
+ * project needs someone to choose one. So the honest result of a successful
+ * call is often `awaiting_authorization` plus a link, not a connected server.
+ * Callers are expected to present the link and then poll
+ * `get_project_server_connection_status`.
+ *
+ * `handoffUrl` IS A PRIVATE CAPABILITY. Anyone holding it can complete the
+ * authorization, so a surface must deliver it to the requester alone —
+ * ephemerally in Slack, behind an owner-checked button in Discord — and never
+ * let a model repeat it in prose. The agent adapter strips it from
+ * model-visible text for exactly this reason.
+ */
+export const connectProjectServerOperation: PlatformOperation<
+  ConnectProjectServerInput,
+  PlatformServerConnection
+> = {
+  name: "connect_project_server",
+  title: "Connect an MCP server to a project",
+  description:
+    "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries a private authorization link for the requester to open; present it privately and never repeat the URL in a shared channel. Poll get_project_server_connection_status until the status is ready or failed.",
+  readOnly: false,
+  inputSchema: connectProjectServerInput,
+  async execute(input, { client, signal }) {
+    // Resolve a NAMED project to an id, but only when one was supplied.
+    // `resolveProject`'s no-selector arm falls back to the most recently
+    // updated project, and silently adopting that here would connect a server
+    // to whichever project the caller happened to touch last. Absent means
+    // absent: the request becomes `awaiting_project` and a human chooses.
+    let projectId: string | undefined;
+    if (input.project) {
+      const { project } = await resolveProjectOrThrow(
+        client,
+        input.project,
+        signal
+      );
+      projectId = project.id;
+    }
+
+    return await client.createServerConnection(
+      {
+        body: {
+          url: input.url,
+          projectId,
+          serverId: input.serverId,
+          name: input.name,
+          reauthorize: input.reauthorize,
+        },
+      },
+      { signal }
+    );
+  },
+};
+
+/**
+ * Poll one connection request.
+ *
+ * Read-only and cheap by design — the status path carries no rate-limit
+ * bucket, so a caller never has to choose between polling responsively and
+ * tripping a budget.
+ */
+export const getProjectServerConnectionStatusOperation: PlatformOperation<
+  GetProjectServerConnectionStatusInput,
+  PlatformServerConnection
+> = {
+  name: "get_project_server_connection_status",
+  title: "Check a server connection",
+  description:
+    "Check the status of a server connection request started by connect_project_server. Returns the current status, the saved server once one exists, and an error with a retryable flag if it failed.",
+  readOnly: true,
+  inputSchema: getProjectServerConnectionStatusInput,
+  async execute(input, { client, signal }) {
+    return await client.getServerConnection(
+      { connectionRequestId: input.connectionRequestId },
+      { signal }
+    );
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
+  listOrganizationsOperation,
   listProjectsOperation,
   createProjectOperation,
   updateProjectOperation,
   deleteProjectOperation,
   listProjectServersOperation,
   showServersOperation,
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
@@ -4793,6 +5061,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   setHostServersOperation,
   duplicateHostOperation,
   listEnvironmentsOperation,
+  getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
   createEnvironmentOperation,

@@ -26,12 +26,17 @@ so results respect the caller's project access.
 | --- | --- | --- |
 | `get_me` | Return the account associated with the current API credential. | — |
 | `list_models` | List the public hosted model catalog available to MCPJam callers. | — |
+| `list_organizations` | List the organizations the caller belongs to — where project `organizationId`s come from. | — |
 | `list_projects` | List the MCPJam projects the caller can access, most recently updated first. | — |
+| `create_project` | Create an empty project in one of the caller's organizations. | — |
+| `update_project` | Rename a project or change its description, icon or visibility. Never touches server configs. | — |
 | `list_project_servers` | List the MCP servers saved in an MCPJam project. | — |
 | `create_project_server` | Save a new MCP server in a project, including optional credentials. | — |
 | `get_project_server` | Read one saved MCP server by project and server id. | — |
 | `update_project_server` | Update saved MCP server metadata or rotate/clear credentials. | — |
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
+| `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
+| `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
