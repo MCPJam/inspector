@@ -46,9 +46,8 @@ import {
   type SwarmOverviewTarget,
 } from "@/lib/swarm-api";
 import {
-  PREDICATE_KIND_LABELS,
   formatCriterion,
-  type PredicateKind,
+  isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -78,8 +77,8 @@ export function formatPercent(rate: number): string {
  * to).
  */
 function findingName(finding: SwarmOverviewFinding): string {
-  if (finding.kind && finding.kind in PREDICATE_KIND_LABELS) {
-    return formatCriterion({ ...finding, kind: finding.kind as PredicateKind });
+  if (finding.kind !== undefined && isKnownPredicateKind(finding.kind)) {
+    return formatCriterion({ ...finding, kind: finding.kind });
   }
   return finding.label?.trim() || finding.criterionId;
 }

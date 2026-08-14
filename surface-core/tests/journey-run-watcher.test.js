@@ -116,9 +116,9 @@ describe("collectJourneyRunEvidence", () => {
 					return [
 						...Array.from({ length: 20 }, (_, index) => ({
 							id: `ok_${index}`,
-							status: "completed",
+							outcome: "succeeded",
 						})),
-						{ id: "late_failure", status: "failed" },
+						{ id: "late_failure", outcome: "failed" },
 					];
 				},
 			},
@@ -138,8 +138,8 @@ describe("collectJourneyRunEvidence", () => {
 			apiClient: {
 				getJourneyRunScorecard: async () => null,
 				listJourneyRunSessions: async () => [
-					{ id: "ok_1", status: "completed" },
-					{ id: "limited", status: "rate_limited" },
+					{ id: "ok_1", outcome: "succeeded" },
+					{ id: "limited", outcome: "rate_limited" },
 				],
 			},
 			ctx: {},
@@ -156,9 +156,9 @@ describe("collectJourneyRunEvidence", () => {
 			apiClient: {
 				getJourneyRunScorecard: async () => ({ criteria: [] }),
 				listJourneyRunSessions: async () => [
-					{ id: "ok_1", status: "completed" },
-					{ id: "bad_1", status: "failed" },
-					{ id: "ok_2", status: "completed" },
+					{ id: "ok_1", outcome: "succeeded" },
+					{ id: "bad_1", outcome: "failed" },
+					{ id: "ok_2", outcome: "succeeded" },
 					{ id: "bad_2", goalScore: { passed: false } },
 				],
 			},
@@ -406,5 +406,107 @@ describe("watchJourneyRunUntilDone", () => {
 		);
 		assert.equal(result.status, "failed");
 		assert.deepEqual(edits, ["failed"]);
+	});
+});
+
+// ── Shared copy (copy.js) ───────────────────────────────────────────────────
+// Tested here rather than in a copy test because the contract under test is
+// the PAIRING: these formatters consume exactly what `journeyRunOutcome`
+// produces, and drifting apart shows up as wrong words, not errors.
+
+import {
+	formatJourneyRunEvidenceLines,
+	formatJourneyRunOutcome,
+	plainText,
+} from "../src/copy.js";
+
+describe("formatJourneyRunOutcome", () => {
+	const render = (run) =>
+		plainText(
+			formatJourneyRunOutcome(run, journeyRunOutcome(run), {
+				url: "https://app/swarms/jr_1",
+				actorId: "U1",
+			}),
+		);
+
+	test("counts lead the verdict on every settled kind", () => {
+		const line = render({
+			status: "completed",
+			summary: { total: 10, succeeded: 8, failed: 2 },
+		});
+		// completed-with-failures is MIXED — the formatter must follow the
+		// outcome's reclassification, not the raw status.
+		assert.match(line, /mixed/);
+		assert.match(line, /8\/10 sessions reached their goal/);
+	});
+
+	test("a canceled run reads as stopped, with info severity", () => {
+		const content = formatJourneyRunOutcome(
+			{ status: "failed", canceled: true },
+			journeyRunOutcome({ status: "failed", canceled: true }),
+			{ url: "", actorId: "" },
+		);
+		assert.equal(content.severity, "info");
+		assert.equal(content.code, "journey_run_stopped");
+	});
+
+	test("rate limiting is an error explained in words, not an enum", () => {
+		const line = render({
+			status: "rate_limited",
+			summary: { total: 6, succeeded: 2, rateLimited: 4 },
+		});
+		assert.match(line, /model capacity ran out/);
+		assert.doesNotMatch(line, /rate_limited/);
+	});
+
+	test("no counts clause when the run produced no sessions", () => {
+		assert.doesNotMatch(render({ status: "failed" }), /0\/0/);
+	});
+});
+
+describe("formatJourneyRunEvidenceLines", () => {
+	test("scorecard leads, worst sessions follow", () => {
+		const lines = formatJourneyRunEvidenceLines({
+			scorecard: {
+				criteria: [
+					{ label: "checkout completed", passCount: 1, failCount: 7 },
+					{ criterionId: "c2", passCount: 8, failCount: 0 },
+				],
+			},
+			sessions: [
+				{
+					personaLabel: "Impatient admin",
+					outcome: "succeeded",
+					goalScore: { passed: false },
+					preview: "I give up",
+				},
+				{ personaLabel: "Patient tester", outcome: "rate_limited" },
+			],
+		});
+		assert.equal(lines.length, 4);
+		assert.match(lines[0], /checkout completed: 1 passed, 7 failed/);
+		// A criterion with no label still names itself by id.
+		assert.match(lines[1], /c2: 8 passed, 0 failed/);
+		assert.match(lines[2], /Impatient admin: did not reach the goal/);
+		assert.match(lines[2], /I give up/);
+		assert.match(lines[3], /Patient tester: rate-limited/);
+	});
+
+	test("caps sessions and returns [] when there is nothing to show", () => {
+		assert.deepEqual(
+			formatJourneyRunEvidenceLines({ scorecard: null, sessions: [] }),
+			[],
+		);
+		const many = formatJourneyRunEvidenceLines(
+			{
+				scorecard: null,
+				sessions: Array.from({ length: 9 }, (_, index) => ({
+					personaLabel: `p${index}`,
+					status: "failed",
+				})),
+			},
+			{ maxSessions: 3 },
+		);
+		assert.equal(many.length, 3);
 	});
 });

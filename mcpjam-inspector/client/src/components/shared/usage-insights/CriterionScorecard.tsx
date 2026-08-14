@@ -8,9 +8,8 @@ import {
 } from "@/hooks/chatbox-usage-filters";
 import type { CriterionFacet } from "@/hooks/useUsageInsights";
 import {
-  PREDICATE_KIND_LABELS,
   formatCriterion,
-  type PredicateKind,
+  isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
 
 /** Keep the scorecard headline and compact statline on one calculation. */
@@ -229,8 +228,8 @@ export function CriterionScorecard({
  * `formatCriterion` has no id to fall back to.
  */
 function criterionDisplayName(facet: CriterionFacet): string {
-  if (facet.kind && facet.kind in PREDICATE_KIND_LABELS) {
-    return formatCriterion({ ...facet, kind: facet.kind as PredicateKind });
+  if (facet.kind !== undefined && isKnownPredicateKind(facet.kind)) {
+    return formatCriterion({ ...facet, kind: facet.kind });
   }
   return facet.label?.trim() || facet.criterionId;
 }
