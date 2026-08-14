@@ -695,19 +695,19 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
-  // PUR-11: guests land with 3 pre-selected clients (ChatGPT, Claude, Cursor)
+  // PUR-11: guests land with 3 pre-selected clients (Claude, ChatGPT, Cursor)
   // instead of a single blank "MCPJam" host + a toggle to find first.
-  it("seeds 3 default clients (ChatGPT, Claude, Cursor) for empty projects", async () => {
+  it("seeds 3 default clients (Claude, ChatGPT, Cursor) for empty projects", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     mockCreateHost
       .mockResolvedValueOnce({
-        hostId: "h-chatgpt",
-        hostConfigId: "h-chatgpt-config",
-      })
-      .mockResolvedValueOnce({
         hostId: "h-claude",
         hostConfigId: "h-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
       })
       .mockResolvedValueOnce({
         hostId: "h-cursor",
@@ -728,10 +728,14 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(mockCreateHost).toHaveBeenCalledTimes(3);
     });
     expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "default", name: "ChatGPT" })
+      expect.objectContaining({ projectId: "default", name: "Claude" })
     );
     expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "default", name: "Claude" })
+      expect.objectContaining({
+        projectId: "default",
+        name: "ChatGPT",
+        input: expect.objectContaining({ modelId: "openai/gpt-5.6-luna" }),
+      })
     );
     expect(mockCreateHost).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -745,15 +749,15 @@ describe("PlaygroundMain — multi-host render path", () => {
       })
     );
 
-    // Lead is the first seed template (ChatGPT); the compare lineup is
+    // Lead is the first seed template (Claude); the compare lineup is
     // seeded alongside it — no manual toggle needed for a guest to land in
     // a 3-way compare.
     await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-chatgpt");
+      expect(readPreviewedHostId()).toBe("h-claude");
     });
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
-      "h-chatgpt",
       "h-claude",
+      "h-chatgpt",
       "h-cursor",
     ]);
 

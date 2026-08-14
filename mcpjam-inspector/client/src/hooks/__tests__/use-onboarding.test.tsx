@@ -20,18 +20,7 @@ const mockState = vi.hoisted(() => ({
   markOnboardingShownMutation: vi.fn().mockResolvedValue(undefined),
   detectEnvironment: vi.fn(() => "test"),
   detectPlatform: vi.fn(() => "web"),
-  hostedMode: false,
 }));
-
-vi.mock("@/lib/config", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/config")>();
-  return {
-    ...actual,
-    get HOSTED_MODE() {
-      return mockState.hostedMode;
-    },
-  };
-});
 
 vi.mock("convex/react", () => ({
   useQuery: () => mockState.convexUser,
@@ -76,7 +65,6 @@ describe("useOnboarding", () => {
     vi.clearAllMocks();
     localStorage.clear();
     mockState.convexUser = undefined;
-    mockState.hostedMode = false;
   });
 
   it("auto-connects Excalidraw for a fresh first run", async () => {
@@ -93,28 +81,6 @@ describe("useOnboarding", () => {
     expect(result.current.phase).toBe("connecting_excalidraw");
 
     expect(result.current.isBootstrappingFirstRunConnection).toBe(true);
-    await waitFor(() => {
-      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
-    });
-  });
-
-  it("waits for a new local guest project before auto-connecting", async () => {
-    const onConnect = vi.fn();
-    const { rerender } = renderHook(
-      ({ isProjectProvisioned }: { isProjectProvisioned: boolean }) =>
-        useOnboarding({
-          servers: {},
-          onConnect,
-          isSignedInWithWorkOs: false,
-          isWorkOsAuthLoading: false,
-          isProjectProvisioned,
-        }),
-      { initialProps: { isProjectProvisioned: false } }
-    );
-
-    expect(onConnect).not.toHaveBeenCalled();
-    rerender({ isProjectProvisioned: true });
-
     await waitFor(() => {
       expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
     });
@@ -149,7 +115,6 @@ describe("useOnboarding", () => {
   });
 
   it("waits for a new guest project before auto-connecting Excalidraw", async () => {
-    mockState.hostedMode = true;
     const onConnect = vi.fn();
     const { rerender } = renderHook(
       ({ isProjectProvisioned }: { isProjectProvisioned: boolean }) =>

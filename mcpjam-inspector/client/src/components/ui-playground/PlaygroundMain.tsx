@@ -252,10 +252,14 @@ const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 // template like "claude-code" would both leak the gated client to everyone
 // and have no working way to be filtered out.
 const PLAYGROUND_SEED_TEMPLATE_IDS = [
-  "chatgpt",
   "claude",
+  "chatgpt",
   "cursor",
 ] as const;
+
+const PLAYGROUND_SEED_MODEL_OVERRIDES: Partial<Record<string, string>> = {
+  chatgpt: "openai/gpt-5.6-luna",
+};
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
@@ -1456,9 +1460,14 @@ export function PlaygroundMain({
         createPlaygroundHost({
           projectId: seedProjectId,
           name: host!.label,
-          input: cloneHostTemplateInput(template, {
-            themeMode: seedThemeMode,
-          }),
+          input: {
+            ...cloneHostTemplateInput(template, {
+              themeMode: seedThemeMode,
+            }),
+            ...(PLAYGROUND_SEED_MODEL_OVERRIDES[host!.id]
+              ? { modelId: PLAYGROUND_SEED_MODEL_OVERRIDES[host!.id] }
+              : {}),
+          },
         })
       )
     ).then(async (results) => {
