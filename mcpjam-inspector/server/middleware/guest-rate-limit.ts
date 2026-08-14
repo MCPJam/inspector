@@ -1,9 +1,16 @@
 import type { Context, Next } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
+import { hasDedicatedPollBudget } from "./server-connection-poll-rate-limit.js";
 
 /**
  * Per-guestId rate limiting for OAuth proxy routes.
  * In-memory sliding window: 60 req/min per guestId.
+ *
+ * One route stands outside it: the connection status GET, which is polled every
+ * few seconds by design and would spend half this bucket doing what the flow
+ * tells it to. It carries its own, poll-shaped budget instead — see
+ * `server-connection-poll-rate-limit.ts`, which defines both the exemption and
+ * the limiter that replaces it.
  */
 
 const GUEST_RATE_LIMIT = 60;
@@ -32,6 +39,11 @@ export async function guestRateLimitMiddleware(
   const guestId = c.get("guestId");
   if (!guestId) {
     // Not a guest request — skip rate limiting
+    return next();
+  }
+
+  // Metered elsewhere, on a budget shaped for polling.
+  if (hasDedicatedPollBudget(c.req.method, c.req.path)) {
     return next();
   }
 

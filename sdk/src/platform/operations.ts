@@ -87,6 +87,7 @@ import type {
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
+  PlatformServerConnection,
   PlatformTunnelGrant,
 } from "./types.js";
 
@@ -6759,6 +6760,156 @@ export const rebindUserTestingScenarioOperation: PlatformOperation<
   },
 };
 
+const connectProjectServerInput = z.object({
+  // Validated HERE rather than left to the API. This is the field a model or a
+  // CLI flag fills in, and rejecting `not-a-url` or `file:///etc/passwd` at the
+  // keyboard is both a better error and one fewer caller-supplied string that
+  // reaches an egress guard to be refused. The guard still runs — this is the
+  // outer of two checks, never a replacement for it.
+  url: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (value) => {
+        try {
+          const parsed = new URL(value);
+          return parsed.protocol === "http:" || parsed.protocol === "https:";
+        } catch {
+          return false;
+        }
+      },
+      { message: "Must be an http:// or https:// URL." }
+    )
+    .describe("The MCP server URL to connect (http or https)."),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or id. Omit to let the person choose in the browser — this never defaults to a project on their behalf."
+    ),
+  serverId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Disambiguates when the project already has several saved servers on this URL. Supply one of the ids from an AMBIGUOUS_SERVER error."
+    ),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Name for the server if a new one is created. Ignored when an existing server is reused."
+    ),
+  reauthorize: z
+    .boolean()
+    .optional()
+    .describe("Force a fresh authorization instead of reusing one in flight."),
+});
+
+export type ConnectProjectServerInput = z.infer<
+  typeof connectProjectServerInput
+>;
+
+const getProjectServerConnectionStatusInput = z.object({
+  connectionRequestId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The connection request id returned by connect_project_server."),
+});
+
+export type GetProjectServerConnectionStatusInput = z.infer<
+  typeof getProjectServerConnectionStatusInput
+>;
+
+/**
+ * Connect an MCP server URL to a project — the handoff-first flow.
+ *
+ * WHAT MAKES THIS OPERATION UNUSUAL: it usually cannot finish on its own. A
+ * server that needs OAuth needs a human at a browser, and a request with no
+ * project needs someone to choose one. So the honest result of a successful
+ * call is often `awaiting_authorization` plus a link, not a connected server.
+ * Callers are expected to present the link and then poll
+ * `get_project_server_connection_status`.
+ *
+ * `handoffUrl` IS A PRIVATE CAPABILITY. Anyone holding it can complete the
+ * authorization, so a surface must deliver it to the requester alone —
+ * ephemerally in Slack, behind an owner-checked button in Discord — and never
+ * let a model repeat it in prose. The agent adapter strips it from
+ * model-visible text for exactly this reason.
+ */
+export const connectProjectServerOperation: PlatformOperation<
+  ConnectProjectServerInput,
+  PlatformServerConnection
+> = {
+  name: "connect_project_server",
+  title: "Connect an MCP server to a project",
+  description:
+    "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries a private authorization link for the requester to open; present it privately and never repeat the URL in a shared channel. Poll get_project_server_connection_status until the status is ready or failed.",
+  readOnly: false,
+  inputSchema: connectProjectServerInput,
+  async execute(input, { client, signal }) {
+    // Resolve a NAMED project to an id, but only when one was supplied.
+    // `resolveProject`'s no-selector arm falls back to the most recently
+    // updated project, and silently adopting that here would connect a server
+    // to whichever project the caller happened to touch last. Absent means
+    // absent: the request becomes `awaiting_project` and a human chooses.
+    let projectId: string | undefined;
+    if (input.project) {
+      const { project } = await resolveProjectOrThrow(
+        client,
+        input.project,
+        signal
+      );
+      projectId = project.id;
+    }
+
+    return await client.createServerConnection(
+      {
+        body: {
+          url: input.url,
+          projectId,
+          serverId: input.serverId,
+          name: input.name,
+          reauthorize: input.reauthorize,
+        },
+      },
+      { signal }
+    );
+  },
+};
+
+/**
+ * Poll one connection request.
+ *
+ * Read-only and cheap by design — the status path carries no rate-limit
+ * bucket, so a caller never has to choose between polling responsively and
+ * tripping a budget.
+ */
+export const getProjectServerConnectionStatusOperation: PlatformOperation<
+  GetProjectServerConnectionStatusInput,
+  PlatformServerConnection
+> = {
+  name: "get_project_server_connection_status",
+  title: "Check a server connection",
+  description:
+    "Check the status of a server connection request started by connect_project_server. Returns the current status, the saved server once one exists, and an error with a retryable flag if it failed.",
+  readOnly: true,
+  inputSchema: getProjectServerConnectionStatusInput,
+  async execute(input, { client, signal }) {
+    return await client.getServerConnection(
+      { connectionRequestId: input.connectionRequestId },
+      { signal }
+    );
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
@@ -6768,6 +6919,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteProjectOperation,
   listProjectServersOperation,
   showServersOperation,
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,

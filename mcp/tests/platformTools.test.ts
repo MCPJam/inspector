@@ -99,6 +99,8 @@ const PLAIN_TOOLS = [
   "update_project_server",
   "delete_project_server",
   // Server live operations are agent-oriented payloads with no widget view.
+  "connect_project_server",
+  "get_project_server_connection_status",
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
@@ -268,6 +270,8 @@ describe("platform tool registration", () => {
       "get_project_server",
       "update_project_server",
       "delete_project_server",
+      "connect_project_server",
+      "get_project_server_connection_status",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -408,6 +412,10 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "create_project_server",
       "update_project_server",
+      // Creates a connection request, and possibly a DISABLED server row.
+      // Nothing is destroyed and nothing is enabled without a person
+      // completing the flow, so it is a write rather than a destructive one.
+      "connect_project_server",
       // Swarms authoring. Persists and is editable; nothing here removes
       // anything, and creating a journey starts nothing.
       "create_persona",

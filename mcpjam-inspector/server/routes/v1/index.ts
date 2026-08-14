@@ -17,6 +17,7 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
+import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
 import resources from "./resources.js";
@@ -72,6 +73,7 @@ v1.use("*", async (c, next) => {
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
 v1.route("/", resources);
