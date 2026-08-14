@@ -601,10 +601,10 @@ describe("useServerState CLI config import", () => {
 
   // `servers:getProjectServers` is workspace-wide, so a row owned by a sibling
   // project comes back in this project's list. It is not ours to write, and on
-  // the secret path `servers:createServer` rejects the name per workspace, so
-  // the action resolves the conflict back to that row and returns it with this
-  // payload never applied — which is how one CLI re-import re-attempted the
-  // same doomed create on every launch (Sentry CONVEX-1R / CONVEX-1NG).
+  // the secret path `servers:createServerWithClientSecret` resolves the
+  // workspace name clash back to that row and returns its id with this payload
+  // never applied — which is how one CLI re-import re-attempted the same doomed
+  // create on every launch (Sentry CONVEX-1R / CONVEX-1NG).
   //
   // Both branches that can spot the twin are covered: the local snapshot, which
   // is all the resolver has until the workspace user is ready, and the fresh
@@ -839,6 +839,88 @@ describe("useServerState CLI config import", () => {
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
     expect(mockUpdateServer).not.toHaveBeenCalled();
     expect(mockUpdateServerWithClientSecret).not.toHaveBeenCalled();
+  });
+
+  it("does not create after a failed update when the row it resolved is gone and a sibling holds the name", async () => {
+    // The row resolved on the first pass is not proof it still exists — that is
+    // what the update failing says. Re-resolving finds a sibling's row instead,
+    // and on the secret path a create would resolve back to it, so this project
+    // would bind an id it may not write.
+    mockUseDbUserReady.mockReturnValue(true);
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          servers: [
+            {
+              name: "cli-http",
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: { Authorization: "Bearer secret" },
+            },
+          ],
+        },
+      }),
+    } as Response);
+    mockConvexQuery
+      .mockResolvedValueOnce([
+        {
+          _id: "srv_own",
+          projectId: "proj_cloud",
+          name: "cli-http",
+          enabled: true,
+          transportType: "http" as const,
+          url: "https://example.com/mcp",
+        },
+      ])
+      .mockResolvedValue([
+        {
+          _id: "srv_sibling",
+          projectId: "proj_sibling",
+          name: "cli-http",
+          enabled: true,
+          transportType: "http" as const,
+          url: "https://example.com/mcp",
+        },
+      ]);
+    mockUpdateServerWithClientSecret.mockRejectedValueOnce(
+      new Error("Server not found")
+    );
+    const appState = createCloudCliAppState();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger,
+      })
+    );
+
+    await waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Server name already belongs to another project in this workspace",
+        expect.objectContaining({ existingServerId: "srv_sibling" })
+      );
+    });
+    // The failed first update only, and no create to resolve onto the sibling.
+    expect(mockUpdateServerWithClientSecret).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(injectHostedServerMapping).not.toHaveBeenCalled();
   });
 });
 

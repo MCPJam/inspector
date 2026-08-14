@@ -1734,11 +1734,13 @@ export function useServerState({
       // with the same name owned by ANOTHER project in the same workspace:
       // `servers:getProjectServers` returns those (the list is workspace-wide,
       // by design) but `remoteServerBelongsToProject` reads them as absent.
-      // That only breaks the secret path, whose create runs through
-      // `servers:createServer` and is rejected per WORKSPACE — the action then
-      // resolves the conflict back to the twin and returns it with this payload
-      // never applied. `servers:createServerIfMissing` matches per PROJECT, so
-      // the no-secret path still creates our own row and is left to run.
+      // That only breaks the secret path, whose create resolves a WORKSPACE
+      // name clash back to the row that already holds the name and returns its
+      // id with this payload never applied. `createServerWithClientSecret`
+      // throws on the clash only under `failOnNameConflict`, which the v1 REST
+      // route passes and this client does not. `servers:createServerIfMissing`
+      // matches per PROJECT, so the no-secret path still creates our own row
+      // and is left to run.
       const resolveExistingServer = async (
         snapshot: RemoteServer[] | undefined
       ): Promise<{ owned?: RemoteServer; workspaceTwin?: RemoteServer }> => {
@@ -1960,20 +1962,12 @@ export function useServerState({
           });
           return undefined;
         }
-        // Best-effort fallback for stale query snapshots:
-        // if update failed, try create; if create failed, try update when possible.
+        // Best-effort fallback for stale query snapshots: re-resolve the name
+        // and let the second attempt pick its own write. Both failures come
+        // down to the same doubt — the row this pass resolved may not be the
+        // one that exists now — so neither may skip the re-resolve and jump
+        // straight to a create.
         try {
-          if (existingServer) {
-            const createPayload = {
-              projectId: latestProjectId,
-              ...payload,
-              ...(hasClientSecretValue ? { clientSecret } : {}),
-            };
-            const newId = hasSecretOperation
-              ? await convexCreateServerWithClientSecret(createPayload)
-              : await convexCreateServerIfMissing(createPayload);
-            return newId as string | undefined;
-          }
           const flatRetry =
             activeProjectServersFlatRef.current ?? activeProjectServersFlat;
           const retry = await resolveExistingServer(flatRetry);
@@ -1993,9 +1987,11 @@ export function useServerState({
             }
             return retryExisting._id;
           }
-          // A twin can surface here even when the first resolve missed it —
-          // a concurrent create in a sibling project is exactly the race the
-          // primary write just lost. Retrying would only resolve back to it.
+          // A twin can surface here even when the first resolve missed it: a
+          // sibling project may have won the name concurrently, or — the
+          // ordinary case for a stale snapshot — our own row is gone and a
+          // sibling's row has held the name all along. Either way a second
+          // create would only resolve back to it.
           if (retry.workspaceTwin && hasSecretOperation) {
             logWorkspaceTwinConflict(retry.workspaceTwin);
             return undefined;
