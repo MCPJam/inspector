@@ -130,6 +130,34 @@ describe("ChatboxUsagePanel rating filter", () => {
     );
   });
 
+  it("hands the list the rating selection for its empty-state copy, minus the policy chip", () => {
+    // The list's `filterState` only feeds the empty-state copy. It must see
+    // the USER'S selection — "Low (≤2)" over a clean scenario has to read as
+    // "no sessions match the current filters", not "No conversations yet" —
+    // but never the force-applied hide-synthetic policy chip, which would
+    // claim an active filter on an untouched panel.
+    render(<ChatboxUsagePanel chatbox={CHATBOX} />);
+
+    let listProps = threadListMock.mock.calls.at(-1)?.[0] as {
+      filterState?: { preset: string; chips: Array<{ key?: string }> };
+    };
+    expect(listProps.filterState?.preset).toBe("all");
+    expect(listProps.filterState?.chips).toEqual([]);
+
+    fireEvent.click(screen.getByTestId("chatbox-sessions-rating-filter"));
+    fireEvent.click(screen.getByText("Low (≤2)"));
+
+    listProps = threadListMock.mock.calls.at(-1)?.[0] as {
+      filterState?: { preset: string; chips: Array<{ key?: string }> };
+    };
+    expect(listProps.filterState?.chips).toEqual([
+      { kind: "dimension", key: "feedbackBucket", value: "negative" },
+    ]);
+    expect(
+      listProps.filterState?.chips.some((chip) => chip.key === "synthetic")
+    ).toBe(false);
+  });
+
   it("re-checks the returned page so a live update cannot leak through", () => {
     useUsageInsightsMock.mockReturnValue({
       threads: [

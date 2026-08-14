@@ -73,16 +73,27 @@ const RATING_FILTER_LABELS: Record<RatingFilterValue, string> = {
 };
 
 /**
- * Fold the rating selection into the traffic policy.
+ * Fold the rating selection into a base filter.
  *
  * `none` is a PRESET (`no_feedback`), not a bucket chip: "nobody rated this"
  * is the absence of a record, and the preset is the shared expression of that
  * on both sides of the wire. The other three are `feedbackBucket` chips.
+ *
+ * Applied to two different bases: the traffic policy
+ * (`SESSIONS_TRAFFIC_FILTER`) for the query and the client-side match, and
+ * `EMPTY_USAGE_FILTER` for the list's empty-state copy — the list must see
+ * the USER'S selection (so "Low (≤2)" with no matches says "no sessions match
+ * the current filters", not "No conversations yet") but not the force-applied
+ * hide-synthetic policy chip, which would claim a filter the panel never
+ * showed.
  */
-function buildSessionsFilter(rating: RatingFilterValue) {
-  if (rating === "all") return SESSIONS_TRAFFIC_FILTER;
+function buildRatingFilter(
+  rating: RatingFilterValue,
+  base: typeof SESSIONS_TRAFFIC_FILTER
+) {
+  if (rating === "all") return base;
   if (rating === "none") {
-    return { ...SESSIONS_TRAFFIC_FILTER, preset: "no_feedback" as const };
+    return { ...base, preset: "no_feedback" as const };
   }
   const value =
     rating === "low"
@@ -91,9 +102,9 @@ function buildSessionsFilter(rating: RatingFilterValue) {
       ? "neutral"
       : "positive";
   return {
-    ...SESSIONS_TRAFFIC_FILTER,
+    ...base,
     chips: [
-      ...SESSIONS_TRAFFIC_FILTER.chips,
+      ...base.chips,
       { kind: "dimension" as const, key: "feedbackBucket" as const, value },
     ],
   };
@@ -128,7 +139,12 @@ export function ChatboxUsagePanel({
 
   const [ratingFilter, setRatingFilter] = useState<RatingFilterValue>("all");
   const sessionsFilter = useMemo(
-    () => buildSessionsFilter(ratingFilter),
+    () => buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
+    [ratingFilter]
+  );
+  // The user-visible half of the filter, for the list's empty-state copy.
+  const ratingOnlyFilter = useMemo(
+    () => buildRatingFilter(ratingFilter, EMPTY_USAGE_FILTER),
     [ratingFilter]
   );
 
@@ -241,15 +257,16 @@ export function ChatboxUsagePanel({
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 {/* `filterState` reaches an already-filtered list, so it only
-                    feeds the empty-state copy. Handing it the force-applied
-                    policy chip would tell a scenario with no visitor traffic
-                    that "no sessions match the current filters" and offer to
-                    clear chart chips this panel does not have. */}
+                    feeds the empty-state copy. It carries the rating selection
+                    (so an active filter with no matches reads as such) but NOT
+                    the force-applied hide-synthetic policy chip, which would
+                    tell a scenario with no visitor traffic that "no sessions
+                    match the current filters". */}
                 <ShareUsageThreadList
                   threads={sortedThreads}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={setSelectedThreadId}
-                  filterState={EMPTY_USAGE_FILTER}
+                  filterState={ratingOnlyFilter}
                 />
               </div>
             </div>
