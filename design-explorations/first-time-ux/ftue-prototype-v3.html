@@ -151,6 +151,32 @@
   .scrim { position: absolute; inset: 0; background: var(--scrim); backdrop-filter: blur(1.5px); display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 5; animation: fadein 180ms ease; overflow: auto; }
   @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .scrim.from-splash { animation: none; }
+  .scrim.from-splash .sheet { animation: handoff 420ms cubic-bezier(.16,1,.3,1); }
+  @keyframes handoff {
+    from { opacity: 0; transform: translateY(14px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* welcome splash — type card, no sheet. Hands off to the connect form. */
+  .scrim.splash-scrim { background: oklch(0.18 0.012 95 / 0.55); backdrop-filter: blur(4px); cursor: pointer; }
+  .splash { width: 100%; max-width: 420px; margin: auto; padding: 8px 4px 4px; text-align: left; }
+  .splash h2 { font-size: 2rem; font-weight: 650; letter-spacing: -0.038em; line-height: 1.12; color: #fff; margin: 0 0 16px; max-width: 12ch; }
+  .splash-rule { display: block; height: 1px; width: 0; background: var(--accent); margin: 0 0 16px; animation: aim 720ms 180ms cubic-bezier(.16,1,.3,1) forwards; }
+  @keyframes aim { to { width: 72px; } }
+  .splash-lede { font-size: 14.5px; line-height: 1.5; color: oklch(0.93 0.015 90 / 0.78); margin: 0 0 28px; max-width: 42ch; }
+  .splash-go { border: 0; background: none; padding: 0; font-family: var(--sans); font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: oklch(1 0 0 / 0.35); }
+  .splash-go:hover { text-decoration-color: #fff; }
+  .splash-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+  .splash > *:not(.splash-rule) { animation: splashin 520ms cubic-bezier(.16,1,.3,1) both; }
+  .splash h2 { animation-delay: 40ms; }
+  .splash-lede { animation-delay: 220ms; }
+  .splash-go { animation-delay: 320ms; }
+  @keyframes splashin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .scrim.splash-out { pointer-events: none; }
+  .scrim.splash-out .splash { animation: splashout 280ms ease forwards; }
+  @keyframes splashout { to { opacity: 0; transform: translateY(-8px); } }
+
   .sheet { width: 100%; max-width: 408px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 24px; box-shadow: 0 18px 44px oklch(0 0 0 / 0.20); animation: rise 200ms ease; margin: auto; }
   .sheet.wide { max-width: 452px; }
   .sheet h2 { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg); margin: 0 0 5px; }
@@ -217,7 +243,8 @@
   .win .count { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0 0 20px; }
   .win .count b { color: var(--fg); font-variant-numeric: tabular-nums; }
   @media (prefers-reduced-motion: reduce) {
-    .scrim, .sheet, .win .ring { animation: none !important; }
+    .scrim, .sheet, .win .ring, .splash > *, .splash-rule, .scrim.from-splash .sheet, .scrim.splash-out .splash { animation: none !important; }
+    .splash-rule { width: 72px; }
     .win .ring path { animation: none; stroke-dashoffset: 0; }
     .composer .send { animation: none; }
     .step.now .ic { animation: none; }
@@ -241,9 +268,10 @@
 <div class="page">
   <h1>MCPJam first-run — prototype v3</h1>
   <p class="sub">
-    Dummy data, no backend. Pick an outcome, then click through. Failures of <b>your own</b> server open an
-    editable detail form; failures of the <b>demo</b> get their own screen, because the user can't fix those.
-    Capability values are real, from your host-compat catalog.
+    Dummy data, no backend. Opens on a welcome splash, then hands off to
+    <b>Point MCPJam at a server</b>. Pick an outcome and click through. Failures of
+    <b>your own</b> server open an editable detail form; failures of the <b>demo</b>
+    get their own screen. Capability values are real, from your host-compat catalog.
   </p>
 
   <div class="rig">
@@ -259,7 +287,7 @@
       </div>
       <button type="button" class="rig-reset" id="reset">Restart</button>
     </div>
-    <p class="rig-note">Any failure picked above, taken via <b>Try the Excalidraw demo</b>, shows the “demo is down” screen instead.</p>
+    <p class="rig-note">Restart replays the welcome. Any failure taken via <b>Try the Excalidraw demo</b> shows the “demo is down” screen instead.</p>
   </div>
 
   <div class="app" id="app">
@@ -289,6 +317,7 @@
   <div class="notes">
     <h3>New in v3</h3>
     <ul>
+      <li><b>Welcome splash, then connect.</b> First paint is a type card over Home — “Welcome to MCPJam” — then it automatically hands off to <b>Point MCPJam at a server</b>. Continue or a click skips the wait. Reduced motion skips the auto-advance.</li>
       <li><b>Own-server failure opens an editable form</b> — name, transport, URL, auth, and a header row — instead of bouncing back to one field. The secondary path there is always Excalidraw.</li>
       <li><b>Demo failure is its own screen.</b> No "Try again", no "Edit URL" — the user typed nothing and can fix nothing. It says it's on us and pivots to connecting their own server.</li>
       <li><b>Success moment</b> before Playground: a check that draws itself and a tool count. One click through, no confetti.</li>
@@ -330,12 +359,14 @@
     };
 
     var state = {
-      outcome: "ok", screen: "home", phase: "choose", url: "", err: "",
+      outcome: "ok", screen: "home", phase: "welcome", url: "", err: "",
       source: "own", client: "claude", showTokenField: false, hintOpen: true,
       connected: null, connectedIsDemo: false, guestBar: true, skipped: false,
       form: { name: "", transport: "http", url: "", auth: "auto", token: "", hKey: "", hVal: "" }
     };
     var stepTimer = null;
+    var welcomeTimer = null;
+    var WELCOME_MS = 2600;
 
     var main = document.getElementById("main");
     var overlayHost = document.getElementById("overlayHost");
@@ -404,12 +435,55 @@
     }
 
     // ---------------- overlay ----------------
-    function sheet(inner, wide) {
-      overlayHost.innerHTML = '<div class="scrim" role="dialog" aria-modal="true" aria-label="Connect your first server">' +
+    function sheet(inner, wide, fromSplash) {
+      overlayHost.innerHTML = '<div class="scrim' + (fromSplash ? " from-splash" : "") +
+        '" role="dialog" aria-modal="true" aria-label="Connect your first server">' +
         '<div class="sheet' + (wide ? " wide" : "") + '">' + inner + "</div></div>";
     }
 
-    function viewChoose() {
+    function prefersReducedMotion() {
+      return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    }
+
+    function viewWelcome() {
+      overlayHost.innerHTML =
+        '<div class="scrim splash-scrim" role="dialog" aria-modal="true" aria-labelledby="welcome-title" data-act="leavewelcome">' +
+          '<div class="splash">' +
+            '<h2 id="welcome-title">Welcome to MCPJam</h2>' +
+            '<span class="splash-rule" aria-hidden="true"></span>' +
+            '<p class="splash-lede">From your first prompt to a continuous gate on every release, MCPJam shows what breaks across every AI client, and how to fix it.</p>' +
+            '<button class="splash-go" type="button" data-act="leavewelcome">Continue</button>' +
+          "</div></div>";
+      var go = overlayHost.querySelector(".splash-go");
+      if (go) go.focus();
+    }
+
+    function startWelcome() {
+      clearWelcomeTimer();
+      state.phase = "welcome";
+      viewWelcome();
+      render();
+      if (prefersReducedMotion()) return;
+      welcomeTimer = setTimeout(leaveWelcome, WELCOME_MS);
+    }
+
+    function leaveWelcome() {
+      if (state.phase !== "welcome") return;
+      state.phase = "leaving-welcome";
+      clearWelcomeTimer();
+      var reduced = prefersReducedMotion();
+      var scrim = overlayHost.querySelector(".scrim");
+      function showChoose() {
+        state.phase = "choose";
+        viewChoose(true);
+        render();
+      }
+      if (reduced || !scrim) { showChoose(); return; }
+      scrim.classList.add("splash-out");
+      welcomeTimer = setTimeout(showChoose, 260);
+    }
+
+    function viewChoose(fromSplash) {
       sheet(
         "<h2>Point MCPJam at a server</h2>" +
         '<p class="lede">MCPJam connects to your MCP server and lets you call its tools, inspect traces, and see how different clients handle it.</p>' +
@@ -421,7 +495,9 @@
         '<div class="or">or</div>' +
         '<button class="btn sec" type="button" data-act="demo">Try the ' + DEMO.name + " demo server</button>" +
         '<p class="btn-sub">6 tools · no setup · nothing to install</p>' +
-        '<button class="skiplink" type="button" data-act="skip">I\'ll set this up later</button>'
+        '<button class="skiplink" type="button" data-act="skip">I\'ll set this up later</button>',
+        false,
+        fromSplash
       );
       var el = document.getElementById("url");
       if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
@@ -533,6 +609,7 @@
 
     // ---------------- flow ----------------
     function clearTimer() { if (stepTimer) { clearTimeout(stepTimer); stepTimer = null; } }
+    function clearWelcomeTimer() { if (welcomeTimer) { clearTimeout(welcomeTimer); welcomeTimer = null; } }
 
     function startConnect(name, url, source) {
       clearTimer();
@@ -602,11 +679,12 @@
 
     document.getElementById("reset").addEventListener("click", function () {
       clearTimer();
-      state.screen = "home"; state.phase = "choose"; state.url = ""; state.err = ""; state.source = "own";
+      clearWelcomeTimer();
+      state.screen = "home"; state.phase = "welcome"; state.url = ""; state.err = ""; state.source = "own";
       state.connected = null; state.connectedIsDemo = false; state.showTokenField = false;
       state.hintOpen = true; state.guestBar = true; state.skipped = false; state.client = "claude";
       state.form = { name: "", transport: "http", url: "", auth: "auto", token: "", hKey: "", hVal: "" };
-      render(); viewChoose();
+      startWelcome();
     });
 
     overlayHost.addEventListener("submit", function (e) {
@@ -649,7 +727,8 @@
     overlayHost.addEventListener("click", function (e) {
       var b = e.target.closest("[data-act]"); if (!b || b.tagName === "FORM") return;
       var act = b.dataset.act;
-      if (act === "demo") { state.err = ""; state.showTokenField = false; startConnect(DEMO.name, DEMO.url, "demo"); }
+      if (act === "leavewelcome") { leaveWelcome(); }
+      else if (act === "demo") { state.err = ""; state.showTokenField = false; startConnect(DEMO.name, DEMO.url, "demo"); }
       else if (act === "edit" || act === "cancel") { clearTimer(); state.phase = "choose"; state.err = ""; state.source = "own"; state.showTokenField = false; viewChoose(); render(); }
       else if (act === "authorize") { clearTimer(); state.phase = "authorizing"; viewAuthorizing(state.activeName); render(); }
       else if (act === "backauth") { state.phase = "auth"; viewAuth(state.activeName, state.activeUrl); render(); }
@@ -670,6 +749,15 @@
       else if (act === "reopen") { state.phase = "choose"; state.err = ""; state.source = "own"; render(); viewChoose(); }
     });
 
-    render(); viewChoose();
+    document.addEventListener("keydown", function (e) {
+      if (state.phase !== "welcome") return;
+      if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
+        e.preventDefault();
+        leaveWelcome();
+      }
+    });
+
+    render();
+    startWelcome();
   })();
 </script>

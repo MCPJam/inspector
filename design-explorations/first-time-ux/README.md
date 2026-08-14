@@ -26,6 +26,7 @@ Separately, `use-onboarding.ts` defined a `connect_error` phase with a **Retry**
 | | Decision |
 |---|---|
 | Placement | **Overlay on Home.** Not a route takeover — the app stays behind it. |
+| Opening | **Welcome splash, then connect.** Type card over Home (“Welcome to MCPJam” / first prompt → continuous gate). Automatic handoff to **Point MCPJam at a server**. Continue / click / Enter skips the wait. Reduced motion: no auto-advance. Reopening from the Home banner skips the splash. |
 | Primary path | Connect your own server (URL or command, single field). |
 | Secondary path | Excalidraw demo — **equal weight**, full-width, payoff named ("6 tools · no setup"). |
 | Auth | Default `authType: "auto"`. On 401, resolve **inline** — Authorize, plus a "use a token instead" disclosure. Never hand off to the OAuth Debugger. |
@@ -45,7 +46,7 @@ Separately, `use-onboarding.ts` defined a `connect_error` phase with a **Retry**
 - `client/src/hooks/use-first-run-connect.ts` — connect state machine over `connectServerWithResult`, which returns structured `connected | failed | reauth | missing | superseded`. 14 tests.
 - `client/src/components/first-run/FirstRunConnect.tsx` — choose / connecting / error states and their copy. 12 tests.
 
-What must change: where it mounts (`App.tsx` early return → overlay on Home), plus the v3 additions not yet built — editable failure form, demo-down screen, success moment, preloaded prompt, guest bar, Home banner.
+What must change: where it mounts (`App.tsx` early return → overlay on Home), plus the v3 additions not yet built — welcome splash → connect handoff, editable failure form, demo-down screen, success moment, preloaded prompt, guest bar, Home banner.
 
 Tests were written against the takeover placement and will need revisiting with it.
 
@@ -70,9 +71,9 @@ Seven buckets; five deserve distinct screens.
 
 ## Prototype
 
-`ftue-prototype-v3.html` — self-contained, dummy data, no backend. Open it directly in a browser.
+`ftue-prototype-v3.html` — self-contained, dummy data, no backend. Open it directly in a browser. First paint is the welcome splash; it hands off to the connect sheet on its own.
 
-A control rig at the top selects the simulated outcome (Connects · Can't reach · Not MCP · Needs OAuth · 0 tools). Any failure taken via the demo button shows the demo-down screen instead.
+A control rig at the top selects the simulated outcome (Connects · Can't reach · Not MCP · Needs OAuth · 0 tools). Restart replays the welcome. Any failure taken via the demo button shows the demo-down screen instead.
 
 Client capability values in the Playground are **real**, read from `sdk/src/host-compat/catalog.generated.ts`:
 
