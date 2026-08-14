@@ -148,6 +148,12 @@ export interface PlatformEvalRun {
   environment?: PlatformEvalRunEnvironment | null;
   createdAt: number;
   completedAt: number | null;
+  /**
+   * The common actionable-insights envelope. Present on the DETAIL response
+   * only (lists stay compact) and absent on servers deployed before the
+   * envelope existed — treat absence as `not_available`.
+   */
+  insights?: PlatformInsightsEnvelope;
 }
 
 /**
@@ -929,6 +935,9 @@ export interface PlatformJourneyRun {
   }>;
   createdAt: number;
   lastHeartbeatAt?: number;
+  /** Common insights envelope (detail response only; lists stay compact).
+   * Absent on servers deployed before the envelope existed. */
+  insights?: PlatformInsightsEnvelope;
 }
 
 export interface PlatformJourneyRunSession {
@@ -1202,6 +1211,173 @@ export interface PlatformFindingDismissed {
 }
 
 /** LLM analysis over a whole wave. Requested explicitly; produced async. */
+/**
+ * The common actionable-insights envelope — one shape across Eval runs,
+ * Swarm waves, and User Testing windows. Hand-mirrored from the backend's
+ * `lib/insightsEnvelope.ts` (two-repo type discipline).
+ *
+ * Reading rules for consumers (including agents):
+ * - Findings are AGGREGATED per run/wave/window; `evidence` points at
+ *   exemplar sessions or iterations, not one finding per session.
+ * - Only `actionTarget: "mcp_server"` with `actionability: "ready"`
+ *   authorizes proposing a change to the MCP server. Every other action
+ *   target names different work (agent config, eval case, environment,
+ *   investigation) and must NOT be "fixed" in server code.
+ * - `findings` is empty unless `status === "completed"`. An empty completed
+ *   list is a real "nothing to act on" answer.
+ * - Reads never trigger generation; `status` is observational.
+ */
+export type PlatformInsightsStatus =
+  | "not_available"
+  | "not_requested"
+  | "pending"
+  | "completed"
+  | "failed";
+
+export type PlatformInsightScope =
+  | { kind: "eval_run"; id: string }
+  | { kind: "swarm_wave"; id: string; runId: string }
+  | {
+      kind: "user_testing_window";
+      id: string;
+      scenarioId: string;
+      windowStartAt: number;
+      windowEndAt: number;
+    };
+
+export type PlatformInsightAttribution =
+  | "unknown"
+  | "server_contract"
+  | "server_runtime"
+  | "server_capability"
+  | "agent_or_prompt"
+  | "test_design"
+  | "environment";
+
+export type PlatformInsightActionTarget =
+  | "investigate"
+  | "mcp_server"
+  | "agent_configuration"
+  | "eval_case"
+  | "environment";
+
+export type PlatformInsightActionability =
+  | "informational"
+  | "investigate"
+  | "ready";
+
+export interface PlatformActionableFindingEvidence {
+  sessionId?: string;
+  iterationId?: string;
+  kind: "tool_error" | "transcript" | "feedback" | "judge" | "contrast";
+  /** Scrubbed and clipped at the producer. */
+  excerpt: string;
+  toolName?: string;
+  errorCode?: string;
+}
+
+export interface PlatformActionableFinding {
+  /** Stable remediation id (`rf_<16 hex>`) — survives dynamic error values. */
+  id: string;
+  /** The registry signal this derives from; several findings may share one. */
+  signalFingerprint: string;
+  title: string;
+  category:
+    | "unknown"
+    | "tool_contract"
+    | "tool_runtime"
+    | "capability_gap"
+    | "workflow"
+    | "agent_behavior"
+    | "test_design"
+    | "environment";
+  attribution: PlatformInsightAttribution;
+  actionTarget: PlatformInsightActionTarget;
+  actionability: PlatformInsightActionability;
+  severity: "info" | "low" | "medium" | "high";
+  confidence: "low" | "medium" | "high";
+  /** Deterministic observation — counts and identities, never model prose. */
+  observed: string;
+  rootCause?: string;
+  recommendation: string;
+  acceptanceCriteria: string[];
+  affected: {
+    count: number;
+    total: number;
+    unit: "iterations" | "sessions";
+  };
+  patternSlug?: string;
+  /** Present only when a server (and, for tool surfaces, tool) resolved
+   * against the pinned snapshot. Required for `mcp_server`/`ready`. */
+  target?: {
+    serverId: string;
+    toolName?: string;
+    surface:
+      | "description"
+      | "input_schema"
+      | "output_schema"
+      | "handler"
+      | "server_instructions"
+      | "capability";
+    fieldPath?: string;
+    snapshotHash: string;
+    currentDefinition?: {
+      description?: string;
+      inputSchemaJson?: string;
+      outputSchemaJson?: string;
+      truncated: boolean;
+    };
+  };
+  evidence: PlatformActionableFindingEvidence[];
+}
+
+export interface PlatformInsightsEnvelope {
+  schemaVersion: 1;
+  scope: PlatformInsightScope;
+  status: PlatformInsightsStatus;
+  reasonCode: string | null;
+  retryable: boolean;
+  error: { code: string; message: string } | null;
+  generatedAt: number | null;
+  updatedAt: number | null;
+  summary: string | null;
+  coverage: {
+    unit: "iterations" | "sessions";
+    analyzed: number;
+    total: number;
+    gradedCount?: number;
+    feedbackCount?: number;
+    truncated: boolean;
+    lowConfidence: boolean;
+  };
+  findings: PlatformActionableFinding[];
+  /** Swarm only. Launch outcomes never appear as findings. */
+  runHealth?: {
+    targets: Array<{
+      subjectKind: "environment" | "host";
+      subjectId: string;
+      subjectLabel: string;
+      attempted: number;
+      succeeded: number;
+      failed: number;
+      rateLimited: number;
+    }>;
+  };
+  truncation: {
+    truncated: boolean;
+    omittedFindings: number;
+    omittedEvidence: number;
+    contractTruncated: boolean;
+  };
+}
+
+/** Receipt for an eval-run insights (serverQuality) request. 202. */
+export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
 export interface PlatformWaveInsights {
   waveId: string;
   /** pending | completed | failed. Poll rather than re-requesting. */
@@ -1370,6 +1546,17 @@ export interface PlatformUserTestingScenario {
   description: string | null;
   mode: string | null;
   accessVersion: number | null;
+}
+
+/**
+ * Scenario detail — the read shape, widened with the environment link and
+ * the REQUIRED insights envelope (project members only; share-link guests
+ * never reach this route).
+ */
+export interface PlatformUserTestingScenarioDetail
+  extends PlatformUserTestingScenario {
+  environmentId: string | null;
+  insights: PlatformInsightsEnvelope;
 }
 
 /** Guest execution caps — the spend dial for anonymous visitors. */

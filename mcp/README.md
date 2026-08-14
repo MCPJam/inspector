@@ -107,6 +107,7 @@ so results respect the caller's project access.
 | `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
 | `publish_scenario` | Publish a project environment for user testing, returning its share link and access mode. | — |
 | `unpublish_scenario` | Take a live user-testing scenario down. Every guest session on it dies with it. | — |
+| `get_user_testing_scenario` | Scenario detail plus its actionable-insights envelope — aggregated findings with exemplar evidence over the latest analyzed window. | — |
 | `list_user_testing_sessions` | Sessions real visitors had with a published scenario: counts, feedback, device, segment and a first-message preview. Summaries only. | — |
 | `get_user_testing_session` | One session's conversation, paged and projected. Prefer the metrics or findings when you need the pattern rather than the words. | — |
 | `get_user_testing_metrics` | Aggregate metrics across a scenario's sessions. | — |

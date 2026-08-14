@@ -63,6 +63,7 @@ import type {
   PlatformWaveInsightsCanceled,
   PlatformUserTestingInsightsRequested,
   PlatformUserTestingScenario,
+  PlatformUserTestingScenarioDetail,
   PlatformUserTestingSession,
   PlatformUserTestingSessionDetail,
   PlatformWaveInsightsRequested,
@@ -2407,7 +2408,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled.",
+    "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled. The detail carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   inputSchema: evalRunScopedInput,
   async execute(input, { client, signal }) {
@@ -4619,7 +4620,7 @@ export const getJourneyRunOperation: PlatformOperation<
   name: "get_journey_run",
   title: "Get one MCPJam journey run",
   description:
-    "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled.",
+    "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's wave with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only actionTarget mcp_server with actionability ready authorizes proposing a server change.",
   readOnly: true,
   inputSchema: journeyRunSelectorInput,
   async execute(input, { client, signal }) {
@@ -6063,6 +6064,35 @@ const userTestingScenarioSelectorInput = z.object({
     .describe("Scenario id (the `id` from list_chatboxes / publish_scenario)."),
 });
 
+export type GetUserTestingScenarioResult = {
+  project: SelectedProjectInfo;
+  scenario: PlatformUserTestingScenarioDetail;
+};
+
+export const getUserTestingScenarioOperation: PlatformOperation<
+  z.infer<typeof userTestingScenarioSelectorInput>,
+  GetUserTestingScenarioResult
+> = {
+  name: "get_user_testing_scenario",
+  title: "Get a user-testing scenario",
+  description:
+    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and spends.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const scenario = await client.getUserTestingScenario(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), scenario };
+  },
+};
+
 const updateUserTestingScenarioInput = userTestingScenarioSelectorInput.extend({
   name: z.string().trim().min(1).max(200).optional(),
   description: z.string().max(2000).optional(),
@@ -7051,6 +7081,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
   // User testing — what a published scenario produced, and who may reach it.
+  getUserTestingScenarioOperation,
   updateUserTestingScenarioOperation,
   listUserTestingSessionsOperation,
   getUserTestingSessionOperation,

@@ -761,10 +761,26 @@ journeys.get("/projects/:projectId/journey-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const client = createConvexClient(await getConvexBearerForRequest(c));
-  return v1Resource(
-    c,
-    toJourneyRunDto(await requireRunInProject(client, projectId, runId))
-  );
+  const run = await requireRunInProject(client, projectId, runId);
+
+  // The common insights envelope, DETAIL only (lists stay compact) —
+  // resolved through the run's wave; runHealth rides beside findings, never
+  // inside them. Load failure omits the field rather than failing the read.
+  let insights: Record<string, unknown> | undefined;
+  try {
+    const envelope = await client.query(
+      "swarmWaveInsights:getJourneyRunInsightsEnvelope" as never,
+      { projectId, runId } as never
+    );
+    if (envelope) insights = envelope as Record<string, unknown>;
+  } catch {
+    insights = undefined;
+  }
+
+  return v1Resource(c, {
+    ...toJourneyRunDto(run),
+    ...(insights ? { insights } : {}),
+  });
 });
 
 // GET /v1/projects/:projectId/journey-runs/:runId/sessions

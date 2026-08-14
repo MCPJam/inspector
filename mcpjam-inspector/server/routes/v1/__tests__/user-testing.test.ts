@@ -808,3 +808,69 @@ describe("deleted transcript blob", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("GET scenario detail (insights envelope)", () => {
+  it("returns the scenario with its envelope, members only by construction", async () => {
+    const envelope = {
+      schemaVersion: 1,
+      scope: {
+        kind: "user_testing_window",
+        id: "grp_1",
+        scenarioId: SCENARIO,
+        windowStartAt: 1,
+        windowEndAt: 2,
+      },
+      status: "completed",
+      reasonCode: null,
+      retryable: false,
+      error: null,
+      generatedAt: 5,
+      updatedAt: 6,
+      summary: "One tool keeps failing.",
+      coverage: {
+        unit: "sessions",
+        analyzed: 3,
+        total: 3,
+        feedbackCount: 1,
+        truncated: false,
+        lowConfidence: false,
+      },
+      findings: [],
+      truncation: {
+        truncated: false,
+        omittedFindings: 0,
+        omittedEvidence: 0,
+        contractTruncated: false,
+      },
+    };
+    answerQueries({
+      getChatbox: { ...scenarioRow(), environmentId: "env_9" },
+      getScenarioInsightsEnvelope: envelope,
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      id: SCENARIO,
+      projectId: PROJECT,
+      name: "Checkout",
+      environmentId: "env_9",
+    });
+    expect(body.insights).toEqual(envelope);
+  });
+
+  it("404s when the envelope query refuses (non-member) or finds nothing", async () => {
+    answerQueries({
+      getChatbox: scenarioRow(),
+      getScenarioInsightsEnvelope: null,
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(404);
+  });
+
+  it("404s across projects before any insight read", async () => {
+    answerQueries({ getChatbox: scenarioRow(OTHER_PROJECT) });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(404);
+  });
+});

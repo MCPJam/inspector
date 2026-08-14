@@ -288,6 +288,40 @@ const updateScenarioSchema = z
     }
   );
 
+// GET /v1/projects/:p/user-testing/scenarios/:id
+// Scenario detail with the REQUIRED common insights envelope: findings
+// aggregated over the latest analyzed window of real visitor sessions.
+// Project members only — this route is deliberately absent from the guest
+// allowlist, and the backend envelope query additionally requires workspace
+// MEMBERSHIP, so share-link guests can never reach other visitors' evidence.
+userTesting.get(BASE, async (c) => {
+  const { client, projectId, scenarioId, scenario } = await scopedScenario(c);
+
+  let insights: Record<string, unknown> | null = null;
+  try {
+    insights = (await client.query(
+      "chatboxWindowInsights:getScenarioInsightsEnvelope" as never,
+      { chatboxId: scenarioId } as never
+    )) as Record<string, unknown> | null;
+  } catch (error) {
+    throw translateReadError(error);
+  }
+  if (!insights) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Scenario not found");
+  }
+
+  return v1Resource(c, {
+    id: scenarioId,
+    projectId,
+    name: scenario.name ?? null,
+    description: scenario.description ?? null,
+    mode: scenario.mode ?? null,
+    accessVersion: scenario.accessVersion ?? null,
+    environmentId: scenario.environmentId ? String(scenario.environmentId) : null,
+    insights,
+  });
+});
+
 // PATCH /v1/projects/:p/user-testing/scenarios/:id
 userTesting.patch(BASE, async (c) => {
   const body = await parseBody(c, updateScenarioSchema);

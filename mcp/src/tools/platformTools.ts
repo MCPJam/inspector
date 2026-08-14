@@ -94,6 +94,7 @@ import {
   cancelWaveInsightsOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
+  getUserTestingScenarioOperation,
   listUserTestingSessionsOperation,
   getUserTestingSessionOperation,
   getUserTestingMetricsOperation,
@@ -247,6 +248,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   cancelWaveInsightsOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
+  getUserTestingScenarioOperation,
   listUserTestingSessionsOperation,
   getUserTestingSessionOperation,
   getUserTestingMetricsOperation,
@@ -573,7 +575,119 @@ function describeOperationError(error: unknown): string {
 // complete — widgets and programmatic consumers read that, not the text.
 const MODEL_TEXT_CAP = 24_000;
 
+// ── insights-envelope compaction ─────────────────────────────────────────────
+// Runs BEFORE both renderings (text AND structuredContent): the generic text
+// cap is a blind character slice, and an insights envelope sliced mid-JSON
+// would read as complete while silently missing findings. This compaction is
+// deterministic and self-describing — every omission lands in the envelope's
+// own `truncation` counters, so a reader can never mistake a compacted
+// response for a complete one.
+export const MODEL_MAX_FINDINGS = 8;
+export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
+export const MODEL_CONTRACT_JSON_CAP = 600;
+
+type EnvelopeLike = {
+  schemaVersion: number;
+  findings: Array<Record<string, unknown>>;
+  truncation: {
+    truncated: boolean;
+    omittedFindings: number;
+    omittedEvidence: number;
+    contractTruncated: boolean;
+  };
+};
+
+function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as EnvelopeLike).schemaVersion === 1 &&
+    Array.isArray((value as EnvelopeLike).findings) &&
+    typeof (value as EnvelopeLike).truncation === "object"
+  );
+}
+
+function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+  let omittedEvidence = 0;
+  let contractTruncated = false;
+  // Findings arrive ready-first from the producer, so a head slice keeps
+  // every server-ready finding before any investigation is dropped.
+  const kept = envelope.findings
+    .slice(0, MODEL_MAX_FINDINGS)
+    .map((finding) => {
+      const next = { ...finding };
+      const evidence = Array.isArray(finding.evidence)
+        ? (finding.evidence as unknown[])
+        : [];
+      if (evidence.length > MODEL_MAX_EVIDENCE_PER_FINDING) {
+        omittedEvidence += evidence.length - MODEL_MAX_EVIDENCE_PER_FINDING;
+        next.evidence = evidence.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING);
+      }
+      const target = finding.target as
+        | { currentDefinition?: Record<string, unknown> }
+        | undefined;
+      const def = target?.currentDefinition;
+      if (def) {
+        const clipped = { ...def };
+        for (const key of ["inputSchemaJson", "outputSchemaJson"] as const) {
+          const json = clipped[key];
+          if (typeof json === "string" && json.length > MODEL_CONTRACT_JSON_CAP) {
+            clipped[key] = json.slice(0, MODEL_CONTRACT_JSON_CAP);
+            clipped.truncated = true;
+            contractTruncated = true;
+          }
+        }
+        next.target = { ...target, currentDefinition: clipped };
+      }
+      return next;
+    });
+  const omittedFindings = envelope.findings.length - kept.length;
+  if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
+    return envelope;
+  }
+  return {
+    ...envelope,
+    findings: kept,
+    truncation: {
+      truncated: true,
+      omittedFindings: envelope.truncation.omittedFindings + omittedFindings,
+      omittedEvidence: envelope.truncation.omittedEvidence + omittedEvidence,
+      contractTruncated:
+        envelope.truncation.contractTruncated || contractTruncated,
+    },
+  };
+}
+
+/** Compact every insights envelope found at the payload's top level or one
+ * level down (`{ run: { insights } }`, `{ scenario: { insights } }`). */
+export function compactInsightsForModel<T extends object>(payload: T): T {
+  let changed = false;
+  const out: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
+  for (const [key, value] of Object.entries(out)) {
+    if (isInsightsEnvelope(value)) {
+      const compacted = compactEnvelope(value);
+      if (compacted !== value) {
+        out[key] = compacted;
+        changed = true;
+      }
+      continue;
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const inner = value as Record<string, unknown>;
+      if (isInsightsEnvelope(inner.insights)) {
+        const compacted = compactEnvelope(inner.insights);
+        if (compacted !== inner.insights) {
+          out[key] = { ...inner, insights: compacted };
+          changed = true;
+        }
+      }
+    }
+  }
+  return changed ? (out as T) : payload;
+}
+
 function toolSuccess(payload: object) {
+  payload = compactInsightsForModel(payload);
   let text = JSON.stringify(payload, null, 2);
   if (text.length > MODEL_TEXT_CAP) {
     text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${

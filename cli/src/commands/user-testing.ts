@@ -39,6 +39,7 @@ import {
   rotateUserTestingLinkOperation,
   setUserTestingGuestExecutionOperation,
   undismissUserTestingFindingOperation,
+  getUserTestingScenarioOperation,
   updateUserTestingScenarioOperation,
   upsertUserTestingMemberOperation,
 } from "@mcpjam/sdk/platform";
@@ -254,6 +255,19 @@ export function registerUserTestingCommands(program: Command): void {
   );
 
   // ── Exposure controls ───────────────────────────────────────────────────
+
+  bindOperation(
+    scenarioCommand(
+      group,
+      "get",
+      "Scenario detail plus its actionable-insights envelope: findings aggregated over the latest analyzed window, with exemplar evidence. Only actionTarget mcp_server with actionability ready authorizes proposing a server change."
+    ),
+    getUserTestingScenarioOperation,
+    (options: ScenarioOptions) => ({
+      project: options.project,
+      scenario: options.scenario,
+    })
+  );
 
   bindOperation(
     scenarioCommand(

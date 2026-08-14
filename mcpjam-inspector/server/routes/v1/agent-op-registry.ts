@@ -100,6 +100,7 @@ import {
   undismissUserTestingFindingOperation,
   cancelUserTestingInsightsOperation,
   requestUserTestingInsightsOperation,
+  getUserTestingScenarioOperation,
   updateUserTestingScenarioOperation,
   upsertUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
@@ -864,6 +865,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "spend",
     },
   },
+  { operation: getUserTestingScenarioOperation, tier: "direct" },
   {
     operation: updateUserTestingScenarioOperation,
     tier: "gated",

@@ -2075,7 +2075,65 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
     throw error;
   }
   requireProjectMatch(run, projectId, "Eval run");
-  return v1Resource(c, toRunDto(run!));
+
+  // The common insights envelope, DETAIL only (lists stay compact). Failure
+  // to load it — including an authorization refusal for a caller who can see
+  // the run but not its insights — omits the field rather than failing the
+  // read: the run itself is the resource here.
+  let insights: Record<string, unknown> | undefined;
+  try {
+    const envelope = await convex.query(
+      "serverQuality:getEvalRunInsightsEnvelope" as any,
+      { suiteRunId: runId }
+    );
+    if (envelope) insights = envelope as Record<string, unknown>;
+  } catch {
+    insights = undefined;
+  }
+
+  return v1Resource(c, {
+    ...toRunDto(run!),
+    ...(insights ? { insights } : {}),
+  });
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/insights
+// Request (or with force, regenerate) the run's insights — serverQuality
+// behind the common envelope. SPENDS the org's model budget; 202 receipt,
+// poll the detail's `insights` envelope rather than re-requesting. Same
+// Convex mutation the in-app button uses, so role/limit/billing checks are
+// identical.
+evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let body: { force?: boolean } | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    body = undefined;
+  }
+  try {
+    await convex.mutation("serverQuality:requestServerQuality" as any, {
+      suiteRunId: runId,
+      ...(body?.force ? { force: true } : {}),
+    });
+  } catch (error) {
+    throw translateConvexError(error, { resource: "Eval run insights" });
+  }
+  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
 });
 
 // POST /v1/projects/:projectId/eval-runs/:runId/cancel
