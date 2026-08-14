@@ -517,6 +517,132 @@ describe("requestLogContextMiddleware", () => {
       .mock.calls.filter(([name]) => name === "http.stream.closed");
     expect(closed).toHaveLength(1);
     expect((closed[0][2] as any).durationMs).toBeGreaterThanOrEqual(0);
+    expect((closed[0][2] as any).outcome).toBe("completed");
+    expect((closed[0][2] as any).errorMessage).toBeUndefined();
+  });
+
+  it("delivers stream bytes unchanged through the close-tracking wrapper", async () => {
+    const app = createTestApp();
+    app.get("/api/web/stream", (c) => {
+      c.header("Content-Type", "text/event-stream");
+      return c.body("data: hello\n\ndata: world\n\n");
+    });
+
+    const res = await app.request("/api/web/stream");
+    expect(await res.text()).toBe("data: hello\n\ndata: world\n\n");
+  });
+
+  // Regression: the old TransformStream hook only had flush(), which runs on
+  // a NORMAL end-of-stream — a consumer cancel (client disconnect) or a
+  // producer error left no http.stream.closed at all. The most common
+  // streaming failure produced zero telemetry rows.
+  it("emits http.stream.closed with outcome 'aborted' when the consumer cancels", async () => {
+    const app = createTestApp();
+    app.get("/api/web/stream", (c) => {
+      c.header("Content-Type", "text/event-stream");
+      // A stream that never ends on its own, so only cancel can close it.
+      const endless = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode("data: tick\n\n"));
+        },
+      });
+      return c.body(endless);
+    });
+
+    const res = await app.request("/api/web/stream");
+    const reader = res.body!.getReader();
+    await reader.read();
+    await reader.cancel(new Error("client went away"));
+
+    const closed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.stream.closed");
+    expect(closed).toHaveLength(1);
+    expect((closed[0][2] as any).outcome).toBe("aborted");
+    // An abort is not a failure; no message is recorded for it.
+    expect((closed[0][2] as any).errorMessage).toBeUndefined();
+  });
+
+  it("emits http.stream.closed with outcome 'errored' when the producer errors", async () => {
+    const app = createTestApp();
+    app.get("/api/web/stream", (c) => {
+      c.header("Content-Type", "text/event-stream");
+      const dying = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("data: one\n\n"));
+          controller.error(new Error("upstream connection reset"));
+        },
+      });
+      return c.body(dying);
+    });
+
+    const res = await app.request("/api/web/stream");
+    const reader = res.body!.getReader();
+    await expect(async () => {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }).rejects.toThrow("upstream connection reset");
+
+    const closed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.stream.closed");
+    expect(closed).toHaveLength(1);
+    expect((closed[0][2] as any).outcome).toBe("errored");
+    expect((closed[0][2] as any).errorMessage).toBe(
+      "upstream connection reset",
+    );
+  });
+
+  it("still emits the closed row when the error value cannot be stringified", async () => {
+    // A rejection reason can be a value whose string coercion throws (a
+    // null-prototype object here). The closed row must survive with a
+    // fallback instead of the telemetry code throwing and eating the row.
+    const app = createTestApp();
+    app.get("/api/web/stream", (c) => {
+      c.header("Content-Type", "text/event-stream");
+      const dying = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(Object.create(null));
+        },
+      });
+      return c.body(dying);
+    });
+
+    const res = await app.request("/api/web/stream");
+    const reader = res.body!.getReader();
+    await reader.read().catch(() => undefined);
+
+    const closed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.stream.closed");
+    expect(closed).toHaveLength(1);
+    expect((closed[0][2] as any).outcome).toBe("errored");
+    expect((closed[0][2] as any).errorMessage).toBe("[unreadable error value]");
+  });
+
+  it("caps the errored stream message at 500 chars", async () => {
+    const app = createTestApp();
+    app.get("/api/web/stream", (c) => {
+      c.header("Content-Type", "text/event-stream");
+      const dying = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("x".repeat(2000)));
+        },
+      });
+      return c.body(dying);
+    });
+
+    const res = await app.request("/api/web/stream");
+    const reader = res.body!.getReader();
+    await expect(reader.read()).rejects.toThrow();
+
+    const closed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.stream.closed");
+    expect(closed).toHaveLength(1);
+    expect((closed[0][2] as any).errorMessage).toHaveLength(500);
   });
 
   it("re-throws exceptions after emitting http.request.failed", async () => {

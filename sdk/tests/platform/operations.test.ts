@@ -28,6 +28,7 @@ import {
   PlatformApiClient,
   PlatformApiError,
   ALL_OPERATIONS,
+  publishScenarioOperation,
   readServerResourceOperation,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -428,6 +429,36 @@ function makeClient(overrides: FixtureOverrides = {}): {
       expect(init?.method).toBe("POST");
       const serverId = decodeURIComponent(path.split("/")[6] ?? "");
       return Response.json({ serverId, status: "closed" });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/scenario$/.test(path)
+    ) {
+      expect(init?.method).toBe("PUT");
+      const environmentId = decodeURIComponent(path.split("/")[6] ?? "");
+      const requestBody =
+        init?.body === undefined
+          ? {}
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      // `env-existing` is already published: the route ignores create-time
+      // overrides and says so, exactly as the real API does.
+      const created = environmentId !== "env-existing";
+      const overridesSent = Object.keys(requestBody).length > 0;
+      return Response.json(
+        {
+          id: "scenario-1",
+          environmentId,
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          mode: created
+            ? ((requestBody.mode as string) ?? "project_members")
+            : "anyone_with_link",
+          accessVersion: 1,
+          link: "https://app.mcpjam.com/s/checkout?t=abc",
+          created,
+          ...(!created && overridesSent ? { overridesIgnored: true } : {}),
+          requestBody,
+        },
+        { status: created ? 201 : 200 }
+      );
     }
     if (/^\/api\/v1\/projects\/[^/]+\/chatboxes$/.test(path)) {
       return Response.json({ items: CHATBOXES });
@@ -1166,6 +1197,83 @@ describe("chatbox operations", () => {
     expect((error as PlatformApiError).message).toContain(
       "Support (id: box-1)"
     );
+  });
+});
+
+describe("publishScenarioOperation", () => {
+  it("forwards the create-time overrides verbatim in the PUT body", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-1",
+        name: "Checkout flow",
+        description: "Guided checkout walkthrough",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect(new URL(String(request?.[0])).pathname).toBe(
+      "/api/v1/projects/project-new/environments/env-1/scenario"
+    );
+    expect(JSON.parse(String((request?.[1] as RequestInit).body))).toEqual({
+      name: "Checkout flow",
+      description: "Guided checkout walkthrough",
+      mode: "invited_only",
+    });
+    expect(result.scenario.created).toBe(true);
+    expect(result.scenario.mode).toBe("invited_only");
+    expect(result.overridesIgnored).toBeUndefined();
+  });
+
+  it("sends no body at all when there are no overrides", async () => {
+    // The pre-override wire shape, preserved: a bodyless PUT is the common
+    // case and what existing callers already produce.
+    const { client, fetchMock } = makeClient();
+
+    await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({ environment: "env-1" }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect((request?.[1] as RequestInit).body).toBeUndefined();
+  });
+
+  it("hoists overridesIgnored when a republish discarded the overrides", async () => {
+    const { client } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-existing",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    // The response's mode is the real one — the caller asked for
+    // `invited_only` and must learn the link is NOT restricted.
+    expect(result.scenario.created).toBe(false);
+    expect(result.scenario.mode).toBe("anyone_with_link");
+    expect(result.overridesIgnored).toBe(true);
+  });
+
+  it("rejects a mode outside the enum before any request", async () => {
+    const { fetchMock } = makeClient();
+
+    expect(
+      publishScenarioOperation.inputSchema.safeParse({
+        environment: "env-1",
+        mode: "everyone",
+      }).success
+    ).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
