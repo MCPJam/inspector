@@ -2402,6 +2402,7 @@ describe("useServerState OAuth callback failures", () => {
 
   it("uses the friendly provisioning message when the resolver mapping is missing", async () => {
     tryResolveProjectServerMock.mockReturnValue(null);
+    mockCreateServerIfMissing.mockResolvedValueOnce(undefined);
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";
 
@@ -2429,6 +2430,44 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
       { duration: 8000 }
+    );
+  });
+
+  it("connects with the server id returned by the first-run sync", async () => {
+    tryResolveProjectServerMock.mockReturnValue(null);
+    mockCreateServerIfMissing.mockResolvedValue("srv_excalidraw");
+    const appState = createCloudCliAppState();
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "proj_cloud",
+      activeProjectServersFlat: [],
+    });
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+
+    expect(testConnectionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://mcp.excalidraw.com/mcp" }),
+      "srv_excalidraw",
+      expect.objectContaining({
+        projectId: "proj_cloud",
+        serverName: "Excalidraw (App)",
+      })
+    );
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_SUCCESS",
+        name: "Excalidraw (App)",
+      })
     );
   });
 
@@ -2721,6 +2760,96 @@ describe("useServerState OAuth callback failures", () => {
     // Superseded is not a failure: op1 resolves (does not reject), so the
     // caller has nothing to aggregate into a "Failed to reconnect" toast.
     expect(firstOpOutcome).toBe("resolved");
+  });
+
+  it("allows a send to proceed when its reconnect is superseded by a successful newer one", async () => {
+    // The Playground send path gates on `readyServerNames`. When a background
+    // reconnect (e.g. the host-switch recycle) takes the op pin mid-send, the
+    // send's own connect returns "superseded" — which used to land in NO
+    // bucket at all: absent from ready, failed, missing AND reauth, so callers
+    // could neither send nor explain why. `ensureServersReady` now follows the
+    // newer op to its real outcome, so a successful replacement still lets
+    // the original send proceed immediately.
+    const { ensureAuthorizedForReconnect } = await import(
+      "@/state/oauth-orchestrator"
+    );
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig:
+        createAppState().projects.default.servers["demo-server"].config,
+      tokens: undefined,
+    } as any);
+
+    // `ensureServersReady` only takes the reconnect branch for a server that
+    // is not already connected/connecting/in OAuth.
+    const appState = createAppState();
+    appState.projects.default.servers["demo-server"].connectionStatus =
+      "disconnected";
+    appState.servers["demo-server"].connectionStatus = "disconnected";
+
+    let releaseFirst: (value: unknown) => void = () => {};
+    const firstReconnect = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    reconnectServerMock.mockReturnValueOnce(firstReconnect).mockResolvedValue({
+      success: true,
+      initInfo: { clientCapabilities: {} },
+    } as any);
+
+    const dispatch = vi.fn();
+    const { result, rerender } = renderUseServerState(dispatch, appState);
+
+    let outcome: Awaited<
+      ReturnType<typeof result.current.ensureServersReady>
+    > | null = null;
+    await act(async () => {
+      // op1: the "send" path's connect. Blocks inside guardedReconnectServer.
+      const sendConnect = result.current
+        .ensureServersReady(["demo-server"])
+        .then((value) => {
+          outcome = value;
+        });
+      await flushAsyncWork();
+
+      // op2: the background recycle bumps the op token, staling op1.
+      await result.current.reconnectServerForClientSwitch("demo-server");
+
+      // op2 drove the server to connected — publish that to the hook so the
+      // superseded follow-up observes the newer op's real outcome.
+      appState.projects = {
+        ...appState.projects,
+        default: {
+          ...appState.projects.default,
+          servers: {
+            "demo-server": {
+              ...appState.projects.default.servers["demo-server"],
+              connectionStatus: "connected",
+            },
+          },
+        },
+      } as any;
+      appState.servers = {
+        ...appState.servers,
+        "demo-server": {
+          ...appState.servers["demo-server"],
+          connectionStatus: "connected",
+        },
+      } as any;
+      flushSync(() => rerender());
+      // Let the effect that republishes `effectiveServers` run, so the
+      // superseded follow-up polls against the connected state.
+      await flushAsyncWork();
+
+      releaseFirst({ success: true, initInfo: { clientCapabilities: {} } });
+      await sendConnect;
+    });
+
+    expect(outcome).toEqual({
+      readyServerNames: ["demo-server"],
+      missingServerNames: [],
+      failedServerNames: [],
+      reauthServerNames: [],
+    });
   });
 
   it("strips OAuth bearer headers from reconnect fallback configs", async () => {

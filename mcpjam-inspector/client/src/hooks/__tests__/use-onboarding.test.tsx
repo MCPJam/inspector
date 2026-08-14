@@ -20,8 +20,6 @@ const mockState = vi.hoisted(() => ({
   markOnboardingShownMutation: vi.fn().mockResolvedValue(undefined),
   detectEnvironment: vi.fn(() => "test"),
   detectPlatform: vi.fn(() => "web"),
-  // Toggled per-test so the provisioning gate can be exercised in both hosted
-  // and local modes. Read live via the getter in the config mock below.
   hostedMode: false,
 }));
 
@@ -100,30 +98,57 @@ describe("useOnboarding", () => {
     });
   });
 
-  it("auto-connects Excalidraw in local mode even without a provisioned project", async () => {
-    // In local/non-hosted mode the active project is a local record and
-    // Excalidraw connects as a runtime server, so onboarding must not block on
-    // a Convex-synced project — otherwise guests on deployments that can't
-    // authenticate them hang on an infinite spinner. See issue #3352.
+  it("waits for a new local guest project before auto-connecting", async () => {
     const onConnect = vi.fn();
-    renderHook(() =>
-      useOnboarding({
-        servers: {},
-        onConnect,
-        isSignedInWithWorkOs: false,
-        isWorkOsAuthLoading: false,
-        isProjectProvisioned: false,
-      })
+    const { rerender } = renderHook(
+      ({ isProjectProvisioned }: { isProjectProvisioned: boolean }) =>
+        useOnboarding({
+          servers: {},
+          onConnect,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
+          isProjectProvisioned,
+        }),
+      { initialProps: { isProjectProvisioned: false } }
     );
+
+    expect(onConnect).not.toHaveBeenCalled();
+    rerender({ isProjectProvisioned: true });
 
     await waitFor(() => {
       expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
     });
   });
 
-  it("waits for project provisioning before auto-connecting Excalidraw in hosted mode", async () => {
-    // Hosted mode stores each server on the Convex project, so the first-run
-    // connect must wait for that project to provision.
+  it("waits for first-run client config sync before auto-connecting", async () => {
+    const onConnect = vi.fn();
+    const { rerender } = renderHook(
+      ({ isClientConfigSyncPending }: { isClientConfigSyncPending: boolean }) =>
+        useOnboarding({
+          servers: {},
+          onConnect,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
+          isClientConfigSyncPending,
+        }),
+      {
+        initialProps: {
+          isClientConfigSyncPending: true,
+        },
+      }
+    );
+
+    expect(onConnect).not.toHaveBeenCalled();
+
+    rerender({ isClientConfigSyncPending: false });
+
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
+  it("waits for a new guest project before auto-connecting Excalidraw", async () => {
     mockState.hostedMode = true;
     const onConnect = vi.fn();
     const { rerender } = renderHook(

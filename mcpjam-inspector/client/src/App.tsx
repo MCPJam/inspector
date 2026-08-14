@@ -1987,6 +1987,7 @@ export function PlaygroundRoute() {
     handleConnect,
     handleUpdateHostContext,
     isAuthenticated,
+    isClientConfigSyncPending,
     isSelectedServerSyncing,
     isWorkOsLoading,
     playgroundServerSelectorProps,
@@ -2009,6 +2010,7 @@ export function PlaygroundRoute() {
       isWorkOsAuthLoading={isWorkOsLoading}
       isConvexAuthenticated={isAuthenticated}
       isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
+      isClientConfigSyncPending={isClientConfigSyncPending}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
@@ -4486,6 +4488,7 @@ export default function App() {
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
+    isClientConfigSyncPending,
     isGuestProjectActor,
     isBillingContextPending,
     isLoadingRemoteProjects,
