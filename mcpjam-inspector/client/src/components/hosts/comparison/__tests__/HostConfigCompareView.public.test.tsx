@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -267,6 +267,10 @@ describe("HostConfigCompareView public mode", () => {
     // Apps capability rows use their raw camelCase key as the label. If the
     // query were lowercased before matching (the original bug), typing this
     // exact label would produce "No fields match" instead of the row itself.
+    // This exercises the matrix's own row-filtering path (computeVisibleFieldIds,
+    // fed the raw `fieldSearchQuery` state directly) — not the search bar's
+    // internal autocomplete-suggestion filtering, which has its own coverage
+    // in support-level.test.ts.
     const user = userEvent.setup();
 
     render(
@@ -288,10 +292,16 @@ describe("HostConfigCompareView public mode", () => {
       "toolCancelled"
     );
 
+    // The matrix renders either the table or "No fields match" (mutually
+    // exclusive early returns) — so finding the row inside a real table
+    // already implies the empty state isn't showing. Scoped to the table
+    // because the search bar's own autocomplete popover can render a
+    // "toolCancelled" suggestion at the same time; an unscoped getByText
+    // would collide with it.
     await waitFor(() => {
       expect(
-        screen.queryByText(/No fields match/i)
-      ).not.toBeInTheDocument();
+        within(screen.getByRole("table")).getByText("toolCancelled")
+      ).toBeInTheDocument();
     });
   });
 
