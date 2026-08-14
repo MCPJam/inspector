@@ -53,8 +53,8 @@ function convexClient(token: string): ConvexHttpClient {
  * Map the connection flow's own error codes onto v1 codes.
  *
  * The generic `translateConvexWriteError` is not used here because this flow
- * raises a vocabulary it does not know — RATE_LIMITED, ACTIVE_REQUEST_LIMIT,
- * FEATURE_DISABLED — and its fallbacks would flatten all three into a 400,
+ * raises a vocabulary it does not know — RATE_LIMITED, ACTIVE_REQUEST_LIMIT —
+ * and its fallbacks would flatten both into a 400,
  * which tells a caller to fix their input when the honest answer is "wait",
  * "finish one of the ones you already started", or "this is not on yet".
  */
@@ -67,7 +67,6 @@ const CODE_MAP: Record<string, { status: number; code: ErrorCode }> = {
   RATE_LIMITED: { status: 429, code: ErrorCode.RATE_LIMITED },
   PROJECT_ACCESS_DENIED: { status: 403, code: ErrorCode.FORBIDDEN },
   FORBIDDEN: { status: 403, code: ErrorCode.FORBIDDEN },
-  FEATURE_DISABLED: { status: 403, code: ErrorCode.FORBIDDEN },
   URL_NOT_ALLOWED: { status: 400, code: ErrorCode.VALIDATION_ERROR },
   UNSUPPORTED_AUTH_METHOD: {
     status: 400,
