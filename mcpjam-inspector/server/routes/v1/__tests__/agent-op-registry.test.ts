@@ -803,13 +803,19 @@ describe("tier derives from operation.risk", () => {
       (op) => !op.readOnly && op.risk === undefined
     ).map((op) => op.name);
 
+    // EQUALITY, not <=: a <= ceiling decays as the pin shrinks (classifying
+    // five writes leaves five slots of slack a later addition could use
+    // without touching this line). Exact match means every size change —
+    // shrink or grow — must also edit the ceiling, so the two-diff-line
+    // guarantee stays live for the whole life of the pin.
     expect(
       UNCLASSIFIED_WRITES.size,
-      `The unclassified-writes pin grew. Classifying the new write (one ` +
-        `\`risk\` field in the SDK catalog) is the intended fix; growing the ` +
-        `pin needs a reviewer to accept both this ceiling bump and the new ` +
-        `name above.`
-    ).toBeLessThanOrEqual(UNCLASSIFIED_WRITES_CEILING);
+      `The unclassified-writes pin changed size. Shrinking (classifying a ` +
+        `write): lower UNCLASSIFIED_WRITES_CEILING to match. Growing: don't — ` +
+        `classify the new write (one \`risk\` field in the SDK catalog) ` +
+        `instead; growing needs a reviewer to accept both the ceiling bump ` +
+        `and the new name above.`
+    ).toBe(UNCLASSIFIED_WRITES_CEILING);
 
     const newcomers = unclassified
       .filter((name) => !UNCLASSIFIED_WRITES.has(name))
