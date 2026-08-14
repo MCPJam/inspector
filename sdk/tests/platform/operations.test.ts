@@ -1533,6 +1533,7 @@ describe("operation catalog consistency", () => {
     get_wave_insights: { wave: "w" },
     request_wave_insights: { wave: "w" },
     cancel_wave_insights: { wave: "w" },
+    get_user_testing_scenario: { scenario: "cb" },
     update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
     list_user_testing_sessions: { scenario: "cb" },
     get_user_testing_session: { scenario: "cb", session: "s" },

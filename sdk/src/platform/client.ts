@@ -6,6 +6,7 @@ import type {
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
+  PlatformEvalRunInsightsRequested,
   PlatformEvalRunCreated,
   PlatformEvalCase,
   PlatformEvalCaseDeleted,
@@ -34,6 +35,7 @@ import type {
   PlatformScenario,
   PlatformUserTestingInsightsRequested,
   PlatformUserTestingScenario,
+  PlatformUserTestingScenarioDetail,
   PlatformUserTestingSession,
   PlatformUserTestingSessionDetail,
   PlatformSwarm,
@@ -922,6 +924,25 @@ export class PlatformApiClient {
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}`,
       {},
+      options
+    );
+  }
+
+  /**
+   * Request (or with `force`, regenerate) the eval run's insights —
+   * serverQuality behind the common envelope. SPENDS the org's model budget;
+   * poll `getEvalRun().insights` rather than re-requesting.
+   */
+  requestEvalRunInsights(
+    params: { projectId: string; runId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunInsightsRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      { body: params.force ? { force: true } : {} },
       options
     );
   }
@@ -2027,6 +2048,22 @@ export class PlatformApiClient {
         projectId
       )}/environments/${encodeURIComponent(environmentId)}/scenario`,
       { body },
+      options
+    );
+  }
+
+  /**
+   * Scenario detail with the REQUIRED common insights envelope. Project
+   * members only — share-link guests never reach other visitors' evidence.
+   */
+  getUserTestingScenario(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions
+  ): Promise<PlatformUserTestingScenarioDetail> {
+    return this.request(
+      "GET",
+      this.userTestingPath(params.projectId, params.scenarioId),
+      {},
       options
     );
   }
