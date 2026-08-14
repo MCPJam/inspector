@@ -268,8 +268,11 @@ export function useChatboxTurnRating({
 
         // Superseded while in flight: a newer click owns this key's state now
         // (and its own mutation is the one whose outcome matters). The server
-        // write above already landed and upserts are idempotent per turn, so
-        // there is nothing to undo — just don't report on it.
+        // write above already landed and there is nothing to undo — just
+        // don't report on it. This cannot resurrect the old value server-side
+        // either: Convex executes a client's mutations "one at a time in a
+        // single, ordered queue", so the newer click's upsert always applies
+        // AFTER this one (docs.convex.dev/functions/mutation-functions).
         if (generationRef.current.get(key) !== pending.generation) return;
 
         if (result?.status === "ok") {
@@ -412,6 +415,12 @@ export function useChatboxTurnRating({
       // carries a stale generation and self-cancels.
       const generation = (generationRef.current.get(key) ?? 0) + 1;
       generationRef.current.set(key, generation);
+      // A queued stale-access entry for this turn is superseded by this
+      // click. The generation guard would discard it at replay anyway, but
+      // leaving it in the queue keeps the stale backoff re-asking for a
+      // redeem the newer submission may no longer need — and standing the
+      // timer down should not depend on effect ordering.
+      staleQueueRef.current.delete(key);
       void runSubmit({ ...args, chatboxId, generation }, 0);
     },
     [enabled, runSubmit]

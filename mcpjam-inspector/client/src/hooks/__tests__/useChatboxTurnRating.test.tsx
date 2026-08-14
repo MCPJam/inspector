@@ -202,6 +202,64 @@ describe("useChatboxTurnRating", () => {
     expect(values).toEqual([3, 5]);
   });
 
+  it("a fresh click stands down a superseded stale-queue entry", async () => {
+    // Rating A hits stale access and queues; before the redeem lands the
+    // tester revises and the new submission succeeds. The queued A is now
+    // superseded — the stale backoff must stop re-asking for a redeem the
+    // newer submission proved unnecessary, not keep firing over a queue
+    // entry whose generation guard would discard it anyway.
+    vi.useFakeTimers();
+    mockSubmitScore
+      .mockRejectedValueOnce(staleError())
+      .mockResolvedValue({ status: "ok" });
+    const onStaleHostedAccess = vi.fn();
+
+    const { result } = renderHook(() =>
+      useChatboxTurnRating({
+        enabled: true,
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        onStaleHostedAccess,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 2,
+      });
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 5,
+      });
+    });
+    await flushMicrotasks();
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+
+    // Burn every stale-backoff tier: the timer must find an empty queue and
+    // stand down instead of re-asking.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    await flushMicrotasks();
+
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+  });
+
   it("queues on stale access, asks for a re-redeem, and replays on the new version", async () => {
     mockSubmitScore.mockRejectedValueOnce(staleError());
     const onStaleHostedAccess = vi.fn();
