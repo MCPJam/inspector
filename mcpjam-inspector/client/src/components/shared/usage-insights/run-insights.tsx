@@ -1020,6 +1020,7 @@ function RecommendationRow({
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
+          aria-expanded={isExpanded}
           data-testid="run-insight-headline"
         >
           <span className="min-w-0 flex-1 truncate text-xs font-medium" title={headline}>

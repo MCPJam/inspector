@@ -474,6 +474,23 @@ describe("RunInsightsBanner + Recommendations", () => {
     expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Fix:/i);
   });
 
+  it("announces disclosure state on BOTH of its triggers", () => {
+    // This row has two buttons opening one panel — the count and the
+    // headline. A keyboard user who lands on either must be told the same
+    // thing, so state cannot live on just one of them.
+    state.dto = completed();
+    state.findings = [finding()];
+    renderBannerAndRecommendations();
+    for (const id of ["run-insight-count", "run-insight-headline"]) {
+      expect(screen.getByTestId(id)).toHaveAttribute("aria-expanded", "false");
+    }
+
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    for (const id of ["run-insight-count", "run-insight-headline"]) {
+      expect(screen.getByTestId(id)).toHaveAttribute("aria-expanded", "true");
+    }
+  });
+
   it("closes an OPEN recommendation when its evidence disappears", () => {
     state.dto = completed();
     state.findings = [finding()];
