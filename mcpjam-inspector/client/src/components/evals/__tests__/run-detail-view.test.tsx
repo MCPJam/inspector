@@ -4,6 +4,15 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 
+// The envelope hook subscribes to Convex; these specs render without a
+// provider, so it is stubbed exactly like the rail above. `undefined` is the
+// real "still loading / no envelope" value, and the panel renders nothing for
+// it — the mount is what these specs care about.
+vi.mock(
+  "@/components/shared/actionable-insights/use-insights-envelope",
+  () => ({ useInsightsEnvelope: () => undefined }),
+);
+
 vi.mock("../use-run-insights", () => ({
   useRunInsights: vi.fn(),
 }));

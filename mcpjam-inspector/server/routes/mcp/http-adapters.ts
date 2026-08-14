@@ -11,6 +11,7 @@ import {
 } from "../../services/tunnel-registry";
 import { recordTunnelRequest } from "../../services/tunnel-request-log";
 import { getRequestLogger } from "../../utils/request-logger";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import {
   HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
@@ -377,6 +378,10 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
             readScopeStepUpCorrelationId(c),
             context,
           ),
+        // Bridge failures leave here as HTTP 200 JSON-RPC error envelopes,
+        // invisible to http.request.failed — the reporter is their only
+        // typed record.
+        failureReporter: createRequestStreamFailureReporter(c, "mcp-bridge"),
       },
     );
     if (!response) {
@@ -446,6 +451,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
               readScopeStepUpCorrelationId(c) ?? sess.scopeStepUpCorrelationId,
               context,
             ),
+          // Doubly invisible on this transport: the JSON-RPC error goes out
+          // over the SSE session while HTTP answers 202 Accepted.
+          failureReporter: createRequestStreamFailureReporter(c, "mcp-bridge"),
         },
       );
       // If there is a JSON-RPC response, emit it over SSE to the client

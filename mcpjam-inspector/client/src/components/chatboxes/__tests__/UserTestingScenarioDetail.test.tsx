@@ -146,6 +146,15 @@ vi.mock("@/components/shared/usage-insights/run-insights", () => ({
   RunInsightsRecommendations: () => null,
 }));
 
+// The envelope hook subscribes to Convex; these specs render without a
+// provider, so it is stubbed exactly like the rail above. `undefined` is the
+// real "still loading / no envelope" value, and the panel renders nothing for
+// it — the mount is what these specs care about.
+vi.mock(
+  "@/components/shared/actionable-insights/use-insights-envelope",
+  () => ({ useInsightsEnvelope: () => undefined }),
+);
+
 vi.mock("@/components/chatboxes/ChatboxDeleteConfirmDialog", () => ({
   ChatboxDeleteConfirmDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="stub-delete-dialog" /> : null,
