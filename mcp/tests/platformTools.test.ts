@@ -92,7 +92,10 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
 const PLAIN_TOOLS = [
   "get_me",
   "list_models",
+  "list_organizations",
   "list_projects",
+  "create_project",
+  "update_project",
   "list_project_servers",
   "create_project_server",
   "get_project_server",
@@ -209,7 +212,10 @@ describe("platform tool registration", () => {
     expect(registrations.map((registration) => registration.name)).toEqual([
       "get_me",
       "list_models",
+      "list_organizations",
       "list_projects",
+      "create_project",
+      "update_project",
       "list_project_servers",
       "create_project_server",
       "get_project_server",
@@ -301,6 +307,11 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "create_project_server",
       "update_project_server",
+      // Project create/update: both are cheap, both are metadata-only (the
+      // update schema has no `servers` key at all), and neither destroys
+      // anything — so they announce a plain write, not a destructive one.
+      "create_project",
+      "update_project",
       // Creates a connection request, and possibly a DISABLED server row.
       // Nothing is destroyed and nothing is enabled without a person
       // completing the flow, so it is a write rather than a destructive one.

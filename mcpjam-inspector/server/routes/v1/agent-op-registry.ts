@@ -652,6 +652,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "The turn already runs as a resolved actor; re-reading identity adds no capability.",
   list_projects:
     "The turn is pinned to one project; project shopping is not a turn concern.",
+  list_organizations:
+    "The turn is pinned to one project inside one organization; organization shopping is a step further out than even project shopping, and nothing the agent can do with the answer stays inside the turn.",
   list_models:
     "Model choice belongs to the host that started the turn, not the turn itself.",
 

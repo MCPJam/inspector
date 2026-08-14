@@ -157,6 +157,43 @@ function usesDelegatedToken(c: Context): boolean {
 }
 
 /**
+ * The organization this request is CONFINED TO, or `undefined` for a caller
+ * who is confined to nothing.
+ *
+ * The backend applies this itself for everything reached through a delegated
+ * JWT — the token is minted for one org and Convex re-checks membership in it.
+ * What the backend cannot clamp is a query that is not org-scoped at all:
+ * `organizations:getMyOrganizations` answers "every org this HUMAN belongs to",
+ * which for an `sk_` key bound to one org is strictly more than the key may
+ * see. A route serving such a query must intersect the result with this.
+ *
+ * Read the AUTH METHOD, not the presence of `mcpjamOrganizationId`: a session
+ * JWT caller can carry the var too (it is the org their UI is looking at), and
+ * clamping them to it would hide the other orgs they legitimately belong to —
+ * the exact list this endpoint exists to return.
+ *
+ * FAILS CLOSED. A delegated caller whose org cannot be resolved throws rather
+ * than returning `undefined`, because `undefined` here means "confined to
+ * nothing" — the caller would skip the clamp entirely and receive everything.
+ * The two states are opposites and must not share a return value. Today this
+ * is also unreachable, since `getConvexBearerForRequest` mints first and
+ * `delegationContext` rejects the same broken state (with this same code); the
+ * throw is here so the clamp does not depend on that ordering holding.
+ */
+export function getDelegatedOrganizationId(c: Context): string | undefined {
+  if (!usesDelegatedToken(c)) return undefined;
+  const organizationId = c.get("mcpjamOrganizationId");
+  if (typeof organizationId !== "string" || organizationId.length === 0) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Missing WorkOS delegation context for organization scoping"
+    );
+  }
+  return organizationId;
+}
+
+/**
  * Resolve the bearer to use against Convex for this request:
  *   - JWT callers (WorkOS session, guest): the original bearer, verbatim.
  *   - WorkOS API-key callers: a cached short-lived delegated JWT.

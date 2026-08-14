@@ -23,6 +23,11 @@
 export type CliBinding = { command: string } | { excluded: string };
 
 export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
+  // ── Organizations ───────────────────────────────────────────────────────
+  // Read-only, and the only organization command there is. Member, role,
+  // invite and billing writes are account administration and stay in the app.
+  list_organizations: { command: "organizations list" },
+
   // ── Projects and servers ────────────────────────────────────────────────
   list_projects: { command: "projects list" },
   create_project: { command: "projects create" },
