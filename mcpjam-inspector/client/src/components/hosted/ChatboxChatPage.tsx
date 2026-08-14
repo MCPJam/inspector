@@ -963,6 +963,11 @@ export function ChatboxChatPage({
     enabled: perTurnFeedbackEnabled,
     chatboxId: session?.chatboxId,
     accessVersion: session?.accessVersion,
+    // The style picks the score key. Derived here rather than inside the hook
+    // so the widget's `variant` and the key its clicks write both come from
+    // one read of the config.
+    scoreKey:
+      perTurnFeedback?.style === "thumbs" ? "user_thumb" : "user_rating",
     onStaleHostedAccess: requestRefreshAccessVersion,
   });
   const introGate = useChatboxHostIntroGate({

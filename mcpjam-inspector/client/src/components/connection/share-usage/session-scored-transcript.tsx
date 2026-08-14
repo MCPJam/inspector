@@ -10,6 +10,16 @@ import {
 import { useSharedChatTurnScores } from "@/hooks/useSharedChatThreads";
 
 const USER_RATING_KEY = "user_rating";
+const USER_THUMB_KEY = "user_thumb";
+/** The per-turn keys a tester writes — one per widget style. */
+const TURN_RATING_KEYS = [USER_RATING_KEY, USER_THUMB_KEY];
+
+type TurnRatingRow = {
+  value?: number;
+  comment?: string;
+  key: string;
+  updatedAt: number;
+};
 
 interface SessionScoredTranscriptProps extends ReadOnlyTranscriptProps {
   threadId: string;
@@ -44,21 +54,26 @@ export function SessionScoredTranscript({
    * prompts and counting them would shift every rating one turn late.
    */
   const ratingByVisibleIndex = useMemo(() => {
-    const map = new Map<number, { value?: number; comment?: string }>();
-    const ratings = (scores ?? []).filter(
-      (score) => score.key === USER_RATING_KEY
+    const map = new Map<number, TurnRatingRow>();
+    const ratings = (scores ?? []).filter((score) =>
+      TURN_RATING_KEYS.includes(score.key)
     );
     if (ratings.length === 0) return map;
 
-    const byPromptIndex = new Map<
-      number,
-      { value?: number; comment?: string }
-    >();
+    const byPromptIndex = new Map<number, TurnRatingRow>();
     for (const score of ratings) {
       if (score.promptIndex === undefined) continue;
+      // A turn can carry a row under BOTH keys — a scenario whose style was
+      // switched, re-rated by the same tester. The latest revision is what
+      // they currently mean, so it wins; `updatedAt` is the freshness axis the
+      // backend maintains for exactly this.
+      const existing = byPromptIndex.get(score.promptIndex);
+      if (existing && existing.updatedAt >= score.updatedAt) continue;
       byPromptIndex.set(score.promptIndex, {
         value: score.value,
         comment: score.comment,
+        key: score.key,
+        updatedAt: score.updatedAt,
       });
     }
 
@@ -92,6 +107,10 @@ export function SessionScoredTranscript({
         return (
           <TurnRating
             readOnly
+            // Render the widget the tester actually used. A 0 shown as stars
+            // would read as "unrated"; a 4 shown as thumbs cannot be shown at
+            // all.
+            variant={rating.key === USER_THUMB_KEY ? "thumbs" : "stars"}
             value={rating.value}
             comment={rating.comment}
             status="submitted"

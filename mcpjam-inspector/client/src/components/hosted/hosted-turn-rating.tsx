@@ -45,6 +45,10 @@ export function HostedTurnRating({
 
   return (
     <TurnRating
+      // The single switch point between the two widget styles. The hook is
+      // told the matching score key by the page, so the control the tester
+      // sees and the key their click writes cannot disagree.
+      variant={config.style === "thumbs" ? "thumbs" : "stars"}
       value={state.value}
       comment={state.comment}
       status={state.status}

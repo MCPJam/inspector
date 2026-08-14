@@ -389,4 +389,45 @@ describe("chatUi surface normalization", () => {
       normalized?.payload.chatUi?.surfaces?.perTurnFeedback
     ).not.toHaveProperty("prompt");
   });
+
+  it("carries the thumbs style through", () => {
+    const normalized = normalizeChatboxSession(
+      session({
+        surfaces: { perTurnFeedback: { enabled: true, style: "thumbs" } },
+      })
+    );
+    expect(normalized?.payload.chatUi?.surfaces?.perTurnFeedback).toEqual({
+      enabled: true,
+      style: "thumbs",
+    });
+  });
+
+  it("omits the style rather than copying an unrecognised one", () => {
+    // A CLOSED enum, not a pass-through string: the value picks which widget
+    // renders and which score key the tester writes under, so an unknown value
+    // copied through would produce a scenario whose widget renders nothing.
+    // Absence means stars downstream.
+    for (const style of ["hearts", "", 5, null, "THUMBS"]) {
+      const normalized = normalizeChatboxSession(
+        session({
+          surfaces: { perTurnFeedback: { enabled: true, style } },
+        })
+      );
+      expect(
+        normalized?.payload.chatUi?.surfaces?.perTurnFeedback
+      ).not.toHaveProperty("style");
+    }
+  });
+
+  it("keeps stars implicit rather than writing it out", () => {
+    const normalized = normalizeChatboxSession(
+      session({
+        surfaces: { perTurnFeedback: { enabled: true, style: "stars" } },
+      })
+    );
+    // Absence IS stars — one representation, so no reader has to handle two.
+    expect(
+      normalized?.payload.chatUi?.surfaces?.perTurnFeedback
+    ).not.toHaveProperty("style");
+  });
 });
