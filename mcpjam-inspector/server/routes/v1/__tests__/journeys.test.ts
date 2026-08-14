@@ -518,6 +518,7 @@ describe("session DTO outcome join", () => {
           attempts: [
             { chatSessionId: "cs_ok", hostId: "h1", status: "succeeded" },
             { chatSessionId: "cs_bad", hostId: "h1", status: "failed" },
+            { chatSessionId: "cs_limited", hostId: "h1", status: "rate_limited" },
           ],
         })
       )
@@ -525,7 +526,8 @@ describe("session DTO outcome join", () => {
         page: [
           { id: "s1", chatSessionId: "cs_ok", projectId: PROJECT, status: "active" },
           { id: "s2", chatSessionId: "cs_bad", projectId: PROJECT, status: "active" },
-          { id: "s3", chatSessionId: "cs_unknown", projectId: PROJECT, status: "active" },
+          { id: "s3", chatSessionId: "cs_limited", projectId: PROJECT, status: "active" },
+          { id: "s4", chatSessionId: "cs_unknown", projectId: PROJECT, status: "active" },
         ],
         isDone: true,
         continueCursor: "",
@@ -539,6 +541,9 @@ describe("session DTO outcome join", () => {
     expect(body.items.map((s) => s.outcome)).toEqual([
       "succeeded",
       "failed",
+      // The watcher ranks rate-limited sessions as evidence — this literal
+      // surviving the join is what that depends on.
+      "rate_limited",
       // No matching attempt (historical run) → null, never a guess.
       null,
     ]);
