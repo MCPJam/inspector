@@ -1309,6 +1309,11 @@ export function PlaygroundMain({
   // per-project ref so it fires at most once per empty project and never
   // blocks a different empty project from getting its own default hosts.
   const playgroundSeededProjectIdsRef = useRef(new Set<string>());
+  // While the three first-run hosts are being created, a subscription can
+  // surface ChatGPT before Claude. Do not let the generic missing-preview
+  // fallback turn that timing artifact into the selected default; the seed
+  // writes Claude as the lead after all three creates succeed.
+  const playgroundSeedingProjectIdsRef = useRef(new Set<string>());
   // Retry plumbing for the two failure paths below (single-host create
   // rejected / 3-host seed rolled back). Both clear the project's "seeded"
   // marker, which permits a retry but cannot cause one — this tick is what
@@ -1455,6 +1460,7 @@ export function PlaygroundMain({
     const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
     const preSeedPreviewedHostId = loadPreviewedHostId(seedProjectId);
     playgroundSeededProjectIdsRef.current.add(seedProjectId);
+    playgroundSeedingProjectIdsRef.current.add(seedProjectId);
     Promise.allSettled(
       seeds.map(({ host, template }) =>
         createPlaygroundHost({
@@ -1558,6 +1564,8 @@ export function PlaygroundMain({
         setPreviewedHostId(leadHostId);
         setSelectedHostIds(hostIds);
       }
+    }).finally(() => {
+      playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
     });
   }, [
     isConvexAuthenticated,
@@ -1582,6 +1590,9 @@ export function PlaygroundMain({
       !multiHostProjectId ||
       hostList.length === 0
     ) {
+      return;
+    }
+    if (playgroundSeedingProjectIdsRef.current.has(multiHostProjectId)) {
       return;
     }
     const previewedHostIsValid =

@@ -1037,14 +1037,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     ]);
   });
 
-  // The mirror image of the test above, and the reason the lead guard can't
-  // simply be "did the previewed id move at all". The host-list query catches
-  // up to the FIRST create while the other two are still in flight, so the
-  // "no valid previewed host" fallback effect auto-picks that host as lead —
-  // our own write, not the user's. A guard that read it as a user selection
-  // would bail before `saveSelectedHostIds` and strand the guest with 3 hosts
-  // and no compare lineup: exactly the half-seeded state the seed prevents.
-  it("still lands the 3-way lineup when the host list catches up mid-seed and a lead is auto-picked", async () => {
+  it("keeps Claude as lead when ChatGPT reaches the host list first", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     const releaseCreate: Array<(host: { hostId: string }) => void> = [];
@@ -1061,30 +1054,28 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(releaseCreate).toHaveLength(3);
     });
 
-    // Convex surfaces the first created host while creates 2 and 3 are still
-    // pending; the fallback effect promotes it because nothing is previewed.
+    // ChatGPT resolves before the first seed (Claude), so a generic fallback
+    // would otherwise make ChatGPT the automatic default.
+    await act(async () => {
+      releaseCreate[1]({ hostId: "h-chatgpt" });
+    });
     multiHostFixture.hostList = [{ hostId: "h-chatgpt", name: "ChatGPT" }];
     rerender(<PlaygroundMain {...defaultProps} />);
-    await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-chatgpt");
-    });
+    expect(readPreviewedHostId()).toBeNull();
 
     await act(async () => {
-      releaseCreate[0]({ hostId: "h-chatgpt" });
-      releaseCreate[1]({ hostId: "h-claude" });
+      releaseCreate[0]({ hostId: "h-claude" });
       releaseCreate[2]({ hostId: "h-cursor" });
     });
 
-    // The lineup still lands, and the auto-picked lead is kept rather than
-    // being rewritten to a different slot.
     await waitFor(() => {
       expect(loadSelectedHostIds("default")).toEqual([
-        "h-chatgpt",
         "h-claude",
+        "h-chatgpt",
         "h-cursor",
       ]);
     });
-    expect(readPreviewedHostId()).toBe("h-chatgpt");
+    expect(readPreviewedHostId()).toBe("h-claude");
   });
 
   it("seeds 3 default clients for each empty project", async () => {
