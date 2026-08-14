@@ -3041,6 +3041,13 @@ export function useServerState({
 
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
+      // Snapshot the client BEFORE the first await, not when the toast is
+      // built. This connect resolves its protocol pin from whichever client is
+      // previewed as it starts, then spends seconds inside
+      // `syncServerToConvex` / `guardedTestConnection` — long enough for the
+      // user to switch clients. Capturing at the end would name a client that
+      // had nothing to do with the failure, and whose dropdown cannot fix it.
+      const hostIdAtConnectStart = previewedHostIdRef.current;
       if (notifyIfClientConfigSyncPending()) {
         return;
       }
@@ -3537,9 +3544,6 @@ export function useServerState({
             serverName: formData.name,
             error: result.error,
           });
-          // Which client held the pin AT THE MOMENT OF FAILURE — see the
-          // handler below.
-          const hostIdAtFailure = previewedHostIdRef.current;
           toast.error(
             `Failed to connect to ${formData.name}${
               result.error ? `: ${result.error}` : ""
@@ -3553,17 +3557,17 @@ export function useServerState({
               ? {
                   action: {
                     label: "Change protocol version",
-                    // `hostIdAtFailure`, bound above when the toast was built:
-                    // reading the ref here would follow the user's CURRENT
-                    // client, and an 8-second toast easily outlives a client
-                    // switch.
+                    // `hostIdAtConnectStart`, bound before the first await: the
+                    // pin that failed was resolved from the client active
+                    // THEN, and both the connect itself and the toast that
+                    // follows easily outlive a client switch.
                     onClick: () => {
                       track("change_protocol_version_clicked", {
                         location: "connect_failure_toast",
-                        has_host_id: Boolean(hostIdAtFailure),
+                        has_host_id: Boolean(hostIdAtConnectStart),
                       });
                       navigateApp(
-                        buildHostFocusTabPath(hostIdAtFailure, "protocol")
+                        buildHostFocusTabPath(hostIdAtConnectStart, "protocol")
                       );
                     },
                   },
@@ -4501,6 +4505,12 @@ export function useServerState({
     ): Promise<EnsureServerConnectionResult> => {
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
+      // Snapshot before anything awaits. `reportError` runs at the END of a
+      // reconnect that resolved its pin from the client active at the START,
+      // and the toast it raises then lives ~8s beyond that — two windows in
+      // which the user can switch clients and be sent to the one client that
+      // provably did not cause this.
+      const hostIdAtReconnectStart = previewedHostIdRef.current;
 
       const reportError = (errorMessage: string) => {
         if (suppressErrors) return;
@@ -4510,22 +4520,16 @@ export function useServerState({
         // action of its own. Matched on the message because that is all this
         // helper receives; the clause is MCPJam's own wording.
         if (isProtocolVersionPinFailure(undefined, errorMessage)) {
-          // Bound NOW, not read at click time. An error toast lives ~8s and
-          // the client picker is one click away, so reading the ref in the
-          // handler can open whichever client the user happened to switch to
-          // while reading — the one client guaranteed NOT to hold the pin that
-          // just failed.
-          const hostIdAtFailure = previewedHostIdRef.current;
           toast.error(errorMessage, {
             action: {
               label: "Change protocol version",
               onClick: () => {
                 track("change_protocol_version_clicked", {
                   location: "reconnect_failure_toast",
-                  has_host_id: Boolean(hostIdAtFailure),
+                  has_host_id: Boolean(hostIdAtReconnectStart),
                 });
                 navigateApp(
-                  buildHostFocusTabPath(hostIdAtFailure, "protocol")
+                  buildHostFocusTabPath(hostIdAtReconnectStart, "protocol")
                 );
               },
             },

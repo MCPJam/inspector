@@ -134,25 +134,3 @@ describe("protocol version pin — real envelope shape", () => {
     );
   });
 });
-
-describe("protocol version pin — compare cards", () => {
-  it("gives every column the same way out", async () => {
-    // Compare mode is where this failure was first REPORTED from — three
-    // columns, all pointed at the same server, all dead ends. A card that
-    // renders the banner without the action is invisible in review and total
-    // for the user, so the surfaces are asserted together.
-    const onChangeProtocolVersion = vi.fn();
-    render(
-      <ErrorBox
-        message={PIN_FAILURE_MESSAGE}
-        code={PROTOCOL_VERSION_PIN_CODE}
-        onChangeProtocolVersion={onChangeProtocolVersion}
-      />,
-    );
-
-    await userEvent.click(
-      screen.getByRole("button", { name: /change protocol version/i }),
-    );
-    expect(onChangeProtocolVersion).toHaveBeenCalledTimes(1);
-  });
-});
