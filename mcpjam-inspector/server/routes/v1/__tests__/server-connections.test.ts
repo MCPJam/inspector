@@ -4,7 +4,7 @@
  * These four routes are thin — they forward the caller's own bearer and return
  * what the backend says — so the part worth pinning is the TRANSLATION. The
  * backend raises a vocabulary the generic v1 mapper does not know
- * (`ACTIVE_REQUEST_LIMIT`, `FEATURE_DISABLED`, `AMBIGUOUS_SERVER`), and the
+ * (`ACTIVE_REQUEST_LIMIT`, `AMBIGUOUS_SERVER`), and the
  * generic fallback flattens all of it into a 400: "fix your input", when the
  * honest answer is "wait", "finish one you already started", or "this is not on
  * yet". `CODE_MAP` is also the piece most likely to drift, because a new backend
@@ -166,7 +166,6 @@ describe("error translation", () => {
     ["ACTIVE_REQUEST_LIMIT", 409],
     ["RATE_LIMITED", 429],
     ["PROJECT_ACCESS_DENIED", 403],
-    ["FEATURE_DISABLED", 403],
     ["URL_NOT_ALLOWED", 400],
     ["UNSUPPORTED_AUTH_METHOD", 400],
   ])("maps %s to %i", async (code, status) => {

@@ -116,9 +116,9 @@ describe("collectJourneyRunEvidence", () => {
 					return [
 						...Array.from({ length: 20 }, (_, index) => ({
 							id: `ok_${index}`,
-							status: "completed",
+							outcome: "succeeded",
 						})),
-						{ id: "late_failure", status: "failed" },
+						{ id: "late_failure", outcome: "failed" },
 					];
 				},
 			},
@@ -138,8 +138,8 @@ describe("collectJourneyRunEvidence", () => {
 			apiClient: {
 				getJourneyRunScorecard: async () => null,
 				listJourneyRunSessions: async () => [
-					{ id: "ok_1", status: "completed" },
-					{ id: "limited", status: "rate_limited" },
+					{ id: "ok_1", outcome: "succeeded" },
+					{ id: "limited", outcome: "rate_limited" },
 				],
 			},
 			ctx: {},
@@ -156,9 +156,9 @@ describe("collectJourneyRunEvidence", () => {
 			apiClient: {
 				getJourneyRunScorecard: async () => ({ criteria: [] }),
 				listJourneyRunSessions: async () => [
-					{ id: "ok_1", status: "completed" },
-					{ id: "bad_1", status: "failed" },
-					{ id: "ok_2", status: "completed" },
+					{ id: "ok_1", outcome: "succeeded" },
+					{ id: "bad_1", outcome: "failed" },
+					{ id: "ok_2", outcome: "succeeded" },
 					{ id: "bad_2", goalScore: { passed: false } },
 				],
 			},
@@ -476,11 +476,11 @@ describe("formatJourneyRunEvidenceLines", () => {
 			sessions: [
 				{
 					personaLabel: "Impatient admin",
-					status: "completed",
+					outcome: "succeeded",
 					goalScore: { passed: false },
 					preview: "I give up",
 				},
-				{ personaLabel: "Patient tester", status: "rate_limited" },
+				{ personaLabel: "Patient tester", outcome: "rate_limited" },
 			],
 		});
 		assert.equal(lines.length, 4);

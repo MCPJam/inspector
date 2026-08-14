@@ -20,6 +20,7 @@ import {
   ChatboxShareEmptyPanel,
 } from "@/components/chatboxes/ChatboxShareBanner";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
+import { ChatboxPerTurnFeedbackToggle } from "@/components/chatboxes/ChatboxPerTurnFeedbackToggle";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
@@ -74,6 +75,7 @@ import {
 import { buildChatboxLink } from "@/lib/chatbox-session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 /**
  * One User Testing scenario.
@@ -159,9 +161,8 @@ export function UserTestingScenarioDetail({
     [namedEnvironments],
   );
   const resolveComposerTargets = useComposerResolver(chatbox.projectId);
-  const [composer, setComposer] = useState<EnvironmentComposerState>(
-    emptyComposerState,
-  );
+  const [composer, setComposer] =
+    useState<EnvironmentComposerState>(emptyComposerState);
   const [isRebinding, setIsRebinding] = useState(false);
   // Blocks the reseed below while a commit is in flight, so the rebind's own
   // reactive echo doesn't clobber the state the user is mid-editing against.
@@ -369,10 +370,7 @@ export function UserTestingScenarioDetail({
   const selParam = searchParams.get("sel");
   const view: InsightsView =
     searchParams.get("view") === "clusters" ? "clusters" : "flow";
-  const urlSelection = useMemo(
-    () => parseSelectionParam(selParam),
-    [selParam],
-  );
+  const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
 
   // Present only when the environment can't resolve right now (archived, a
   // pinned plugin disabled, its host gone). The scenario still opens: its
@@ -541,14 +539,21 @@ export function UserTestingScenarioDetail({
                           : "This scenario's environment can't be loaded right now — the share link won't open."}
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {environmentError.message} Its sessions are
-                        unaffected.
+                        {environmentError.message} Its sessions are unaffected.
                       </p>
                     </div>
                   </div>
                 ) : null}
 
                 <ChatboxShareSection chatbox={chatbox} />
+
+                {/* Keyed per scenario: the toggle holds optimistic state
+                    across an await, and reusing one instance would let a
+                    write started on one scenario resolve into another's. */}
+                <ChatboxPerTurnFeedbackToggle
+                  key={chatbox.chatboxId}
+                  chatbox={chatbox}
+                />
 
                 <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
                   {composerActive ? (
@@ -585,9 +590,7 @@ export function UserTestingScenarioDetail({
                 data-testid="user-testing-edit-preview"
               >
                 <div className="flex h-9 shrink-0 items-center border-b border-border/40 px-4">
-                  <p className="text-sm font-medium text-foreground">
-                    Preview
-                  </p>
+                  <p className="text-sm font-medium text-foreground">Preview</p>
                 </div>
                 <div className="relative min-h-0 flex-1">
                   {isPreviewProfilePending ? (
@@ -767,9 +770,7 @@ export function UserTestingScenarioDetail({
                     buildUserTestingScenarioPath(chatbox.chatboxId, {
                       tab: "insights",
                       session: sessionParam ?? undefined,
-                      sel: themes
-                        ? serializeSelectionParam(themes)
-                        : undefined,
+                      sel: themes ? serializeSelectionParam(themes) : undefined,
                       view,
                     }),
                     { replace: true },
@@ -814,6 +815,33 @@ export function UserTestingScenarioDetail({
                     name="user-testing-insights-rail"
                     fallback={null}
                   >
+                    {/* Repair tasks above the pattern rail: what to change,
+                        then what concentrated. The subscription lives inside
+                        this component (not in the page body) so a backend
+                        without the query degrades to nothing instead of
+                        taking the scenario page down, and it only mounts on
+                        the insights tab — never in edit mode. Membership is
+                        enforced at the backend; a non-member simply gets
+                        nothing. */}
+                    <ActionableFindings
+                      boundaryName="user-testing-actionable-findings"
+                      surface={{
+                        kind: "scenario",
+                        chatboxId: chatbox.chatboxId,
+                      }}
+                      context={{ rerunLabel: "this user-testing scenario" }}
+                      onOpenSession={(threadId) => {
+                        navigate(
+                          buildUserTestingScenarioPath(chatbox.chatboxId, {
+                            tab: "sessions",
+                            session: threadId,
+                            sel: selParam ?? undefined,
+                            view,
+                          }),
+                          { replace: true },
+                        );
+                      }}
+                    />
                     <RunInsightsProvider
                       surface={{
                         kind: "chatbox",
