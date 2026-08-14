@@ -4820,11 +4820,45 @@ const scenarioSelectorInput = z.object({
       "Project environment id to publish (or unpublish). One scenario per environment."
     ),
 });
-export type PublishScenarioInput = z.infer<typeof scenarioSelectorInput>;
+// Create-time overrides, forwarded to the publish IN THE SAME CALL — without
+// them, "publish this restricted to invited people only" is two operations
+// with a window between them where the scenario is live in the default mode.
+const publishScenarioInput = scenarioSelectorInput.extend({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Scenario name. CREATE-TIME ONLY — ignored on a republish of an already-published environment (rename with update_user_testing_scenario)."
+    ),
+  description: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe(
+      "Scenario description. CREATE-TIME ONLY — ignored on a republish."
+    ),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link: project_members (signed-in project members only), invited_only (named members, invited individually), anyone_with_link (anyone holding the URL). CREATE-TIME ONLY — ignored on a republish; change an existing scenario's mode with update_user_testing_scenario."
+    ),
+});
+export type PublishScenarioInput = z.infer<typeof publishScenarioInput>;
 
 export type PublishScenarioResult = {
   project: SelectedProjectInfo;
   scenario: PlatformScenario;
+  /**
+   * True when overrides were sent but the environment was ALREADY published,
+   * so they were ignored upstream. The scenario in the result carries the real
+   * name and mode — a caller who asked for `invited_only` must not conclude
+   * the link is restricted when it is not.
+   */
+  overridesIgnored?: boolean;
 };
 
 export const publishScenarioOperation: PlatformOperation<
@@ -4835,20 +4869,32 @@ export const publishScenarioOperation: PlatformOperation<
   risk: "exposure",
   title: "Publish a project environment as a user-testing scenario",
   description:
-    "Publish a project environment so people outside the project can talk to it through a share link. IDEMPOTENT — publishing an already-published environment returns the existing scenario rather than creating a second one; `created` tells you which happened. Requires project admin.",
+    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at CREATE TIME, so the scenario is never briefly live in a wider mode than asked for. IDEMPOTENT — publishing an already-published environment returns the existing scenario rather than creating a second one; `created` tells you which happened, and `overridesIgnored: true` means the overrides were discarded because the scenario already existed. Requires project admin.",
   readOnly: false,
-  inputSchema: scenarioSelectorInput,
+  inputSchema: publishScenarioInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const scenario = await client.publishScenario(
-      { projectId: project.id, environmentId: input.environment },
+    const { overridesIgnored, ...scenario } = await client.publishScenario(
+      {
+        projectId: project.id,
+        environmentId: input.environment,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
       { signal }
     );
-    return { project: toSelectedProjectInfo(project), scenario };
+    return {
+      project: toSelectedProjectInfo(project),
+      scenario,
+      ...(overridesIgnored ? { overridesIgnored: true } : {}),
+    };
   },
 };
 
