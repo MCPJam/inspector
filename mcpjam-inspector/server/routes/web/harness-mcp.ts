@@ -335,6 +335,9 @@ async function handle(c: any) {
         source: "web.harness-mcp.proxy",
         hop: "user_server_hop",
         transport: "rpc_envelope",
+        // The masked response below is always a -32000; carry it so these
+        // stay queryable alongside the bridge's own failures.
+        errorCode: "-32000",
         context: { serverId },
       });
     } catch {

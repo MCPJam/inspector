@@ -206,6 +206,13 @@ export async function handleJsonRpc(
     context?: Record<string, unknown>,
   ) => {
     try {
+      // An UPSTREAM -32601 (the connected server rejecting an unknown
+      // method, surfaced through the passthrough or outer catch) is the same
+      // declared client outcome as our own -32601 short-circuit below —
+      // excluded for the same reason.
+      if ((error as { code?: unknown } | undefined)?.code === -32601) {
+        return;
+      }
       options.failureReporter?.({
         message: `[mcp-bridge] ${rpcMethod} failed`,
         error,
@@ -322,6 +329,10 @@ export async function handleJsonRpc(
           // adapter-mode -32000.
           reportOperationFailure(e, "tools/call", normalized, {
             ...(observedToolName ? { toolName: observedToolName } : {}),
+            // A prefixed name ("otherServer:tool") reroutes the call; the
+            // failure belongs to the server that actually executed it, not
+            // the one in the URL.
+            targetServerId,
           });
           if (mode === "manager") {
             const result = {

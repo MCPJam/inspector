@@ -130,6 +130,48 @@ describe("handleJsonRpc failure telemetry", () => {
     expect(calls[0].rpcMethod).toBe("resources/subscribe");
   });
 
+  it("attributes a prefixed tools/call to the server that actually ran it", async () => {
+    const { reporter, calls } = makeReporter();
+    await handleJsonRpc(
+      "srv-1",
+      {
+        id: 10,
+        method: "tools/call",
+        params: { name: "other-server:boom", arguments: {} },
+      },
+      failingManager({ hasServer: vi.fn().mockReturnValue(true) }),
+      "adapter",
+      { failureReporter: reporter },
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].context).toMatchObject({
+      serverId: "srv-1",
+      targetServerId: "other-server",
+    });
+  });
+
+  it("an UPSTREAM -32601 through the passthrough is a declared outcome — no report", async () => {
+    const { reporter, calls } = makeReporter();
+    const manager = failingManager({
+      getManagedClient: vi.fn().mockReturnValue({
+        request: vi
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error("Method not found"), { code: -32601 }),
+          ),
+      }),
+    });
+    const response = await handleJsonRpc(
+      "srv-1",
+      { id: 11, method: "tasks/list", params: {} },
+      manager,
+      "adapter",
+      { failureReporter: reporter },
+    );
+    expect(response.error.code).toBe(-32000);
+    expect(calls).toHaveLength(0);
+  });
+
   it("-32601 method-not-implemented is a declared client outcome — no report", async () => {
     const { reporter, calls } = makeReporter();
     const response = await handleJsonRpc(
