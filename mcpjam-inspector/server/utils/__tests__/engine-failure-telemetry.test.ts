@@ -94,6 +94,26 @@ function errorChunks() {
   return writtenChunks.filter((c) => c?.type === "error");
 }
 
+/**
+ * A real 200 SSE body, so the failure travels the way it does in production:
+ * through `parseJsonEventStream` and the chunk switch, not around them.
+ */
+function sseResponse(chunks: unknown[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
 async function runTurn(overrides: Record<string, unknown> = {}) {
   await handleMCPJamFreeChatModel({
     messages: [{ role: "user", content: "Hi." }] as any,
@@ -206,6 +226,99 @@ describe("engine failure telemetry", () => {
     // but the verdict no longer depends on it.
     expect(calls[0].hop).toBe("mcpjam_internal");
     expect(originOf(calls[0].normalized)).toBe("mcpjam");
+  });
+
+  it("fails the turn on a mid-stream error chunk instead of succeeding", async () => {
+    // The second delivery path, and the one HTTP status can never see. The
+    // backend's `toUIMessageStreamResponse({onError})` categorizes the failure
+    // and serializes it into an error PART on a stream whose headers already
+    // said 200. That chunk used to fall into processStream's `default:` and be
+    // forwarded verbatim; the loop then returned normally and the turn was
+    // recorded as COMPLETED. The user saw an error, telemetry saw a success.
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      { type: "start" },
+      {
+        type: "error",
+        errorText: JSON.stringify({
+          code: "mcpjam_api_error",
+          message: "MCPJam is experiencing a configuration issue.",
+          statusCode: 401,
+          isRetryable: false,
+        }),
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+    const onConversationComplete = vi.fn();
+    const onEngineError = vi.fn();
+
+    await runTurn({
+      failureReporter: reporter,
+      onConversationComplete,
+      onEngineError,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].source).toBe("mcp.chat-v2.agentic-loop");
+    expect(calls[0].errorCode).toBe("mcpjam_api_error");
+    // Classified at the chunk, where the structured body still existed.
+    // `describeError` on the rethrown Error could only see the sentence.
+    expect(originOf(calls[0].normalized)).toBe("mcpjam");
+
+    // The turn took the failure path: engine error fired, and the successful
+    // conversation was never persisted.
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onConversationComplete).not.toHaveBeenCalled();
+
+    // Still exactly one error chunk on the wire — site 3's `emitError` writes
+    // it, and the raw chunk is deliberately not also forwarded.
+    const chunks = errorChunks();
+    expect(chunks).toHaveLength(1);
+    expect(Object.keys(chunks[0]).sort()).toEqual(["errorText", "type"]);
+    // The parsed sentence, not the raw JSON envelope.
+    expect(chunks[0].errorText).toBe(
+      "MCPJam is experiencing a configuration issue.",
+    );
+  });
+
+  it("does not claim a mid-stream provider 5xx as MCPJam's", async () => {
+    // `statusCode` in an error chunk is the UPSTREAM provider's, copied off
+    // its error — not our backend's response status. Reading it with the
+    // non-OK path's `>= 500 → mcpjam` rule would page us every time someone
+    // else's model was overloaded.
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      { type: "start" },
+      {
+        type: "error",
+        errorText: JSON.stringify({
+          code: "provider_error",
+          message: "The AI provider is temporarily unavailable.",
+          statusCode: 503,
+        }),
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(originOf(calls[0].normalized)).toBe("ambiguous");
+  });
+
+  it("still fails the turn on a non-JSON error chunk", async () => {
+    // Any other producer's error chunk. No code, so no ownership claim — but
+    // the turn must still not be recorded as a success.
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      { type: "start" },
+      { type: "error", errorText: "something broke" },
+    ]));
+    const { reporter, calls } = makeReporter();
+    const onConversationComplete = vi.fn();
+
+    await runTurn({ failureReporter: reporter, onConversationComplete });
+
+    expect(calls).toHaveLength(1);
+    expect(onConversationComplete).not.toHaveBeenCalled();
+    expect(errorChunks()[0].errorText).toBe("something broke");
   });
 
   it("stays completely silent on abort — no report, no error chunk", async () => {
