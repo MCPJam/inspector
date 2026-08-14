@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 import type { UIMessage } from "@ai-sdk/react";
 
@@ -117,5 +117,34 @@ describe("ReadOnlyTranscript renderTurnFooter", () => {
     // Two assistant messages at visible positions 1 and 3 — the hidden message
     // was dropped before indexing, so the second one is 3 and not 4.
     expect(seen).toEqual([1, 3]);
+  });
+
+  it("passes the footer by reference so MessageView's memo still holds", () => {
+    // A per-message arrow built in this render would change identity every
+    // pass and defeat `memo` for the whole transcript. The index travels as a
+    // separate prop precisely so the function can be passed through.
+    const renderTurnFooter = vi.fn(() => null);
+    const messages = [
+      userText("hi"),
+      assistantParts([{ type: "text", text: "hello" }]),
+    ];
+    const { rerender } = render(
+      <ReadOnlyTranscript
+        messages={messages}
+        renderTurnFooter={renderTurnFooter}
+      />
+    );
+    const callsAfterFirst = renderTurnFooter.mock.calls.length;
+
+    // Same messages, same callback, unrelated prop change.
+    rerender(
+      <ReadOnlyTranscript
+        messages={messages}
+        renderTurnFooter={renderTurnFooter}
+        className="changed"
+      />
+    );
+
+    expect(renderTurnFooter.mock.calls.length).toBe(callsAfterFirst);
   });
 });

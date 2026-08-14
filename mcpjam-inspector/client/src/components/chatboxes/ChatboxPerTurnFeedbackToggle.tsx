@@ -28,8 +28,15 @@ export function ChatboxPerTurnFeedbackToggle({
   // failure so the control never claims a setting the server refused.
   const [pending, setPending] = useState<boolean | null>(null);
   const enabled = pending ?? stored;
+  const saving = pending !== null;
 
   const handleChange = async (next: boolean) => {
+    // One write in flight at a time. Without this, a double-click starts two
+    // mutations that share `pending`: the first response clears the optimistic
+    // value the second click set, and out-of-order writes can leave the stored
+    // setting disagreeing with the last click. The switch is disabled while
+    // saving, and this guard closes the gap for a programmatic caller.
+    if (saving) return;
     setPending(next);
     try {
       await updateChatbox({
@@ -61,6 +68,7 @@ export function ChatboxPerTurnFeedbackToggle({
         </div>
         <Switch
           checked={enabled}
+          disabled={saving}
           onCheckedChange={(next) => void handleChange(next)}
           aria-label="Enable per-turn ratings"
           data-testid="user-testing-per-turn-feedback-toggle"

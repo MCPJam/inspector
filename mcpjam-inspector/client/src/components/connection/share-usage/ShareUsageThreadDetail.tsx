@@ -653,6 +653,12 @@ export function ShareUsageThreadDetail({
                 itself — losing the conversation to a missing ratings query
                 would be a far worse failure than losing the ratings. */}
             <ErrorBoundary
+              // Keyed on the session so the boundary RETRIES. Without it a
+              // single throw during the pre-deployment window latches the
+              // fallback for the life of the mounted detail — every session a
+              // PM opened afterwards would show a transcript with no ratings
+              // even once the backend went live.
+              key={threadId}
               fallback={
                 <ReadOnlyTranscript
                   messages={adaptedTrace.messages}

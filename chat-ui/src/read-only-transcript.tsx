@@ -16,6 +16,14 @@ import {
   type WidgetRenderInput,
 } from "./types";
 
+// Hoisted so the defaults keep a STABLE identity. As inline `= {}` defaults
+// these were rebuilt on every render, which defeated `MessageView`'s shallow
+// `memo` for every message in the transcript — the same failure the
+// `renderTurnFooter` seam takes care to avoid by passing its index as a
+// separate prop rather than closing over it.
+const EMPTY_TOOLS_METADATA: Record<string, Record<string, unknown>> = {};
+const EMPTY_TOOL_SERVER_MAP: ToolServerMap = {};
+
 function themeClass(themeMode: ThemeMode): string | undefined {
   if (themeMode === "dark") return "dark";
   if (themeMode === "light") return "light";
@@ -60,8 +68,8 @@ export interface TranscriptProps {
 export function Transcript({
   messages,
   model = DEFAULT_CHAT_UI_MODEL,
-  toolsMetadata = {},
-  toolServerMap = {},
+  toolsMetadata = EMPTY_TOOLS_METADATA,
+  toolServerMap = EMPTY_TOOL_SERVER_MAP,
   toolRenderOverrides,
   themeMode = "system",
   reasoningDisplayMode = "inline",
@@ -91,11 +99,8 @@ export function Transcript({
             renderAvatar={renderAvatar}
             renderTool={renderTool}
             renderWidget={renderWidget}
-            renderTurnFooter={
-              renderTurnFooter
-                ? (msg) => renderTurnFooter(msg, index)
-                : undefined
-            }
+            renderTurnFooter={renderTurnFooter}
+            turnIndex={index}
           />
         ))}
       </div>

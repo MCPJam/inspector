@@ -18,6 +18,17 @@ import type { TurnRatingStatus } from "@mcpjam/chat-ui";
 const MAX_NOT_READY_RETRIES = 4;
 const NOT_READY_BACKOFF_MS = [400, 1000, 2000, 4000];
 
+/**
+ * Bounded re-asks for a fresh `accessVersion` after a stale-access rejection.
+ *
+ * The redeem the host runs can itself fail (offline, rate-limited). Without
+ * this the queued rating would sit in `pending` forever: nothing else advances
+ * `accessVersion`, so the replay effect never fires. Same shape as
+ * `useSharedChatWidgetCapture`'s `schedulePendingStaleRefresh`, ending in a
+ * visible error rather than a silent hang.
+ */
+const STALE_REFRESH_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000];
+
 export interface TurnRatingState {
   value?: number;
   comment?: string;
@@ -29,6 +40,14 @@ type PendingSubmission = {
   turnId: string;
   value: number;
   comment?: string;
+  /**
+   * The chatbox this rating was left in. A retry that fires after the host
+   * switched chatboxes would otherwise submit the old session and turn under
+   * the new chatbox's credentials — the server rejects that, but spending a
+   * round-trip and surfacing an error for a rating that is simply no longer on
+   * screen is worse than dropping it.
+   */
+  chatboxId: string;
 };
 
 interface UseChatboxTurnRatingOptions {
@@ -86,6 +105,9 @@ export function useChatboxTurnRating({
   // `states` so a second rating on the same turn replaces the first rather
   // than replaying both.
   const staleQueueRef = useRef(new Map<string, PendingSubmission>());
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const staleAttemptRef = useRef(0);
+  const scheduleStaleRefreshRef = useRef<(() => void) | null>(null);
   const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
   useEffect(() => {
     onStaleHostedAccessRef.current = onStaleHostedAccess;
@@ -126,8 +148,21 @@ export function useChatboxTurnRating({
     return map;
   }, [persisted, chatSessionId]);
 
+  /**
+   * `comment: undefined` means "leave the stored comment alone" — the same
+   * contract the mutation uses. Merging rather than overwriting keeps a turn's
+   * annotation on screen when someone revises only the stars; a plain
+   * assignment would blank it locally while the server quietly kept it.
+   * `''` still clears, because the caller passed a value.
+   */
   const setState = useCallback((key: string, next: TurnRatingState) => {
-    setStates((prev) => ({ ...prev, [key]: next }));
+    setStates((prev) => ({
+      ...prev,
+      [key]: {
+        ...next,
+        comment: next.comment === undefined ? prev[key]?.comment : next.comment,
+      },
+    }));
   }, []);
 
   const runSubmit = useCallback(
@@ -135,7 +170,18 @@ export function useChatboxTurnRating({
       const key = stateKey(pending.chatSessionId, pending.turnId);
       const { chatboxId: liveChatboxId, accessVersion: liveAccessVersion } =
         accessRef.current;
-      if (!liveChatboxId) return;
+      if (!liveChatboxId) {
+        // Identity is momentarily absent (mid-redeem). The replay path clears
+        // the queue before calling in, so returning bare would drop the rating
+        // AND leave its key stuck on `pending` — a permanent spinner over a
+        // discarded submission. Put it back for the next accessVersion.
+        staleQueueRef.current.set(key, pending);
+        return;
+      }
+      // Identity moved on to a DIFFERENT chatbox while this attempt was
+      // queued. Drop it: the rating belongs to a conversation no longer on
+      // screen, and the server would reject it anyway.
+      if (pending.chatboxId !== liveChatboxId) return;
 
       setState(key, {
         value: pending.value,
@@ -197,6 +243,7 @@ export function useChatboxTurnRating({
             status: "pending",
           });
           onStaleHostedAccessRef.current?.();
+          scheduleStaleRefreshRef.current?.();
           return;
         }
         setState(key, {
@@ -209,12 +256,58 @@ export function useChatboxTurnRating({
     [setState, submitScore]
   );
 
+  /**
+   * Re-ask the host to redeem, on a growing backoff, until the queue drains.
+   *
+   * Armed on every stale rejection and cancelled by the replay effect below.
+   * If the redeem never succeeds the queued ratings surface as `error` rather
+   * than spinning in `pending` forever — an honest dead end beats a hang.
+   */
+  useEffect(() => {
+    scheduleStaleRefreshRef.current = () => {
+      if (staleTimerRef.current !== null) return;
+      const attempt = staleAttemptRef.current;
+      if (attempt >= STALE_REFRESH_BACKOFF_MS.length) {
+        const abandoned = Array.from(staleQueueRef.current.values());
+        staleQueueRef.current.clear();
+        staleAttemptRef.current = 0;
+        for (const pending of abandoned) {
+          setState(stateKey(pending.chatSessionId, pending.turnId), {
+            value: pending.value,
+            comment: pending.comment,
+            status: "error",
+          });
+        }
+        return;
+      }
+      staleAttemptRef.current = attempt + 1;
+      staleTimerRef.current = setTimeout(() => {
+        staleTimerRef.current = null;
+        if (staleQueueRef.current.size === 0) return;
+        onStaleHostedAccessRef.current?.();
+        scheduleStaleRefreshRef.current?.();
+      }, STALE_REFRESH_BACKOFF_MS[attempt]);
+    };
+    return () => {
+      if (staleTimerRef.current !== null) {
+        clearTimeout(staleTimerRef.current);
+        staleTimerRef.current = null;
+      }
+    };
+  }, [setState]);
+
   // Replay whatever was queued as soon as the accessVersion advances.
   useEffect(() => {
     if (accessVersion === undefined) return;
     const queued = Array.from(staleQueueRef.current.values());
     if (queued.length === 0) return;
     staleQueueRef.current.clear();
+    // The redeem landed — stand down the backoff.
+    staleAttemptRef.current = 0;
+    if (staleTimerRef.current !== null) {
+      clearTimeout(staleTimerRef.current);
+      staleTimerRef.current = null;
+    }
     for (const pending of queued) {
       void runSubmit(pending, 0);
     }
@@ -227,8 +320,9 @@ export function useChatboxTurnRating({
       value: number;
       comment?: string;
     }) => {
-      if (!enabled || !accessRef.current.chatboxId) return;
-      void runSubmit(args, 0);
+      const chatboxId = accessRef.current.chatboxId;
+      if (!enabled || !chatboxId) return;
+      void runSubmit({ ...args, chatboxId }, 0);
     },
     [enabled, runSubmit]
   );

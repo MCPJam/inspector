@@ -56,6 +56,10 @@ export function TurnRating({
   // resting transcript quiet — a row of stars under every response is already
   // a lot of chrome, and a text input under every response is too much.
   const [expanded, setExpanded] = useState(false);
+  // A comment submit is in flight. The editor collapses on its success and
+  // stays open on its failure, so a save that did not land keeps both the
+  // draft and the way to retry it.
+  const [awaitingCommentSave, setAwaitingCommentSave] = useState(false);
 
   // Follow the host when it rehydrates a stored rating (page reload) or a
   // submission resolves. Guarded on identity so it never clobbers a draft the
@@ -67,6 +71,19 @@ export function TurnRating({
     setDraftComment(comment ?? "");
   }, [comment]);
 
+  // Resolve the comment submit. Only `submitted` closes the editor — a star
+  // click also reaches `submitted` but never sets the flag, so re-rating
+  // cannot yank the input out from under someone about to type in it.
+  useEffect(() => {
+    if (!awaitingCommentSave) return;
+    if (status === "submitted") {
+      setAwaitingCommentSave(false);
+      setExpanded(false);
+    } else if (status === "error") {
+      setAwaitingCommentSave(false);
+    }
+  }, [awaitingCommentSave, status]);
+
   const effective = hovered ?? draftValue ?? 0;
   const disabled = readOnly || status === "pending";
 
@@ -77,13 +94,23 @@ export function TurnRating({
     // Submit the stars immediately. A rating that only counts once someone
     // also writes a comment is a rating most testers never leave; the comment
     // is a second, optional submit on top.
-    onSubmit?.({ value: next });
+    //
+    // The draft comment rides along when there is one. Omitting it means "leave
+    // the stored comment alone" to the backend, but the host's optimistic state
+    // would still show the turn as uncommented until the next round-trip — so
+    // revising the stars on an annotated turn would blank the annotation on
+    // screen while the server quietly kept it.
+    const trimmed = draftComment.trim();
+    onSubmit?.({
+      value: next,
+      ...(trimmed.length > 0 ? { comment: draftComment } : {}),
+    });
   }
 
   function submitComment() {
     if (disabled || draftValue === undefined) return;
+    setAwaitingCommentSave(true);
     onSubmit?.({ value: draftValue, comment: draftComment });
-    setExpanded(false);
   }
 
   return (

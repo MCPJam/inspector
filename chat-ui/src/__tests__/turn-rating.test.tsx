@@ -87,6 +87,80 @@ describe("TurnRating", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
+  it("carries the existing comment when only the stars change", () => {
+    // Re-rating an annotated turn must not read as "they removed the comment".
+    // The mutation would keep it (an omitted comment means "leave it alone"),
+    // but the host's optimistic state would blank it on screen until the next
+    // round-trip.
+    const onSubmit = vi.fn();
+    render(
+      <TurnRating
+        value={2}
+        comment="lost my order"
+        status="submitted"
+        onSubmit={onSubmit}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "4 of 5" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      value: 4,
+      comment: "lost my order",
+    });
+  });
+
+  it("omits the comment entirely when there is none to carry", () => {
+    const onSubmit = vi.fn();
+    render(<TurnRating onSubmit={onSubmit} />);
+    fireEvent.click(screen.getByRole("radio", { name: "4 of 5" }));
+    expect(onSubmit).toHaveBeenCalledWith({ value: 4 });
+  });
+
+  it("keeps the editor and the draft open when a comment save fails", () => {
+    const onSubmit = vi.fn();
+    const { rerender } = render(<TurnRating onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "2 of 5" }));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "lost my order" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    rerender(<TurnRating status="error" onSubmit={onSubmit} />);
+
+    // The draft survives and the Send button is still there to retry with.
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    expect(input.value).toBe("lost my order");
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("collapses the editor once the comment save lands", () => {
+    const onSubmit = vi.fn();
+    const { rerender } = render(<TurnRating onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "5 of 5" }));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "great" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    rerender(<TurnRating value={5} status="submitted" onSubmit={onSubmit} />);
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("does not collapse the editor when a star click resolves", () => {
+    // A star click also reaches `submitted`; only a comment save should close
+    // the row someone may be about to type in.
+    const onSubmit = vi.fn();
+    const { rerender } = render(<TurnRating onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "3 of 5" }));
+    rerender(<TurnRating value={3} status="submitted" onSubmit={onSubmit} />);
+
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
   it("adopts a rating the host rehydrates after mount", () => {
     const { rerender } = render(<TurnRating />);
     expect(screen.getByRole("radio", { name: "5 of 5" })).not.toBeChecked();

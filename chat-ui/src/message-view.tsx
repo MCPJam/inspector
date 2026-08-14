@@ -36,8 +36,16 @@ export interface MessageViewProps {
    * Host slot rendered under an ASSISTANT message's parts — the per-turn
    * rating widget, today. Assistant-only because the thing being judged is the
    * response; a footer under the user's own message has nothing to rate.
+   *
+   * Takes `turnIndex` as a SECOND ARGUMENT rather than closing over it. This
+   * component is `memo`ized on shallow prop equality, so a per-message arrow
+   * built in the parent's render would change identity every pass and defeat
+   * the memo for the whole transcript. A function reference plus a number both
+   * compare cleanly.
    */
-  renderTurnFooter?: (message: UIMessage) => ReactNode;
+  renderTurnFooter?: (message: UIMessage, turnIndex: number) => ReactNode;
+  /** Position of this message in the parent's VISIBLE message array. */
+  turnIndex?: number;
 }
 
 function getPartKey(part: AnyPart, stepIndex: number, partIndex: number) {
@@ -71,6 +79,7 @@ function MessageViewImpl({
   showAssistantAvatar = true,
   renderAvatar,
   renderTurnFooter,
+  turnIndex = 0,
 }: MessageViewProps) {
   if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
@@ -148,7 +157,7 @@ function MessageViewImpl({
             </div>
           ))}
         </div>
-        {renderTurnFooter?.(message)}
+        {renderTurnFooter?.(message, turnIndex)}
       </div>
     </article>
   );
