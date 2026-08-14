@@ -433,14 +433,21 @@ export interface MCPJamEngineErrorEvent {
  * chat turn produced a raw string and no attribution, which is exactly the
  * failure a user cannot tell apart from their own server dying.
  *
- * Status drives the verdict:
+ * The body's guardrail `code` outranks the status, because it is the only
+ * direct evidence of ownership on the wire. The backend answers a failure of
+ * MCPJam's OWN managed provider credential with the upstream provider's
+ * status — `categorizeError` in `convex/stream/routes.ts` returns
+ * `{code:"mcpjam_api_error", statusCode:401}` for a revoked Gateway/OpenRouter
+ * key and `{code:"mcpjam_rate_limit", statusCode:429}` for MCPJam's quota —
+ * so status alone reads a total hosted outage as the user's expired key. See
+ * {@link isMcpjamOwnedFailureCode}.
  *
- * - 401/403 and 429 are the provider walls. They keep the catalog's default
- *   `user_config` origin because the common case is a BYO key that expired or
- *   ran out of credit. A managed-key failure IS ours, but the key's owner is
- *   not plumbed to this layer yet; defaulting to the non-paging reading is the
- *   safe direction to be wrong in, and the fix is to pass `credentialOwner`
- *   once that context exists.
+ * Otherwise status drives the verdict:
+ *
+ * - 401/403 and 429 are the provider walls. With no MCPJam-owned code on the
+ *   body they keep the catalog's default `user_config` origin: `/stream`
+ *   answers its own auth gate with 401 `auth_required` (sign in) and the spend
+ *   precheck with 429 `user_rate_limit`, both genuinely user-owned.
  * - Any other 5xx is OUR backend answering badly, and the origin is set
  *   explicitly rather than taken from the slug. `internal/unknown` is
  *   `ambiguous` by design — it is where unrecognized failures from arbitrary
@@ -452,11 +459,31 @@ export interface MCPJamEngineErrorEvent {
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
+  code?: string,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
 
+  // Before the status branches: a body that names MCPJam settles ownership no
+  // matter which upstream status was mirrored onto it. The slug still comes
+  // from the status so the user-facing copy stays accurate ("the provider
+  // rejected the key" IS what happened — it was just our key).
+  if (isMcpjamOwnedFailureCode(code)) {
+    return {
+      ...describeBackendStreamFailureSlug(status, detail),
+      origin: "mcpjam",
+    };
+  }
+
+  return describeBackendStreamFailureSlug(status, detail);
+}
+
+/** Status → slug, with the catalog's own origin. Shared by both paths above. */
+function describeBackendStreamFailureSlug(
+  status: number | undefined,
+  detail: Error,
+): NormalizedError {
   if (status === 401 || status === 403) {
     return describeAsSlug("provider/auth_error", detail);
   }
@@ -1252,6 +1279,36 @@ const USER_OWNED_DENIAL_CODES = new Set<string>([
 /** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
 export function isUserOwnedDenialCode(code: string | undefined): boolean {
   return USER_OWNED_DENIAL_CODES.has(code ?? "");
+}
+
+/**
+ * The mirror of {@link USER_OWNED_DENIAL_CODES}: backend denial codes that name
+ * MCPJAM as the responsible party.
+ *
+ * Relevant at every status, not just 200 — and that is the whole point. The
+ * backend's `categorizeError` mirrors the UPSTREAM provider's status onto its
+ * own response, so a revoked MCPJam Gateway/OpenRouter key comes back as HTTP
+ * 401 and MCPJam's own provider quota as HTTP 429. Read by status alone those
+ * are `provider/auth_error` / `provider/quota`, whose catalog origin is
+ * `user_config` — and `mcpjam_internal` deliberately promotes only `ambiguous`,
+ * never evidence-bearing origins. So a total hosted-chat outage was filed as
+ * the user's expired key: no capture, no page, and nothing for M2 to fire on.
+ *
+ * Kept as an explicit allowlist rather than a `startsWith("mcpjam_")` rule so
+ * a new backend code has to be read and classified rather than inheriting a
+ * page from its name. Source of truth is the `MCPJamErrorCode` union in the
+ * backend's `convex/stream/routes.ts`; its own comments mark these three
+ * "(not user's fault)".
+ */
+const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
+  "mcpjam_rate_limit",
+  "mcpjam_api_error",
+  "mcpjam_config_error",
+]);
+
+/** See {@link MCPJAM_OWNED_FAILURE_CODES}. */
+export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
+  return MCPJAM_OWNED_FAILURE_CODES.has(code ?? "");
 }
 
 /**
@@ -2378,8 +2435,16 @@ async function processOneStep(
     const parsed = parseEngineErrorBody(res.status, errorText);
     // Site (1): no Error object exists here, so classify from the response
     // itself. A 5xx from our own backend is the hosted-502 class — capture it,
-    // because nothing downstream of this point ever will.
-    const normalized = describeBackendStreamFailure(res.status, errorText);
+    // because nothing downstream of this point ever will. `parsed.code` is
+    // passed because the status can be the UPSTREAM provider's, mirrored onto
+    // our response: only the code distinguishes MCPJam's own revoked key
+    // (401 `mcpjam_api_error`) from the caller's missing session (401
+    // `auth_required`).
+    const normalized = describeBackendStreamFailure(
+      res.status,
+      errorText,
+      parsed.code,
+    );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
     // is not enough either. The backend's error-code union includes
