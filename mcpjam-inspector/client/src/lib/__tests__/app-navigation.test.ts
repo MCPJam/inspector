@@ -2,6 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildOrganizationPath,
+  buildSessionsPath,
   buildSwarmPath,
   buildUserTestingScenarioEditPath,
   buildUserTestingScenarioPath,
@@ -92,6 +93,33 @@ describe("User Testing detail / edit navigation", () => {
     expect(isLegacyUserTestingEditTab("?tab=share")).toBe(true);
     expect(isLegacyUserTestingEditTab("?tab=preview")).toBe(true);
     expect(isLegacyUserTestingEditTab("?tab=insights")).toBe(false);
+  });
+});
+
+describe("buildSessionsPath", () => {
+  it("builds a bare /sessions path when nothing is focused", () => {
+    expect(buildSessionsPath()).toBe("/sessions");
+    expect(buildSessionsPath({})).toBe("/sessions");
+  });
+
+  it("encodes the focused session and the project scope", () => {
+    // This is the shape the backend mints as the universal permalink
+    // fallback, so its exact spelling is a wire contract with `/v1/sessions`.
+    expect(buildSessionsPath({ session: "k57abc", project: "p_1" })).toBe(
+      "/sessions?session=k57abc&project=p_1",
+    );
+    expect(buildSessionsPath({ session: "a/b" })).toBe("/sessions?session=a%2Fb");
+  });
+
+  it("keeps each param independent", () => {
+    expect(buildSessionsPath({ project: "p_1" })).toBe("/sessions?project=p_1");
+    expect(buildSessionsPath({ session: "s_1" })).toBe("/sessions?session=s_1");
+  });
+
+  it("reads the focused session back off the URL", () => {
+    window.history.replaceState({}, "", buildSessionsPath({ session: "s_9" }));
+    const { result } = renderHook(() => useCurrentSearchParam("session"));
+    expect(result.current).toBe("s_9");
   });
 });
 

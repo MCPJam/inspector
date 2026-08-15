@@ -15,7 +15,7 @@
  * other members' private Playground sessions never reach this client, so the
  * panel renders whatever the page contains without re-deriving policy.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { MessageSquare, Search } from "lucide-react";
@@ -38,6 +38,12 @@ import { ShareUsageThreadDetail } from "@/components/connection/share-usage/Shar
 import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
+import {
+  buildSessionsPath,
+  useAppNavigate,
+  useCurrentSearchParam,
+} from "@/lib/app-navigation";
+import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import {
   SESSIONS_FEED_PAGE_SIZE,
   SESSIONS_FEED_QUERIES,
@@ -66,7 +72,15 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+
+  // Selection lives in the URL, not in component state. `/sessions?session=…`
+  // is the backend's universal permalink fallback (every `/v1/sessions` item
+  // carries a `link`), so arriving at one must open that session — which local
+  // state cannot do. It also makes the selection shareable and survivable
+  // across a reload, and gives Back/Forward the meaning a reader expects.
+  const navigate = useAppNavigate();
+  const selectedThreadId = useCurrentSearchParam("session");
+  const projectParam = useCurrentSearchParam("project");
 
   useEffect(() => {
     const handle = window.setTimeout(
@@ -121,6 +135,34 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
     () => rows.find((r) => r.id === selectedThreadId) ?? null,
     [rows, selectedThreadId]
   );
+
+  /**
+   * Move the selection into the URL, preserving `?project=` so a click never
+   * silently drops the project the page is scoped to (`useCurrentProject`
+   * reads it globally). Not `replace`: each session a reader opens is a place
+   * they can go Back from.
+   */
+  const handleSelect = useCallback(
+    (threadId: string) => {
+      navigate(
+        buildSessionsPath({
+          session: threadId,
+          project: projectParam ?? undefined,
+        })
+      );
+    },
+    [navigate, projectParam]
+  );
+
+  // The shareable form of the same link. `project` is the panel's own
+  // `projectId` rather than the URL's — a recipient parked on another project
+  // must land on this one, and the param is what carries that.
+  const sessionLink = selectedThreadId
+    ? `${getShareableAppOrigin()}${buildSessionsPath({
+        session: selectedThreadId,
+        project: projectId,
+      })}`
+    : undefined;
 
   const emptyListCopy = searching
     ? "No sessions match this search"
@@ -238,7 +280,7 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
                     key={row.id}
                     row={row}
                     selected={row.id === selectedThreadId}
-                    onSelect={() => setSelectedThreadId(row.id)}
+                    onSelect={() => handleSelect(row.id)}
                   />
                 ))}
               </div>
@@ -255,7 +297,10 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
                   name="sessions-thread-detail"
                   fallback={<SessionDetailFallback row={selectedRow} />}
                 >
-                  <ShareUsageThreadDetail threadId={selectedThreadId} />
+                  <ShareUsageThreadDetail
+                    threadId={selectedThreadId}
+                    sessionLink={sessionLink}
+                  />
                 </ErrorBoundary>
               ) : (
                 <div className="flex h-full items-center justify-center">
