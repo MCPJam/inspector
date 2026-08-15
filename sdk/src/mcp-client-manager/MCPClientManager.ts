@@ -75,6 +75,7 @@ import {
   isInsufficientScopeError,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
+  readUnsupportedVersionFailure,
 } from "./errors.js";
 import {
   type RetryPolicy,
@@ -200,7 +201,10 @@ import { resolveVersionNegotiation } from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
-import { type ManagedMcpClient } from "./managed-mcp-client.js";
+import {
+  type ManagedMcpClient,
+  ProtocolVersionPinUnsupported,
+} from "./managed-mcp-client.js";
 import {
   DEFAULT_MAX_MRTR_ROUNDS,
   defaultResultSchemaForMethod,
@@ -2761,6 +2765,14 @@ export class MCPClientManager {
               { cause: error }
             );
           }
+          // Same setting-not-network case as the combined path below. A
+          // declared-transport server never reaches that path, so without
+          // this the version would go unnamed for exactly the servers most
+          // likely to be modern-only.
+          const declaredPinFailure = this.protocolPinFailure(serverId, config, [
+            error,
+          ]);
+          if (declaredPinFailure) throw declaredPinFailure;
           // Preserve `cause`: `formatError` reduces the failure to its
           // message, and the Node errno (`ECONNREFUSED`, `ENOTFOUND`, ...)
           // lives on the error object — usually one `.cause` hop down, since
@@ -2777,6 +2789,28 @@ export class MCPClientManager {
         }
       }
     }
+
+    // A modern pin ends the attempt here — it does NOT downgrade to SSE.
+    //
+    // Pin mode means "negotiate exactly this revision, no fallback", and the
+    // upstream client honors that inside its own negotiation. This manager
+    // then layered a SECOND fallback underneath it, which quietly defeated the
+    // first: SSE is the legacy transport and carries no pinned version, so a
+    // connection that reached it was never speaking the pinned revision. Two
+    // outcomes, both wrong. A server whose SSE endpoint works came up on a
+    // 2025-era handshake while the UI said the pin was in force. A server that
+    // opens an SSE stream and never completes the handshake — a common shape
+    // for a modern-only server, which answers `GET /mcp` 200 `text/event-stream`
+    // and then has nothing to say on it — left the connect hanging until a
+    // caller's timeout fired, reporting "the server may not exist or is not
+    // responding" for a server that was answering perfectly well.
+    //
+    // Failing here turns both into the honest, immediate answer: this server
+    // does not offer the version this connection pins.
+    const pinFailureBeforeSse = this.protocolPinFailure(serverId, config, [
+      streamableError,
+    ]);
+    if (pinFailureBeforeSse) throw pinFailureBeforeSse;
 
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
@@ -2829,6 +2863,22 @@ export class MCPClientManager {
         );
       }
 
+      // A pinned protocol version the server does not offer. Checked BEFORE
+      // the combined message below, which is where this failure used to
+      // disappear: the Streamable attempt fails negotiation naming the
+      // version, the SSE attempt then fails on its own terms (a modern-only
+      // server answers `405`), and folding the two together produced "failed
+      // to connect using HTTP transports … Non-200 status code (405)" — the
+      // second attempt's symptom, with no mention of the version or the
+      // setting that controls it. `cause` still carries the whole chain.
+      const pinFailure = this.protocolPinFailure(serverId, config, [
+        streamableError,
+        error,
+      ]);
+      if (pinFailure) {
+        throw attachStreamableCause(pinFailure, streamableError);
+      }
+
       // `cause` is the SSE failure (the last attempt, and the one whose errno
       // the message above quotes). Both transports fail with the same errno
       // whenever the server is simply unreachable — ECONNREFUSED, ENOTFOUND —
@@ -2842,6 +2892,53 @@ export class MCPClientManager {
         streamableError
       );
     }
+  }
+
+  /**
+   * Recognize the one connect failure whose cause is a SETTING rather than a
+   * network condition: this connection pinned a modern protocol version and
+   * the server does not offer it.
+   *
+   * Returns `undefined` unless the connection was actually in pin mode, so an
+   * `auto` connection — which probes and falls back — can never produce this.
+   * The mode is derived through `resolveVersionNegotiation`, the same helper
+   * the negotiation telemetry uses, rather than re-deriving "is this modern"
+   * from the version string: one definition of pin mode, not two.
+   *
+   * The pin comes from the resolved config, never from parsing the upstream
+   * message. The manager is the thing that chose the version; reading it back
+   * out of prose would make an upstream rewording silently produce a message
+   * with a blank version in it.
+   */
+  private protocolPinFailure(
+    serverId: string,
+    config: MCPServerConfig,
+    errors: readonly unknown[]
+  ): ProtocolVersionPinUnsupported | undefined {
+    if (this.isStdioConfig(config)) return undefined;
+    const pin = config.mcpProtocolVersion;
+    if (!pin) return undefined;
+    const negotiation = resolveVersionNegotiation(pin);
+    // `undefined` is a legacy pin (exact `initialize`, no discover probe) and
+    // `"auto"` falls back on its own. Only an explicit modern pin refuses.
+    if (!negotiation || negotiation.mode === "auto") return undefined;
+    for (const error of errors) {
+      // NOT "is this an era-negotiation error": that code also covers a probe
+      // that hit an HTTP status, a network failure, or a closed transport —
+      // outages, which must keep their transport slug and keep paging rather
+      // than being relabelled as the user's version setting.
+      const verdict = readUnsupportedVersionFailure(error);
+      if (!verdict) continue;
+      // `cause` is the negotiation error itself, not the transport failure
+      // that happened to be last: it is the one that names what
+      // `server/discover` answered, and it is what a support thread needs
+      // quoted.
+      return new ProtocolVersionPinUnsupported(serverId, pin, {
+        cause: error,
+        supportedVersions: verdict.supported,
+      });
+    }
+    return undefined;
   }
 
   private async safeCloseTransport(transport: Transport): Promise<void> {

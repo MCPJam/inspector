@@ -190,7 +190,10 @@ export function UpdateHostToLatestButton({
     <Button
       type="button"
       size="sm"
-      variant="outline"
+      // `default` (the primary orange), not `outline`: this is the one
+      // recommended action in a panel otherwise full of neutral controls, and
+      // as an outline button it read as just another one of them.
+      variant="default"
       onClick={handleClick}
       disabled={disabled}
       title={title}

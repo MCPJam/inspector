@@ -12,6 +12,7 @@ import {
   extractTesterLinkToken,
   TESTER_LINK_PATH_SEGMENT,
 } from "@/lib/tester-link-path";
+import type { ChatboxPerTurnFeedbackStyle } from "@/types/chatUi";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -76,9 +77,29 @@ export interface ChatboxWelcomeDialogPayload {
   body?: string;
 }
 
+/**
+ * Per-turn ratings config. Absent or `enabled: false` ⇒ the widget renders
+ * nothing, which is what lets the UI ship before any scenario turns it on.
+ */
+export interface ChatboxPerTurnFeedbackPayload {
+  enabled: boolean;
+  /**
+   * Which widget to render, and therefore which score key the tester writes
+   * under. Absent ⇒ `stars`, the only style that existed before this field.
+   *
+   * Aliased from the settings type rather than restated, so the bootstrap
+   * payload and the scenario config cannot drift apart on what a style is.
+   */
+  style?: ChatboxPerTurnFeedbackStyle;
+  prompt?: string;
+  commentPlaceholder?: string;
+  thanksMessage?: string;
+}
+
 export interface ChatUiPayload {
   surfaces?: {
     welcome?: ChatboxWelcomeDialogPayload | null;
+    perTurnFeedback?: ChatboxPerTurnFeedbackPayload | null;
   } | null;
 }
 
@@ -165,10 +186,11 @@ export function chatboxEnabledOptionalStorageKey(chatboxId: string): string {
   return `chatbox-enabled-optional:${chatboxId}`;
 }
 
-// Defensive normalizer for the chatUi envelope in
-// /web/chatbox/redeem responses. Returns `undefined` when no recognized
-// surface is present; the hosted runtime only consumes the `welcome`
-// surface today (feedback never reaches the bootstrap payload).
+// Defensive normalizer for the chatUi envelope in /web/chatbox/redeem
+// responses. Returns `undefined` when no recognized surface is present. The
+// hosted runtime consumes `welcome` and `perTurnFeedback`; the deprecated
+// session-level `feedback` dialog is dropped on purpose (its write path is
+// gone — see the backend's `sessionScores` design note).
 /** A plain object whose every value is a string — the shape of custom headers. */
 function isStringRecord(input: unknown): input is Record<string, string> {
   return (
@@ -196,8 +218,46 @@ function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
               : "",
         }
       : undefined;
-  if (!welcome) return undefined;
-  return { surfaces: { welcome } };
+  const perTurnRaw = (surfaces as { perTurnFeedback?: unknown })
+    .perTurnFeedback;
+  const perTurnFeedback =
+    perTurnRaw &&
+    typeof perTurnRaw === "object" &&
+    typeof (perTurnRaw as { enabled?: unknown }).enabled === "boolean"
+      ? {
+          enabled: (perTurnRaw as { enabled: boolean }).enabled,
+          // A CLOSED enum check, not `optionalString`: the value picks which
+          // widget renders and which score key the tester writes under, so an
+          // unrecognised string copied through would produce a scenario whose
+          // rating widget renders nothing. Anything but "thumbs" omits the
+          // field, and absence means stars downstream.
+          ...((perTurnRaw as { style?: unknown }).style === "thumbs"
+            ? { style: "thumbs" as const }
+            : {}),
+          ...optionalString(perTurnRaw, "prompt"),
+          ...optionalString(perTurnRaw, "commentPlaceholder"),
+          ...optionalString(perTurnRaw, "thanksMessage"),
+        }
+      : undefined;
+  // EITHER surface is enough. Returning undefined unless `welcome` parsed
+  // (the old behavior) would have silently dropped a per-turn-feedback config
+  // on every scenario with no welcome dialog — which is most of them.
+  if (!welcome && !perTurnFeedback) return undefined;
+  return {
+    surfaces: {
+      ...(welcome ? { welcome } : {}),
+      ...(perTurnFeedback ? { perTurnFeedback } : {}),
+    },
+  };
+}
+
+/** Copy `key` through only when it is a real string; never null-punch it. */
+function optionalString(
+  source: unknown,
+  key: string
+): Record<string, string> | Record<string, never> {
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "string" ? { [key]: value } : {};
 }
 
 function normalizeHostCapabilitiesOverride(

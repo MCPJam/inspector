@@ -14,6 +14,7 @@ import type {
 } from "./EvalTest.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
+import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 import type { EvalToolCallMatchResult } from "./matchers.js";
@@ -215,6 +216,16 @@ export class EvalSuite {
       apiKey,
       baseUrl: config?.baseUrl,
       strict: config?.strict,
+      // One fingerprint for a run that graded each case with its own scorer
+      // set; see `aggregateEvaluationConfigHash`.
+      ...(() => {
+        const hashes = Array.from(testResults.values())
+          .map((result) => result.evaluationConfig?.hash)
+          .filter((hash): hash is string => Boolean(hash));
+        return hashes.length > 0
+          ? { evaluationConfigHash: aggregateEvaluationConfigHash(hashes) }
+          : {};
+      })(),
       results,
     });
   }

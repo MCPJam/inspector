@@ -61,7 +61,7 @@ vi.mock("@/lib/client-config-v2", () => ({
 import { UserTestingCreateFlow } from "../UserTestingCreateFlow";
 
 const renderFlow = (
-  onCreateScenario = vi.fn().mockResolvedValue({ hostId: "h1" }),
+  onCreateScenario = vi.fn().mockResolvedValue({ chatboxId: "cb1" }),
 ) => {
   const onCancel = vi.fn();
   render(
@@ -126,9 +126,9 @@ describe("UserTestingCreateFlow", () => {
   });
 
   it("creates one scenario on a double-click, not two", async () => {
-    let resolveSave: (v: { hostId: string }) => void = () => {};
+    let resolveSave: (v: { chatboxId: string }) => void = () => {};
     const onCreateScenario = vi.fn(
-      () => new Promise<{ hostId: string }>((r) => (resolveSave = r)),
+      () => new Promise<{ chatboxId: string }>((r) => (resolveSave = r)),
     );
     renderFlow(onCreateScenario);
 
@@ -140,7 +140,7 @@ describe("UserTestingCreateFlow", () => {
     fireEvent.click(save);
 
     await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(1));
-    resolveSave({ hostId: "h1" });
+    resolveSave({ chatboxId: "cb1" });
   });
 
   it("cannot save an unnamed scenario", () => {
