@@ -169,6 +169,11 @@ import {
   type GithubChecksWorkerHandle,
 } from "./services/github-checks-worker";
 import {
+  isProductionChecksWorkerEnabled,
+  startProductionChecksWorker,
+  type ProductionChecksWorkerHandle,
+} from "./services/production-checks-worker";
+import {
   SERVER_PORT,
   CORS_ORIGINS,
   HOSTED_MODE,
@@ -840,6 +845,14 @@ if (isGithubChecksWorkerEnabled()) {
   githubChecksWorker = startGithubChecksWorker();
 }
 
+// Production scoring: claim-and-grade polling loop for real User Testing
+// sessions. Env-gated; the backend enqueue/routes/cron have their own
+// PRODUCTION_CHECKS_ENABLED gate and 404 the routes when it is off.
+let productionChecksWorker: ProductionChecksWorkerHandle | undefined;
+if (isProductionChecksWorkerEnabled()) {
+  productionChecksWorker = startProductionChecksWorker();
+}
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -896,6 +909,7 @@ async function shutdown() {
     // shutdown rather than skipping straight to the force-exit deadline.
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
+    await productionChecksWorker?.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
