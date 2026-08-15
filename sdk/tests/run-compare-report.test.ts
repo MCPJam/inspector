@@ -150,7 +150,8 @@ describe("buildRunCompareReport", () => {
     expect(
       report.cases.filter((row) => !row.passed).map((row) => row.id)
     ).toEqual(["ck_regressed"]);
-    expect(report.summary.total).toBe(6);
+    // 6 comparison rows + the synthetic gate row.
+    expect(report.summary.total).toBe(7);
     expect(report.summary.failed).toBe(1);
     expect(report.summary.byClassification).toMatchObject({
       breaking: { total: 1, passed: 0, failed: 1 },
@@ -259,11 +260,15 @@ describe("buildRunCompareReport", () => {
     // auto-updating snapshot would let a rendering change land unnoticed.
     expect(renderStructuredRunJUnitXml(report)).toBe(
       `<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="run-compare" tests="2" failures="1" time="1.500">
-  <testsuite name="run-compare" tests="2" failures="1" time="1.500">
+<testsuites name="run-compare" tests="3" failures="2" time="1.500">
+  <testsuite name="run-compare" tests="3" failures="2" time="1.500">
     <testcase name="Stable" classname="mcpjam.run-compare.unchanged_passed" time="0.000"/>
     <testcase name="Regressed" classname="mcpjam.run-compare.regressed" time="0.000">
       <failure message="passed -&gt; failed">{&quot;status&quot;:&quot;regressed&quot;,&quot;configChanged&quot;:false,&quot;evaluationConfigChanged&quot;:false,&quot;base&quot;:&quot;passed&quot;,&quot;compare&quot;:&quot;failed&quot;}</failure>
+    </testcase>
+    <testcase name="gate: failed" classname="mcpjam.run-compare.gate" time="0.000">
+      <failure message="Gate: FAILED (score integrity: valid)
+  FAIL noDeterministicRegressions: 1 deterministic gating regression(s): ck_b/tool-match">{&quot;outcome&quot;:&quot;failed&quot;,&quot;scoreIntegrity&quot;:&quot;valid&quot;,&quot;verdicts&quot;:[{&quot;gate&quot;:&quot;noDeterministicRegressions&quot;,&quot;status&quot;:&quot;failed&quot;,&quot;message&quot;:&quot;1 deterministic gating regression(s): ck_b/tool-match&quot;,&quot;observed&quot;:1}]}</failure>
     </testcase>
   </testsuite>
 </testsuites>
@@ -271,11 +276,34 @@ describe("buildRunCompareReport", () => {
     );
   });
 
+  it("always emits a gate row, so JUnit and the exit code cannot disagree", () => {
+    // Failing gate, zero regressed rows: without the gate row this renders
+    // ZERO JUnit failures while the command exits 1.
+    const failing = buildRunCompareReport(
+      compareWire([caseRow()]),
+      FAILED_GATE
+    );
+    const gateRow = failing.cases.find((row) => row.id === "gate");
+    expect(gateRow?.passed).toBe(false);
+    expect(gateRow?.error).toContain("Gate: FAILED");
+    expect(renderStructuredRunJUnitXml(failing)).toContain("<failure");
+
+    // Passing gate: the row is present and green, so the count is honest in
+    // the other direction too.
+    const passing = buildRunCompareReport(
+      compareWire([caseRow({ status: "regressed" })]),
+      PASSED_GATE
+    );
+    expect(passing.cases.find((row) => row.id === "gate")?.passed).toBe(true);
+  });
+
   it("renders a synthetic case rather than an empty suite", () => {
     const xml = renderStructuredRunJUnitXml(
       buildRunCompareReport(compareWire([]), PASSED_GATE)
     );
-    // An empty <testsuite> reads as "nothing ran" to every CI UI.
+    // Never an empty <testsuite>, which every CI UI reads as "nothing ran":
+    // the gate row alone is enough.
     expect(xml).toContain('tests="1"');
+    expect(xml).toContain("gate: passed");
   });
 });

@@ -708,6 +708,32 @@ async function runEvalCompare(
               ),
             ];
 
+        // Defence in depth. The backend action already refuses a
+        // non-completed run, so this is normally unreachable — but the
+        // command's contract says an unfinished comparison is INCOMPLETE, and
+        // that must not depend on a guard in another repo staying put.
+        if (
+          compare.baseRun.completedAt === null ||
+          compare.compareRun.completedAt === null
+        ) {
+          return {
+            report: {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "run",
+                  status: "non_gateable" as const,
+                  message:
+                    "both runs must be completed before they can be compared",
+                },
+              ],
+            },
+            compare,
+            flakyCases: [],
+          };
+        }
+
         const input = compareGateInputFrom(compare, {
           baseP95Ms: p95Of(baseIterations),
           compareP95Ms: p95Of(compareIterations),
@@ -749,9 +775,15 @@ async function runEvalCompare(
         },
       ],
     };
-    writeCompareResult(
+    // A reporter was requested, so CI is parsing the output — handing it the
+    // default JSON instead of JUnit on the error path is how a pipeline
+    // silently stops seeing results.
+    await writeCompareResult(
       { report, reporter, out: options.out, format: globalOptions.format },
-      undefined
+      // Built whenever EITHER output channel was requested. `--reporter` needs
+      // it to emit JUnit rather than JSON; `--out` needs it so a CI step
+      // reading the artifact finds the verdict instead of a missing file.
+      reporter || options.out ? emptyCompareReport(report) : undefined
     );
     setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
     return;
@@ -778,6 +810,74 @@ async function runEvalCompare(
     setProcessExitCode(exitCode);
   }
 }
+
+/**
+ * A structured report for a comparison that never happened.
+ *
+ * The gate case alone, so `--reporter junit-xml` still emits well-formed XML
+ * whose single failure explains why — rather than an empty suite, which every
+ * CI UI renders as "nothing ran".
+ */
+function emptyCompareReport(report: GateReport): StructuredRunReport {
+  return buildRunCompareReport(
+    {
+      suite: { id: "", name: "" },
+      baseline: { policy: "previous_completed", baseRunId: "" },
+      baseRun: {
+        id: "",
+        runNumber: 0,
+        result: "",
+        createdAt: 0,
+        completedAt: null,
+        summary: null,
+      },
+      compareRun: {
+        id: "",
+        runNumber: 0,
+        result: "",
+        createdAt: 0,
+        completedAt: null,
+        summary: null,
+      },
+      passSummary: {
+        passRatePercent: EMPTY_DIFF,
+        total: EMPTY_DIFF,
+        passed: EMPTY_DIFF,
+        failed: EMPTY_DIFF,
+      },
+      metrics: {
+        wallDurationMs: EMPTY_DIFF,
+        totalTokens: EMPTY_DIFF,
+        estimatedCostUsd: EMPTY_DIFF,
+      },
+      scoreContract: {
+        base: {
+          evaluationConfigHash: null,
+          scoreIntegrity: null,
+          scoredIterations: 0,
+          quarantinedIterations: 0,
+        },
+        compare: {
+          evaluationConfigHash: null,
+          scoreIntegrity: null,
+          scoredIterations: 0,
+          quarantinedIterations: 0,
+        },
+        evaluationConfigChanged: false,
+        scorers: [],
+      },
+      cases: [],
+    },
+    report
+  );
+}
+
+const EMPTY_DIFF = {
+  base: null,
+  compare: null,
+  delta: null,
+  percentDelta: null,
+};
 
 /** p95 over a COMPLETE iteration walk; `undefined` from a partial one. */
 function p95Of(

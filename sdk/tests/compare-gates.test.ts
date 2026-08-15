@@ -249,19 +249,19 @@ describe("evaluateCompareGates — integrity of BOTH sides", () => {
     base: "valid" | "invalid" | undefined;
     compare: "valid" | "invalid" | undefined;
     gateable: boolean;
-    label_: string;
+    expectedIntegrity: string;
   }> = [
-    { label: "both valid", base: "valid", compare: "valid", gateable: true, label_: "valid" },
-    { label: "base invalid", base: "invalid", compare: "valid", gateable: false, label_: "invalid" },
-    { label: "compare invalid", base: "valid", compare: "invalid", gateable: false, label_: "invalid" },
-    { label: "base absent", base: undefined, compare: "valid", gateable: false, label_: "unknown" },
-    { label: "compare absent", base: "valid", compare: undefined, gateable: false, label_: "unknown" },
-    { label: "both absent", base: undefined, compare: undefined, gateable: false, label_: "unknown" },
+    { label: "both valid", base: "valid", compare: "valid", gateable: true, expectedIntegrity: "valid" },
+    { label: "base invalid", base: "invalid", compare: "valid", gateable: false, expectedIntegrity: "invalid" },
+    { label: "compare invalid", base: "valid", compare: "invalid", gateable: false, expectedIntegrity: "invalid" },
+    { label: "base absent", base: undefined, compare: "valid", gateable: false, expectedIntegrity: "unknown" },
+    { label: "compare absent", base: "valid", compare: undefined, gateable: false, expectedIntegrity: "unknown" },
+    { label: "both absent", base: undefined, compare: undefined, gateable: false, expectedIntegrity: "unknown" },
   ];
 
   it.each(INTEGRITY_CASES)(
     "$label -> deterministic gate gateable=$gateable",
-    ({ base, compare, gateable, label_ }) => {
+    ({ base, compare, gateable, expectedIntegrity }) => {
       const report = evaluateCompareGates(
         input({
           base: side(56, 70, { scoreIntegrity: base }),
@@ -276,7 +276,7 @@ describe("evaluateCompareGates — integrity of BOTH sides", () => {
       // A real regression is present. It must NOT be reported when the
       // evidence for it did not verify — that would be gating on garbage.
       expect(verdict.status).toBe(gateable ? "failed" : "non_gateable");
-      expect(report.scoreIntegrity).toBe(label_);
+      expect(report.scoreIntegrity).toBe(expectedIntegrity);
     }
   );
 
@@ -377,5 +377,30 @@ describe("evaluateCompareGates — shape", () => {
     // introduce.
     policy.maximumFlakyCases = 0;
     expect(evaluateCompareGates(input(), policy).verdicts).toEqual([]);
+  });
+});
+
+describe("evaluateCompareGates — an empty comparison is never a pass", () => {
+  it("floors the minimum sample at 1 even when the policy says 0", () => {
+    // `--min-sample-size 0` would otherwise let two EMPTY runs reach the
+    // statistic, come back `no_regression`, and exit 0 — a green gate over
+    // nothing at all.
+    const report = evaluateCompareGates(
+      input({ base: side(0, 0), compare: side(0, 0) }),
+      { passRateRegression: { minSampleSize: 0 } }
+    );
+    expect(verdictFor(report, "passRateRegression").status).toBe(
+      "non_gateable"
+    );
+    expect(report.outcome).toBe("incomplete");
+  });
+
+  it("still honours a deliberately low, non-zero floor", () => {
+    expect(
+      evaluateCompareGates(
+        input({ base: side(1, 1), compare: side(0, 1) }),
+        { passRateRegression: { minSampleSize: 1 } }
+      ).verdicts[0].status
+    ).not.toBe("non_gateable");
   });
 });

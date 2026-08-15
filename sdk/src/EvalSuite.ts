@@ -244,6 +244,10 @@ export class EvalSuite {
       string,
       import("./matchers.js").EvalMatchOptions | undefined
     > = {};
+    const caseIdentityByTest: Record<
+      string,
+      import("./eval-result-mapping.js").EvalCaseIdentity | undefined
+    > = {};
     for (const [name, test] of this.tests) {
       const expected = test.getConfig().expectedToolCalls;
       if (expected) {
@@ -253,6 +257,21 @@ export class EvalSuite {
       if (predicates && predicates.length > 0)
         predicatesByTest[name] = predicates;
       matchOptionsByTest[name] = test.getConfig().matchOptions;
+      const config = test.getConfig();
+      const identity = {
+        ...(config.externalCaseId !== undefined
+          ? { externalCaseId: config.externalCaseId }
+          : {}),
+        ...(config.isNegativeTest !== undefined
+          ? { isNegativeTest: config.isNegativeTest }
+          : {}),
+        ...(config.expectedOutput !== undefined
+          ? { expectedOutput: config.expectedOutput }
+          : {}),
+      };
+      if (Object.keys(identity).length > 0) {
+        caseIdentityByTest[name] = identity;
+      }
     }
     return suiteTestResultsToEvalResultInputs(
       testResults,
@@ -262,7 +281,10 @@ export class EvalSuite {
       reporting?.failOnToolError,
       hostExtras,
       Object.keys(predicatesByTest).length > 0 ? predicatesByTest : undefined,
-      matchOptionsByTest
+      matchOptionsByTest,
+      Object.keys(caseIdentityByTest).length > 0
+        ? caseIdentityByTest
+        : undefined
     );
   }
 

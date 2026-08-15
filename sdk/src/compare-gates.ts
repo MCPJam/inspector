@@ -40,6 +40,7 @@
 
 import {
   assessPassRateRegression,
+  DEFAULT_MIN_SAMPLE_SIZE,
   type RegressionAssessment,
 } from "./compare-stats.js";
 import type {
@@ -234,7 +235,13 @@ export function evaluateCompareGates(
       const assessment = assessPassRateRegression({
         base: passRateSample(input.base),
         compare: passRateSample(input.compare),
-        minSampleSize: policy.passRateRegression.minSampleSize,
+        // Floored at 1. `--min-sample-size 0` would otherwise let a
+        // comparison of two EMPTY runs reach the statistic, come back
+        // `no_regression`, and exit 0 — a green gate over nothing at all.
+        minSampleSize: Math.max(
+          1,
+          policy.passRateRegression.minSampleSize ?? DEFAULT_MIN_SAMPLE_SIZE
+        ),
         minEffectSize: policy.passRateRegression.minEffectSize,
       });
       verdicts.push(

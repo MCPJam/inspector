@@ -297,7 +297,7 @@ test("3 — EVERY population-mismatch condition, with --gate-regressions", () =>
   }
 });
 
-test("3 — a population mismatch does NOT mask a deterministic regression", () => {
+test("1 — a population mismatch does NOT mask a deterministic regression", () => {
   // Per-case regressions join by caseKey, so they survive a changed
   // population. A real failure outranks an undecidable gate.
   assert.equal(

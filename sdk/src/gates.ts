@@ -98,6 +98,12 @@ export const COMPARATIVE_GATE_FIELDS = [
   "passRateRegression",
 ] as const satisfies ReadonlyArray<keyof GatePolicy>;
 
+// FROZEN, not merely `as const`: this array decides which policy fields
+// `evaluateGates` refuses to evaluate silently, and `as const` is a
+// compile-time claim that a runtime `push` would quietly break — turning a
+// fail-closed guard into a hole in exactly the surface it protects.
+Object.freeze(COMPARATIVE_GATE_FIELDS);
+
 export type GateStatus =
   /** Evidence present, threshold met. */
   | "passed"
@@ -411,7 +417,12 @@ export function evaluateGates(
   // a question nobody answered — the exact failure mode a gate exists to
   // prevent. A usage error is loud and unambiguous.
   for (const field of COMPARATIVE_GATE_FIELDS) {
-    if (policy[field] === undefined) continue;
+    const value = policy[field];
+    // `undefined` is "not asked for"; an explicit `false` is "asked for, and
+    // disabled" — the same semantics `noGatingScoreErrors` already has. Note
+    // this deliberately does NOT skip falsy in general:
+    // `maximumP95LatencyIncreaseMs: 0` is a real, strict threshold.
+    if (value === undefined || value === false) continue;
     verdicts.push({
       gate: field,
       status: "usage_error",

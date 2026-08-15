@@ -292,3 +292,37 @@ describe("guest access", () => {
     ).toBe(true);
   });
 });
+
+describe("toRunCompareDto — the narrowing nobody else asserts", () => {
+  it("keeps exactly three metrics, dropping the wider internal set", () => {
+    // The internal diff carries startOffsetMs, inputTokens, outputTokens,
+    // cachedInputTokens and reasoningTokens too. Nothing else fails if that
+    // narrowing silently widens.
+    const projected = dto() as Record<string, any>;
+    expect(Object.keys(projected.metrics).sort()).toEqual([
+      "estimatedCostUsd",
+      "totalTokens",
+      "wallDurationMs",
+    ]);
+    expect(projected.metrics.wallDurationMs).toEqual({
+      base: 3000,
+      compare: 6000,
+      delta: 3000,
+      percentDelta: 100,
+    });
+  });
+
+  it("projects both run sides literally", () => {
+    const projected = dto() as Record<string, any>;
+    expect(projected.baseRun).toEqual({
+      id: "run_parity_base",
+      runNumber: 1,
+      result: "passed",
+      createdAt: 1000,
+      completedAt: 4000,
+      summary: { total: 3, passed: 3, failed: 0, passRate: 1 },
+    });
+    expect(projected.compareRun.id).toBe("run_parity_compare");
+    expect(projected.compareRun.result).toBe("failed");
+  });
+});

@@ -194,6 +194,20 @@ export function assessPassRateRegression(args: {
     z: args.z,
   });
 
+  // Checked BEFORE the configurable floor and independently of it: a side with
+  // no iterations has no rate, both Wilson intervals degenerate to [0,1], and
+  // the difference would come back `no_regression` — a clean verdict over
+  // nothing. `minSampleSize: 0` must not be able to unlock that.
+  if (args.base.total <= 0 || args.compare.total <= 0) {
+    return {
+      ...interval,
+      verdict: "insufficient_data",
+      reason:
+        `a side reported no iterations, so a pass-rate regression cannot be ` +
+        `decided (base ${args.base.total}, compare ${args.compare.total})`,
+    };
+  }
+
   if (args.base.total < minSampleSize || args.compare.total < minSampleSize) {
     return {
       ...interval,
@@ -246,5 +260,10 @@ export function detectFlakyCases(
       });
     }
   }
-  return flaky.sort((left, right) => left.caseKey.localeCompare(right.caseKey));
+  // Codepoint order, NOT `localeCompare`: the default locale comes from the
+  // host, so the same run would order its flaky list differently on two CI
+  // machines and the report bytes would not reproduce.
+  return flaky.sort((left, right) =>
+    left.caseKey < right.caseKey ? -1 : left.caseKey > right.caseKey ? 1 : 0
+  );
 }

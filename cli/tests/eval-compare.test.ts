@@ -352,16 +352,40 @@ test("p95 rides in only when supplied", () => {
 test("flaky input keys on the case, falling back through the identity fields", () => {
   assert.deepEqual(
     flakyInputFrom([
-      { testCaseId: "tc1", title: "A", result: "passed" } as never,
-      { testCaseId: "tc1", title: "A", result: "failed" } as never,
-      { testCaseId: null, title: "B", result: "passed" } as never,
-      { testCaseId: null, title: null, result: "failed" } as never,
+      { id: "it_1", testCaseId: "tc1", title: "A", result: "passed" } as never,
+      { id: "it_2", testCaseId: "tc1", title: "A", result: "failed" } as never,
+      { id: "it_3", testCaseId: null, title: "B", result: "passed" } as never,
+      { id: "it_4", testCaseId: null, title: null, result: "failed" } as never,
     ]),
     [
       { caseKey: "tc1", passed: true },
       { caseKey: "tc1", passed: false },
       { caseKey: "B", passed: true },
-      { caseKey: "unknown", passed: false },
+      // The unidentified row keys on its OWN id — a shared "unknown" bucket
+      // would pool unrelated iterations and could invent a flake.
+      { caseKey: "it_4", passed: false },
     ]
+  );
+});
+
+test("a per-case evaluation config change breaks the population too", () => {
+  // The run-level hash alone misses a suite that re-graded ONE case — the
+  // whole-run rate would then mix two different measurements.
+  const input = compareGateInputFrom(
+    wire([caseRow({ evaluationConfigChanged: true })])
+  );
+  assert.equal(input.evaluationConfigChanged, true);
+});
+
+test("pending iterations are excluded from flakiness, not counted as failures", () => {
+  // `result: null` mapped to `passed: false` would make a half-finished case
+  // look like it both passed and failed — a fabricated flake.
+  assert.deepEqual(
+    flakyInputFrom([
+      { id: "it_1", testCaseId: "tc1", title: "A", result: "passed" } as never,
+      { id: "it_2", testCaseId: "tc1", title: "A", result: null } as never,
+      { id: "it_3", testCaseId: "tc1", title: "A", result: "running" } as never,
+    ]),
+    [{ caseKey: "tc1", passed: true }]
   );
 });

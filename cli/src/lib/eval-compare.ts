@@ -200,7 +200,12 @@ export function compareGateInputFrom(
       CASE_SET_CHANGED_STATUSES.has(row.status)
     ),
     scenarioConfigChanged: cases.some((row) => row.configChanged),
-    evaluationConfigChanged: compare.scoreContract.evaluationConfigChanged,
+    // Run-level OR any single case's own. A suite that re-grades ONE case has
+    // changed what that case measures, and the whole-run rate now mixes two
+    // measurements — the run-level hash alone would miss it.
+    evaluationConfigChanged:
+      compare.scoreContract.evaluationConfigChanged ||
+      cases.some((row) => row.evaluationConfigChanged),
     iterationWeightingEqual: iterationWeightingEqualFrom(cases),
   };
 }
@@ -209,12 +214,20 @@ export function compareGateInputFrom(
 export function flakyInputFrom(
   iterations: PlatformEvalIteration[]
 ): Array<{ caseKey: string; passed: boolean }> {
-  return iterations.map((iteration) => ({
-    caseKey:
-      (iteration as { caseKey?: string }).caseKey ??
-      iteration.testCaseId ??
-      iteration.title ??
-      "unknown",
-    passed: iteration.result === "passed",
-  }));
+  return iterations
+    // A pending iteration has `result: null`. Mapping that to `passed: false`
+    // would make a half-finished case look like it both passed and failed —
+    // a fabricated flake.
+    .filter(
+      (iteration) =>
+        iteration.result === "passed" || iteration.result === "failed"
+    )
+    .map((iteration) => ({
+      // Falls back to the iteration's own id, never a shared literal: a
+      // single "unknown" bucket would pool unrelated iterations, and one pass
+      // plus one fail from two DIFFERENT cases would be reported as a flake
+      // that never existed.
+      caseKey: iteration.testCaseId ?? iteration.title ?? iteration.id,
+      passed: iteration.result === "passed",
+    }));
 }

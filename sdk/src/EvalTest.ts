@@ -97,6 +97,42 @@ export interface EvalTestConfig {
    * them — so these compose with the built-ins rather than replacing them.
    */
   scorers?: Scorer[];
+  /**
+   * Stable identity for a case that also exists somewhere else — today, a
+   * hosted eval case materialized by `loadCorpus`.
+   *
+   * The backend derives `caseKey = "external:" + id` when this is present
+   * (`convex/sdkEvals.ts`), which is what joins a local run to the hosted
+   * case's history on the run page. Identity rides HERE, never on `name`:
+   * display names collide and get renamed.
+   */
+  externalCaseId?: string;
+  /**
+   * Hosted "negative case" semantics: the test passes iff NO tool was called.
+   *
+   * Not a per-tool `toolNeverCalled` translation — the matcher already
+   * implements exactly this (`evaluateToolCalls(..., {isNegativeTest: true})`),
+   * and re-expressing it as predicates would be a second implementation of a
+   * rule that already exists.
+   *
+   * Three consequences, all deliberate: the empty-`expectedToolCalls` guard
+   * FLIPS (a negative case with no expectations still asserts "no tools
+   * fired", so tool-match becomes applicable and gating); `isNegativeTest`
+   * joins the tool-match definition's `implementationHash` (a negative and a
+   * positive tool-match are different scorers and must digest differently);
+   * and `ScorerContextV1.scenario.isNegativeTest` is populated so custom and
+   * judge scorers can see it.
+   */
+  isNegativeTest?: boolean;
+  /**
+   * Reference output for judge scorers (`ScorerContextV1.expectedOutput`).
+   *
+   * Threaded rather than dropped because `judge-scorer.ts` consumes it: a
+   * hosted case with an expected output judged locally without one is a
+   * different evaluation, and hosted↔local judge parity is the point of
+   * materializing the case at all.
+   */
+  expectedOutput?: string;
 }
 
 /**
@@ -599,7 +635,12 @@ export class EvalTest {
     };
     return {
       version: 1,
-      scenario: { title: this.getName() },
+      scenario: {
+        title: this.getName(),
+        // Populated so custom and judge scorers can see the case's polarity;
+        // without it a judge grades a negative case as though it were positive.
+        ...(this.config.isNegativeTest ? { isNegativeTest: true } : {}),
+      },
       transcript: buildIterationTranscript({
         trace,
         toolCalls: actualToolCallsFromPrompts(promptResults),
@@ -617,6 +658,9 @@ export class EvalTest {
           ? { spans: trace.spans }
           : {}),
       },
+      ...(this.config.expectedOutput !== undefined
+        ? { expectedOutput: this.config.expectedOutput }
+        : {}),
       ...(this.config.expectedToolCalls
         ? { expectedToolCalls: this.config.expectedToolCalls }
         : {}),
@@ -654,15 +698,34 @@ export class EvalTest {
     context: ScorerContextV1
   ): EvalToolCallMatchResult | undefined {
     const expected = this.config.expectedToolCalls ?? [];
-    if (expected.length === 0) return undefined;
+    // The guard FLIPS for a negative case. "No expectations" means "nothing to
+    // check" for a positive test, but a negative case with no expectations is
+    // still asserting something — that no tool fired — so skipping the matcher
+    // here would make the whole point of the case `not_applicable`.
+    if (expected.length === 0 && !this.config.isNegativeTest) return undefined;
     return evaluateToolCalls(
       expected.map((toolCall) => ({
         toolName: toolCall.toolName,
         arguments: toolCall.arguments ?? {},
       })),
       context.transcript.toolCalls,
-      resolveMatchOptions(this.config.matchOptions)
+      {
+        ...resolveMatchOptions(this.config.matchOptions),
+        ...(this.config.isNegativeTest ? { isNegativeTest: true } : {}),
+      }
     );
+  }
+
+  /**
+   * This test's resolved, hashed scorer definitions.
+   *
+   * Exposed so corpus tooling can record the SAME evaluation config the run
+   * will report, rather than re-deriving it. A second derivation is a drift
+   * factory: the lock would claim a hash the run never produces, and every
+   * `--frozen` check would report a config change that never happened.
+   */
+  getEvaluationConfigSnapshot(): EvaluationConfigSnapshot {
+    return this.buildEvaluationConfig();
   }
 
   /**
@@ -688,6 +751,7 @@ export class EvalTest {
       toolMatchScoreDefinition({
         expectedToolCalls: this.config.expectedToolCalls ?? [],
         matchOptions: resolveMatchOptions(this.config.matchOptions),
+        isNegativeTest: this.config.isNegativeTest,
       }).scorerId,
       ...(this.config.predicates ?? []).map(
         (predicate, index) =>
@@ -710,6 +774,7 @@ export class EvalTest {
       toolMatchScoreDefinition({
         expectedToolCalls: this.config.expectedToolCalls ?? [],
         matchOptions: resolveMatchOptions(this.config.matchOptions),
+        isNegativeTest: this.config.isNegativeTest,
       }),
       ...(this.config.predicates ?? []).map((predicate, index) =>
         predicateScoreDefinition(predicate, { ordinal: index })
@@ -772,6 +837,7 @@ export class EvalTest {
       toolMatchScoreDefinition({
         expectedToolCalls: this.config.expectedToolCalls ?? [],
         matchOptions: resolveMatchOptions(this.config.matchOptions),
+        isNegativeTest: this.config.isNegativeTest,
       }).scorerId
     );
     const toolMatch = this.evaluateIterationToolCalls(context);
@@ -834,7 +900,18 @@ export class EvalTest {
       hostExtras,
       this.config.predicates,
       this.config.matchOptions,
-      this.lastEvaluationConfig ?? undefined
+      this.lastEvaluationConfig ?? undefined,
+      {
+        ...(this.config.externalCaseId !== undefined
+          ? { externalCaseId: this.config.externalCaseId }
+          : {}),
+        ...(this.config.isNegativeTest !== undefined
+          ? { isNegativeTest: this.config.isNegativeTest }
+          : {}),
+        ...(this.config.expectedOutput !== undefined
+          ? { expectedOutput: this.config.expectedOutput }
+          : {}),
+      }
     );
   }
 

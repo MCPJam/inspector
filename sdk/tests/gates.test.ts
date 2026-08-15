@@ -746,3 +746,31 @@ describe("evaluateGates — comparative fields fail closed", () => {
     expect(report.outcome).not.toBe("usage_error");
   });
 });
+
+describe("evaluateGates — an explicit false disables, it does not error", () => {
+  it("treats `noDeterministicRegressions: false` as not-asked-for", () => {
+    // Same semantics as `noGatingScoreErrors`. Erroring here would break every
+    // caller that builds a policy object with all fields present.
+    const report = evaluateGates(input({}), {
+      minimumPassRate: 0,
+      noDeterministicRegressions: false,
+    });
+    expect(report.outcome).not.toBe("usage_error");
+    expect(report.verdicts.map((verdict) => verdict.gate)).not.toContain(
+      "noDeterministicRegressions"
+    );
+  });
+
+  it("but `maximumP95LatencyIncreaseMs: 0` is a REAL threshold, not a disable", () => {
+    // 0 is falsy and would be skipped by a naive truthiness check — it means
+    // "no latency increase at all is acceptable", the strictest setting.
+    const report = evaluateGates(input({}), {
+      maximumP95LatencyIncreaseMs: 0,
+    });
+    expect(report.outcome).toBe("usage_error");
+  });
+
+  it("the roster itself cannot be mutated to open a hole", () => {
+    expect(Object.isFrozen(COMPARATIVE_GATE_FIELDS)).toBe(true);
+  });
+});

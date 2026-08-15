@@ -2129,6 +2129,19 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const baseRunId = c.req.query("baseRunId");
+  // Forwarded, not dropped: the SDK client sends it, and a silently ignored
+  // knob is worse than an absent one. Parsed defensively — the action clamps
+  // the range, so this only has to refuse non-numbers.
+  const rawPreviewChars = c.req.query("previewChars");
+  const previewChars =
+    rawPreviewChars === undefined ? undefined : Number(rawPreviewChars);
+  if (previewChars !== undefined && !Number.isFinite(previewChars)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "previewChars must be a number",
+    );
+  }
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   // Fetch the compare run FIRST so an unauthorized or cross-project caller
@@ -2149,6 +2162,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     result = await convex.action("testSuites:compareTestSuiteRuns" as any, {
       compareRunId: runId,
       ...(baseRunId ? { baseRunId } : {}),
+      ...(previewChars !== undefined ? { previewChars } : {}),
     });
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
@@ -2178,7 +2192,15 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
 
   const baselineSource = (envelope.baseline ?? {}) as Record<string, unknown>;
   const baseline: RunCompareBaseline = {
-    policy: baselineSource.policy === "run" ? "run" : "previous_completed",
+    // Falls back to what the REQUEST asked for, not to a literal. `baseline`
+    // is an audit field — a caller reads it to learn HOW the baseline was
+    // chosen — so publishing an explicitly named run as `previous_completed`
+    // (which a deploy-order skew could cause) is worse than saying nothing.
+    policy:
+      baselineSource.policy === "run" ||
+      (baselineSource.policy === undefined && Boolean(baseRunId))
+        ? "run"
+        : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
   };
 

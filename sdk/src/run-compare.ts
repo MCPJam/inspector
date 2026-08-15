@@ -19,7 +19,7 @@
  * non-gateable policy must not pass it.
  */
 
-import type { GateReport } from "./gates.js";
+import { formatGateReport, type GateReport } from "./gates.js";
 import type { FlakyCase } from "./compare-stats.js";
 import type {
   PlatformRunCompare,
@@ -30,11 +30,6 @@ import {
   type StructuredCaseResult,
   type StructuredRunReport,
 } from "./structured-reporting.js";
-
-/** Case statuses that represent a product regression, not a suite edit. */
-const FAILING_STATUSES = new Set<PlatformRunCompareCase["status"]>([
-  "regressed",
-]);
 
 function classify(
   status: PlatformRunCompareCase["status"]
@@ -67,13 +62,18 @@ function describeCase(row: PlatformRunCompareCase): string | undefined {
 }
 
 function toStructuredCase(row: PlatformRunCompareCase): StructuredCaseResult {
+  // ONE owner for the rule: a case fails exactly when it is `breaking`, which
+  // `classify` already decides. A second `FAILING_STATUSES` set beside it is
+  // two places to update and one to forget.
+  const classification = classify(row.status);
+  const description = describeCase(row);
   return {
     id: row.caseKey,
     title: row.title,
     category: row.status,
-    passed: !FAILING_STATUSES.has(row.status),
-    classification: classify(row.status),
-    ...(describeCase(row) ? { error: describeCase(row) } : {}),
+    passed: classification !== "breaking",
+    classification,
+    ...(description ? { error: description } : {}),
     details: {
       status: row.status,
       configChanged: row.configChanged,
@@ -87,6 +87,36 @@ function toStructuredCase(row: PlatformRunCompareCase): StructuredCaseResult {
   };
 }
 
+/**
+ * The gate's own verdict, as a case row.
+ *
+ * Without it the JUnit output and the exit code can disagree in both
+ * directions: a regression nobody gated on renders as a JUnit `<failure>`
+ * while the command exits 0, and a gate that failed on latency or integrity —
+ * neither of which is a case row — renders zero failures while the command
+ * exits 1. CI reads the XML, so "green report, red exit" is a bug report
+ * waiting to happen.
+ *
+ * The per-case rows still describe what happened (a regression IS a
+ * regression); this row describes what was decided.
+ */
+function gateCase(gateReport: GateReport): StructuredCaseResult {
+  const passed = gateReport.outcome === "passed";
+  return {
+    id: "gate",
+    title: `gate: ${gateReport.outcome}`,
+    category: "gate",
+    passed,
+    classification: passed ? "non_breaking" : "breaking",
+    ...(passed ? {} : { error: formatGateReport(gateReport) }),
+    details: {
+      outcome: gateReport.outcome,
+      scoreIntegrity: gateReport.scoreIntegrity,
+      verdicts: gateReport.verdicts,
+    },
+  };
+}
+
 export function buildRunCompareReport(
   compare: PlatformRunCompare,
   gateReport: GateReport,
@@ -96,7 +126,10 @@ export function buildRunCompareReport(
     metadata?: Record<string, unknown>;
   } = {}
 ): StructuredRunReport {
-  const cases = compare.cases.map(toStructuredCase);
+  const cases = [
+    ...compare.cases.map(toStructuredCase),
+    gateCase(gateReport),
+  ];
 
   return {
     schemaVersion: 1,
