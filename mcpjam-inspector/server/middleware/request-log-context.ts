@@ -100,17 +100,70 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     const body = c.res.body;
     if (body) {
       const closedCtx: RequestLogContext = { ...enriched };
-      const ts = new TransformStream({
-        flush() {
-          const durationMs = Date.now() - startedAt;
-          logger.event(
-            "http.stream.closed",
-            { ...closedCtx, durationMs },
-            { statusCode: closedCtx.statusCode ?? status, durationMs },
-          );
+      // Hand-rolled pull wrapper instead of a TransformStream: flush() only
+      // runs on a NORMAL end-of-stream, so a producer error or a client
+      // disconnect used to leave no `http.stream.closed` at all — the most
+      // common streaming failure produced zero telemetry. read()/cancel()
+      // cover all three exits deterministically, and pull() is demand-driven
+      // so backpressure is preserved.
+      const reader = body.getReader();
+      let closedEmitted = false;
+      const emitClosed = (
+        outcome: "completed" | "aborted" | "errored",
+        error?: unknown,
+      ) => {
+        // Exactly once: cancel and a pending read rejection can race.
+        if (closedEmitted) return;
+        closedEmitted = true;
+        const durationMs = Date.now() - startedAt;
+        // Guarded extraction: a rejection reason can be a value whose
+        // message getter or string coercion throws (Proxy trap, null-proto
+        // object). Letting that escape here would swallow the closed row AND
+        // replace the stream error with a secondary failure from the
+        // telemetry code — same precedent as reportRouteFailure's
+        // "[unreadable error value]" handling.
+        let errorMessage: string | undefined;
+        if (outcome === "errored" && error !== undefined) {
+          try {
+            errorMessage = (
+              error instanceof Error ? error.message : String(error)
+            ).slice(0, 500);
+          } catch {
+            errorMessage = "[unreadable error value]";
+          }
+        }
+        logger.event(
+          "http.stream.closed",
+          { ...closedCtx, durationMs },
+          {
+            statusCode: closedCtx.statusCode ?? status,
+            durationMs,
+            outcome,
+            ...(errorMessage ? { errorMessage } : {}),
+          },
+        );
+      };
+      const wrapped = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              emitClosed("completed");
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          } catch (err) {
+            emitClosed("errored", err);
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          emitClosed("aborted", reason);
+          return reader.cancel(reason);
         },
       });
-      c.res = new Response(body.pipeThrough(ts), {
+      c.res = new Response(wrapped, {
         status: c.res.status,
         statusText: c.res.statusText,
         headers: c.res.headers,
@@ -128,7 +181,17 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       : 500
     : status;
 
-  if (effectiveStatus >= 500) {
+  // 424 joins the 5xx range as a FAILURE for logging purposes. It is the one
+  // 4xx this server emits for "we could not reach the dependency the request
+  // named" (`mapTargetServerError`), which is a failed request in every sense
+  // except whose fault it was. Without this it would log as
+  // `http.request.completed` and lose the `errorCode` / `origin` / `slug` /
+  // `errorMessage` breakdown below — and that Axiom slice is exactly what
+  // makes an unpaged `ambiguous` bucket measurable, i.e. what lets the bucket
+  // be promoted later as a data decision rather than a guess. Moving these
+  // failures out of the 5xx range to stop them paging us must not also move
+  // them out of the record that says how often they happen.
+  if (effectiveStatus >= 500 || effectiveStatus === 424) {
     // Prefer the route's own error code/message over a classifier bucket. A
     // route that *returns* a `webError` response (the hosted connect paths do)
     // never reaches the `thrown` branch, so both of these used to collapse to a
@@ -170,6 +233,32 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       },
       { error: thrown instanceof Error ? thrown : undefined },
     );
+  } else if (effectiveStatus >= 400) {
+    // 4xx: a declared client outcome, deliberately NOT `http.request.failed`
+    // — but typed anyway. `classifyRuntimeError` checks 401 before every
+    // other branch, so an MCP auth incident can arrive here entirely as
+    // 401s (measured on the 08-06 route: 2,328 401s next to 4,932 500s),
+    // and #3948 moved the largest upstream-auth class to 403. Without
+    // code/origin/slug those classes fingerprint as one `route 401` bucket
+    // per route and rate spikes are undiagnosable.
+    const webErrorMeta =
+      c.var.webErrorMeta?.status === effectiveStatus
+        ? c.var.webErrorMeta
+        : undefined;
+    const errorCode = thrown ? classifyError(thrown) : webErrorMeta?.code;
+    const rawErrorMessage = thrown
+      ? thrown instanceof Error
+        ? thrown.message
+        : String(thrown)
+      : webErrorMeta?.message;
+    const errorMessage = rawErrorMessage?.slice(0, 500);
+    reqLogger.event("http.request.completed", {
+      statusCode: effectiveStatus,
+      ...(errorCode ? { errorCode } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
+      ...(webErrorMeta?.origin ? { origin: webErrorMeta.origin } : {}),
+      ...(webErrorMeta?.slug ? { slug: webErrorMeta.slug } : {}),
+    });
   } else {
     reqLogger.event("http.request.completed", {
       statusCode: effectiveStatus,

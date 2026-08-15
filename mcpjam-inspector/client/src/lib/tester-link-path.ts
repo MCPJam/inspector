@@ -22,23 +22,39 @@
 export const TESTER_LINK_PATH_SEGMENT = "user-testing";
 
 /**
+ * Third segments that belong to the SIGNED-IN app, not to a tester link.
+ *
+ * `/user-testing/<scenarioId>/edit` is the scenario's setup screen, and it has
+ * the same three-segment shape as a tester link — so without this exclusion the
+ * token matcher below reads `edit` as a share token, `App` mounts the public
+ * runtime instead of the app shell, and redeeming fails with "Link
+ * Unavailable". That is what made the header's Edit button look dead.
+ *
+ * Reserving the word costs nothing: tokens are minted random ids, never `edit`.
+ */
+const RESERVED_APP_SUBPATH = "edit";
+
+/**
  * Exactly `<segment>/<slug>/<token>`, trailing slash tolerated and nothing
  * else. Deliberately not a `startsWith` — a generic prefix test would let an
  * unrelated future subpath past the iframe guard.
  *
  * `/user-testing/<scenarioId>` (the in-app scenario screen) has two segments,
- * so it cannot match: the third segment is required and cannot be empty.
+ * so it cannot match: the third segment is required and cannot be empty. Its
+ * `/edit` sibling DOES have three, so it is excluded by name.
  */
-export const TESTER_LINK_RUNTIME_PATH_PATTERN =
-  /^\/(?:user-testing|chatbox)\/[^/]+\/[^/]+\/?$/;
+export const TESTER_LINK_RUNTIME_PATH_PATTERN = new RegExp(
+  `^/(?:user-testing|chatbox)/[^/]+/(?!${RESERVED_APP_SUBPATH}/?$)[^/]+/?$`
+);
 
 /**
  * Same shape, token captured. Looser than the pattern above on purpose: a
  * pathname carrying `?surface=preview` or a `#slug` bookmark still yields its
- * token.
+ * token — while still refusing the reserved app sub-path.
  */
-const TESTER_LINK_TOKEN_PATTERN =
-  /^\/(?:user-testing|chatbox)\/[^/?#]+\/([^/?#]+)/;
+const TESTER_LINK_TOKEN_PATTERN = new RegExp(
+  `^/(?:user-testing|chatbox)/[^/?#]+/(?!${RESERVED_APP_SUBPATH}(?:[/?#]|$))([^/?#]+)`
+);
 
 export function extractTesterLinkToken(pathname: string): string | null {
   const match = pathname.match(TESTER_LINK_TOKEN_PATTERN);
