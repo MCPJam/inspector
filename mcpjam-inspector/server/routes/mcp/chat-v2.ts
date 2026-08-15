@@ -27,6 +27,7 @@ import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
@@ -1395,6 +1396,7 @@ chatV2.post("/", async (c) => {
 
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
+        failureReporter: createRequestStreamFailureReporter(c, "chat"),
         modelId: String(modelDefinition.id),
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
@@ -1612,6 +1614,7 @@ chatV2.post("/", async (c) => {
       if (runtime.runtimeLocation === "local") {
         return handleLocalOrgChatModel({
           provider: runtime.provider,
+          failureReporter: createRequestStreamFailureReporter(c, "chat"),
           projectId: body.projectId,
           modelId,
           chatSessionId,
@@ -1650,6 +1653,7 @@ chatV2.post("/", async (c) => {
 
       return handleHostedOrgChatModel({
         projectId: body.projectId,
+        failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
         messages: modelMessages,

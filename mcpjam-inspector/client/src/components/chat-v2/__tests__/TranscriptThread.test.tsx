@@ -488,6 +488,80 @@ describe("TranscriptThread", () => {
     );
   });
 
+  it("suppresses the per-turn rating footer on the streaming message", () => {
+    // Rating a half-written answer rates something the tester has not read.
+    const renderFooter = vi.fn(() => null);
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={true}
+        lastRenderableMessageId="assistant-1"
+        renderAssistantTurnFooter={renderFooter}
+      />
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        renderAssistantTurnFooter: undefined,
+      })
+    );
+  });
+
+  it("passes the per-turn rating footer through once streaming finishes", () => {
+    const renderFooter = vi.fn(() => null);
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={false}
+        lastRenderableMessageId="assistant-1"
+        renderAssistantTurnFooter={renderFooter}
+      />
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        renderAssistantTurnFooter: renderFooter,
+      })
+    );
+  });
+
+  it("keeps the footer on earlier assistant messages while the last one streams", () => {
+    // Only the message being written is suppressed; a completed turn earlier
+    // in the thread is still rateable.
+    const renderFooter = vi.fn(() => null);
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={true}
+        lastRenderableMessageId="assistant-2"
+        messages={[
+          ...defaultProps.messages,
+          {
+            id: "assistant-2",
+            role: "assistant",
+            parts: [{ type: "text", text: "still writing" }],
+          } as unknown as UIMessage,
+        ]}
+        renderAssistantTurnFooter={renderFooter}
+      />
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        renderAssistantTurnFooter: renderFooter,
+      })
+    );
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-2" }),
+        renderAssistantTurnFooter: undefined,
+      })
+    );
+  });
+
   it("scrolls the focused message using the nearest scrollable ancestor", () => {
     vi.useFakeTimers();
     installTimerBackedAnimationFrame();
