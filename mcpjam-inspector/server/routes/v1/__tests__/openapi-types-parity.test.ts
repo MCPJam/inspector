@@ -119,6 +119,14 @@ const PAIRS: Readonly<Record<string, string>> = {
   JourneyArchived: "PlatformJourneyArchived",
   Swarm: "PlatformSwarm",
   SwarmArchived: "PlatformSwarmArchived",
+
+  // ── A2: Swarm runs ────────────────────────────────────────────────────
+  JourneyRun: "PlatformJourneyRun",
+  JourneyRunTarget: "PlatformJourneyRunTarget",
+  JourneyRunAttempt: "PlatformJourneyRunAttempt",
+  JourneyRunSession: "PlatformJourneyRunSession",
+  JourneyRunLaunched: "PlatformJourneyRunLaunched",
+  JourneyRunCanceled: "PlatformJourneyRunCanceled",
 };
 
 /**
@@ -138,6 +146,10 @@ const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {
   //
   // This exemption comes OFF with those routes, in the same PR.
   EvalRun: ["insights"],
+  // Same envelope, same reason, on the swarm side. The run itself is
+  // documented; the envelope it can carry is not, because the routes that
+  // produce and retry it are still pre-GA.
+  JourneyRun: ["insights"],
 };
 
 // ── SDK type extraction ─────────────────────────────────────────────────────

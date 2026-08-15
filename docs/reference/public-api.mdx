@@ -337,6 +337,40 @@ drafts are stable across retries when they are not.
   rather than guessing.
 </Warning>
 
+**Swarms — runs** (`/projects/{projectId}/journeys/{journeyId}/runs`,
+`.../journey-runs/...`) — launching a journey and reading what it produced:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../journeys` | List the project's journeys |
+| `GET .../journeys/{journeyId}/runs` | That journey's runs, newest first |
+| `POST .../journeys/{journeyId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key` |
+| `GET .../journey-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
+| `GET .../journey-runs/{runId}/sessions` | The chat sessions the run produced (summaries, not transcripts) |
+| `POST .../journey-runs/{runId}/cancel` | Stop a run. Idempotent — a second cancel is `200` with `alreadyCanceled: true`, not a `409` |
+
+Three things worth knowing before you write the client:
+
+- **Always send `Idempotency-Key` on a launch.** It spends model credits, so a
+  retry of a dropped response must not run the journey twice. Replaying a key
+  returns the original run with `deduped: true` and starts no second runner —
+  and consumes no quota. Omitting the header is read as a request that declined
+  to identify itself, and gets a fresh run every time.
+- **Check `canceled` before reporting a failure.** A stopped run carries
+  `status: "failed"`, because cancellation is recorded as a marker rather than
+  a status of its own. `stale: true` is the third case: the runner went silent
+  and the watchdog settled the run.
+- **`targetId`, not `hostId`, identifies a target.** Two environments can
+  resolve to the same host with different servers, so a run can hold two
+  targets that share a `hostId`.
+
+<Warning>
+  Launching **spends**: a run fans out into `targets × sessionsPerTarget`
+  sessions. Two different `429`s can come back — the per-minute burst brake
+  (retry in seconds) and your plan's daily launch cap (resets at UTC midnight).
+  Both send `Retry-After`.
+</Warning>
+
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.

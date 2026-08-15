@@ -84,6 +84,10 @@
     {
       "name": "Swarms",
       "description": "Personas, journeys and swarm containers \u2014 the authoring half of Swarms \u2014 plus the model-backed generation that drafts them."
+    },
+    {
+      "name": "Swarm runs",
+      "description": "Launching journeys and reading what they produced. Launching SPENDS \u2014 see the per-operation notes."
     }
   ],
   "paths": {
@@ -6185,6 +6189,303 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/journeys": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "listJourneys",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "List journeys",
+        "description": "The project's journeys, newest first. Archived journeys are excluded.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "A page of journeys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journeys/{journeyId}/runs": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/journeyId"
+        }
+      ],
+      "get": {
+        "operationId": "listJourneyRuns",
+        "tags": [
+          "Swarm runs"
+        ],
+        "summary": "List a journey's runs",
+        "description": "Newest first. Compact records \u2014 `attempts` is on the single-run read.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "A page of runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyRunPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "launchJourneyRun",
+        "tags": [
+          "Swarm runs"
+        ],
+        "summary": "Launch a journey",
+        "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished \u2014 poll `GET /projects/{projectId}/journey-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets \u00d7 sessionsPerTarget` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both send `Retry-After` \u2014 honor it rather than guessing. A retried `Idempotency-Key` consumes NO quota.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "**Send one.** A launch spends model credits, so a retry of a dropped response must not run the journey twice. Replaying a key returns the ORIGINAL run with `deduped: true` and starts no second runner.\n\nOmitting the header is read as a request that declined to identify itself, and gets a FRESH run every time.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "description": "Optional launch options. Omit the body entirely to run the journey as authored.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyRunLaunchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyRunLaunched"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journey-runs/{runId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/runId"
+        }
+      ],
+      "get": {
+        "operationId": "getJourneyRun",
+        "tags": [
+          "Swarm runs"
+        ],
+        "summary": "Get a journey run",
+        "description": "The full record, including per-session `attempts` and `targetSummaries`.\n\nRead `canceled` before reporting a failure: a stopped run carries `status: \"failed\"`.",
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journey-runs/{runId}/sessions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/runId"
+        }
+      ],
+      "get": {
+        "operationId": "listJourneyRunSessions",
+        "tags": [
+          "Swarm runs"
+        ],
+        "summary": "List a run's sessions",
+        "description": "One entry per chat session the run produced. Summaries, not transcripts \u2014 read a transcript through the chat-session routes using `id`.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "A page of sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyRunSessionPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journey-runs/{runId}/cancel": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/runId"
+        }
+      ],
+      "post": {
+        "operationId": "cancelJourneyRun",
+        "tags": [
+          "Swarm runs"
+        ],
+        "summary": "Cancel a journey run",
+        "description": "Stops a run and settles its in-flight attempts. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` \u2014 there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
+        "responses": {
+          "200": {
+            "description": "The run was cancelled (or already was).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyRunCanceled"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -11861,6 +12162,464 @@
                 }
               }
             }
+          }
+        }
+      },
+      "JourneyRunTarget": {
+        "type": "object",
+        "required": [
+          "hostId"
+        ],
+        "properties": {
+          "hostId": {
+            "type": "string"
+          },
+          "hostName": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string",
+            "description": "Execution identity. TWO TARGETS CAN SHARE A `hostId` \u2014 two environments may resolve to the same host with different servers \u2014 so this, not `hostId`, is what identifies a target within a run."
+          },
+          "modelId": {
+            "type": "string"
+          }
+        }
+      },
+      "JourneyRunAttempt": {
+        "type": "object",
+        "description": "One session's execution record: (target, session index).",
+        "required": [
+          "chatSessionId",
+          "hostId",
+          "targetId",
+          "sessionIndex",
+          "status",
+          "errorCode",
+          "errorMessage"
+        ],
+        "properties": {
+          "chatSessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` until the attempt claims a session."
+          },
+          "hostId": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionIndex": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending` \u2192 `running` \u2192 terminal. A `pending` attempt cannot jump straight to a terminal state.",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "rate_limited"
+            ]
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Capped and redacted before it reaches this response."
+          }
+        }
+      },
+      "JourneyRunSummary": {
+        "type": "object",
+        "required": [
+          "total",
+          "succeeded",
+          "failed",
+          "rateLimited"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "description": "Targets \u00d7 `sessionsPerTarget`, fixed at launch."
+          },
+          "succeeded": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "rateLimited": {
+            "type": "integer"
+          }
+        }
+      },
+      "JourneyRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "journeyId",
+          "status",
+          "canceled",
+          "stale",
+          "summary",
+          "targets",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "journeyId": {
+            "type": "string"
+          },
+          "waveId": {
+            "type": "string",
+            "description": "The batch this run was launched with. Sibling runs of one co-launched wave share it; a solo relaunch is a wave of one. Absent on a run launched without one."
+          },
+          "status": {
+            "type": "string",
+            "description": "Poll until it leaves `running`.",
+            "enum": [
+              "running",
+              "completed",
+              "partial",
+              "failed",
+              "rate_limited"
+            ]
+          },
+          "canceled": {
+            "type": "boolean",
+            "description": "True when somebody STOPPED this run. **Check this before showing a run as a failure**: a cancelled run reports `status: \"failed\"`, because cancellation is recorded as a marker rather than a status of its own."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "True when the runner went silent and the watchdog settled the run. Distinct from a run that failed while still reporting."
+          },
+          "error": {
+            "type": "string",
+            "description": "Raw marker behind `canceled` / `stale`."
+          },
+          "summary": {
+            "$ref": "#/components/schemas/JourneyRunSummary"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JourneyRunTarget"
+            }
+          },
+          "persona": {
+            "type": "object",
+            "description": "The persona AS PINNED AT LAUNCH, from the run's immutable snapshot \u2014 not the persona's current values, which may have been edited since.",
+            "properties": {
+              "personaId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "role": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "attempts": {
+            "type": "array",
+            "description": "Per-session execution records. Present on the single-run read only \u2014 lists stay compact.",
+            "items": {
+              "$ref": "#/components/schemas/JourneyRunAttempt"
+            }
+          },
+          "targetSummaries": {
+            "type": "array",
+            "description": "The same counts as `summary`, broken down per target.",
+            "items": {
+              "type": "object",
+              "required": [
+                "hostId",
+                "total",
+                "succeeded",
+                "failed",
+                "rateLimited"
+              ],
+              "properties": {
+                "hostId": {
+                  "type": "string"
+                },
+                "targetId": {
+                  "type": "string"
+                },
+                "total": {
+                  "type": "integer"
+                },
+                "succeeded": {
+                  "type": "integer"
+                },
+                "failed": {
+                  "type": "integer"
+                },
+                "rateLimited": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "lastHeartbeatAt": {
+            "type": "number",
+            "description": "Epoch milliseconds of the runner's last check-in. A long-stale heartbeat on a `running` run is what the watchdog acts on."
+          }
+        }
+      },
+      "JourneyRunPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JourneyRun"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists."
+          }
+        }
+      },
+      "JourneyRunSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "chatSessionId",
+          "projectId",
+          "status",
+          "readiness",
+          "goalScore",
+          "messageCount",
+          "startedAt",
+          "lastActivityAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The session's document id \u2014 the same value `GET /chat-sessions` returns as `id`, so a session found here can be looked up there."
+          },
+          "chatSessionId": {
+            "type": "string",
+            "description": "The RUNTIME key for the same session, used by the chat transport and the app's deep links. Distinct from `id` and NOT interchangeable with it."
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "hostId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "journeyId": {
+            "type": "string"
+          },
+          "personaId": {
+            "type": "string"
+          },
+          "personaLabel": {
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ARCHIVAL state. A run session stays `active` forever unless archived, so this says nothing about how the run went \u2014 read `outcome` for the verdict.",
+            "enum": [
+              "active",
+              "archived",
+              null
+            ]
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How this session's attempt ended. `null` when the attempt cannot be matched (historical runs); absent on servers that predate the field.",
+            "enum": [
+              "succeeded",
+              "failed",
+              "rate_limited",
+              "running",
+              "pending",
+              null
+            ]
+          },
+          "readiness": {
+            "description": "Opaque readiness block."
+          },
+          "goalScore": {
+            "description": "Opaque goal-completion block."
+          },
+          "messageCount": {
+            "type": "integer"
+          },
+          "preview": {
+            "type": "string",
+            "description": "First message only. The transcript is a separate read."
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "lastActivityAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "JourneyRunSessionPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JourneyRunSession"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists."
+          }
+        }
+      },
+      "JourneyRunLaunchRequest": {
+        "type": "object",
+        "description": "Optional. A launch with no options is a BODYLESS POST \u2014 omit the body entirely rather than sending `null`, which is rejected.",
+        "additionalProperties": false,
+        "properties": {
+          "waveId": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Opaque id linking the sibling runs of one co-launched batch. Mint it yourself and reuse it across the launches you want grouped."
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "Fan out across THESE environments instead of the journey's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
+          }
+        }
+      },
+      "JourneyRunLaunched": {
+        "type": "object",
+        "required": [
+          "id",
+          "journeyId",
+          "projectId",
+          "status",
+          "deduped"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The run id. Poll it, or stop it with `cancel`."
+          },
+          "journeyId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "Always `running` \u2014 the run row exists and its fan-out has started. This is a 202: nothing here says the journey has finished, only that it is under way.",
+            "enum": [
+              "running"
+            ]
+          },
+          "deduped": {
+            "type": "boolean",
+            "description": "True when an `Idempotency-Key` replayed onto a run that ALREADY existed, so nothing new was started. The response is otherwise identical, which is how a retry of a dropped request tells \"I launched it\" from \"it was already going\" without a second read."
+          }
+        }
+      },
+      "JourneyRunCanceled": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "canceled",
+          "alreadyCanceled",
+          "finalized"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "The run's terminal status after the cancel settled it."
+          },
+          "canceled": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "alreadyCanceled": {
+            "type": "boolean",
+            "description": "True when the run was already cancelled and this call did nothing."
+          },
+          "finalized": {
+            "type": "integer",
+            "description": "Attempts this call moved to terminal. Zero on an idempotent replay."
           }
         }
       }

@@ -35,6 +35,8 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/tunnels/{serverId}/close",
   // Cancel is addressed entirely by the path runId; the body is empty.
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
+  // Same shape on the swarm side, for the same reason.
+  "post /projects/{projectId}/journey-runs/{runId}/cancel",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
@@ -74,12 +76,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   // flag comes off. Reads are ungated at the API (an empty list leaks
   // nothing); the WRITES these support are enforced in
   // `mcpjam-backend/convex/lib/sandboxesGate.ts`.
-  "get /projects/{projectId}/journeys",
-  "get /projects/{projectId}/journeys/{journeyId}/runs",
-  "get /projects/{projectId}/journey-runs/{runId}",
-  "get /projects/{projectId}/journey-runs/{runId}/sessions",
-  "post /projects/{projectId}/journeys/{journeyId}/runs",
-  "post /projects/{projectId}/journey-runs/{runId}/cancel",
   // Authoring — personas, journeys, swarm containers — and the generation that
   // drafts them. Same flag, same reason: these are the WRITES the gate exists
   // for, so they cannot be advertised in a document the flag cannot reach.
