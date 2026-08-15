@@ -988,9 +988,15 @@ userTesting.put(`${BASE}/guest-execution`, async (c) => {
 
 // POST .../rotate-link
 //
-// DESTRUCTIVE and immediate: the old share link stops working and every
-// session minted under it dies. That is the point — it is what you do when a
-// link has leaked — but it means a caller cannot undo this by rotating back.
+// Mints a new link token; the old URL stops resolving at once, and a caller
+// cannot undo this by rotating back.
+//
+// It does NOT evict anyone who already redeemed the old link. `chatboxAccess`
+// rows are the authoritative grant store and rotation does not touch them —
+// `rotateChatboxLink` patches the token and deliberately leaves
+// `accessVersion` alone (see `lib/chatboxAccessLifecycle.ts`, invariant 2).
+// So this closes the door without removing anyone already inside: for a leak,
+// rotate AND remove the members who should not be there.
 userTesting.post(`${BASE}/rotate-link`, async (c) => {
   const { client, projectId, scenarioId } = await scopedScenario(c);
   let result: { link?: unknown } | null;
