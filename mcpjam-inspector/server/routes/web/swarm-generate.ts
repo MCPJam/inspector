@@ -168,11 +168,18 @@ function upstreamErrorCode(bodyText: string): string | undefined {
  */
 export function rethrowAsRouteError(c: Context, err: unknown): never {
   if (err instanceof SwarmAgentError && err.status >= 400 && err.status < 500) {
-    throw new WebRouteError(
+    const routeError = new WebRouteError(
       err.status,
       FORWARDED_ERROR_CODES[err.status] ?? ErrorCode.VALIDATION_ERROR,
       err.message || "Generation request was rejected."
     );
+    // The 429 above is the backend's burst brake or its daily cap, and both
+    // told us when they lift. Forwarding the status without the header left
+    // the caller with a code that means "retry" and nothing to say when — so
+    // every client either hammered or gave up.
+    throw err.retryAfter
+      ? routeError.withHeaders({ "Retry-After": err.retryAfter })
+      : routeError;
   }
   if (err instanceof SwarmAgentError) {
     const requestId = c.var.requestLogContext?.requestId;
