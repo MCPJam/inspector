@@ -65,6 +65,7 @@ import {
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { isAdhocEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
+import { ChatboxGradingSection } from "./ChatboxGradingSection";
 import {
   buildUserTestingScenarioEditPath,
   buildUserTestingScenarioPath,
@@ -554,6 +555,11 @@ export function UserTestingScenarioDetail({
                   key={chatbox.chatboxId}
                   chatbox={chatbox}
                 />
+
+                {/* Production scoring: grade sampled real sessions against
+                    deterministic checks. Its own section — grading config is
+                    a peer of sharing, not part of it. */}
+                <ChatboxGradingSection chatbox={chatbox} />
 
                 <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
                   {composerActive ? (
