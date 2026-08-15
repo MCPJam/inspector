@@ -140,7 +140,7 @@ function Spinner() {
 }
 
 export function ServerConnectionHandoff() {
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, isLoading: authLoading } = useAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -156,6 +156,16 @@ export function ServerConnectionHandoff() {
 
   // First load: trade the token for the cookie, then take it out of the URL.
   useEffect(() => {
+    // WAIT FOR AUTHKIT TO SETTLE FIRST. The provider restores its session
+    // asynchronously, so claiming on mount asks `getAccessToken` before there
+    // is one to give: it answers with nothing, the claim goes out
+    // unidentified, and the backend refuses an account-owned link to its own
+    // owner — the very failure this identity plumbing exists to fix, moved
+    // from "never sends a token" to "sends it a moment too late".
+    //
+    // Only the claim waits. A visitor who is signed out settles just as fast
+    // with no user, and the claim proceeds unauthenticated exactly as before.
+    if (authLoading) return;
     if (claimed.current) return;
     claimed.current = true;
 
@@ -201,7 +211,7 @@ export function ServerConnectionHandoff() {
       }
       await refresh();
     })();
-  }, [refresh]);
+  }, [refresh, authLoading, getAccessToken]);
 
   // Poll only while the outstanding step is someone else's.
   useEffect(() => {
