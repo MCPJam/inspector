@@ -363,7 +363,17 @@ export function UserTestingTab({
         try {
           const result = (await deleteChatbox({
             chatboxId: target.chatboxId,
-          } as any)) as { retirement?: ScenarioBackingRetirement } | undefined;
+          } as any)) as
+            | { deleted?: boolean; retirement?: ScenarioBackingRetirement }
+            | undefined;
+          // `deleteChatbox` resolves `{ deleted: false }` rather than throwing
+          // when the row is already gone. Reporting success there would tell
+          // the agent it removed something it did not.
+          if (result?.deleted === false) {
+            throw new Error(
+              "The scenario was not deleted — it may already be gone.",
+            );
+          }
           return {
             status: "chatbox_deleted",
             scenarioId: target.chatboxId,
@@ -530,12 +540,19 @@ export function UserTestingTab({
             chatboxMode,
             owner: "user_testing",
           });
+          // `chatboxId` is typed nullable because `owner: 'journeys'` mints no
+          // chatbox. This branch always does — but asserting that would turn a
+          // backend that disagreed into a navigation to `/user-testing/null`
+          // and a success toast for a scenario nobody can open.
+          if (!chatboxId) {
+            throw new Error("Scenario creation did not return a scenario.");
+          }
           toast.success("Scenario created");
           // Navigate by CHATBOX id, like the environment flow above. The
           // host-keyed ladder deliberately filters env-backed rows out, so a
           // host id would resolve to nothing here.
-          navigate(buildUserTestingScenarioPath(chatboxId!), { replace: true });
-          return { chatboxId: chatboxId! };
+          navigate(buildUserTestingScenarioPath(chatboxId), { replace: true });
+          return { chatboxId };
         }}
       />
     );

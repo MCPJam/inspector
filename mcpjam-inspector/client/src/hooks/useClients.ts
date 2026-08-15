@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { ChatboxMode } from "./useChatboxes";
 import { shouldQueryProjectId } from "./useProjects";
+import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -35,12 +37,28 @@ export interface HostDetail {
   ownerScope?: HostOwnerScope;
 }
 
+/**
+ * The project's clients, with private scenario-backing ones REMOVED by default.
+ *
+ * The filter lives here rather than at each call site because there are ~18 of
+ * them and the ones that matter are leaves: `HostPicker`, `MultiHostPicker`,
+ * `ClientAttachmentsEditor` and friends each call this hook themselves, so a
+ * caller that filters the list it holds does nothing about the picker rendered
+ * inside it. Defaulting to the safe set is the only version of this rule that
+ * actually holds — a new picker gets it without knowing it exists.
+ *
+ * `includePrivateBacking` is for the handful of consumers doing an id → name
+ * or id → row LOOKUP rather than offering a choice; for them a missing host is
+ * a rendering bug, not a safety win. Pass it deliberately and say why.
+ */
 export function useHostList({
   isAuthenticated,
   projectId,
+  includePrivateBacking = false,
 }: {
   isAuthenticated: boolean;
   projectId: string | null;
+  includePrivateBacking?: boolean;
 }): {
   hosts: HostListItem[];
   isLoading: boolean;
@@ -57,8 +75,15 @@ export function useHostList({
       : "skip",
   ) as HostListItem[] | null | undefined;
 
+  const hosts = useMemo(() => {
+    const all = result ?? [];
+    return includePrivateBacking
+      ? all
+      : withoutPrivateScenarioBackingHosts(all);
+  }, [result, includePrivateBacking]);
+
   return {
-    hosts: result ?? [],
+    hosts,
     isLoading: result === undefined,
   };
 }

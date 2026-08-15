@@ -37,7 +37,6 @@ import {
   useProjectServers,
 } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
-import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
@@ -134,16 +133,10 @@ export function ConvertSessionDialogCore({
       isAuthenticated: attachmentPickersEnabled,
       projectId: attachmentPickersEnabled ? effectiveProjectId : null,
     });
-  const { hosts: allProjectHosts } = useHostList({
+  const { hosts: projectHosts } = useHostList({
     isAuthenticated: attachmentPickersEnabled,
     projectId: attachmentPickersEnabled ? effectiveProjectId : null,
   });
-  // Same reason as the save-as-test-case picker: a suite must not pin a
-  // client whose lifecycle belongs to a scenario.
-  const projectHosts = useMemo(
-    () => withoutPrivateScenarioBackingHosts(allProjectHosts),
-    [allProjectHosts],
-  );
   const knownServerNames = useMemo(
     () => (servers ?? []).map((s) => s.name),
     [servers]

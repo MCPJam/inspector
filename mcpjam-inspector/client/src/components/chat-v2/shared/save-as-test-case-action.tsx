@@ -29,7 +29,6 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
-import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
@@ -100,16 +99,10 @@ export function SaveAsTestCaseAction({
       isAuthenticated: open && attachmentPickersEnabled,
       projectId: open && attachmentPickersEnabled ? projectId : null,
     });
-  const { hosts: allProjectHosts } = useHostList({
+  const { hosts: projectHosts } = useHostList({
     isAuthenticated: open && attachmentPickersEnabled,
     projectId: open && attachmentPickersEnabled ? projectId : null,
   });
-  // A suite pinned to a private scenario-backing client would keep that
-  // client alive (blocking its scenario's cleanup) or lose it outright.
-  const projectHosts = useMemo(
-    () => withoutPrivateScenarioBackingHosts(allProjectHosts),
-    [allProjectHosts],
-  );
 
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,

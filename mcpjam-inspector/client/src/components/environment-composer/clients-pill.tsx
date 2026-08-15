@@ -5,7 +5,7 @@
  * makes it a single-select (picking replaces the current client and closes),
  * for surfaces that run in exactly one environment.
  */
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { ChevronDown, Users } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -16,7 +16,6 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { useHostList } from "@/hooks/useClients";
-import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
@@ -46,16 +45,7 @@ export function ClientsPill({
   inModal?: boolean;
 }) {
   const { isAuthenticated } = useConvexAuth();
-  const { hosts: allHosts, isLoading } = useHostList({
-    isAuthenticated,
-    projectId,
-  });
-  // A private scenario-backing client would disappear under any environment
-  // composed on it the moment its scenario is deleted.
-  const hosts = useMemo(
-    () => withoutPrivateScenarioBackingHosts(allHosts),
-    [allHosts],
-  );
+  const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const [open, setOpen] = useState(false);
 
   const single = max === 1;
