@@ -867,6 +867,7 @@ async function reportEvalResultsInternal(
         ci: input.ci,
         expectedIterations: input.expectedIterations,
         tags: input.tags,
+        evaluationConfigHash: input.evaluationConfigHash,
         results: resultsWithIterationIds,
         ...wireHostConfigBody,
       }
@@ -887,6 +888,7 @@ async function reportEvalResultsInternal(
     ci: input.ci,
     expectedIterations: input.expectedIterations,
     tags: input.tags,
+    evaluationConfigHash: input.evaluationConfigHash,
     ...wireHostConfigBody,
   });
 

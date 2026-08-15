@@ -650,6 +650,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               <SuiteRunCostEstimateHint
                 suiteId={suite._id}
                 planCount={countSuiteRunPlans(suite)}
+                environmentIds={suite.environmentIds}
                 // Structural blockers only: with no cases there is nothing to
                 // price, and with no servers configured Run all can never
                 // launch. The transient blockers (a rerun/replay in flight, a
@@ -973,7 +974,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       {overviewHasRightActions ? (
         <div
           data-testid="suite-overview-actions"
-          className="ml-auto flex shrink-0 flex-nowrap items-center gap-2"
+          className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
         >
           {overviewSetupSdkButton}
           {overviewLegacyRunActions}

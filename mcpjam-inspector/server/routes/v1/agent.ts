@@ -907,6 +907,15 @@ agent.post("/projects/:projectId/agent", async (c) => {
         "In-process /api/v1 dispatch is not registered."
       );
     }
+    // NOTE: self-dispatched requests re-enter bearer auth carrying the
+    // delegated JWT, not the original `sk_` key, so the middleware labels them
+    // a passthrough JWT with no `mcpjamOrganizationId` — every gateway-level
+    // org clamp (`getDelegatedOrganizationId`) is a no-op on this path. That
+    // is contained, not open: the JWT's own org claim is enforced inside
+    // Convex membership resolution (`delegatedScopeAllowsOrganization`), which
+    // is the canonical barrier. But gateway-only niceties (the `POST
+    // /projects` org fill-in, the membership-enumeration clamps) do not apply
+    // to ops invoked through this client.
     const makeClient = (extraHeaders: Record<string, string> = {}) =>
       new PlatformApiClient({
         baseUrl: "http://self.mcpjam.internal/api/v1",

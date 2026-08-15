@@ -4,6 +4,7 @@ import {
   filterByFeatureFlags,
   getHostedNavigationSections,
   navigationSections,
+  SIDEBAR_RESOLVED_FLAG_KEYS,
 } from "../mcp-sidebar";
 
 const FakeIcon = () => null;
@@ -46,7 +47,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "registry-enabled": false },
+      { "registry-enabled": false }
     );
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toEqual(["Always Visible"]);
@@ -68,7 +69,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { xaa: false },
+      { xaa: false }
     );
 
     expect(result[0].items.map((i) => i.title)).toEqual(["OAuth Debugger"]);
@@ -149,7 +150,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "mcpjam-conformance": false },
+      { "mcpjam-conformance": false }
     );
 
     expect(result[0].items.map((item) => item.title)).toEqual([
@@ -174,7 +175,7 @@ describe("filterByFeatureFlags", () => {
     ];
 
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
+      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items
     ).toEqual([
       {
         title: "Chatboxes",
@@ -185,7 +186,7 @@ describe("filterByFeatureFlags", () => {
       },
     ]);
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
+      filterByFeatureFlags(sections, { "sandboxes-enabled": false })
     ).toHaveLength(0);
   });
 
@@ -208,10 +209,56 @@ describe("filterByFeatureFlags", () => {
         billingUiEnabled: true,
         gateDenied: { chatboxes: true },
         enforcementActive: true,
-      },
+      }
     );
 
     expect(result[0].items[0].disabled).toBe(true);
+  });
+});
+
+describe("declared nav flags are actually resolved", () => {
+  // The bug this guards: a nav item can declare `featureFlag: "x"` while the
+  // sidebar's `featureFlags` map never sets `x`. `filterByFeatureFlags` then
+  // reads `undefined`, hides the item permanently, and — because nothing ever
+  // calls the flag — PostHog reports it as never evaluated, which reads like a
+  // rollout/targeting problem instead of a missing map entry. Sessions shipped
+  // that way and was invisible in production with a correctly-configured flag.
+  it("every featureFlag / hiddenByFlag key in navigationSections is in SIDEBAR_RESOLVED_FLAG_KEYS", () => {
+    const declared = new Set<string>();
+    for (const section of navigationSections) {
+      for (const item of section.items) {
+        if (item.featureFlag) declared.add(item.featureFlag);
+        if (item.hiddenByFlag) declared.add(item.hiddenByFlag);
+      }
+    }
+
+    const resolved = new Set<string>(SIDEBAR_RESOLVED_FLAG_KEYS);
+    const missing = [...declared].filter((key) => !resolved.has(key)).sort();
+
+    expect(missing).toEqual([]);
+  });
+
+  it("Sessions is gated by unified-sessions-enabled and appears when it is on", () => {
+    const sessionsItem = navigationSections
+      .flatMap((section) => section.items)
+      .find((item) => item.url === "/sessions");
+
+    expect(sessionsItem).toMatchObject({
+      title: "Sessions",
+      featureFlag: "unified-sessions-enabled",
+    });
+
+    const off = filterByFeatureFlags(navigationSections, {})
+      .flatMap((s) => s.items)
+      .map((i) => i.title);
+    expect(off).not.toContain("Sessions");
+
+    const on = filterByFeatureFlags(navigationSections, {
+      "unified-sessions-enabled": true,
+    })
+      .flatMap((s) => s.items)
+      .map((i) => i.title);
+    expect(on).toContain("Sessions");
   });
 });
 
@@ -235,7 +282,7 @@ describe("applyBillingGateNavState", () => {
         billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: false,
-      },
+      }
     );
 
     expect(result[0].items[0].disabled).not.toBe(true);
@@ -265,7 +312,7 @@ describe("applyBillingGateNavState", () => {
         billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: true,
-      },
+      }
     );
 
     const evalItem = result[0].items.find((i) => i.title === "Testing");
