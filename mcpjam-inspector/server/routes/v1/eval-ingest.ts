@@ -19,6 +19,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { v1Error } from "./envelope.js";
 
 const evalIngest = new Hono();
@@ -120,7 +121,45 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
     if (isAbortError(error)) {
       return v1Error(c, "TIMEOUT", "Eval ingestion timed out");
     }
-    throw error;
+    // The hop that just failed was to MCPJam's OWN Convex deployment, not to
+    // anything a caller controls, so an unrecognized failure here is ours by
+    // default — the exact case `mcpjam_internal` documents. Without the
+    // declaration a `fetch` failure classifies `transport/fetch_failed` →
+    // `ambiguous` and never reaches the MCPJam-fault monitor, which is why 44
+    // opaque 500s sat on this route in 72h with nothing watching them.
+    //
+    // Reported here rather than at `v1OnError` because only this frame knows
+    // whose hop it was; the shared handler sees every v1 route at once and
+    // would have to guess. `reportRouteFailure` returns the effective origin,
+    // which rides on the rethrown error so the envelope reports the same
+    // verdict Sentry was paged on — `mapRuntimeError` never downgrades an
+    // origin that is already set.
+    const report = reportRouteFailure(
+      "[v1.eval-ingest] convex ingest proxy failed",
+      error,
+      {
+        source: "v1.eval-ingest",
+        hop: "mcpjam_internal",
+        context: { suffix },
+      },
+    );
+    // Status stays 500/INTERNAL_ERROR, deliberately. 502 SERVER_UNREACHABLE
+    // reads as "the USER's target MCP server is down" everywhere else in this
+    // codebase — it is the basis of the 502 triage doctrine (judge a spike by
+    // server-id concentration) — and borrowing it for OUR Convex would corrupt
+    // that. Reclassifying a route's status also has form here: #3948 moved
+    // upstream auth rejections 500->403 and silently blinded the spike
+    // monitor's `maxStatus >= 500` clause. The bug being fixed is missing
+    // ATTRIBUTION, not a wrong status, so the status does not move.
+    const routeError = new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      `Eval ingestion upstream failed: ${report.normalized.rawMessage}`,
+      undefined,
+      report.normalized,
+    );
+    routeError.origin = report.origin;
+    throw routeError;
   } finally {
     clearTimeout(timer);
   }

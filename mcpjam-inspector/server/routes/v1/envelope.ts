@@ -7,7 +7,7 @@
  * public code union, upgrading MCP auth failures to OAUTH_REQUIRED.
  */
 import type { Context } from "hono";
-import { describeError, isMCPAuthError } from "@mcpjam/sdk";
+import { describeError, isMCPAuthError, type ErrorOrigin } from "@mcpjam/sdk";
 import { ErrorCode, mapRuntimeError } from "../web/errors.js";
 import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
 import {
@@ -18,13 +18,43 @@ import {
   type V1ErrorCode,
 } from "./contract.js";
 
+/**
+ * What a classified failure knows about itself, forwarded to the telemetry
+ * envelope. See {@link v1Error}.
+ */
+export type V1ErrorAttribution = {
+  origin?: ErrorOrigin;
+  slug?: string;
+};
+
 /** Canonical error response. */
 export function v1Error(
   c: Context,
   code: V1ErrorCode,
   message: string,
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
+  attribution?: V1ErrorAttribution
 ) {
+  // Stash for `requestLogContextMiddleware`, exactly as `webError` does for the
+  // `/api/web/*` surface. Without it the ENTIRE `/api/v1/*` surface returned
+  // its errors without ever telling the middleware what they were, so every
+  // failure logged as a bare `internal_error` with no message, no slug, and no
+  // origin — measured on 2026-08-15 as 44 rows on `eval-ingest/report` and
+  // every other v1 5xx, all of them opaque and none of them reachable by the
+  // MCPJam-fault monitor.
+  //
+  // Set unconditionally, not just for classified throws: a route that calls
+  // `v1Error` directly for a declared 4xx outcome still knows its own code and
+  // message, and those are worth more on the row than `internal_error`.
+  if (typeof c?.set === "function") {
+    c.set("webErrorMeta", {
+      status: V1_ERROR_STATUS[code],
+      code,
+      message,
+      ...(attribution?.origin ? { origin: attribution.origin } : {}),
+      ...(attribution?.slug ? { slug: attribution.slug } : {}),
+    });
+  }
   // Cast the dynamic numeric status to satisfy Hono's literal StatusCode union
   // (the web routes sidestep this by typing `c` as `any` in `webError`).
   return c.json(
@@ -60,7 +90,7 @@ export function mapErrorToV1(error: unknown): {
   code: V1ErrorCode;
   message: string;
   details?: Record<string, unknown>;
-} {
+} & V1ErrorAttribution {
   // The two branches below return BEFORE `mapRuntimeError`, which is where the
   // v1 chain would otherwise make its capture decision. Classify them here so
   // no path out of this function escapes unclassified — both are non-MCPJam in
@@ -68,19 +98,32 @@ export function mapErrorToV1(error: unknown): {
   // primitive), so in practice this records the verdict and pages on nothing.
   if (safeIsMcpAuthError(error)) {
     const message = error instanceof Error ? error.message : String(error);
-    maybeCaptureOriginError(error, describeError(error), {
+    // The decision was already being made here and thrown away. Keeping it is
+    // what lets these two early returns carry attribution like every other
+    // path — otherwise the surface's most common non-500 failures stay blank.
+    const decision = maybeCaptureOriginError(error, describeError(error), {
       source: "v1.mapErrorToV1",
       extra: { code: "OAUTH_REQUIRED" },
     });
-    return { code: "OAUTH_REQUIRED", message };
+    return {
+      code: "OAUTH_REQUIRED",
+      message,
+      origin: decision.origin,
+      ...(decision.slug ? { slug: decision.slug } : {}),
+    };
   }
   if (isMcpMethodNotFound(error)) {
     const message = error instanceof Error ? error.message : String(error);
-    maybeCaptureOriginError(error, describeError(error), {
+    const decision = maybeCaptureOriginError(error, describeError(error), {
       source: "v1.mapErrorToV1",
       extra: { code: "FEATURE_NOT_SUPPORTED" },
     });
-    return { code: "FEATURE_NOT_SUPPORTED", message };
+    return {
+      code: "FEATURE_NOT_SUPPORTED",
+      message,
+      origin: decision.origin,
+      ...(decision.slug ? { slug: decision.slug } : {}),
+    };
   }
   const routeError = mapRuntimeError(error);
   if (
@@ -91,6 +134,7 @@ export function mapErrorToV1(error: unknown): {
       code: "OAUTH_REQUIRED",
       message: routeError.message,
       details: routeError.details,
+      ...routeErrorAttribution(routeError),
     };
   }
   // The upstream server refused the credentials we presented. Mapped HERE
@@ -115,12 +159,32 @@ export function mapErrorToV1(error: unknown): {
       code: "FORBIDDEN",
       message: routeError.message,
       details: routeError.details,
+      ...routeErrorAttribution(routeError),
     };
   }
   return {
     code: mapInternalCode(routeError.code),
     message: routeError.message,
     details: routeError.details,
+    ...routeErrorAttribution(routeError),
+  };
+}
+
+/**
+ * Read attribution off a mapped error.
+ *
+ * `origin` is the EFFECTIVE value `mapRuntimeError` resolved (post
+ * internal-boundary promotion), never `originOf(normalized)` — recomputing the
+ * declared catalog value here would report `ambiguous` for a failure Sentry
+ * was just paged for as `mcpjam`, which is the drift that kept `origin=mcpjam`
+ * out of Axiom in the first place.
+ */
+function routeErrorAttribution(
+  routeError: ReturnType<typeof mapRuntimeError>
+): V1ErrorAttribution {
+  return {
+    ...(routeError.origin ? { origin: routeError.origin } : {}),
+    ...(routeError.normalized?.slug ? { slug: routeError.normalized.slug } : {}),
   };
 }
 
@@ -152,6 +216,6 @@ function isMcpMethodNotFound(error: unknown): boolean {
 
 /** Hono onError handler for the v1 router. */
 export function v1OnError(error: unknown, c: Context) {
-  const { code, message, details } = mapErrorToV1(error);
-  return v1Error(c, code, message, details);
+  const { code, message, details, origin, slug } = mapErrorToV1(error);
+  return v1Error(c, code, message, details, { origin, slug });
 }
