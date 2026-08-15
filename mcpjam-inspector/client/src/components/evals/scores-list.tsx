@@ -113,6 +113,28 @@ function isGating(joined: JoinedScore): boolean {
   return joined.definition?.role === "gating";
 }
 
+/**
+ * Does this row belong in a "N / M gating scores passed" count?
+ *
+ * Deliberately NOT `isGating`, and the difference is the whole point of two
+ * predicates:
+ *
+ *   - an UNJOINABLE row counts, even though it renders in its own section — it
+ *     fails closed everywhere else, and leaving it out would read
+ *     "2 / 2 checks passed" beside a failed iteration;
+ *   - a joined gating row that came back `not_applicable` does NOT count, even
+ *     though it renders under "Gating" — exclusion from every denominator is
+ *     exactly what distinguishes it from `skipped`.
+ *
+ * Every count in this file goes through here, so the header and the compact
+ * chip cannot disagree about the same iteration.
+ */
+function countsTowardGate(joined: JoinedScore): boolean {
+  if (joined.definition === null) return true;
+  if (joined.definition.role !== "gating") return false;
+  return joined.score.status !== "not_applicable";
+}
+
 /** Does this row count against the gate? Mirrors the SDK's `scoresPassed`. */
 function failsGate(joined: JoinedScore): boolean {
   if (!joined.definition) return true; // unjoinable ⇒ fails closed
@@ -139,24 +161,12 @@ function joinOne(
   return joinScores([score], config)[0];
 }
 
-/**
- * Whether this score decides the verdict. An UNJOINABLE row counts as gating:
- * it fails closed everywhere else, so excluding it from the chip's denominator
- * would show "2 / 2 checks passed" beside a failed iteration.
- */
+/** Whether this score decides the verdict — see {@link countsTowardGate}. */
 export function isGatingScore(
   score: ScoreResult,
   config: EvaluationConfigSnapshot | null,
 ): boolean {
-  const joined = joinOne(score, config);
-  // `not_applicable` is excluded from EVERY denominator — that is the property
-  // that distinguishes it from `skipped`. Counting it would render
-  // "1 / 1 checks passed" for an iteration where the only gating scorer was
-  // never in scope.
-  if (joined.definition !== null && score.status === "not_applicable") {
-    return false;
-  }
-  return joined.definition === null || isGating(joined);
+  return countsTowardGate(joinOne(score, config));
 }
 
 export function scoreFailsGate(
@@ -245,14 +255,19 @@ export function ScoresList({
   );
   const unjoinable = joined.filter((row) => row.definition === null);
 
-  const gatingFailures = gating.filter(failsGate).length;
+  // The SECTIONS above group rows for a reader; the count below is the verdict,
+  // and the two memberships are not the same set. Counting the "Gating" section
+  // instead would put an out-of-scope `not_applicable` row in the denominator
+  // here while the compact chip left it out — the same iteration summarized two
+  // ways, in two places on the same screen.
+  const counted = joined.filter(countsTowardGate);
+  const countedFailures = counted.filter(failsGate).length;
   // An integrity downgrade means the backend could not verify this iteration's
   // gating evidence and flipped its verdict. The surviving rows may all read
   // green — they are the ones that DID validate — so summarizing them as a
   // pass would contradict the run's own result.
   const integrityInvalid = integrity === "score_integrity_invalid";
-  const allPassed =
-    gatingFailures === 0 && unjoinable.length === 0 && !integrityInvalid;
+  const allPassed = countedFailures === 0 && !integrityInvalid;
 
   return (
     <div
@@ -278,7 +293,11 @@ export function ScoresList({
           )}
           {integrityInvalid
             ? "score evidence did not verify"
-            : `${gating.length - gatingFailures} / ${gating.length} gating scores passed`}
+            : counted.length === 0
+              ? // "0 / 0 passed" beside a green check claims a gate was met
+                // when nothing was gated on at all.
+                "no gating scores"
+              : `${counted.length - countedFailures} / ${counted.length} gating scores passed`}
         </div>
       </div>
 

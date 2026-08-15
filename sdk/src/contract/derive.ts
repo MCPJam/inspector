@@ -138,17 +138,31 @@ export function buildEvaluationConfigSnapshot(
   // ambiguous join is one where a gating policy can silently resolve to an
   // advisory twin. Caught here, at construction, rather than downstream where
   // the snapshot merely fails validation and the run loses its scores.
-  const seen = new Set<string>();
+  //
+  // Only ids that disagree are an error. Two definitions with the same id and
+  // the same CONTENT are the same definition described twice — two identical
+  // anonymous predicate scorers mint one content-derived id by design — and
+  // nothing about them is ambiguous, so they collapse to a single entry rather
+  // than failing a run that is merely redundant. Every score row minted by
+  // either one carries that entry's hash and still joins.
+  const seen = new Map<string, string>();
+  const unique: ResolvedScoreDefinition[] = [];
   for (const definition of resolved) {
-    if (seen.has(definition.scorerId)) {
+    const hash = definitionHash(definition);
+    const previous = seen.get(definition.scorerId);
+    if (previous === undefined) {
+      seen.set(definition.scorerId, hash);
+      unique.push(definition);
+      continue;
+    }
+    if (previous !== hash) {
       throw new Error(
-        `Duplicate scorerId "${definition.scorerId}" in the evaluation config. ` +
-          `Scorer ids must be unique within a run.`
+        `Duplicate scorerId "${definition.scorerId}" in the evaluation config ` +
+          `with different settings. Scorer ids must be unique within a run.`
       );
     }
-    seen.add(definition.scorerId);
   }
-  return { hash: evaluationConfigHash(resolved), definitions: resolved };
+  return { hash: evaluationConfigHash(unique), definitions: unique };
 }
 
 /**
