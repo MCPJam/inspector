@@ -55,7 +55,7 @@ import {
   WebRouteError,
   webError,
   webErrorFromRoute,
-  mapRuntimeError,
+  mapTargetServerError,
   extractMcpInitializeOptions,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
@@ -433,8 +433,7 @@ chatV2.post("/", async (c) => {
                 "[chat-v2] chatbox attribution unavailable; running without plugin origin",
                 {
                   chatboxId,
-                  error:
-                    error instanceof Error ? error.message : String(error),
+                  error: error instanceof Error ? error.message : String(error),
                 }
               );
             }
@@ -1309,6 +1308,10 @@ chatV2.post("/", async (c) => {
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         isGuest: Boolean(c.get("guestId")),
         isChatboxSession,
+        // Lets a spend inside a shared chatbox bill the chatbox OWNER instead
+        // of the visitor, who has no wallet to charge. Only web search reads
+        // it today; the model turn and voice already send their own.
+        ...(isChatboxSession && chatboxId ? { chatboxId } : {}),
         requireToolApproval,
         // Out-of-band and in-process ONLY. Never on `config.computer`:
         // `narrowHostComputer` runs at the top of `resolveHostTools` and
@@ -1634,9 +1637,24 @@ chatV2.post("/", async (c) => {
     // nothing but the status by the time it runs: without the verdict it
     // guesses `mcpjam` from the 500 and pages us for the user's own MCP
     // server.
+    //
+    // `mapTargetServerError`, because that header is exactly what a 5xx loses:
+    // Cloudflare swaps an origin 5xx for its own error page, so a connection
+    // failure to the user's MCP server arrived at the browser as a bare 502
+    // and was reported as an MCPJam outage anyway.
+    //
+    // Declared HERE and not in the shared mapper because a chat turn's
+    // outbound connections are to the user's own servers — that is what the
+    // route exists to do, and it is the path the misattribution was measured
+    // on. Not a proof: this catch also spans the turn's Convex work, so an
+    // MCPJam-side failure inside it is downgraded too. That residue is
+    // accepted deliberately — it is one route rather than every `/api/web/*`
+    // route (including `server-secrets`, which reaches nothing but Convex, and
+    // the router-wide `onError`, where the hop is unknown), so a real Convex
+    // outage still pages us from everywhere else.
     return webErrorFromRoute(
       c,
-      mapRuntimeError(error),
+      mapTargetServerError(error),
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
