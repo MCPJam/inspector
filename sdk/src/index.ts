@@ -293,6 +293,11 @@ export type {
 // Adapts a run comparison into the same StructuredRunReport the server-diff
 // reporter uses, so `--reporter junit-xml` needs no second renderer.
 export { buildRunCompareReport } from "./run-compare.js";
+// Already the p95 the gate engine uses internally. Exported so the CLI's
+// compare command computes latency the SAME way rather than growing a second
+// percentile implementation next to it.
+export { calculateLatencyStats, calculatePercentile } from "./percentiles.js";
+export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
   evaluateToolCallOutcome,

@@ -47,8 +47,20 @@ import {
   usageError,
   writeResult,
 } from "../lib/output.js";
-import { formatGateReport, type GateReport } from "@mcpjam/sdk";
-import type { PlatformEvalIteration } from "@mcpjam/sdk/platform";
+import {
+  buildRunCompareReport,
+  calculateLatencyStats,
+  detectFlakyCases,
+  evaluateCompareGates,
+  formatGateReport,
+  type FlakyCase,
+  type GateReport,
+  type StructuredRunReport,
+} from "@mcpjam/sdk";
+import type {
+  PlatformEvalIteration,
+  PlatformRunCompare,
+} from "@mcpjam/sdk/platform";
 import {
   EVAL_GATE_INCOMPLETE_EXIT_CODE,
   EVAL_GATE_USAGE_EXIT_CODE,
@@ -62,6 +74,18 @@ import {
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
+import { fetchAllIterations } from "../lib/eval-iterations.js";
+import {
+  comparePolicyFromOptions,
+  compareGateInputFrom,
+  flakyInputFrom,
+  type EvalCompareOptions,
+} from "../lib/eval-compare.js";
+import {
+  parseReporterFormat,
+  writeJsonArtifact,
+  writeReporterResult,
+} from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
   buildPlatformClient,
@@ -446,36 +470,6 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-/**
- * Fetch every iteration page for a run.
- *
- * `complete` is the load-bearing half of the return. A gate evaluated against
- * page one of a paginated run would report a confident verdict about a sample,
- * so an aborted walk yields `complete: false` and every score-derived gate
- * degrades to non-gateable (exit 3) instead of passing on partial evidence.
- */
-async function fetchAllIterations(
-  client: ReturnType<typeof buildPlatformClient>["client"],
-  signal: AbortSignal,
-  projectId: string,
-  runId: string
-): Promise<{ items: PlatformEvalIteration[]; complete: boolean }> {
-  const items: PlatformEvalIteration[] = [];
-  let cursor: string | undefined;
-  // Bound the walk so a runaway cursor cannot spin forever; hitting the bound
-  // reports `complete: false` rather than pretending the sample is the run.
-  for (let page = 0; page < 100; page += 1) {
-    const result = await client.listEvalRunIterations(
-      { projectId, runId, ...(cursor ? { cursor } : {}), limit: 200 },
-      { signal }
-    );
-    items.push(...result.items);
-    if (!result.nextCursor) return { items, complete: true };
-    cursor = result.nextCursor;
-  }
-  return { items, complete: false };
-}
-
 const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
 
 async function runEvalGate(
@@ -628,6 +622,213 @@ async function runEvalGate(
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
   }
+}
+
+/**
+ * `mcpjam eval compare` — this run against a baseline.
+ *
+ * Deliberately has NO `--wait`. A comparison against a run that has not
+ * finished compares against a partial population, and the honest answer is
+ * incomplete (exit 3), not "wait around and hope". `eval gate --wait` exists
+ * for the waiting.
+ */
+async function runEvalCompare(
+  options: PlatformOptions &
+    EvalCompareOptions & {
+      project: string;
+      run: string;
+      baseRun?: string;
+      reporter?: string;
+      out?: string;
+    },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  // Parsed BEFORE any network call, so a malformed flag exits 2 without
+  // spending a request — and cannot be mistaken for an infrastructure failure.
+  const policy = comparePolicyFromOptions(options);
+  const reporter = parseReporterFormat(options.reporter);
+
+  type CompareOutcome = {
+    report: GateReport;
+    compare?: PlatformRunCompare;
+    flakyCases?: FlakyCase[];
+  };
+
+  let outcome: CompareOutcome;
+  try {
+    outcome = await runPlatformCommand(
+      options,
+      globalOptions.timeout,
+      async ({ client, signal }) => {
+        const projects = await client.listProjects({}, { signal });
+        const resolution = resolveProject(projects.items, options.project);
+        if (!resolution.ok) {
+          throw usageError(resolution.message);
+        }
+        const project = resolution.project;
+
+        const compare = await client.compareEvalRun(
+          {
+            projectId: project.id,
+            runId: options.run,
+            ...(options.baseRun ? { baseRunId: options.baseRun } : {}),
+          },
+          { signal }
+        );
+
+        // Latency and flakiness both need per-iteration rows. An INCOMPLETE
+        // walk contributes neither: a p95 over page one is not this run's p95,
+        // and a flaky-case list from a sample is misleading rather than
+        // partial.
+        const needsIterations =
+          policy.maximumP95LatencyIncreaseMs !== undefined;
+        const [baseIterations, compareIterations] = needsIterations
+          ? await Promise.all([
+              fetchAllIterations(
+                client,
+                signal,
+                project.id,
+                compare.baseRun.id
+              ),
+              fetchAllIterations(
+                client,
+                signal,
+                project.id,
+                compare.compareRun.id
+              ),
+            ])
+          : [
+              undefined,
+              await fetchAllIterations(
+                client,
+                signal,
+                project.id,
+                compare.compareRun.id
+              ),
+            ];
+
+        const input = compareGateInputFrom(compare, {
+          baseP95Ms: p95Of(baseIterations),
+          compareP95Ms: p95Of(compareIterations),
+        });
+
+        return {
+          report: evaluateCompareGates(input, policy),
+          compare,
+          // Reported, NEVER gated. See `detectFlakyCases`.
+          flakyCases: compareIterations?.complete
+            ? detectFlakyCases(flakyInputFrom(compareIterations.items))
+            : [],
+        };
+      }
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as { exitCode?: number }).exitCode === EVAL_GATE_USAGE_EXIT_CODE
+    ) {
+      throw error;
+    }
+    // A missing baseline is INCOMPLETE, not a failure: the run may be a
+    // suite's first, and reporting exit 1 would claim a regression nobody
+    // observed. Keyed on `details.reason` rather than the message, which is
+    // prose and may be localized or reworded.
+    const reason = baselineNotFoundReason(error);
+    const detail = error instanceof Error ? error.message : String(error);
+    const report: GateReport = {
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [
+        {
+          gate: reason ? "baseline" : "fetch",
+          status: "non_gateable",
+          message: reason
+            ? `no baseline to compare against: ${detail}`
+            : `could not compare the runs: ${detail}`,
+        },
+      ],
+    };
+    writeCompareResult(
+      { report, reporter, out: options.out, format: globalOptions.format },
+      undefined
+    );
+    setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
+    return;
+  }
+
+  const exitCode = evalGateExitCode(outcome.report);
+  await writeCompareResult(
+    {
+      report: outcome.report,
+      reporter,
+      out: options.out,
+      format: globalOptions.format,
+    },
+    outcome.compare
+      ? buildRunCompareReport(outcome.compare, outcome.report, {
+          flakyCases: outcome.flakyCases,
+        })
+      : undefined
+  );
+  if (globalOptions.format === "human" && !reporter) {
+    process.stderr.write(`${formatGateReport(outcome.report)}\n`);
+  }
+  if (exitCode !== 0) {
+    setProcessExitCode(exitCode);
+  }
+}
+
+/** p95 over a COMPLETE iteration walk; `undefined` from a partial one. */
+function p95Of(
+  iterations: { items: PlatformEvalIteration[]; complete: boolean } | undefined
+): number | undefined {
+  if (!iterations?.complete) return undefined;
+  const durations = iterations.items
+    .map((iteration) => iteration.durationMs)
+    .filter((ms): ms is number => typeof ms === "number");
+  if (durations.length === 0 || durations.length !== iterations.items.length) {
+    // A single missing duration makes the p95 describe a different set than
+    // the run — absent beats approximate.
+    return undefined;
+  }
+  return calculateLatencyStats(durations).p95;
+}
+
+/**
+ * The server says "no baseline" with a 404 carrying
+ * `details.reason: "BASELINE_NOT_FOUND"`. Read the machine field, not the
+ * prose.
+ */
+function baselineNotFoundReason(error: unknown): boolean {
+  const details = (error as { details?: unknown })?.details;
+  return (
+    typeof details === "object" &&
+    details !== null &&
+    (details as { reason?: unknown }).reason === "BASELINE_NOT_FOUND"
+  );
+}
+
+async function writeCompareResult(
+  args: {
+    report: GateReport;
+    reporter: ReturnType<typeof parseReporterFormat>;
+    out?: string;
+    format: ReturnType<typeof getGlobalOptions>["format"];
+  },
+  structured: StructuredRunReport | undefined
+): Promise<void> {
+  if (args.out && structured) {
+    await writeJsonArtifact(args.out, structured);
+  }
+  if (args.reporter && structured) {
+    writeReporterResult(args.reporter, structured);
+    return;
+  }
+  writeResult(
+    { compare: args.report, exitCode: evalGateExitCode(args.report) },
+    args.format
+  );
 }
 
 export function registerEvalCommands(program: Command): void {
@@ -927,6 +1128,62 @@ export function registerEvalCommands(program: Command): void {
       command
     ) => {
       await runEvalGate(options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("compare")
+      .description(
+        "Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)"
+      )
+      .requiredOption("--run <id>", "Eval run ID to compare")
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option(
+        "--base-run <id>",
+        "Baseline run ID (defaults to the nearest earlier completed run in the same suite)"
+      )
+      .option(
+        "--gate-regressions",
+        "Fail on a statistically significant pass-rate regression"
+      )
+      .option(
+        "--min-sample-size <n>",
+        "Iterations required on EACH side before a pass-rate regression is decidable (default 5)"
+      )
+      .option(
+        "--min-effect-size-percent <0-100>",
+        "Smallest pass-rate drop worth failing on, as a percentage (default 1)"
+      )
+      .option(
+        "--gate-deterministic-regressions",
+        "Fail if a deterministic gating scorer flipped from passed to failed"
+      )
+      .option(
+        "--max-p95-latency-increase-ms <ms>",
+        "Fail if p95 end-to-end latency rose by more than this many milliseconds"
+      )
+      .option(
+        "--reporter <json-summary|junit-xml>",
+        "Write a structured report to stdout instead of the default output"
+      )
+      .option("--out <path>", "Write the structured report to a JSON file")
+  ).action(
+    async (
+      options: PlatformOptions &
+        EvalCompareOptions & {
+          project: string;
+          run: string;
+          baseRun?: string;
+          reporter?: string;
+          out?: string;
+        },
+      command
+    ) => {
+      await runEvalCompare(options, command);
     }
   );
 

@@ -44,6 +44,7 @@ import {
   getEnvironmentOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
+  compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
@@ -539,6 +540,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getEvalCaseOperation, tier: "direct" },
   { operation: listEvalSuiteRunsOperation, tier: "direct" },
   { operation: getEvalRunOperation, tier: "direct" },
+  {
+    operation: compareEvalRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
+    ],
+  },
   { operation: listEvalRunIterationsOperation, tier: "direct" },
   { operation: getEvalRunStepsOperation, tier: "direct" },
   {
