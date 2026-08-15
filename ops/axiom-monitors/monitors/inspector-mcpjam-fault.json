@@ -1,10 +1,10 @@
 {
   "key": "inspector-mcpjam-fault",
   "name": "MCPJam Inspector MCPJam-fault error (prod)",
-  "tier": "WARN",
+  "tier": "PAGE",
   "owner": "marcelo",
   "dataset": "inspector-logs",
-  "notifier": "mcpjam-alerts-warn",
+  "notifier": "mcpjam-alerts-page",
   "monitor": {
     "type": "Threshold",
     "columnName": "Count",
@@ -26,11 +26,13 @@
     "| summarize Count = count() by tostring(slug), tostring(route), tostring(source)"
   ],
   "description": [
-    "WARN (bake) — owner: marcelo. A failure the classifier attributed to MCPJam ITSELF occurred in prod. Zero tolerance: any single occurrence fires.",
+    "PAGE — owner: marcelo. A failure the classifier attributed to MCPJam ITSELF occurred in prod. Zero tolerance: any single occurrence fires.",
     "",
     "THIS IS THE MONITOR THE WHOLE PROGRAM EXISTS FOR. Every other monitor here measures volume or novelty and cannot tell our outage from a user's server dying. This one fires only on `origin == 'mcpjam'` — the effective origin from the capture decision, after boundary promotion, not the catalog's declared value.",
     "",
-    "WHY WARN AND NOT PAGE: the plan gates M2 on a seven-day bake of the corrected effective-origin path, which starts at the deploy that carries #4018/#4025/#4029. Tier is the only thing held back — the alert still posts to #mcpjam-alerts, and PAGE/WARN treatment is currently identical anyway (see README 'PAGE vs WARN notifiers'). To promote after a clean bake, change `tier` to PAGE and `notifier` to mcpjam-alerts-page, then re-apply. Do NOT promote by raising the threshold above 0 — zero tolerance is the design.",
+    "PAGE FROM DAY ONE, bake skipped deliberately (2026-08-15, Marcelo). The plan gated M2 on a seven-day WARN bake. That gate bought nothing: the PAGE and WARN notifiers are the SAME Slack channel webhook with no mention and no escalation, so the tier was a label and the bake was a label's bake. The calibration the bake existed to provide was obtained by measurement instead — ZERO matching rows in 7d of prod history (below) — and zero-tolerance monitors have no threshold to tune. If this becomes noisy, the answer is to fix the misclassification that produced the row, NOT to raise the threshold above 0.",
+    "",
+    "THE TIER IS STILL NOT A PAGER. `mcpjam-alerts-page` is a plain webhook: no on-call mention, no escalation, no acknowledgement. Until that notifier points at something with page semantics, PAGE and WARN differ in name only and this monitor cannot wake anyone up. See README 'PAGE vs WARN notifiers'.",
     "",
     "MEASURED BEFORE ENABLING (2026-08-15, prod, 7d): ZERO rows match. Origin coverage on `http.request.failed` began 2026-08-11 and now runs ~91% (08-12 443/505, 08-13 212/237, 08-14 152/167); the large unattributed bucket before 08-11 predates the field and is not a coverage hole. So a first-run burst is not expected — but see the KNOWN BLIND SPOT below before reading silence as health.",
     "",
