@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import { originOf } from "@mcpjam/sdk";
 import {
   describeBackendStreamFailure,
+  describeStreamErrorChunkFailure,
   isMcpjamOwnedFailureCode,
   isUserOwnedDenialCode,
+  parseStreamErrorChunkText,
 } from "../mcpjam-stream-handler.js";
 
 describe("describeBackendStreamFailure", () => {
@@ -126,6 +128,92 @@ describe("isUserOwnedDenialCode", () => {
     // costs the blindness this work exists to remove.
     expect(isUserOwnedDenialCode("something_new")).toBe(false);
     expect(isUserOwnedDenialCode(undefined)).toBe(false);
+  });
+});
+
+describe("describeStreamErrorChunkFailure", () => {
+  it.each(["mcpjam_api_error", "mcpjam_rate_limit", "mcpjam_config_error"])(
+    "owns a mid-stream failure whose code names us (%s)",
+    (code) => {
+      expect(
+        originOf(describeStreamErrorChunkFailure(500, "boom", code)),
+      ).toBe("mcpjam");
+    },
+  );
+
+  // The whole reason this is a SEPARATE classifier. On the non-OK path the
+  // status is our own backend's, so a 5xx is our outage. In an error CHUNK it
+  // is the field the backend copied off the upstream provider's error, so an
+  // Anthropic 503 arrives as `statusCode: 503`. Same number, opposite meaning.
+  it.each([500, 502, 503, 529])(
+    "does NOT claim a %i that came from the upstream provider",
+    (status) => {
+      expect(
+        originOf(describeStreamErrorChunkFailure(status, "overloaded", "provider_error")),
+      ).toBe("ambiguous");
+    },
+  );
+
+  it("keeps the paired non-OK classifier owning the same status", () => {
+    // Guards the split: if these two ever agree on a bare 503, one of them is
+    // reading the status against its own delivery path.
+    expect(originOf(describeBackendStreamFailure(503, "boom"))).toBe("mcpjam");
+    expect(originOf(describeStreamErrorChunkFailure(503, "boom"))).toBe(
+      "ambiguous",
+    );
+  });
+
+  it("still reads a provider credential wall from the status", () => {
+    const normalized = describeStreamErrorChunkFailure(401, "bad key");
+
+    expect(normalized.slug).toBe("provider/auth_error");
+    expect(originOf(normalized)).toBe("user_config");
+  });
+});
+
+describe("parseStreamErrorChunkText", () => {
+  it("reads the mid-stream shape, which uses `message` and an upstream status", () => {
+    // NOT the `{ok, code, error, details}` shape of the non-OK path — this is
+    // what `toUIMessageStreamResponse({onError})` serializes.
+    const parsed = parseStreamErrorChunkText(
+      JSON.stringify({
+        code: "mcpjam_api_error",
+        message: "MCPJam is experiencing a configuration issue.",
+        statusCode: 401,
+        isRetryable: false,
+        details: "invalid api key",
+      }),
+    );
+
+    expect(parsed).toEqual({
+      code: "mcpjam_api_error",
+      message: "MCPJam is experiencing a configuration issue.",
+      statusCode: 401,
+      details: "invalid api key",
+    });
+  });
+
+  it("falls back to the raw text when the chunk is not JSON", () => {
+    // Any other producer's error chunk — the text the client used to be
+    // handed verbatim stays the display message.
+    expect(parseStreamErrorChunkText("something broke")).toEqual({
+      message: "something broke",
+    });
+  });
+
+  it("falls back to the raw text when the JSON carries no usable message", () => {
+    const raw = JSON.stringify({ code: "provider_error" });
+
+    expect(parseStreamErrorChunkText(raw)).toEqual({
+      message: raw,
+      code: "provider_error",
+    });
+  });
+
+  it("ignores non-string / non-number fields rather than trusting them", () => {
+    const raw = JSON.stringify({ code: 7, message: "  ", statusCode: "503" });
+
+    expect(parseStreamErrorChunkText(raw)).toEqual({ message: raw });
   });
 });
 

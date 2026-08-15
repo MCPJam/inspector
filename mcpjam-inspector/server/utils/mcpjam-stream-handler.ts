@@ -28,6 +28,7 @@ import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import {
   describeAsSlug,
   describeError,
+  isNormalizedError,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -470,17 +471,51 @@ export function describeBackendStreamFailure(
   // from the status so the user-facing copy stays accurate ("the provider
   // rejected the key" IS what happened — it was just our key).
   if (isMcpjamOwnedFailureCode(code)) {
-    return {
-      ...describeBackendStreamFailureSlug(status, detail),
-      origin: "mcpjam",
-    };
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
 
-  return describeBackendStreamFailureSlug(status, detail);
+  if (status !== undefined && status >= 500) {
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  return backendFailureSlug(status, detail);
 }
 
-/** Status → slug, with the catalog's own origin. Shared by both paths above. */
-function describeBackendStreamFailureSlug(
+/**
+ * Classify a mid-stream `{type:"error"}` chunk from MCPJam's own `/stream`
+ * backend — the failure delivered as a stream PART, after the headers already
+ * said 200.
+ *
+ * Same code rule as {@link describeBackendStreamFailure}, and deliberately
+ * NOT the same status rule. There the status is our own backend's response
+ * status, so a 5xx is our outage. Here it is the field the backend copied off
+ * the UPSTREAM provider's error (`categorizeError`'s `statusCode`), so an
+ * Anthropic 503 arrives as `statusCode: 503` — reading that as "our backend
+ * answered 5xx" would page us for someone else's overloaded model. Identical
+ * number, opposite meaning; only the delivery path distinguishes them.
+ *
+ * So the code is the ONLY thing that can assert MCPJam ownership here. Without
+ * one the catalog's own verdict stands — which for an unrecognized provider
+ * failure is `ambiguous`: visible, measured, never paging.
+ */
+export function describeStreamErrorChunkFailure(
+  status: number | undefined,
+  rawText: string,
+  code?: string,
+): NormalizedError {
+  const detail = new Error(
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+  );
+
+  if (isMcpjamOwnedFailureCode(code)) {
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  return backendFailureSlug(status, detail);
+}
+
+/** Status → slug, carrying the catalog's own origin. Shared by both paths. */
+function backendFailureSlug(
   status: number | undefined,
   detail: Error,
 ): NormalizedError {
@@ -489,9 +524,6 @@ function describeBackendStreamFailureSlug(
   }
   if (status === 429) {
     return describeAsSlug("provider/quota", detail);
-  }
-  if (status !== undefined && status >= 500) {
-    return { ...describeAsSlug("internal/unknown", detail), origin: "mcpjam" };
   }
   return describeAsSlug("internal/unknown", detail);
 }
@@ -1312,6 +1344,73 @@ export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
 }
 
 /**
+ * Parse the `errorText` of a mid-stream `{type:"error"}` chunk.
+ *
+ * SEPARATE from {@link parseEngineErrorBody} because the two shapes differ.
+ * The backend's non-OK path returns `{ok, code, error, details}` (parsed
+ * there); its mid-stream path is `toUIMessageStreamResponse({onError})`, which
+ * serializes `{code, message, statusCode, isRetryable, details}` — `message`,
+ * not `error`, and it carries the UPSTREAM `statusCode` that never reaches our
+ * own HTTP response. Feeding this shape to the other parser yields the raw JSON
+ * as the display text and drops the status.
+ *
+ * Non-JSON text (any other producer's error chunk) falls back to the text
+ * itself, which is what the client used to be handed verbatim.
+ */
+export function parseStreamErrorChunkText(errorText: string): {
+  message: string;
+  code?: string;
+  statusCode?: number;
+  details?: string;
+} {
+  try {
+    const body = JSON.parse(errorText) as {
+      code?: unknown;
+      message?: unknown;
+      statusCode?: unknown;
+      details?: unknown;
+    };
+    if (body && typeof body === "object") {
+      const message =
+        typeof body.message === "string" && body.message.trim().length > 0
+          ? body.message
+          : errorText;
+      return {
+        message,
+        ...(typeof body.code === "string" ? { code: body.code } : {}),
+        ...(typeof body.statusCode === "number"
+          ? { statusCode: body.statusCode }
+          : {}),
+        ...(typeof body.details === "string" ? { details: body.details } : {}),
+      };
+    }
+  } catch {
+    // Not JSON — fall through to the raw text.
+  }
+  return { message: errorText };
+}
+
+/**
+ * An error carrying a classification its thrower already made.
+ *
+ * Generalizes the convention `WebRouteError` already uses, so the engine's
+ * outer catch can prefer a verdict reached with the structured body in hand
+ * over `describeError`, which would only see the message string.
+ */
+function attachedNormalized(error: unknown): NormalizedError | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const candidate = (error as { normalized?: unknown }).normalized;
+  return isNormalizedError(candidate) ? candidate : undefined;
+}
+
+/** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
+function attachedFailureCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { failureCode?: unknown }).failureCode;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
  * PR 5b-followup-2: parse a Convex `/stream` non-OK response body as
  * the standard guardrail JSON shape `{ code?, error, details? }`.
  * Falls back to a generic `<status> <text>` message when the body
@@ -1642,6 +1741,48 @@ async function processStream(
           finishChunk = chunk;
           // Don't write finish yet - wait until we know we're done
           break;
+
+        case "error": {
+          // The backend's OTHER failure delivery path, and the one HTTP status
+          // can never see. `toUIMessageStreamResponse({onError})` categorizes
+          // the failure and serializes it into an error PART on a stream whose
+          // headers already said 200 — including `mcpjam_api_error` /
+          // `mcpjam_rate_limit`, i.e. OUR outage.
+          //
+          // This used to fall into `default:` and be forwarded verbatim.
+          // processStream then returned NORMALLY, processOneStep ran its
+          // success epilogue, and the outer loop set `runSucceeded = true`:
+          // the user saw an error while telemetry recorded a completed turn,
+          // and the turn was persisted as a good conversation. Exactly the
+          // bug already fixed for parser failures a few lines above — same
+          // remedy, same reason.
+          //
+          // Throw so it lands in `runChatEngineLoop`'s outer catch (site 3),
+          // which owns the whole failure ritual: error chunk, trace events,
+          // `onEngineError`, and the reporter. Deliberately NOT forwarded
+          // here — site 3's `emitError` writes the single error chunk, so the
+          // wire still carries exactly one.
+          const errorText =
+            typeof (chunk as { errorText?: unknown }).errorText === "string"
+              ? ((chunk as { errorText: string }).errorText)
+              : String((chunk as { errorText?: unknown }).errorText ?? "");
+          const parsed = parseStreamErrorChunkText(errorText);
+          // Classified HERE, where the structured body still exists. By the
+          // time site 3 sees this it is an Error whose message is a sentence;
+          // `describeError` could not recover the guardrail code, and the
+          // ownership verdict depends on it. NOT the non-OK classifier: this
+          // `statusCode` is the upstream provider's, not our backend's — see
+          // {@link describeStreamErrorChunkFailure}.
+          const normalized = describeStreamErrorChunkFailure(
+            parsed.statusCode,
+            errorText,
+            parsed.code,
+          );
+          throw Object.assign(new Error(parsed.message), {
+            normalized,
+            ...(parsed.code ? { failureCode: parsed.code } : {}),
+          });
+        }
 
         default:
           // Forward other chunks (step-start, etc.)
@@ -3571,7 +3712,12 @@ export async function runChatEngineLoop(
         const failAbs = Date.now();
         const errorText =
           error instanceof Error ? error.message : String(error);
-        const loopNormalized = describeError(error);
+        // A thrower that classified with the structured body in hand wins:
+        // a mid-stream error chunk reaches here as an Error whose message is
+        // a sentence, and re-describing it would throw away the guardrail
+        // code that settles ownership.
+        const loopFailureCode = attachedFailureCode(error);
+        const loopNormalized = attachedNormalized(error) ?? describeError(error);
         // Reporter, not a bare logger.error: the old call captured to Sentry
         // unconditionally — paging on user-fault failures — and left no typed
         // record a monitor could read (the response is a 200 stream). The
@@ -3584,6 +3730,7 @@ export async function runChatEngineLoop(
           hop: "user_server_hop",
           transport: "http_stream",
           normalized: loopNormalized,
+          ...(loopFailureCode ? { errorCode: loopFailureCode } : {}),
           context: { promptIndex: traceTurn.promptIndex },
         });
         pushAiSdkTrailingErrorSpan(
@@ -3612,6 +3759,7 @@ export async function runChatEngineLoop(
         // no stepIndex.
         safelyEmitEngineError(onEngineError, {
           message: errorText,
+          ...(loopFailureCode ? { code: loopFailureCode } : {}),
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
