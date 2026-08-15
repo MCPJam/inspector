@@ -415,17 +415,20 @@ export function RunDetailMetricsCharts({
 export function RunInsightRail({
   triageCard,
   goalCompletionCard,
+  groundednessCard,
   className,
   embedded = false,
 }: {
   triageCard: ReactNode;
   /** Advisory LLM-as-judge panel rendered below the triage card. */
   goalCompletionCard?: ReactNode;
+  /** Second named advisory judge (groundedness), below goal completion. */
+  groundednessCard?: ReactNode;
   className?: string;
   /** Flush layout inside the run-detail split (shared dividers, no card gaps). */
   embedded?: boolean;
 }) {
-  if (!triageCard && !goalCompletionCard) return null;
+  if (!triageCard && !goalCompletionCard && !groundednessCard) return null;
 
   return (
     <aside
@@ -437,6 +440,7 @@ export function RunInsightRail({
     >
       {triageCard}
       {goalCompletionCard}
+      {groundednessCard}
     </aside>
   );
 }

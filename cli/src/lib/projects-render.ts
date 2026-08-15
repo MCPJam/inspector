@@ -1,5 +1,6 @@
 import type {
   ListProjectServersResult,
+  PlatformOrganization,
   PlatformProject,
   ShowServersPayload,
 } from "@mcpjam/sdk/platform";
@@ -23,6 +24,32 @@ function table(rows: string[][]): string[] {
       .join("  ")
       .trimEnd(),
   );
+}
+
+/**
+ * Organizations render alongside projects rather than in their own module: an
+ * organization id is only ever useful as an argument to a project command
+ * (`projects list --organization`, `projects create --organization-id`), so the
+ * two tables want the same column widths and the same timestamp treatment.
+ */
+export function formatOrganizationsHuman(
+  organizations: PlatformOrganization[],
+): string {
+  if (organizations.length === 0) {
+    return "No accessible organizations.";
+  }
+
+  const lines = table([
+    ["ID", "NAME", "PLAN", "ROLE"],
+    ...organizations.map((organization) => [
+      organization.id,
+      organization.name,
+      organization.plan ?? "-",
+      organization.myRole ?? "-",
+    ]),
+  ]);
+  lines.push("", `${organizations.length} organization(s).`);
+  return lines.join("\n");
 }
 
 export function formatProjectsHuman(projects: PlatformProject[]): string {
