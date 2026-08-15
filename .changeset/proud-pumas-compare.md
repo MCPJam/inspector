@@ -52,3 +52,14 @@ inspect `skipped` to detect an incomplete corpus.
 `EvalTestConfig` gains `externalCaseId`, `isNegativeTest` and
 `expectedOutput`, so a materialized case keeps hosted grading semantics and
 joins the hosted case's history on the run page.
+
+New `mcpjam eval pull --suite <id-or-name>` writes that corpus to
+`mcpjam-evals.lock.json`, and `--frozen` verifies the lock against the hosted
+suite without writing — exit 1 when the corpus drifted, and drift alone. The
+lock is written through a sibling temp file and a rename, because a
+half-written lock does not look broken: it looks like a corpus that lost
+cases, and the next `--frozen` run would report drift nobody caused. Content
+drift and grading drift are reported as separate kinds, since "someone edited
+the case" and "someone changed how it is graded" have different fixes.
+Everything that means no comparison happened — no lock, an unreadable lock, a
+lock from another `lockVersion`, a failed fetch — is exit 3.

@@ -42,25 +42,43 @@ import {
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import {
+  cliError,
   operationalError,
   setProcessExitCode,
   usageError,
   writeResult,
 } from "../lib/output.js";
 import {
+  buildCorpus,
   buildRunCompareReport,
   calculateLatencyStats,
   detectFlakyCases,
   evaluateCompareGates,
   formatGateReport,
+  HostedOnlyCaseError,
+  verifyCorpusLock,
   type FlakyCase,
   type GateReport,
+  type LoadedCorpus,
+  type PublicMatchOptions,
   type StructuredRunReport,
 } from "@mcpjam/sdk";
 import type {
+  PlatformEvalCase,
   PlatformEvalIteration,
   PlatformRunCompare,
 } from "@mcpjam/sdk/platform";
+import {
+  CORPUS_DRIFT_EXIT_CODE,
+  CORPUS_INCOMPLETE_EXIT_CODE,
+  CORPUS_USAGE_EXIT_CODE,
+  corpusFetchFailure,
+  DEFAULT_CORPUS_LOCK_PATH,
+  readCorpusLock,
+  renderCorpusDrift,
+  resolveCorpusLockPath,
+  writeCorpusLockAtomic,
+} from "../lib/corpus-lock.js";
 import {
   EVAL_GATE_INCOMPLETE_EXIT_CODE,
   EVAL_GATE_USAGE_EXIT_CODE,
@@ -812,6 +830,150 @@ async function runEvalCompare(
 }
 
 /**
+ * `mcpjam eval pull` — materialize a hosted suite into a local corpus lock.
+ *
+ * Two modes, one code path. The default fetches and WRITES the lock; `--frozen`
+ * fetches and only COMPARES, never writing. Sharing the fetch and
+ * materialization matters: a `--frozen` check that built its corpus differently
+ * from the pull that wrote the lock would report drift that does not exist.
+ *
+ * Exit codes follow the contract in `corpus-lock.ts`: 0 clean, 1 drift (the one
+ * real verdict this command can reach), 2 a flag or a case this CLI cannot run,
+ * 3 anything that means no comparison happened.
+ */
+async function runEvalPull(
+  options: PlatformOptions & {
+    suite: string;
+    project?: string;
+    lock?: string;
+    frozen?: boolean;
+    skipUnsupported?: boolean;
+  },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const lockPath = resolveCorpusLockPath(options.lock);
+
+  // Read the existing lock BEFORE fetching. A `--frozen` run with no lock is
+  // exit 3 whatever the server would have said, and discovering that after a
+  // round trip only delays the answer.
+  const locked = options.frozen ? await readCorpusLock(lockPath) : undefined;
+
+  let fetched: {
+    suite: { id: string; name?: string };
+    cases: PlatformEvalCase[];
+    suiteChecks: unknown[];
+    suiteMatchOptions?: PublicMatchOptions;
+  };
+  try {
+    fetched = await runPlatformCommand(
+      options,
+      globalOptions.timeout,
+      async ({ client, signal }) => {
+        const selector = {
+          ...(options.project ? { project: options.project } : {}),
+          suite: options.suite,
+        };
+        const [detail, page] = await Promise.all([
+          getEvalSuiteOperation.execute(selector, { client, signal }),
+          listEvalCasesOperation.execute(selector, { client, signal }),
+        ]);
+
+        // The cases endpoint returns the whole suite today and the client has
+        // no cursor parameter to follow one with. If that ever changes, a
+        // silently truncated corpus would be locked as if complete — so this
+        // refuses rather than guessing. Fail-closed: a partial lock is worse
+        // than no lock.
+        if (page.nextCursor) {
+          throw cliError(
+            "CORPUS_TRUNCATED",
+            `Suite "${options.suite}" returned more cases than one page and ` +
+              `this CLI cannot follow the cursor. Upgrade @mcpjam/cli.`,
+            CORPUS_INCOMPLETE_EXIT_CODE
+          );
+        }
+
+        return {
+          suite: {
+            id: detail.id,
+            ...(detail.name ? { name: detail.name } : {}),
+          },
+          cases: page.items,
+          suiteChecks: detail.settings.checks ?? [],
+          ...(detail.settings.matchOptions
+            ? { suiteMatchOptions: detail.settings.matchOptions }
+            : {}),
+        };
+      }
+    );
+  } catch (error) {
+    throw corpusFetchFailure(error);
+  }
+
+  let corpus: LoadedCorpus;
+  try {
+    corpus = buildCorpus({
+      ...(options.project ? { project: options.project } : {}),
+      suite: fetched.suite,
+      cases: fetched.cases,
+      suiteChecks: fetched.suiteChecks,
+      ...(fetched.suiteMatchOptions
+        ? { suiteMatchOptions: fetched.suiteMatchOptions }
+        : {}),
+      unsupported: options.skipUnsupported ? "skip" : "error",
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    // A case this CLI cannot execute is the user's to resolve — by fixing the
+    // case, or by opting into `--skip-unsupported`. It is emphatically NOT
+    // exit 1: nothing regressed. Nor exit 3: the fetch succeeded and the
+    // answer is definite.
+    if (error instanceof HostedOnlyCaseError) {
+      throw cliError(
+        "CORPUS_HOSTED_ONLY_CASE",
+        `${error.message} Pass --skip-unsupported to omit cases like this ` +
+          `from the corpus and the lock.`,
+        CORPUS_USAGE_EXIT_CODE,
+        { caseId: error.caseId, caseTitle: error.caseTitle }
+      );
+    }
+    throw cliError(
+      "CORPUS_INVALID_CASE",
+      error instanceof Error ? error.message : String(error),
+      CORPUS_USAGE_EXIT_CODE
+    );
+  }
+
+  const summary = {
+    suite: corpus.suite,
+    cases: corpus.cases.length,
+    skipped: corpus.skipped,
+    evaluationConfigHash: corpus.lock.evaluationConfigHash,
+  };
+
+  if (locked) {
+    const drift = verifyCorpusLock(locked, corpus.lock);
+    writeResult(
+      { ...summary, lockPath, frozen: true, drift },
+      globalOptions.format
+    );
+    if (globalOptions.format === "human") {
+      process.stderr.write(`${renderCorpusDrift(drift)}\n`);
+    }
+    if (drift.length > 0) {
+      setProcessExitCode(CORPUS_DRIFT_EXIT_CODE);
+    }
+    return;
+  }
+
+  const written = await writeCorpusLockAtomic(lockPath, corpus.lock);
+  writeResult(
+    { ...summary, lockPath: written, written: true },
+    globalOptions.format
+  );
+}
+
+/**
  * A structured report for a comparison that never happened.
  *
  * The gate case alone, so `--reporter junit-xml` still emits well-formed XML
@@ -1284,6 +1446,44 @@ export function registerEvalCommands(program: Command): void {
       command
     ) => {
       await runEvalCompare(options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("pull")
+      .description(
+        "Materialize a hosted eval suite into a local corpus lock (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite to pull (name or ID)")
+      .option(
+        "--project <id-or-name>",
+        "Project the suite belongs to (defaults to the most recently updated project)"
+      )
+      .option(
+        "--lock <path>",
+        `Lock file path (default ${DEFAULT_CORPUS_LOCK_PATH})`
+      )
+      .option(
+        "--frozen",
+        "Verify the lock matches the hosted suite without writing; exit 1 on drift"
+      )
+      .option(
+        "--skip-unsupported",
+        "Omit cases a local run cannot execute instead of failing"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        lock?: string;
+        frozen?: boolean;
+        skipUnsupported?: boolean;
+      },
+      command
+    ) => {
+      await runEvalPull(options, command);
     }
   );
 
