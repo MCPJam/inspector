@@ -15,6 +15,10 @@ import {
 } from "@/hooks/useSharedChatThreads";
 import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
+import {
+  feedbackHeadline,
+  formatThumbCounts,
+} from "@/components/connection/share-usage/feedback-headline";
 
 interface ShareUsageThreadListProps {
   /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
@@ -134,6 +138,9 @@ export function ThreadCard({
   const summary = thread.feedback ?? null;
   const rating = summary?.min ?? thread.feedbackRating ?? null;
   const ratingCount = summary?.count ?? thread.feedbackCount ?? 0;
+  // `null` on rows from a backend old enough to send only the flat fields —
+  // those fall back to the bare `min/5` they always showed.
+  const headline = summary ? feedbackHeadline(summary) : null;
   const hasComment =
     summary?.hasComment ?? (thread.feedbackComment?.trim().length ?? 0) > 0;
   const needsReview =
@@ -185,9 +192,29 @@ export function ThreadCard({
             {/* Average for the headline number, `n×` for how many turns it
                 covers — the worst turn is what the amber tint already says,
                 so repeating it here would spend the row's one number on a
-                fact the color carries. */}
-            {summary ? summary.avg.toFixed(1) : rating}/5
-            {ratingCount > 1 ? ` · ${ratingCount}×` : ""}
+                fact the color carries.
+
+                A thumbs session has no meaningful average, so it shows its
+                tallies instead; a session holding both shows the BLENDED
+                average (thumbs projected onto the 1–5 axis, down→1/up→5 —
+                `summary.avg` is not a stars-only number) WITH the thumb
+                tallies, because dropping either half would under-report how
+                many turns were judged. */}
+            {headline === null ? (
+              `${rating}/5`
+            ) : headline.kind === "thumbs" ? (
+              formatThumbCounts(headline.up, headline.down)
+            ) : headline.kind === "mixed" ? (
+              `${headline.avg.toFixed(1)}/5 · ${formatThumbCounts(
+                headline.up,
+                headline.down
+              )}`
+            ) : (
+              <>
+                {headline.avg.toFixed(1)}/5
+                {ratingCount > 1 ? ` · ${ratingCount}×` : ""}
+              </>
+            )}
           </span>
         ) : (
           <span className="text-xs text-muted-foreground">No feedback</span>

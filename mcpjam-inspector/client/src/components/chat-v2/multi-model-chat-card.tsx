@@ -8,6 +8,7 @@ import { Thread } from "@/components/chat-v2/thread";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
+import { useChangeProtocolVersionAction } from "@/hooks/use-change-protocol-version-action";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import {
@@ -175,6 +176,11 @@ export function MultiModelChatCard({
     messages: [],
   };
   const errorMessage = formatErrorMessage(error);
+  const changeProtocolVersionHandler = useChangeProtocolVersionAction({
+    error: errorMessage,
+    hostId: hostedContext?.hostId,
+    location: "chat_compare_card",
+  });
   const { sendBlocked: fullscreenChatSendBlocked } =
     getChatComposerInteractivity({
       isStreamingActive: isStreaming,
@@ -508,6 +514,7 @@ export function MultiModelChatCard({
               statusCode={errorMessage.statusCode}
               isRetryable={errorMessage.isRetryable}
               isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+              onChangeProtocolVersion={changeProtocolVersionHandler}
             />
           </div>
         ) : null}

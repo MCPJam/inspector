@@ -33,6 +33,10 @@ import {
 import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
+import {
+  feedbackHeadline,
+  formatThumbCounts,
+} from "@/components/connection/share-usage/feedback-headline";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
@@ -513,6 +517,9 @@ export function ShareUsageThreadDetail({
   const reasoningDisplayMode = isChatboxThread ? "collapsible" : "collapsed";
 
   const feedbackSummary = thread.feedback ?? null;
+  const feedbackHeadlineValue = feedbackSummary
+    ? feedbackHeadline(feedbackSummary)
+    : null;
   const hasFeedback =
     feedbackSummary != null ||
     thread.feedbackRating != null ||
@@ -528,16 +535,31 @@ export function ShareUsageThreadDetail({
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Feedback
             </p>
-            {feedbackSummary ? (
+            {feedbackSummary && feedbackHeadlineValue ? (
               <p className="mt-1 text-sm font-medium">
-                {feedbackSummary.avg.toFixed(1)}/5
+                {feedbackHeadlineValue.kind === "thumbs"
+                  ? formatThumbCounts(
+                      feedbackHeadlineValue.up,
+                      feedbackHeadlineValue.down
+                    )
+                  : feedbackHeadlineValue.kind === "mixed"
+                  ? `${feedbackHeadlineValue.avg.toFixed(
+                      1
+                    )}/5 · ${formatThumbCounts(
+                      feedbackHeadlineValue.up,
+                      feedbackHeadlineValue.down
+                    )}`
+                  : `${feedbackHeadlineValue.avg.toFixed(1)}/5`}
                 <span className="ml-1 font-normal text-muted-foreground">
                   across {feedbackSummary.count}{" "}
                   {feedbackSummary.count === 1 ? "rating" : "ratings"}
                   {/* The worst turn is what the filters and the list row's
                       amber tint key on, so name it here rather than leaving
-                      the average to imply a uniformly mediocre session. */}
-                  {feedbackSummary.count > 1
+                      the average to imply a uniformly mediocre session.
+                      Suppressed for a thumbs-only session: "worst 1/5" would
+                      restate the 👎 tally on a scale nobody was shown. */}
+                  {feedbackSummary.count > 1 &&
+                  feedbackHeadlineValue.kind !== "thumbs"
                     ? ` · worst ${feedbackSummary.min}/5`
                     : ""}
                 </span>

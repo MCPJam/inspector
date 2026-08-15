@@ -52,6 +52,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
+import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
@@ -421,7 +422,7 @@ const updateJourneySchema = z
       // can fix, rather than a lost update they never see.
       message:
         "sessionsPerTarget and maxTurns must be updated together — they are one execution config upstream.",
-    }
+    },
   );
 
 const launchBodySchema = z.object({
@@ -461,7 +462,7 @@ async function readOptionalJsonBody(c: {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
 }
@@ -475,7 +476,7 @@ async function readOptionalJsonBody(c: {
  */
 async function parseJsonBody<T>(
   c: { req: { json: () => Promise<unknown> } },
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -484,7 +485,7 @@ async function parseJsonBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
   const parsed = schema.safeParse(raw);
@@ -492,7 +493,7 @@ async function parseJsonBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
   return parsed.data;
@@ -517,7 +518,7 @@ async function parseJsonBody<T>(
 async function requireJourneyInProject(
   client: ConvexHttpClient,
   projectId: string,
-  journeyId: string
+  journeyId: string,
 ): Promise<JourneyRow> {
   let row: JourneyRow | null;
   try {
@@ -526,7 +527,7 @@ async function requireJourneyInProject(
       {
         projectId,
         journeyRefId: journeyId,
-      } as never
+      } as never,
     )) as JourneyRow | null;
   } catch (error) {
     throw translateReadError(error);
@@ -541,7 +542,7 @@ async function requireJourneyInProject(
 async function requireRunInProject(
   client: ConvexHttpClient,
   projectId: string,
-  runId: string
+  runId: string,
 ): Promise<JourneyRunRow> {
   let run: JourneyRunRow | null;
   try {
@@ -549,7 +550,7 @@ async function requireRunInProject(
       "journeyRuns:getJourneyRun" as never,
       {
         runId,
-      } as never
+      } as never,
     )) as JourneyRunRow | null;
   } catch (error) {
     throw translateReadError(error);
@@ -572,7 +573,7 @@ journeys.get("/projects/:projectId/journeys", async (c) => {
       "journeys:listJourneysByProject" as never,
       {
         projectId,
-      } as never
+      } as never,
     )) as JourneyRow[] | null;
   } catch (error) {
     throw translateReadError(error);
@@ -592,8 +593,12 @@ journeys.get("/projects/:projectId/journeys/:journeyId", async (c) => {
   return v1Resource(
     c,
     toJourneyDto(
-      await requireJourneyInProject(client, projectId, c.req.param("journeyId"))
-    )
+      await requireJourneyInProject(
+        client,
+        projectId,
+        c.req.param("journeyId"),
+      ),
+    ),
   );
 });
 
@@ -650,7 +655,7 @@ journeys.post("/projects/:projectId/journeys", async (c) => {
           maxTurns: body.maxTurns,
         },
         ...(idempotencyKey ? { idempotencyKey } : {}),
-      } as never
+      } as never,
     )) as JourneyRow;
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Journey" });
@@ -698,7 +703,7 @@ journeys.patch("/projects/:projectId/journeys/:journeyId", async (c) => {
               },
             }
           : {}),
-      } as never
+      } as never,
     )) as JourneyRow;
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Journey" });
@@ -729,7 +734,7 @@ journeys.delete("/projects/:projectId/journeys/:journeyId", async (c) => {
   try {
     await client.mutation(
       "journeys:archiveJourney" as never,
-      { journeyRefId: journeyId } as never
+      { journeyRefId: journeyId } as never,
     );
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Journey" });
@@ -758,7 +763,7 @@ journeys.get("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
       {
         journeyRefId: journeyId,
         paginationOpts: paginationOptsFrom(c),
-      } as never
+      } as never,
     )) as typeof result;
   } catch (error) {
     throw translateReadError(error);
@@ -766,7 +771,7 @@ journeys.get("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
   return v1PageJson(
     c,
     result.page.map(toJourneyRunDto),
-    nextCursorFrom(result)
+    nextCursorFrom(result),
   );
 });
 
@@ -775,10 +780,25 @@ journeys.get("/projects/:projectId/journey-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const client = createConvexClient(await getConvexBearerForRequest(c));
-  return v1Resource(
-    c,
-    toJourneyRunDto(await requireRunInProject(client, projectId, runId))
+  const run = await requireRunInProject(client, projectId, runId);
+
+  // The common insights envelope, DETAIL only (lists stay compact) —
+  // resolved through the run's wave; runHealth rides beside findings, never
+  // inside them. Load failure omits the field rather than failing the read.
+  const insights = await loadInsightsEnvelope("v1.journeys", () =>
+    client.query(
+      "swarmWaveInsights:getJourneyRunInsightsEnvelope" as never,
+      {
+        projectId,
+        runId,
+      } as never,
+    ),
   );
+
+  return v1Resource(c, {
+    ...toJourneyRunDto(run),
+    ...(insights ? { insights } : {}),
+  });
 });
 
 // GET /v1/projects/:projectId/journey-runs/:runId/sessions
@@ -809,7 +829,7 @@ journeys.get("/projects/:projectId/journey-runs/:runId/sessions", async (c) => {
       {
         journeyRunId: runId,
         paginationOpts: paginationOptsFrom(c),
-      } as never
+      } as never,
     )) as typeof result;
   } catch (error) {
     throw translateReadError(error);
@@ -817,9 +837,9 @@ journeys.get("/projects/:projectId/journey-runs/:runId/sessions", async (c) => {
   return v1PageJson(
     c,
     result.page.map((row) =>
-      toJourneySessionDto(row, outcomeByChatSessionId.get(row.chatSessionId))
+      toJourneySessionDto(row, outcomeByChatSessionId.get(row.chatSessionId)),
     ),
-    nextCursorFrom(result)
+    nextCursorFrom(result),
   );
 });
 
@@ -854,7 +874,7 @@ journeys.post("/projects/:projectId/journey-runs/:runId/cancel", async (c) => {
       "journeyRuns:cancelJourneyRun" as never,
       {
         journeyRunId: runId,
-      } as never
+      } as never,
     )) as typeof result;
   } catch (error) {
     // CONFLICT (the run already settled on its own) becomes 409 here rather
@@ -914,7 +934,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
 
@@ -938,7 +958,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
         ...(parsed.data.environmentIds?.length
           ? { environmentIds: parsed.data.environmentIds }
           : {}),
-      }
+      },
     );
   } catch (error) {
     // `launchJourneyRun` already throws `WebRouteError` for the caller-facing
@@ -965,7 +985,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
        */
       deduped: result.deduped === true,
     },
-    202
+    202,
   );
 });
 

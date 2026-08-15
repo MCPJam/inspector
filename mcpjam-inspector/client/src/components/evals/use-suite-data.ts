@@ -15,6 +15,30 @@ import {
   SuiteAggregate,
 } from "./types";
 
+/**
+ * Run-level advisory judge score: the mean of the goal-completion judge's
+ * per-case scores, as a whole percent — or null when the run carries no
+ * completed judge verdict.
+ *
+ * Null, never zero: an unjudged run is not a run that scored 0, and the trend
+ * chart DROPS null points rather than plotting them (the same honesty rule
+ * the swarm overview's daily trend applies to 0/0 buckets).
+ *
+ * Unit note: `goalCompletion.cases[].score` is a 0..1 fraction (unlike
+ * `passCriteria.minimumPassRate`, which is 0-100); this returns 0-100 to
+ * match `passRate` in the same trend rows.
+ */
+export function computeRunJudgeScore(run: EvalSuiteRun): number | null {
+  const cases = run.goalCompletion?.cases;
+  if (!cases || cases.length === 0) return null;
+  const scores = cases
+    .map((c) => c.score)
+    .filter((score) => typeof score === "number" && Number.isFinite(score));
+  if (scores.length === 0) return null;
+  const mean = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+  return Math.round(mean * 100);
+}
+
 function desanitizeEvalIteration(iter: EvalIteration): EvalIteration {
   return {
     ...iter,
@@ -124,6 +148,10 @@ export function useSuiteData(
           total,
           label: formatTime(run.completedAt ?? run.createdAt),
           runNumber: run.runNumber,
+          judgeScore: computeRunJudgeScore(run),
+          // Ran under a per-run judge override — divergence from the suite's
+          // judge calibration must be visible on the trend, not silent.
+          judgeOffConfig: run.judgeConfigOverride !== undefined,
         };
       })
       .filter(
@@ -137,6 +165,8 @@ export function useSuiteData(
           total: number;
           label: string;
           runNumber: number;
+          judgeScore: number | null;
+          judgeOffConfig: boolean;
         } => item !== null,
       );
     return data;
