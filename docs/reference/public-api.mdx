@@ -205,6 +205,12 @@ Retry-After: 7
 Honor `Retry-After`, add jittered exponential backoff, and expect these limits
 to be tuned during the preview.
 
+Other `429`s — the per-minute brakes and daily budgets described with the
+endpoints below — carry `Retry-After` whenever the refusal knows when it
+lifts, which is the ordinary case. Treat it as a hint that is usually there
+rather than a guarantee: a refusal that reaches you without one still needs
+your backoff, so **never** block waiting for a header that may not come.
+
 ## Endpoints
 
 Each endpoint is fully documented — request and response schemas, examples,
@@ -215,6 +221,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | Endpoint | What it does |
 | --- | --- |
 | `GET /me` | The account behind the key |
+| `GET /organizations` | The organizations the caller belongs to — where `organizationId` comes from. A key is bound to one organization and only ever sees that one |
 | `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
 | `GET /projects/{projectId}/servers` | The project's saved MCP servers |
 | `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |
@@ -293,6 +300,223 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | --- | --- |
 | `GET .../chatboxes` | List the project's published chatboxes: name, access mode, attached servers, share link |
 | `GET .../chatboxes/{chatboxId}` | One chatbox's settings: model, system prompt, tool-approval policy, resolved servers |
+
+<Note>
+  **Swarms and User Testing are enabled per organization.** Everything in the
+  four sections below is behind that gate, enforced server-side. If it is not
+  on for your organization, the reads generally return empty and every **write**
+  — creating a persona or journey, launching a run, publishing a scenario,
+  requesting insights — answers `403` with a message naming the feature, not a
+  `404` and not a validation error.
+
+  Five operations are deliberately outside the gate, because every one of them
+  *reduces* exposure and spend: cancelling a journey run, unpublishing a
+  scenario, and archiving a persona, journey or swarm (each one's `DELETE`). An
+  organization that loses access can still stop what is running and clean up
+  what it authored.
+
+  Ask us on [Discord](https://discord.gg/JEnDtz8X6z) if you want it turned on.
+</Note>
+
+**Swarms — authoring** (`/projects/{projectId}/personas...`, `.../journeys...`,
+`.../swarms...`) — the definitions a swarm run executes. A **persona** is a
+reusable synthetic character; a **journey** is the task you point one at; a
+**swarm** is an authoring container holding defaults for the journeys made
+under it. Nothing here starts anything — launching is
+`POST .../journeys/{journeyId}/runs`.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../personas` | List the project's personas |
+| `POST .../personas` | Create a persona (accepts `Idempotency-Key`) |
+| `GET .../personas/{personaId}` | One persona |
+| `PATCH .../personas/{personaId}` | Update a persona. Journeys reference it by id, so renaming is safe |
+| `DELETE .../personas/{personaId}` | Delete a persona. **409** while journeys still reference it |
+| `GET .../journeys` | List the project's journeys |
+| `POST .../journeys` | Create a journey (accepts `Idempotency-Key`). `personaId` and `swarmId` must be in this project |
+| `GET .../journeys/{journeyId}` | One journey |
+| `PATCH .../journeys/{journeyId}` | Update a journey. `null` CLEARS `environmentIds`; `sessionsPerTarget` and `maxTurns` must be sent together |
+| `DELETE .../journeys/{journeyId}` | **Archive** a journey — existing runs keep pointing at the definition they executed |
+| `GET .../swarms` | List swarm containers |
+| `POST .../swarms` | Create a swarm container (accepts `Idempotency-Key`) |
+| `GET .../swarms/{swarmId}` | One swarm |
+| `PATCH .../swarms/{swarmId}` | Update the container's defaults. Not a cascade — existing journeys keep their own values |
+| `DELETE .../swarms/{swarmId}` | **Archive** a swarm. The journeys under it stay launchable |
+
+**Swarms — generation** — drafts a model writes for you. Both routes return
+candidates and **persist nothing**: feed what you want to keep to the create
+routes above. That is also why neither accepts an `Idempotency-Key` — a call
+with no effect has nothing to de-duplicate, and offering one would imply the
+drafts are stable across retries when they are not.
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../personas/generate` | Draft a slate of personas (and journeys for each) grounded in a server attachment or an environment |
+| `POST .../journeys/generate` | Draft journeys for a persona passed **by value**, so you can draft before you save |
+
+<Warning>
+  The generation routes **spend** — they run models on your organization's
+  account. They are metered two ways, and the two mean different waits: a
+  per-minute burst brake (`429`, retry in seconds) and your plan's daily
+  budget (`429`, resets at UTC midnight). Both normally carry `Retry-After` —
+  honor it rather than guessing, and fall back to your own backoff on the
+  refusal that arrives without one.
+</Warning>
+
+**Swarms — runs** (`/projects/{projectId}/journeys/{journeyId}/runs`,
+`.../journey-runs/...`) — launching a journey and reading what it produced:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../journeys/{journeyId}/runs` | That journey's runs, newest first |
+| `POST .../journeys/{journeyId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key` |
+| `GET .../journey-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
+| `GET .../journey-runs/{runId}/sessions` | The chat sessions the run produced (summaries, not transcripts) |
+| `POST .../journey-runs/{runId}/cancel` | Stop a run. Idempotent — a second cancel is `200` with `alreadyCanceled: true`, not a `409` |
+
+Three things worth knowing before you write the client:
+
+- **Always send `Idempotency-Key` on a launch.** It spends model credits, so a
+  retry of a dropped response must not run the journey twice. Replaying a key
+  returns the original run with `deduped: true` and starts no second runner —
+  and consumes no quota. Omitting the header is read as a request that declined
+  to identify itself, and gets a fresh run every time.
+- **Check `canceled` before reporting a failure.** A stopped run carries
+  `status: "failed"`, because cancellation is recorded as a marker rather than
+  a status of its own. `stale: true` is the third case: the runner went silent
+  and the watchdog settled the run.
+- **`targetId`, not `hostId`, identifies a target.** Two environments can
+  resolve to the same host with different servers, so a run can hold two
+  targets that share a `hostId`.
+
+<Warning>
+  Launching **spends**: a run fans out into `targets × sessionsPerTarget`
+  sessions. Two different `429`s can come back — the per-minute burst brake
+  (retry in seconds) and your plan's daily launch cap (resets at UTC midnight).
+  Both normally carry `Retry-After`; back off on your own when one does not.
+</Warning>
+
+**Swarms — insights** — what a run revealed. Read these in order of cost: the
+roll-up and the scorecard are deterministic and free, the findings registry
+aggregates them, and wave insights run a model.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../journeys-overview` | Project roll-up: recent runs, goal-completion rates, repeat failures, trend |
+| `GET .../journey-runs/{runId}/scorecard` | One run's deterministic rubric result. No model, no spend |
+| `GET .../journey-findings` | Criteria that keep failing, tracked across waves |
+| `POST .../journey-findings/{findingId}/dismiss` | Hide a finding |
+| `POST .../journey-findings/{findingId}/undismiss` | Un-hide it |
+| `GET .../waves/{waveId}/insights` | Poll a wave's generated insights. **404 = nobody asked** |
+| `POST .../waves/{waveId}/insights` | Request them. `202` — scheduled, not done |
+| `DELETE .../waves/{waveId}/insights` | Cancel a generation still `pending` |
+
+Two arithmetic traps worth naming, because both produce numbers that look
+plausible and are wrong:
+
+- **Divide by `sessionsGraded`, never by the session total.** Three failures
+  out of four graded sessions, in a run that attempted forty, is 75% — not
+  7.5%.
+- **`failedGradingCount` is not `failCount`.** A crashed judge is not a
+  regression, and folding the two together makes one look like the other.
+
+And one modelling note: a finding's `status` is a lifecycle —
+`new | recurring | regressed | resolved`. `dismissed` is *not* one of them.
+Dismissal is the orthogonal `dismissedAt`, so a finding can be both recurring
+and dismissed, and hiding one never claims it stopped happening.
+
+<Warning>
+  Requesting wave insights **spends**, and draws on the `insightsPerDay`
+  ledger that is **shared** with eval-run and user-testing insights — burning
+  it here takes it from there too. Poll the `GET` rather than re-requesting;
+  `force: true` deliberately spends a second time.
+
+  Three refusals, three different meanings: a short `429` is the per-minute
+  brake (wait seconds), a `429` naming `insightsPerDay` is the daily ledger
+  (its `Retry-After`, when present, counts to UTC midnight), and a `403` means
+  the feature is not available to your organization — waiting will never help.
+</Warning>
+
+**User testing** (`/projects/{projectId}/environments/{environmentId}/scenario`,
+`.../user-testing/scenarios/...`) — publishing an environment for real visitors,
+reading what they did, and controlling who can reach it. A **scenario** is a
+published environment: one per environment, addressed by its own id once it
+exists.
+
+| Endpoint | What it does |
+| --- | --- |
+| `PUT .../environments/{environmentId}/scenario` | **Publish.** Idempotent — republishing returns the existing scenario, and `created: false` says so. Project **admin** |
+| `DELETE .../environments/{environmentId}/scenario` | **Unpublish.** The link dies and live sessions end. `deleted: false` when there was nothing published |
+| `PATCH .../user-testing/scenarios/{scenarioId}` | Rename, re-describe, or change `mode` |
+| `GET .../user-testing/scenarios/{scenarioId}/sessions` | What visitors did: one row per session, with feedback and a first-message preview |
+| `GET .../user-testing/scenarios/{scenarioId}/sessions/{sessionId}` | One session's transcript, paged. Tool payloads and blobs are dropped |
+| `PUT .../user-testing/scenarios/{scenarioId}/guest-execution` | The spend dial for anonymous visitors: daily credits, computer starts, concurrency |
+| `POST .../user-testing/scenarios/{scenarioId}/rotate-link` | **Mint a new share link.** No body — the new secret is minted server-side |
+| `PUT .../user-testing/scenarios/{scenarioId}/members` | Invite someone (or change their role) on an `invited_only` scenario |
+| `DELETE .../user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}` | Remove someone. Their grant is revoked, ending their live sessions |
+| `POST .../user-testing/scenarios/{scenarioId}/rebind` | Point the scenario at a different environment in the same project |
+
+<Warning>
+  **Rotating the link does not evict anyone who already used it.** It stops the
+  old URL from granting NEW access; the grants already redeemed under it stay
+  valid. That is the single most important thing to know here, because rotation
+  is what you reach for when a link leaks — and on its own it does not undo the
+  leak. Rotate *and* remove the members you did not intend to have.
+
+  What DOES take effect at once, ending live sessions rather than waiting for
+  expiry: unpublishing, tightening `mode`, and removing a member. Those bump
+  the scenario's `accessVersion`, and a session minted under an older version
+  stops working. None of them reverse by calling the opposite — a re-invited
+  member gets a new session, not their old one.
+
+  Read `accessVersion` off the publish and rebind responses. The update and
+  rotate responses do not carry it.
+</Warning>
+
+**User testing — what visitors did** — the analytics reads, and the model pass
+over them. Read these in cost order: metrics, usage and signals are
+deterministic and free; the insights request runs a model.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../user-testing/scenarios/{scenarioId}` | The scenario, plus its insights envelope when you may have it |
+| `GET .../user-testing/scenarios/{scenarioId}/metrics` | Volumes, completion and feedback rates. `?population=real\|synthetic` splits real visitors from swarm runs |
+| `GET .../user-testing/scenarios/{scenarioId}/usage` | Which models, tools and servers the sessions used. **Check `scan.truncated`** before quoting a rate |
+| `GET .../user-testing/scenarios/{scenarioId}/signals` | What the miner found in the current window — and where you get the `windowId` |
+| `GET .../user-testing/scenarios/{scenarioId}/findings` | Every finding raised over this scenario, dismissed ones included |
+| `GET .../user-testing/scenarios/{scenarioId}/windows/{windowId}/insights` | One window's insights. **`404` means nobody asked**, which is not the same as `pending` |
+| `POST .../user-testing/scenarios/{scenarioId}/insights` | **Spends.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
+| `DELETE .../user-testing/scenarios/{scenarioId}/insights` | Release a generation stuck `pending`. Takes `windowId` in the body |
+| `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss` | Dismiss a finding. Keyed on its stable id, so it stays dismissed when insights regenerate |
+| `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss` | Undo that |
+
+The five analytics shapes above are documented as **open objects** on purpose.
+Their upstream projections grow with the product and the SDK types them the
+same way, so pinning a field list would turn every new metric into a spec
+violation. Read what you recognize; ignore the rest.
+
+<Warning>
+  Requesting insights **spends**, and draws on the same `insightsPerDay` ledger
+  as eval-run and swarm wave insights — one budget, three producers. Poll the
+  window read rather than re-requesting; `force: true` deliberately spends a
+  second time, which is why it is never inferred from anything else.
+</Warning>
+
+**Planning** — one read that answers "may I?" before you try:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, and the booleans to branch on |
+
+<Note>
+  `capabilities` is a **planning aid, not a gate**. Every write still enforces
+  independently, so a `true` here that races a flag flip costs you a clean
+  `403` rather than an incorrect success — and nothing should consult it
+  *instead of* trying. It exists because agent surfaces are static: an MCP tool
+  catalog is built with no organization in hand, so the alternative is
+  attempting the write and reading the failure, by which point the agent has
+  usually already told someone what it was about to do.
+</Note>
 
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)

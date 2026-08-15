@@ -110,6 +110,7 @@ export interface UsePlaygroundStateOptions {
   isWorkOsAuthLoading?: boolean;
   isConvexAuthenticated?: boolean;
   isProjectProvisioned?: boolean;
+  isClientConfigSyncPending?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
@@ -181,6 +182,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isWorkOsAuthLoading = false,
     isConvexAuthenticated = false,
     isProjectProvisioned = true,
+    isClientConfigSyncPending = false,
     hasSeenFirstRunOnboarding,
     isServerSyncing = false,
     onConnect,
@@ -210,6 +212,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     hasSeenOnboarding: hasSeenFirstRunOnboarding === true,
     canPersistRemoteOnboarding: isConvexAuthenticated,
     isProjectProvisioned,
+    isClientConfigSyncPending,
   });
 
   const firstRunComposerSeed =

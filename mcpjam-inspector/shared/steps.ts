@@ -130,9 +130,39 @@ export type InteractStep = z.infer<typeof interactStepSchema>;
  * DOM/widget-level assertions evaluated against the live widget by the headless
  * harness (NOT the transcript predicate engine). `toolName` is always the WIDGET
  * being asserted against. `widgetToolCalled.calledToolName` is the tool the
- * widget invoked (distinct from the widget's own tool). `widgetRendered` is NOT
- * here — it's a transcript `Predicate` ("widgetRendered") evaluated against
- * render observations.
+ * widget invoked (distinct from the widget's own tool).
+ *
+ * ── Why this is a SEPARATE union from `Predicate`, and stays one ──────────────
+ *
+ * The dividing line is what the assertion is evaluated AGAINST, and therefore
+ * what can re-run it later:
+ *
+ *  - A `Predicate` is evaluated against a persisted TRANSCRIPT. Anything
+ *    holding one — the eval runner, the swarm checks runner, an on-demand
+ *    re-grade months later — can re-derive the same verdict from stored data
+ *    by calling the SDK's pure evaluator. That is why swarm rubrics, whole-run
+ *    checks and the per-session Checks panel are all predicate-shaped.
+ *  - A `WidgetAssertion` is evaluated against a LIVE DOM inside the browser
+ *    harness, at the moment the step runs. Nothing is persisted that could
+ *    reproduce it: the transcript records that a widget rendered, not what was
+ *    on screen inside it. Re-running the assertion means re-running the
+ *    session.
+ *
+ * That is the whole reason `widgetRendered` is a `Predicate` while
+ * `textVisible` is not, even though both sound like claims about a view.
+ * "Did the host mount this widget?" is answered by a render observation the
+ * transcript already carries; "is the word 'Refunded' visible in it?" is
+ * answered only by looking at the live document.
+ *
+ * The consequence is not cosmetic: swarms have no `TestStep[]` and no browser
+ * harness, so they cannot author or evaluate widget assertions at all. Merging
+ * the two unions would put kinds in the swarm rubric menu that can never
+ * produce a verdict there.
+ *
+ * Re-evaluate this split if a persisted-DOM-snapshot capability lands (a
+ * serialized document per render observation, not just a screenshot). At that
+ * point widget assertions become transcript-replayable and the argument for
+ * two vocabularies goes away.
  */
 export const widgetAssertionSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -163,6 +193,25 @@ export const widgetAssertionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type WidgetAssertion = z.infer<typeof widgetAssertionSchema>;
+
+/**
+ * The ONE human label per widget-assertion kind — the DOM-level counterpart of
+ * `PREDICATE_KIND_LABELS` in `shared/predicate-kinds.ts`.
+ *
+ * Lives here, beside the union it names, so a new `kind` cannot be added
+ * without the exhaustive `Record` forcing a label for it. Every authoring
+ * surface (the step-list sub-editor, the Add Step picker catalog, the
+ * click-to-assert chooser) imports these rather than keeping private copies —
+ * three copies is how "Input value equals" and "Input equals…" ended up on
+ * screen for the same assertion.
+ */
+export const WIDGET_ASSERTION_LABELS: Record<WidgetAssertion["kind"], string> = {
+  textVisible: "Text visible",
+  elementVisible: "Element visible",
+  elementHidden: "Element hidden",
+  inputValue: "Input value equals",
+  widgetToolCalled: "View called tool",
+};
 
 /**
  * An assert step's payload is EITHER a model-level `Predicate` (keyed on `type`)
