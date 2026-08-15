@@ -15,7 +15,7 @@
  * only they can press.
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   fireEvent,
@@ -104,7 +104,10 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
     await screen.findByText("Personal");
 
-    expect(calls[0]).toEqual({
+    // Located by path, not by index: the claim is now preceded by a
+    // best-effort token exchange that proves who the visitor is, and which
+    // call lands first is not the property this test is about.
+    expect(calls.find((call) => call.path === "/claim")).toEqual({
       path: "/claim",
       body: { handoffToken: "handoff-token-abc" },
     });
@@ -345,5 +348,91 @@ describe("returning from the authorization server", () => {
       error: "access_denied",
       errorDescription: "User declined",
     });
+  });
+});
+
+describe("proving who the visitor is", () => {
+  /**
+   * The claim is the ONLY call that carries identity, and it has to: the
+   * backend refuses an account-owned link to anyone but its owner, and this
+   * page — mounted without `AuthKitProvider` on purpose — used to send no
+   * credential at all. The check therefore compared "nobody" against an owner
+   * and refused every account-owned link, which made the whole OAuth path
+   * unusable for signed-in users.
+   */
+  function mockWithAuth(accessToken: string | null) {
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const headers = new Headers(
+          (init?.headers ?? undefined) as HeadersInit | undefined
+        );
+        seen.push({ url, auth: headers.get("authorization") });
+
+        if (url === "/user_management/authenticate") {
+          return accessToken
+            ? new Response(JSON.stringify({ access_token: accessToken }), {
+                status: 200,
+              })
+            : // What a signed-out visitor actually gets back.
+              new Response(
+                JSON.stringify({
+                  error_description: "No local WorkOS session",
+                }),
+                { status: 400 }
+              );
+        }
+
+        const path = url.replace("/api/web/server-connections", "");
+        if (path === "/claim") {
+          return new Response(
+            JSON.stringify({ requestId: "scr_1", status: "awaiting_project" }),
+            { status: 200 }
+          );
+        }
+        if (path === "/state") {
+          return new Response(JSON.stringify(stateBody()), { status: 200 });
+        }
+        return new Response(JSON.stringify({ message: "unhandled" }), {
+          status: 500,
+        });
+      })
+    );
+    return seen;
+  }
+
+  beforeEach(() => {
+    window.__MCP_RUNTIME_CONFIG__ = { workosClientId: "client_test" };
+  });
+
+  afterEach(() => {
+    delete window.__MCP_RUNTIME_CONFIG__;
+  });
+
+  it("sends the signed-in visitor's token, so the owner can claim their own link", async () => {
+    const seen = mockWithAuth("access-token-value");
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("Personal");
+
+    const claim = seen.find((entry) => entry.url.endsWith("/claim"));
+    expect(claim?.auth).toBe("Bearer access-token-value");
+  });
+
+  it("still claims when there is no session, so guests keep working", async () => {
+    // Possession of the single-use token remains the capability for a
+    // guest-owned request; a failed exchange must never block that.
+    const seen = mockWithAuth(null);
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("Personal");
+
+    const claim = seen.find((entry) => entry.url.endsWith("/claim"));
+    expect(claim).toBeDefined();
+    expect(claim?.auth).toBeNull();
   });
 });

@@ -33,6 +33,7 @@ import {
   readPendingAuthorization,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import { getRuntimeWorkosClientId } from "@/lib/runtime-config";
 
 const API = "/api/web/server-connections";
 
@@ -56,7 +57,61 @@ interface HandoffState {
   projects: Array<{ id: string; name: string }>;
 }
 
-async function call<T>(path: string, body?: unknown): Promise<T> {
+/**
+ * Who the visitor is, when they are signed in — for the CLAIM and nothing else.
+ *
+ * The backend refuses an account-owned handoff link to anyone but its owner,
+ * and it can only tell who is asking from a verified bearer token. This page
+ * is deliberately mounted WITHOUT `AuthKitProvider` so a signed-out visitor or
+ * a guest can use it, so it has no token to send — which meant the ownership
+ * check compared "nobody" against an owner and refused EVERY account-owned
+ * link. The flow was unusable for signed-in users: create a request from the
+ * CLI, open the link in the very same account, get "This authorization link
+ * belongs to a different account."
+ *
+ * The session cookie is already sent on every call here, but it seals a
+ * REFRESH token, not an identity — redeeming it server-side would rotate the
+ * browser's session as a side effect of a claim. So the exchange goes through
+ * the same proxy the app itself uses, which re-seals the rotated token
+ * correctly.
+ *
+ * BEST EFFORT, ALWAYS. No session, no client id, a network failure, a 400 for
+ * a signed-out visitor: all resolve to `null`, the claim proceeds without a
+ * header, and possession of the single-use token remains the capability for
+ * guest-owned requests exactly as before.
+ */
+async function bestEffortAccessToken(): Promise<string | null> {
+  const clientId =
+    getRuntimeWorkosClientId() ??
+    (import.meta.env.VITE_WORKOS_CLIENT_ID as string | undefined);
+  if (!clientId) return null;
+  try {
+    const response = await fetch("/user_management/authenticate", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        client_id: clientId,
+      }),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json().catch(() => null)) as {
+      access_token?: unknown;
+    } | null;
+    return typeof payload?.access_token === "string"
+      ? payload.access_token
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function call<T>(
+  path: string,
+  body?: unknown,
+  accessToken?: string | null
+): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     method: body === undefined ? "GET" : "POST",
     // Same-origin is the default, but stating it makes the cookie requirement
@@ -65,7 +120,10 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     ...(body === undefined
       ? {}
       : {
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+          },
           body: JSON.stringify(body),
         }),
   });
@@ -125,9 +183,13 @@ export function ServerConnectionHandoff() {
 
       try {
         if (route?.kind === "claim") {
-          const result = await call<{ requestId: string }>("/claim", {
-            handoffToken: route.handoffToken,
-          });
+          const result = await call<{ requestId: string }>(
+            "/claim",
+            { handoffToken: route.handoffToken },
+            // Only the claim carries identity. Every later step authenticates
+            // with the continuation cookie, which is scoped to this request.
+            await bestEffortAccessToken()
+          );
           // `replaceState`, not push: the token URL must not be somewhere the
           // back button can return to, and it is single-use anyway.
           window.history.replaceState(
