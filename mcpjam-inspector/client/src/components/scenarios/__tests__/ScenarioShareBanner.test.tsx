@@ -67,6 +67,31 @@ describe("ScenarioShareBanner", () => {
     const { container } = render(<ScenarioShareBanner scenario={scenario} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("withholds the link while the environment can't resolve", () => {
+    // The Edit tab already refused to hand this link out. This strip copied it
+    // to the clipboard anyway, so the same scenario was both unshareable and
+    // one click from being shared.
+    render(
+      <ScenarioShareBanner
+        scenario={
+          {
+            ...scenario,
+            environmentError: {
+              code: "ENV_ARCHIVED",
+              message: "Environment archived.",
+            },
+          } as ScenarioSettings
+        }
+      />,
+    );
+
+    expect(screen.queryByText("mcpjam.link/t/tok")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Withheld — this scenario can't run."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeDisabled();
+  });
 });
 
 describe("ScenarioShareEmptyPanel", () => {

@@ -51,6 +51,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { isAdhocUnavailable } from "@/components/environment-composer/resolve-stacks";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useCloudServerReadiness } from "@/components/environment-composer/use-cloud-server-readiness";
 import { NameEnvironmentDialog } from "@/components/project-environments/NameEnvironmentDialog";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
@@ -379,6 +380,27 @@ export function UserTestingScenarioDetail({
   // this state calls for.
   const environmentError = scenario.environmentError ?? null;
 
+  /**
+   * The other way a scenario ships broken, which nothing on this surface used
+   * to say: the environment resolves fine, but every server behind it is one a
+   * shared session can't reach — a stdio server, or a localhost/private URL.
+   * The author runs it locally, it works, and the failure is discovered by
+   * whoever they sent the link to.
+   *
+   * Warn rather than withhold. Unlike an unresolvable environment this is
+   * measured from the catalog, `assessCloudServerReadiness` deliberately fails
+   * open on anything it can't see, and the author may be mid-setup — so the
+   * cost of being wrong here should be a notice, not a confiscated link.
+   */
+  const serverReadiness = useCloudServerReadiness({
+    // Trimmed, matching `useComposerResolver` — the same id reaches both.
+    projectId: scenario.projectId.trim(),
+    state: composer,
+    environments: liveNamedEnvironments,
+  });
+  const unreachableServerNames =
+    serverReadiness.status === "local_only" ? serverReadiness.serverNames : null;
+
   const publishLink = scenario.link?.token
     ? buildScenarioLink(scenario.link.token, scenario.name)
     : null;
@@ -541,6 +563,28 @@ export function UserTestingScenarioDetail({
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         {environmentError.message} Its sessions are unaffected.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+
+                {unreachableServerNames ? (
+                  <div
+                    data-testid="user-testing-detail-unreachable-servers"
+                    className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+                  >
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                    <div className="min-w-0 text-sm">
+                      <p className="font-medium text-foreground">
+                        Testers won&apos;t be able to reach{" "}
+                        {unreachableServerNames.join(", ")}.
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        A shared session runs in MCPJam&apos;s cloud, which
+                        can&apos;t reach a stdio server or a localhost or
+                        private-address URL. Expose the server over HTTPS and
+                        point this scenario at that URL — it will work for you
+                        locally either way.
                       </p>
                     </div>
                   </div>
