@@ -139,6 +139,10 @@ Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge*
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+#### Goal completion trend in swarms
+
+The swarm Overview tab shows a **Goal completion** strip above the runs list when the overview window has a graded pass rate and at least two graded days. The strip headlines the window pass rate with its passed/graded session denominators and a daily sparkline. Days with no graded sessions are omitted from the sparkline — a gap in grading is not the same as a 0% day. The strip does not appear for a single graded day (one day is a number, not a trend) or when the window pass rate is unavailable.
+
 ### MCP App widgets in swarm sessions
 
 When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.
