@@ -1,13 +1,10 @@
 /**
- * Read-only views of the chat sessions the published scenarios and the in-app
- * Playground produced.
+ * Read-only views of the chat sessions that published scenarios and the in-app
+ * Playground produced. Reads only.
  *
- * These operations shipped in the SDK and the MCP catalog but had no CLI
- * binding, which made them unreachable from a script — you could ask an agent
- * about your sessions but not `grep` them in CI. Reads only.
- *
- * The scenario reads that used to live here moved to `commands/scenarios.ts`,
- * which owns the whole `mcpjam scenarios` group.
+ * The scenario reads that used to live here moved to `commands/scenarios.ts`:
+ * after the rename both files registered a top-level `scenarios` command, and
+ * that group owns all four operations now.
  */
 import type { Command } from "commander";
 import {

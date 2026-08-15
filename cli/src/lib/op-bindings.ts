@@ -97,8 +97,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_capabilities: { command: "capabilities" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
-  // Supersedes the `scenarios` group below, which is the same product under
-  // its older name.
+  // Publishing and taking down. The reads (`scenarios list` / `scenarios get`)
+  // are bound under "Chat surfaces" below — they used to be a separate group
+  // under the product's older name, and now share this one command.
   publish_scenario: { command: "scenarios publish" },
   unpublish_scenario: { command: "scenarios unpublish" },
   // ── User testing: everything you do with a scenario once it exists ──────

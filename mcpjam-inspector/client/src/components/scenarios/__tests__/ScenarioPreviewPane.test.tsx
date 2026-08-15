@@ -16,7 +16,7 @@ import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { ScenarioPreviewPane } from "../ScenarioPreviewPane";
 
 // jsdom serves the app from localhost — same-origin links must match it.
-const sameOriginLink = `${window.location.origin}/scenario/payments-beta/tok-1`;
+const sameOriginLink = `${window.location.origin}/user-testing/payments-beta/tok-1`;
 
 describe("ScenarioPreviewPane", () => {
   it("tags the embedded run as preview traffic", () => {
@@ -29,7 +29,7 @@ describe("ScenarioPreviewPane", () => {
       .getAttribute("src");
     expect(new URL(src!).searchParams.get("surface")).toBe("preview");
     // The path shape is what main.tsx's self-embed exception matches on.
-    expect(new URL(src!).pathname).toBe("/scenario/payments-beta/tok-1");
+    expect(new URL(src!).pathname).toBe("/user-testing/payments-beta/tok-1");
   });
 
   it("passes the full spec feature set through when the host has no policy", () => {
@@ -61,7 +61,7 @@ describe("ScenarioPreviewPane", () => {
   it("offers the link instead of framing a cross-origin share URL", () => {
     render(
       <ScenarioPreviewPane
-        publishLink="https://elsewhere.example/scenario/x/tok"
+        publishLink="https://elsewhere.example/user-testing/x/tok"
         mcpProfile={undefined}
       />,
     );
@@ -71,7 +71,7 @@ describe("ScenarioPreviewPane", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /open in a new tab/i }),
-    ).toHaveAttribute("href", "https://elsewhere.example/scenario/x/tok");
+    ).toHaveAttribute("href", "https://elsewhere.example/user-testing/x/tok");
   });
 
   it("shows the empty state, and no frame, without a share link", () => {
@@ -132,7 +132,7 @@ describe("ScenarioPreviewPane", () => {
     const frame = screen.getByTestId("user-testing-preview-frame");
     Object.defineProperty(frame, "contentWindow", {
       configurable: true,
-      value: { location: { pathname: "/scenario/payments-beta/tok-1" } },
+      value: { location: { pathname: "/user-testing/payments-beta/tok-1" } },
     });
     fireEvent.load(frame);
 
@@ -229,7 +229,7 @@ describe("ScenarioPreviewPane", () => {
       // src-keyed behavior this prop must not regress.
       rerender(
         <ScenarioPreviewPane
-          publishLink={`${window.location.origin}/scenario/payments-beta/tok-2`}
+          publishLink={`${window.location.origin}/user-testing/payments-beta/tok-2`}
           mcpProfile={undefined}
         />,
       );

@@ -375,7 +375,7 @@ describe("ScenarioChatPage", () => {
   });
 
   it("persists the redeemed session to sessionStorage when standalone", async () => {
-    window.history.replaceState({}, "", "/scenario/demo/scenario-token");
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 
     render(<ScenarioChatPage pathToken="scenario-token" />);
 
@@ -412,7 +412,7 @@ describe("ScenarioChatPage", () => {
       },
     };
     writeScenarioSession(outerSession);
-    window.history.replaceState({}, "", "/scenario/demo/scenario-token");
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 
     render(<ScenarioChatPage pathToken="scenario-token" />);
 
@@ -511,7 +511,7 @@ describe("ScenarioChatPage", () => {
   it("keeps the access denied sign-in path intact", async () => {
     mockConvexAuthState.isAuthenticated = false;
     mockWorkOsAuthState.user = null;
-    window.history.replaceState({}, "", "/scenario/test/token-denied");
+    window.history.replaceState({}, "", "/user-testing/test/token-denied");
     mockAuthFetch.mockResolvedValueOnce(
       createFetchResponse(
         {
@@ -537,7 +537,7 @@ describe("ScenarioChatPage", () => {
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
-      "/scenario/test/token-denied"
+      "/user-testing/test/token-denied"
     );
   });
 
@@ -555,7 +555,7 @@ describe("ScenarioChatPage", () => {
     window.history.replaceState(
       {},
       "",
-      "/scenario/test/token-denied?surface=preview"
+      "/user-testing/test/token-denied?surface=preview"
     );
     mockAuthFetch.mockResolvedValueOnce(
       createFetchResponse(
@@ -1444,7 +1444,7 @@ describe("ScenarioChatPage", () => {
 
       // Navigate to a DIFFERENT scenario while the redeem is in flight, and
       // let its effects flush so the live token is the new one.
-      window.history.replaceState({}, "", "/scenario/other/tok_other");
+      window.history.replaceState({}, "", "/user-testing/other/tok_other");
       view.rerender(<ScenarioChatPage pathToken="tok_other" />);
       await waitFor(() => expect(redeemCalls).toBeGreaterThanOrEqual(2));
 
@@ -1523,7 +1523,7 @@ describe("ScenarioChatPage", () => {
 
     it("renders the denied landing for a SCENARIO_ACCESS_DENIED bootstrap failure", async () => {
       // The code is authoritative — no message-substring match required.
-      window.history.replaceState({}, "", "/scenario/test/tok_code_denied");
+      window.history.replaceState({}, "", "/user-testing/test/tok_code_denied");
       mockAuthFetch.mockResolvedValueOnce(
         createFetchResponse(
           {
