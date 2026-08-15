@@ -71,10 +71,10 @@ export function canonicalJson(value: unknown): string {
   if (value === undefined) {
     throw new CanonicalJsonError("Cannot canonicalize `undefined` at the root");
   }
-  return write(value);
+  return write(value, new Set());
 }
 
-function write(value: unknown): string {
+function write(value: unknown, ancestors: Set<object>): string {
   if (value === null) return "null";
 
   switch (typeof value) {
@@ -92,28 +92,47 @@ function write(value: unknown): string {
       );
   }
 
-  if (Array.isArray(value)) {
-    return `[${value
-      .map((entry) => (entry === undefined ? "null" : write(entry)))
-      .join(",")}]`;
+  // A cycle would otherwise recurse to a stack-overflow RangeError, which
+  // reads as a crash rather than as "this value is not canonicalizable".
+  if (ancestors.has(value as object)) {
+    throw new CanonicalJsonError("Cannot canonicalize a circular structure");
   }
+  ancestors.add(value as object);
 
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new CanonicalJsonError(
-      "Cannot canonicalize a non-plain object (only plain objects, arrays and " +
-        "JSON primitives are part of the contract)"
-    );
-  }
+  try {
+    if (Array.isArray(value)) {
+      // Indexed, NOT `.map()`. `map` skips holes in a sparse array, and the
+      // resulting `join` emits empty fields — `[1,,3]` would canonicalize to
+      // `"[1,,3]"`, which is not JSON and lets distinct configs collide.
+      const entries: string[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        const entry = value[index];
+        entries.push(entry === undefined ? "null" : write(entry, ancestors));
+      }
+      return `[${entries.join(",")}]`;
+    }
 
-  const record = value as Record<string, unknown>;
-  const parts: string[] = [];
-  for (const key of Object.keys(record).sort()) {
-    const entry = record[key];
-    if (entry === undefined) continue;
-    parts.push(`${JSON.stringify(key)}:${write(entry)}`);
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new CanonicalJsonError(
+        "Cannot canonicalize a non-plain object (only plain objects, arrays and " +
+          "JSON primitives are part of the contract)"
+      );
+    }
+
+    const record = value as Record<string, unknown>;
+    const parts: string[] = [];
+    for (const key of Object.keys(record).sort()) {
+      const entry = record[key];
+      if (entry === undefined) continue;
+      parts.push(`${JSON.stringify(key)}:${write(entry, ancestors)}`);
+    }
+    return `{${parts.join(",")}}`;
+  } finally {
+    // Released on the way back up so a value that legitimately appears twice
+    // in DIFFERENT branches is not mistaken for a cycle.
+    ancestors.delete(value as object);
   }
-  return `{${parts.join(",")}}`;
 }
 
 /** Lowercase hex SHA-256 of a UTF-8 string. */

@@ -8,7 +8,7 @@
  * reached for a passthrough to ship one more field.
  */
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   buildEvaluationConfigSnapshot,
   definitionHash,
@@ -16,17 +16,6 @@ import {
   resolveScoreDefinition,
 } from "@mcpjam/sdk/contract";
 import type { ScoreDefinition } from "@mcpjam/sdk/contract";
-
-const convexQueryMock = vi.fn();
-
-vi.mock("convex/browser", () => ({
-  ConvexHttpClient: class {
-    query = convexQueryMock;
-    action = vi.fn();
-    mutation = vi.fn();
-    setAuth = vi.fn();
-  },
-}));
 
 const GATING: ScoreDefinition = {
   scorerId: "refund-mentioned",
@@ -63,36 +52,15 @@ const scores = [
 ];
 
 /**
- * Reimplements the route's projection contract as a black box: build the
- * metadata a real ingest would store, run it through the same validators the
- * route uses, and assert on what survives. The route module itself is a large
- * Hono app with a heavy dependency graph; what is under test here is the
- * projection rule, which is exactly reproducible from the exported schemas.
+ * Exercises the PRODUCTION projection, imported from the route's own module.
+ * A test that re-implemented the rule would only prove it agrees with itself,
+ * and the thing this boundary guards — `metadata` never leaking — is exactly
+ * what such a test would stop noticing.
  */
 async function project(metadata: Record<string, unknown>) {
-  const { evaluationConfigSnapshotSchema, scoreResultArraySchema } =
-    await import("@mcpjam/sdk/contract");
-  const parsedScores = scoreResultArraySchema.safeParse(metadata.scores);
-  const parsedConfig = evaluationConfigSnapshotSchema.safeParse(
-    metadata.evaluationConfig,
-  );
-  const integrity =
-    metadata.scoreIntegrity === "score_integrity_invalid"
-      ? { scoreIntegrity: metadata.scoreIntegrity }
-      : {};
-  if (!parsedScores.success || !parsedConfig.success) {
-    return integrity as Record<string, unknown>;
-  }
-  return {
-    scores: parsedScores.data,
-    evaluationConfig: parsedConfig.data,
-    ...integrity,
-  } as Record<string, unknown>;
+  const { toScoreProjection } = await import("../eval-score-projection.js");
+  return toScoreProjection(metadata) as Record<string, unknown>;
 }
-
-beforeEach(() => {
-  convexQueryMock.mockReset();
-});
 
 describe("iteration score projection", () => {
   it("projects scores and the snapshot together", async () => {
@@ -142,6 +110,43 @@ describe("iteration score projection", () => {
     expect(dto.scoreIntegrity).toBe("score_integrity_invalid");
   });
 
+  it("projects NO evidence at all when integrity is invalid, even if valid", async () => {
+    // The surviving rows are the subset that happened to validate. Publishing
+    // them would let a consumer compute a clean pass from an incomplete
+    // picture of a verdict the backend already downgraded.
+    const dto = await project({
+      scores,
+      evaluationConfig: snapshot,
+      scoreIntegrity: "score_integrity_invalid",
+    });
+    expect(dto.scores).toBeUndefined();
+    expect(dto.evaluationConfig).toBeUndefined();
+    expect(dto.scoreIntegrity).toBe("score_integrity_invalid");
+  });
+
+  it("ignores an unrecognized integrity marker", async () => {
+    const dto = await project({
+      scores,
+      evaluationConfig: snapshot,
+      scoreIntegrity: "probably_fine",
+    });
+    expect(dto.scoreIntegrity).toBeUndefined();
+    // …and the evidence still projects, because nothing flagged it.
+    expect(dto.scores).toHaveLength(2);
+  });
+
+  it("tolerates null and non-object metadata", async () => {
+    expect(await project(null as unknown as Record<string, unknown>)).toEqual({});
+    expect(
+      await project("nope" as unknown as Record<string, unknown>),
+    ).toEqual({});
+    expect(await project({ scores: null, evaluationConfig: null })).toEqual({});
+    expect(await project({ scores: [], evaluationConfig: snapshot })).toEqual({
+      scores: [],
+      evaluationConfig: snapshot,
+    });
+  });
+
   it("never projects metadata itself, or quarantined raw payloads", async () => {
     const dto = await project({
       scores,
@@ -170,6 +175,22 @@ describe("iteration score projection", () => {
     // existed.
     const dto = await project({ retryCount: 0, iterationNumber: 1 });
     expect(dto).toEqual({});
+  });
+});
+
+describe("run-level integrity projection", () => {
+  it("projects only the two known verdicts", async () => {
+    const { toRunScoreIntegrity } = await import(
+      "../eval-score-projection.js"
+    );
+    expect(toRunScoreIntegrity("valid")).toEqual({ scoreIntegrity: "valid" });
+    expect(toRunScoreIntegrity("invalid")).toEqual({
+      scoreIntegrity: "invalid",
+    });
+    // Absent means NO VERDICT, which a gate treats exactly like invalid.
+    expect(toRunScoreIntegrity(undefined)).toEqual({});
+    expect(toRunScoreIntegrity(null)).toEqual({});
+    expect(toRunScoreIntegrity("probably_fine")).toEqual({});
   });
 });
 

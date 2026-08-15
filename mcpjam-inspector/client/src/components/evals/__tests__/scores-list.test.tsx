@@ -129,6 +129,19 @@ describe("gate helpers", () => {
   it("never gates on not_applicable", () => {
     expect(scoreFailsGate(notApplicableScoreResult(gate), snapshot)).toBe(false);
   });
+
+  it("excludes a not_applicable row from the gate DENOMINATOR", () => {
+    // Counting it would render "1 / 1 checks passed" for an iteration whose
+    // only gating scorer was never in scope — the exact conflation
+    // `not_applicable` exists to prevent.
+    expect(isGatingScore(notApplicableScoreResult(gate), snapshot)).toBe(false);
+    // …while an UNJOINABLE row still counts, because it fails closed.
+    const orphan: ScoreResult = {
+      ...notApplicableScoreResult(gate),
+      definitionHash: "0".repeat(64),
+    };
+    expect(isGatingScore(orphan, snapshot)).toBe(true);
+  });
 });
 
 describe("ScoresList", () => {
@@ -226,7 +239,49 @@ describe("ScoresList", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders nothing for an empty score set", () => {
+  it("does NOT summarize as passed when integrity is invalid", () => {
+    // The surviving rows are the subset that validated, so they can all read
+    // green while the run's own verdict was downgraded. Showing "1 / 1 passed"
+    // beside a failed iteration is the contradiction to avoid.
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(gate, { kind: "scored", value: 1 })]}
+        evaluationConfig={snapshot}
+        integrity="score_integrity_invalid"
+      />,
+    );
+    expect(
+      screen.getByText("score evidence did not verify"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/gating scores passed/)).toBeNull();
+  });
+
+  it("renders an integrity-only payload with no surviving rows", () => {
+    // Every row quarantined: the warning is then the ONLY explanation an
+    // operator gets for the failed verdict.
+    render(
+      <ScoresList
+        scores={[]}
+        evaluationConfig={snapshot}
+        integrity="score_integrity_invalid"
+      />,
+    );
+    expect(
+      screen.getByText(/verdict was downgraded at ingest/),
+    ).toBeInTheDocument();
+  });
+
+  it("badges an unjoinable scored row as UNRESOLVED, never PASS", () => {
+    const orphan: ScoreResult = {
+      ...finalizeScoreResult(gate, { kind: "scored", value: 1 }),
+      definitionHash: "0".repeat(64),
+    };
+    render(<ScoresList scores={[orphan]} evaluationConfig={snapshot} />);
+    expect(screen.getByText("UNRESOLVED")).toBeInTheDocument();
+    expect(screen.queryByText("PASS")).toBeNull();
+  });
+
+  it("renders nothing for an empty score set with no integrity flag", () => {
     const { container } = render(
       <ScoresList scores={[]} evaluationConfig={snapshot} />,
     );

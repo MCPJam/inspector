@@ -8,6 +8,7 @@ import {
   isGatingScore,
   parseEvaluationConfig,
   parseIterationScores,
+  parseScoreIntegrity,
   scoreFailsGate,
 } from "./scores-list";
 
@@ -71,8 +72,14 @@ export function CompactIterationRow({
             passed: predicates.filter((p) => p.passed).length,
           }
         : null;
+  // An integrity downgrade means the gating evidence did not verify. The rows
+  // that survived may all be green, so the chip must not read as a pass.
+  const scoreIntegrityInvalid =
+    parseScoreIntegrity(iteration.metadata) === "score_integrity_invalid";
   const allChecksPassed =
-    checksBadge !== null && checksBadge.passed === checksBadge.total;
+    checksBadge !== null &&
+    checksBadge.passed === checksBadge.total &&
+    !scoreIntegrityInvalid;
 
   return (
     <div

@@ -467,6 +467,17 @@ describe("predicateScorer", () => {
     }
   });
 
+  it("gives two anonymous same-type scorers DIFFERENT ids", () => {
+    // Defaulting both to `#0` would collide in the snapshot and make one of
+    // them unjoinable — which fails the gate closed with no explanation.
+    const a = predicateScorer({ type: "responseContains", needle: "alpha" });
+    const b = predicateScorer({ type: "responseContains", needle: "beta" });
+    expect(a.definition.scorerId).not.toBe(b.definition.scorerId);
+    // Still generated: content-stable is not author-stable, so a gate must
+    // refuse to select it.
+    expect(a.definition.idSource).toBe("generated");
+  });
+
   it("refuses a widget predicate at construction", () => {
     expect(() => predicateScorer({ type: "widgetRendered" })).toThrow(
       /hosted run captures/
@@ -496,6 +507,18 @@ describe("judgeScorer", () => {
     expect(() =>
       judgeScorer({ id: "x", model: "m", apiKey: "k" })
     ).toThrow(/exactly one/);
+  });
+
+  it("rejects a threshold outside [0,1] at CONSTRUCTION", () => {
+    // `passThreshold: -1` makes `value >= threshold` true for every possible
+    // score, so a gating judge with a typo'd threshold would pass everything.
+    for (const threshold of [-1, 1.5, NaN, Infinity]) {
+      expect(() => judgeScorer({ ...options, threshold })).toThrow(
+        /threshold must be a number in \[0,1\]/
+      );
+    }
+    expect(() => judgeScorer({ ...options, threshold: 0 })).not.toThrow();
+    expect(() => judgeScorer({ ...options, threshold: 1 })).not.toThrow();
   });
 
   it("is advisory by default and defaults to the hosted 0.7 threshold", () => {
@@ -685,6 +708,26 @@ describe("gating policy", () => {
     expect(scoreFor(scores, "non-empty")?.status).toBe("scored");
     expect(scoreFor(scores, "judge")?.status).toBe("skipped");
     expect(generateObjectMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("reserved scorer ids", () => {
+  it("rejects a custom scorer that shadows a built-in projection", async () => {
+    // The built-in row would otherwise be minted against the CUSTOM definition,
+    // carrying a definitionHash that joins to nothing — a permanently failing
+    // iteration with no message naming the cause.
+    for (const reserved of ["legacy:test", "tool-match"]) {
+      const test = new EvalTest({
+        name: "collision",
+        scorers: [
+          predicateScorer({ type: "noToolErrors" }, { id: reserved }),
+        ],
+        test: async () => true,
+      });
+      await expect(
+        test.run(mockAgent(() => mockPrompt({})), { iterations: 1 })
+      ).rejects.toThrow(/already used by this test's built-in scorers/);
+    }
   });
 });
 

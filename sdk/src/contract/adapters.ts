@@ -124,10 +124,19 @@ export function toolMatchScoreDefinition(options: {
 }
 
 function describeToolMatch(match: EvalToolCallMatchResult): string {
-  if (match.passed) {
-    return "every expected tool call was observed";
-  }
   const parts: string[] = [];
+  if (match.passed) {
+    // Extras are still reported on a PASS: `maxExtraToolCalls` may permit them,
+    // but "the agent also called three tools you did not expect" is exactly the
+    // diagnostic somebody reads a rationale for.
+    parts.push("every expected tool call was observed");
+    if (match.extra.length > 0) {
+      parts.push(
+        `extra ${match.extra.map((call) => call.toolName).join(", ")} (permitted)`
+      );
+    }
+    return parts.join("; ");
+  }
   if (match.missing.length > 0) {
     parts.push(
       `missing ${match.missing.map((call) => call.toolName).join(", ")}`

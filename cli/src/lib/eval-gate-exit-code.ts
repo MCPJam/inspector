@@ -39,6 +39,21 @@ export function evalGateExitCode(report: GateReport): number {
   }
 }
 
+/**
+ * Statuses at which a run has stopped changing.
+ *
+ * Colocated with {@link NON_VERDICT_STATUSES} on purpose: they are one
+ * vocabulary, and splitting them across files is how a newly-added terminal
+ * status ends up in one set and not the other — making `--wait` poll a finished
+ * run until the deadline and then report a wait timeout.
+ */
+export const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
 /** Terminal run statuses that make a gate undecidable rather than failed. */
 const NON_VERDICT_STATUSES = new Set(["cancelled", "timed_out"]);
 

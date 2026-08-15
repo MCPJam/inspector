@@ -13,6 +13,7 @@ import {
   type Predicate,
 } from "../predicates/types.js";
 import { predicateScoreDefinition } from "../contract/adapters.js";
+import { canonicalDigest } from "../contract/canonical.js";
 import type { ScorerRole } from "../contract/types.js";
 import type { Scorer } from "./types.js";
 
@@ -42,7 +43,14 @@ export type PredicateScorerOptions = {
    * gated in CI should name itself.
    */
   id?: string;
-  /** Position in the authored list; feeds the generated id. */
+  /**
+   * Position in the authored list; feeds the generated id.
+   *
+   * Omit it and the id is derived from the predicate's CONTENT instead of its
+   * position, so two anonymous scorers of the same type cannot both mint
+   * `predicate:<type>#0` and collide in the snapshot. Either way the id is
+   * `idSource: "generated"` and therefore not gateable.
+   */
   ordinal?: number;
   /** Predicates gate by default — determinism is what a release gate needs. */
   role?: ScorerRole;
@@ -58,6 +66,18 @@ export function predicateScorer(
     ordinal: options?.ordinal ?? 0,
     role: options?.role,
   });
+
+  // Positional numbering is meaningless for a standalone scorer nobody gave an
+  // index to, and defaulting every one of them to `#0` means two anonymous
+  // scorers of the same predicate type mint the SAME id and collide in the
+  // snapshot. When no ordinal was supplied, derive the suffix from the
+  // predicate's content instead. Still `idSource: "generated"` — content-stable
+  // is not the same as author-stable, and a gate must not select it.
+  if (options?.id === undefined && options?.ordinal === undefined) {
+    definition.scorerId = `predicate:${predicate.type}#${canonicalDigest(
+      predicate
+    ).slice(0, 8)}`;
+  }
 
   return {
     definition,

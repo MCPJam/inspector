@@ -28,6 +28,8 @@ import {
   definitionHash,
   resolveScoreDefinition,
 } from "../src/contract/derive.js";
+import { gateInputFromSuiteResult } from "../src/gates.js";
+import { scoresPassed } from "../src/scorers/run.js";
 import type { ScoreDefinition } from "../src/contract/types.js";
 
 const GATING: ScoreDefinition = {
@@ -225,6 +227,67 @@ describe("score-integrity tri-state", () => {
       maximumP95LatencyMs: 1000,
     });
     expect(report.outcome).toBe("passed");
+  });
+
+  it("an exceeded resource budget FAILS rather than passing vacuously", () => {
+    expect(
+      evaluateGates(input(), { maximumTotalTokens: 999 }).outcome
+    ).toBe("failed");
+    expect(
+      evaluateGates(input(), { maximumP95LatencyMs: 499 }).outcome
+    ).toBe("failed");
+  });
+
+  it("an ABSENT total is non-gateable, never a pass", () => {
+    // A cap evaluated against a missing total would silently read as 0.
+    expect(
+      evaluateGates(input({ totals: undefined }), { maximumTotalTokens: 2000 })
+        .outcome
+    ).toBe("incomplete");
+    expect(
+      evaluateGates(input({ totals: {} }), { maximumP95LatencyMs: 1000 })
+        .outcome
+    ).toBe("incomplete");
+  });
+});
+
+describe("scoresPassed", () => {
+  const definitions = [GATING, JUDGE].map(resolveScoreDefinition);
+
+  it("passes when every gating definition is represented and green", () => {
+    expect(
+      scoresPassed(
+        [
+          { ...score("refund"), scorerVersion: "1", deterministic: true },
+          { ...score("tone"), scorerVersion: "1", deterministic: false },
+        ] as never,
+        definitions
+      )
+    ).toBe(true);
+  });
+
+  it("FAILS when a gating definition produced no row at all", () => {
+    // Iterating scores alone never enters the loop for a missing scorer, so
+    // this used to pass — absent evidence reading as a pass.
+    expect(
+      scoresPassed(
+        [{ ...score("refund"), scorerVersion: "1", deterministic: true }] as never,
+        definitions
+      )
+    ).toBe(false);
+  });
+
+  it("does not require ADVISORY definitions to be represented", () => {
+    const advisoryDefinitions = [
+      resolveScoreDefinition(GATING),
+      resolveScoreDefinition({ ...JUDGE, role: "advisory" }),
+    ];
+    expect(
+      scoresPassed(
+        [{ ...score("refund"), scorerVersion: "1", deterministic: true }] as never,
+        advisoryDefinitions
+      )
+    ).toBe(true);
   });
 });
 
@@ -460,6 +523,116 @@ describe("adapters", () => {
 
     const report = evaluateGates(built, { minimumScorerPassRate: { refund: 1 } });
     expect(report.outcome).toBe("incomplete");
+  });
+
+  it("merges per-case definitions for a suite, deduplicated by hash", () => {
+    const caseA = {
+      iterations: 1,
+      successes: 1,
+      failures: 0,
+      results: [true],
+      iterationDetails: [
+        { passed: true, latencies: [], tokens: { total: 1, input: 0, output: 1 }, scores: [score("refund")] },
+      ],
+      tokenUsage: { total: 1, input: 0, output: 1, perIteration: [] },
+      latency: {
+        e2e: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 1 },
+        llm: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 1 },
+        mcp: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 1 },
+        perIteration: [],
+      },
+      evaluationConfig: buildEvaluationConfigSnapshot([GATING]),
+    };
+    const caseB = {
+      ...caseA,
+      iterationDetails: [
+        { passed: true, latencies: [], tokens: { total: 1, input: 0, output: 1 }, scores: [score("refund"), score("tone", { value: 0.9 })] },
+      ],
+      evaluationConfig: buildEvaluationConfigSnapshot([GATING, JUDGE]),
+    };
+
+    const built = gateInputFromSuiteResult({
+      tests: new Map([
+        ["a", caseA],
+        ["b", caseB],
+      ]),
+      aggregate: {
+        iterations: 2,
+        successes: 2,
+        failures: 0,
+        accuracy: 1,
+        tokenUsage: { total: 2, perTest: [1, 1] },
+        latency: {
+          e2e: { min: 0, max: 0, mean: 0, p50: 0, p95: 3, count: 2 },
+          llm: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 2 },
+          mcp: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 2 },
+        },
+      },
+    } as never);
+
+    // `refund` appears in BOTH cases and collapses to one entry…
+    expect(built.evaluationConfig?.definitions).toHaveLength(2);
+    // …and the hash actually describes the merged set.
+    expect(built.evaluationConfig?.hash).toBe(
+      buildEvaluationConfigSnapshot([GATING, JUDGE]).hash
+    );
+    // Scores are flattened across every case.
+    expect(built.scores).toHaveLength(3);
+
+    // A policy naming a scorer that exists in only ONE case still resolves.
+    expect(
+      evaluateGates(built, { minimumScorerPassRate: { tone: 1 } }).outcome
+    ).toBe("passed");
+  });
+
+  it("drops the token total when ANY iteration lacks one", () => {
+    const iteration = (tokensUsed: number | null) => ({
+      id: "i",
+      testCaseId: null,
+      title: null,
+      iterationNumber: 1,
+      status: "completed",
+      result: "passed",
+      model: null,
+      provider: null,
+      startedAt: null,
+      durationMs: 10,
+      tokensUsed,
+      usage: null,
+      actualToolCalls: [],
+      expectedToolCalls: [],
+      error: null,
+    });
+    const run = {
+      id: "run_1",
+      suiteId: "s",
+      runNumber: 1,
+      status: "completed",
+      result: "passed",
+      summary: { total: 2, passed: 2 },
+      source: "sdk",
+      notes: null,
+      createdAt: 0,
+      completedAt: 1,
+      scoreIntegrity: "valid" as const,
+    };
+
+    const complete = gateInputFromPlatformRun(run, {
+      complete: true,
+      items: [iteration(10), iteration(20)] as never,
+    });
+    expect(complete.totals?.tokens).toBe(30);
+    expect(complete.totals?.e2eP95Ms).toBe(10);
+
+    // One missing count makes the SUM wrong, not merely smaller.
+    const partial = gateInputFromPlatformRun(run, {
+      complete: true,
+      items: [iteration(10), iteration(null)] as never,
+    });
+    expect(partial.totals?.tokens).toBeUndefined();
+    expect(
+      evaluateGates(partial, { maximumTotalTokens: 5 }).outcome
+    ).toBe("incomplete");
   });
 
   it("maps a null platform integrity to undefined (no verdict)", () => {

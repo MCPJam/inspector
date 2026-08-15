@@ -90,10 +90,12 @@ export async function runScorers(
 ): Promise<ScoreResult[]> {
   if (scorers.length === 0) return [];
 
-  const concurrency = Math.max(
-    1,
-    options?.concurrency ?? DEFAULT_SCORER_CONCURRENCY
-  );
+  // Normalized, not trusted: a non-finite or fractional cap either disables
+  // the bound or wedges every scorer waiting on a permit that never frees.
+  const requested = options?.concurrency ?? DEFAULT_SCORER_CONCURRENCY;
+  const concurrency = Number.isFinite(requested)
+    ? Math.max(1, Math.floor(requested))
+    : DEFAULT_SCORER_CONCURRENCY;
   const fallbackTimeout = options?.timeoutMs ?? DEFAULT_SCORER_TIMEOUT_MS;
   const semaphore = new Semaphore(concurrency);
   const skipReason = options?.skipNonDeterministicReason;
@@ -105,8 +107,11 @@ export async function runScorers(
       // The retry-exhausted path. A gating judge skipped here fails closed by
       // default, which is correct: an unscored gate is not a passed gate, and
       // the rationale says exactly why so nobody has to guess.
-      if (skipReason && !definition.deterministic) {
-        return skippedScoreResult(definition, skipReason);
+      if (skipReason !== undefined && !definition.deterministic) {
+        return skippedScoreResult(
+          definition,
+          skipReason || "iteration errored before scoring"
+        );
       }
 
       await semaphore.acquire();
@@ -174,6 +179,15 @@ export function scoresPassed(
         return false;
       }
     }
+  }
+
+  // Every gating definition must actually be REPRESENTED. Iterating scores
+  // alone silently passes an iteration whose gating scorer produced no row at
+  // all — the loop simply never runs — which is the same "absent evidence read
+  // as a pass" the whole contract exists to prevent.
+  const present = new Set(scores.map((score) => score.definitionHash));
+  for (const [hash, definition] of byHash) {
+    if (definition.role === "gating" && !present.has(hash)) return false;
   }
   return true;
 }

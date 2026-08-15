@@ -20,7 +20,8 @@ import type {
   ResolvedScoreDefinition,
   ScoreResult,
 } from "./contract/types.js";
-import { definitionHash } from "./contract/derive.js";
+import { definitionHash, evaluationConfigHash } from "./contract/derive.js";
+import { calculateLatencyStats } from "./percentiles.js";
 import type {
   PlatformEvalIteration,
   PlatformEvalRun,
@@ -190,9 +191,12 @@ export function gateInputFromSuiteResult(result: EvalSuiteResult): GateInput {
     ...(definitions.length > 0
       ? {
           evaluationConfig: {
-            // The merged set spans cases, so its hash is not any one case's
-            // `evaluationConfigHash`; it exists only to make the join work.
-            hash: "",
+            // Computed over the MERGED set, so the hash actually describes the
+            // definitions it ships with. It is deliberately not equal to any
+            // one case's `evaluationConfigHash` — a suite has no single one —
+            // but a snapshot whose hash does not describe its own contents is
+            // a lie waiting to be verified against.
+            hash: evaluationConfigHash(definitions),
             definitions,
           },
         }
@@ -227,9 +231,6 @@ export function gateInputFromPlatformRun(
       : undefined;
 
   const usable = iterations?.complete ? iterations.items : [];
-  const snapshot = usable.find(
-    (iteration) => iteration.evaluationConfig
-  )?.evaluationConfig;
 
   // Merge every iteration's definitions: a suite run grades different cases
   // with different scorers, and a policy naming one of them must still resolve.
@@ -239,14 +240,31 @@ export function gateInputFromPlatformRun(
       byHash.set(definitionHash(definition), definition);
     }
   }
+  const merged = [...byHash.values()];
+
+  // A single iteration missing its token count makes the SUM wrong, not
+  // merely smaller — and a token cap evaluated against an undercount passes
+  // for the wrong reason. Absent beats approximate: the gate reports
+  // non-gateable instead.
+  const tokenCounts = usable.map((iteration) => iteration.tokensUsed);
+  const tokens = tokenCounts.every((count) => typeof count === "number")
+    ? (tokenCounts as number[]).reduce((sum, count) => sum + count, 0)
+    : undefined;
+
+  // Same rule for latency: p95 over a partial set is not this run's p95.
+  const durations = usable.map((iteration) => iteration.durationMs);
+  const e2eP95Ms =
+    durations.length > 0 && durations.every((ms) => typeof ms === "number")
+      ? calculateLatencyStats(durations as number[]).p95
+      : undefined;
 
   return {
     iterations: { total, passed },
-    ...(byHash.size > 0
+    ...(merged.length > 0
       ? {
           evaluationConfig: {
-            hash: snapshot?.hash ?? "",
-            definitions: [...byHash.values()],
+            hash: evaluationConfigHash(merged),
+            definitions: merged,
           },
         }
       : {}),
@@ -258,10 +276,8 @@ export function gateInputFromPlatformRun(
             }))
           ),
           totals: {
-            tokens: usable.reduce(
-              (sum, iteration) => sum + (iteration.tokensUsed ?? 0),
-              0
-            ),
+            ...(tokens !== undefined ? { tokens } : {}),
+            ...(e2eP95Ms !== undefined ? { e2eP95Ms } : {}),
           },
         }
       : {}),
@@ -345,6 +361,12 @@ export function evaluateGates(
   const verdicts: GateVerdict[] = [];
   const scores = input.scores ?? [];
   const byId = definitionsById(input.evaluationConfig);
+  const byHash = new Map(
+    (input.evaluationConfig?.definitions ?? []).map((definition) => [
+      definitionHash(definition),
+      definition,
+    ])
+  );
   const gateability = scoreGateability(input.scoreIntegrity);
   /**
    * Without the definition snapshot, NO score gate is decidable — not even
@@ -439,10 +461,14 @@ export function evaluateGates(
         message: integrityReason(input.scoreIntegrity),
       });
     } else {
+      // Joined by definitionHash, like every other consumer. Matching on
+      // scorerId would grade a row against whichever definition happened to
+      // land last in the map when a merged run carries the same id under two
+      // hashes.
       const errored = scores.filter(
         (score) =>
           score.status === "error" &&
-          byId.get(score.scorerId)?.role === "gating"
+          byHash.get(score.definitionHash)?.role === "gating"
       );
       verdicts.push({
         gate,

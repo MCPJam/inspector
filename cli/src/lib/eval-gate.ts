@@ -44,7 +44,10 @@ function parseScorerMap(
   flag: string,
   parseValue: (raw: string, flag: string) => number
 ): Record<string, number> {
-  const out: Record<string, number> = {};
+  // Null prototype: `out["__proto__"] = 0.9` on a plain object sets the
+  // PROTOTYPE rather than an own key, so `--min-scorer-pass-rate __proto__=100`
+  // would silently drop the gate the author asked for.
+  const out: Record<string, number> = Object.create(null);
   for (const entry of entries) {
     const index = entry.indexOf("=");
     if (index <= 0) {
@@ -53,6 +56,13 @@ function parseScorerMap(
     const scorerId = entry.slice(0, index).trim();
     if (!scorerId) {
       throw usageError(`${flag} is missing a scorer id in "${entry}".`);
+    }
+    if (Object.prototype.hasOwnProperty.call(out, scorerId)) {
+      // Last-wins would silently discard the stricter of two thresholds the
+      // author wrote — a gate quietly weakened by a copy-paste.
+      throw usageError(
+        `${flag} names "${scorerId}" more than once; pass one threshold per scorer.`
+      );
     }
     out[scorerId] = parseValue(entry.slice(index + 1).trim(), flag);
   }

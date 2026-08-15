@@ -142,9 +142,10 @@
     {
       "__kind": "result",
       "__label": "result — scored with evidence and a per-turn scope",
+      "__why": "definitionHash on an accept ROW is an opaque join key — these rows are validated against a snapshot the loader builds for them, not against __digests. It is deliberately NOT one of the pinned constants, so nobody mistakes it for the digest of a definition that appears in this file.",
       "scorerId": "rubric-refund",
       "scorerVersion": "1",
-      "definitionHash": "1727fc2953bec6c1b5b5618f3fa4244b76d662bae8f26d3f13ca7acc964d8580",
+      "definitionHash": "00000000000000000000000000000000000000000000000000000000rubric1",
       "status": "scored",
       "value": 1,
       "passThreshold": 1,

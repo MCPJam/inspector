@@ -90,8 +90,37 @@ test("repeatable scorer flags parse into a fraction map", () => {
     minScorerPassRate: ["tone=90", "refund=100"],
     minMeanScore: ["tone=0.8"],
   });
-  assert.deepEqual(policy.minimumScorerPassRate, { tone: 0.9, refund: 1 });
-  assert.deepEqual(policy.minimumMeanScore, { tone: 0.8 });
+  // Compared by entries, not deepEqual: the maps are null-prototype (so a
+  // `__proto__` scorer id lands as a real own key), and `deepEqual` treats a
+  // null-prototype object as unequal to an object literal.
+  assert.deepEqual(Object.entries(policy.minimumScorerPassRate ?? {}), [
+    ["tone", 0.9],
+    ["refund", 1],
+  ]);
+  assert.deepEqual(Object.entries(policy.minimumMeanScore ?? {}), [
+    ["tone", 0.8],
+  ]);
+});
+
+test("a __proto__ scorer id becomes a real entry, not a silent no-op", () => {
+  // On a plain object `out["__proto__"] = 0.9` sets the PROTOTYPE, so the gate
+  // the author asked for would vanish without a word.
+  const policy = policyFromOptions({ minScorerPassRate: ["__proto__=100"] });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      policy.minimumScorerPassRate ?? {},
+      "__proto__",
+    ),
+    true,
+  );
+  assert.equal((policy.minimumScorerPassRate as never)["__proto__"], 1);
+});
+
+test("naming the same scorer twice is a usage error, not last-wins", () => {
+  assert.throws(
+    () => policyFromOptions({ minScorerPassRate: ["tone=95", "tone=50"] }),
+    /more than once/,
+  );
 });
 
 test("malformed scorer flags are usage errors", () => {

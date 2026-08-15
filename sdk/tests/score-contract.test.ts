@@ -110,6 +110,30 @@ describe("canonicalJson", () => {
     expect(canonicalJson({ "a\"b": "c\nd" })).toBe('{"a\\"b":"c\\nd"}');
   });
 
+  it("serializes sparse-array holes as null, not as empty fields", () => {
+    // `.map()` SKIPS holes and `join` then emits `"[1,,3]"` — not JSON, and a
+    // shape distinct configs could collide on.
+    const sparse = [1, , 3] as unknown[];
+    expect(canonicalJson(sparse)).toBe("[1,null,3]");
+    expect(JSON.parse(canonicalJson(sparse))).toEqual([1, null, 3]);
+  });
+
+  it("reports a cycle instead of overflowing the stack", () => {
+    const cyclic: Record<string, unknown> = { a: 1 };
+    cyclic.self = cyclic;
+    expect(() => canonicalJson(cyclic)).toThrow(CanonicalJsonError);
+    expect(() => canonicalJson(cyclic)).toThrow(/circular/);
+  });
+
+  it("allows the same object twice in different branches", () => {
+    // Shared, not circular — a `finally`-scoped ancestor set must not confuse
+    // the two.
+    const shared = { v: 1 };
+    expect(canonicalJson({ a: shared, b: shared })).toBe(
+      '{"a":{"v":1},"b":{"v":1}}'
+    );
+  });
+
   it("round-trips through JSON.parse", () => {
     const value = { z: [1, { b: null, a: "x" }], y: true };
     expect(JSON.parse(canonicalJson(value))).toEqual(value);
@@ -176,6 +200,15 @@ describe("buildEvaluationConfigSnapshot", () => {
     expect(snapshot.hash).toBe(
       buildEvaluationConfigSnapshot([GATING, ADVISORY]).hash
     );
+  });
+
+  it("rejects duplicate scorerIds at construction", () => {
+    // An ambiguous join is one where a gating policy silently resolves to an
+    // advisory twin — caught here rather than downstream, where the snapshot
+    // merely fails validation and the run loses its scores with no reason.
+    expect(() =>
+      buildEvaluationConfigSnapshot([GATING, { ...ADVISORY, scorerId: "gate" }])
+    ).toThrow(/Duplicate scorerId "gate"/);
   });
 
   it("accepts already-resolved definitions idempotently", () => {

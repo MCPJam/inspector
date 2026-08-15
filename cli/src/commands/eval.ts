@@ -51,6 +51,8 @@ import { formatGateReport, type GateReport } from "@mcpjam/sdk";
 import type { PlatformEvalIteration } from "@mcpjam/sdk/platform";
 import {
   EVAL_GATE_INCOMPLETE_EXIT_CODE,
+  EVAL_GATE_USAGE_EXIT_CODE,
+  TERMINAL_RUN_STATUSES,
   evalGateExitCode,
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
@@ -474,13 +476,6 @@ async function fetchAllIterations(
   return { items, complete: false };
 }
 
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
 const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
 
 async function runEvalGate(
@@ -528,7 +523,23 @@ async function runEvalGate(
           { signal }
         );
 
-        while (options.wait && !TERMINAL_RUN_STATUSES.has(run.status)) {
+        while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+          if (!options.wait) {
+            // Without --wait, a still-running run would otherwise be gated on
+            // its PARTIAL summary — a confident verdict about an unfinished
+            // run. Undecidable, not failed.
+            return {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "run",
+                  status: "non_gateable" as const,
+                  message: `run is ${run.status}; pass --wait, or gate it once it finishes`,
+                },
+              ],
+            };
+          }
           if (Date.now() >= deadline) {
             // A wait timeout is INFRASTRUCTURE, not a verdict: the run may yet
             // pass. Reported as incomplete so it can never read as a
@@ -575,9 +586,18 @@ async function runEvalGate(
       }
     );
   } catch (error) {
-    // Network, auth, timeout — infrastructure. NEVER exit 1: a CI job that
-    // fails a release on a flaked request, and calls it a regression, teaches
-    // people to ignore the gate.
+    // A USAGE error (bad project selector, malformed flag) is the author's
+    // mistake and keeps its own exit code — mapping it to 3 would tell a CI
+    // operator to go looking for an outage that never happened.
+    if (
+      error instanceof Error &&
+      (error as { exitCode?: number }).exitCode === EVAL_GATE_USAGE_EXIT_CODE
+    ) {
+      throw error;
+    }
+    // Everything else — network, auth, timeout — is infrastructure. NEVER exit
+    // 1: a CI job that fails a release on a flaked request, and calls it a
+    // regression, teaches people to ignore the gate.
     const detail = error instanceof Error ? error.message : String(error);
     writeResult(
       {

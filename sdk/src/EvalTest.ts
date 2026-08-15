@@ -395,6 +395,14 @@ export class EvalTest {
               Promise.resolve().then(() => testFn(iterationAgent!)),
               hardTimeoutPromise,
             ]);
+            // Disarm BEFORE scoring. The iteration timeout bounds the agent
+            // run; scorers carry their own per-scorer bound. Leaving it armed
+            // meant a slow judge could trip it and stamp "Operation timed out"
+            // on a test that had already finished.
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = undefined;
+            }
             const promptResults = iterationAgent.getPromptHistory();
             const promptMetrics = collectPromptMetrics(promptResults);
             const predicates = this.config.predicates ?? [];
@@ -670,6 +678,33 @@ export class EvalTest {
    * — indistinguishable from tampering.
    */
   private buildEvaluationConfig(): EvaluationConfigSnapshot {
+    // Built-in projections own these ids. A custom scorer that reuses one would
+    // shadow the built-in in the id→definition map, so the built-in's row would
+    // be minted against the WRONG definition — carrying a definitionHash that
+    // joins to nothing, which fails the gate closed with no explanation the
+    // author can act on. Naming the collision is the whole fix.
+    const reserved = new Set([
+      legacyTestScoreDefinition().scorerId,
+      toolMatchScoreDefinition({
+        expectedToolCalls: this.config.expectedToolCalls ?? [],
+        matchOptions: resolveMatchOptions(this.config.matchOptions),
+      }).scorerId,
+      ...(this.config.predicates ?? []).map(
+        (predicate, index) =>
+          predicateScoreDefinition(predicate, { ordinal: index }).scorerId
+      ),
+    ]);
+    for (const scorer of this.config.scorers ?? []) {
+      if (reserved.has(scorer.definition.scorerId)) {
+        throw new Error(
+          `Scorer id "${scorer.definition.scorerId}" is already used by this ` +
+            `test's built-in scorers (test(), expectedToolCalls, and each ` +
+            `predicate each contribute one). Give the custom scorer a ` +
+            `different id.`
+        );
+      }
+    }
+
     const definitions = [
       legacyTestScoreDefinition(),
       toolMatchScoreDefinition({

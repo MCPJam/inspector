@@ -917,16 +917,20 @@ export function IterationDetails({
   // scoring has predicates and no scores at all.
   const scoresSection = (() => {
     const scores = parseIterationScores(iteration.metadata);
-    if (!scores || scores.length === 0) return null;
+    const integrity = parseScoreIntegrity(iteration.metadata);
+    // Rendered when there are scores OR when the backend flagged a downgrade.
+    // An integrity-invalid iteration whose rows were ALL quarantined has
+    // nothing to list, and that is exactly the case where the warning is the
+    // only explanation the operator will get for a failed verdict.
+    if ((!scores || scores.length === 0) && !integrity) return null;
     return (
-      <div className="space-y-2" data-testid="iteration-scores-section">
-        <div className="flex items-center justify-between border-b border-border/40 pb-2">
-          <div className="text-xs font-semibold">Scores</div>
-        </div>
+      // `ScoresList` owns its own "Scores" header; a wrapper heading here
+      // rendered it twice.
+      <div data-testid="iteration-scores-section">
         <ScoresList
-          scores={scores}
+          scores={scores ?? []}
           evaluationConfig={parseEvaluationConfig(iteration.metadata)}
-          integrity={parseScoreIntegrity(iteration.metadata)}
+          integrity={integrity}
         />
       </div>
     );

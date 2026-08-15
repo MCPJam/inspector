@@ -149,6 +149,13 @@ export function isGatingScore(
   config: EvaluationConfigSnapshot | null,
 ): boolean {
   const joined = joinOne(score, config);
+  // `not_applicable` is excluded from EVERY denominator — that is the property
+  // that distinguishes it from `skipped`. Counting it would render
+  // "1 / 1 checks passed" for an iteration where the only gating scorer was
+  // never in scope.
+  if (joined.definition !== null && score.status === "not_applicable") {
+    return false;
+  }
   return joined.definition === null || isGating(joined);
 }
 
@@ -161,6 +168,17 @@ export function scoreFailsGate(
 
 function statusBadge(joined: JoinedScore) {
   const { status, passed } = joined.score;
+  // An unjoinable row is treated as failing everywhere else; rendering the
+  // `passed` it happens to carry would put a green PASS chip on the one row
+  // whose verdict nobody can verify.
+  if (joined.definition === null) {
+    return {
+      label: "UNRESOLVED",
+      icon: AlertTriangle,
+      className:
+        "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+    };
+  }
   if (status === "scored") {
     return passed
       ? { label: "PASS", icon: CheckCircle2, className: EVAL_PASSED_BADGE_STRONG_CLASS }
@@ -214,7 +232,12 @@ export function ScoresList({
   evaluationConfig: EvaluationConfigSnapshot | null;
   integrity?: "score_integrity_invalid" | null;
 }) {
-  if (scores.length === 0) return null;
+  // An integrity-invalid iteration whose rows were ALL quarantined still
+  // renders: the warning below is the only explanation an operator will get
+  // for the failed verdict.
+  if (scores.length === 0 && integrity !== "score_integrity_invalid") {
+    return null;
+  }
   const joined = joinScores(scores, evaluationConfig);
   const gating = joined.filter(isGating);
   const advisory = joined.filter(
@@ -223,7 +246,13 @@ export function ScoresList({
   const unjoinable = joined.filter((row) => row.definition === null);
 
   const gatingFailures = gating.filter(failsGate).length;
-  const allPassed = gatingFailures === 0 && unjoinable.length === 0;
+  // An integrity downgrade means the backend could not verify this iteration's
+  // gating evidence and flipped its verdict. The surviving rows may all read
+  // green — they are the ones that DID validate — so summarizing them as a
+  // pass would contradict the run's own result.
+  const integrityInvalid = integrity === "score_integrity_invalid";
+  const allPassed =
+    gatingFailures === 0 && unjoinable.length === 0 && !integrityInvalid;
 
   return (
     <div
@@ -247,7 +276,9 @@ export function ScoresList({
           ) : (
             <XCircle className="h-3 w-3 shrink-0" aria-hidden />
           )}
-          {`${gating.length - gatingFailures} / ${gating.length} gating scores passed`}
+          {integrityInvalid
+            ? "score evidence did not verify"
+            : `${gating.length - gatingFailures} / ${gating.length} gating scores passed`}
         </div>
       </div>
 

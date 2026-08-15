@@ -9,6 +9,10 @@
  * `sdk/tests/fixtures/score-contract-parity-fixtures.json` — the same mechanism
  * that keeps `predicateSchema` and `convex/lib/predicates.ts` honest.
  *
+ * Every object is `.strict()`: Convex `v.object` REJECTS unknown fields, so a
+ * permissive Zod schema here would accept a payload the backend refuses, and
+ * the parity fixtures would certify two validators that disagree.
+ *
  * The `superRefine` clauses are not decoration. `passed` is DERIVED
  * (`value >= passThreshold`), and a payload asserting otherwise is the exact
  * shape a tampered or malformed score set takes: a row claiming
@@ -19,6 +23,7 @@
 
 import { z } from "zod";
 import { predicateScopeSchema } from "../predicates/types.js";
+import { evaluationConfigHash } from "./derive.js";
 import {
   MAX_ERROR_LENGTH,
   MAX_EVIDENCE_ENTRIES,
@@ -57,22 +62,26 @@ const scoreDefinitionShape = {
 };
 
 /** The authored definition: `onError`/`onSkipped` may still be unresolved. */
-export const scoreDefinitionSchema = z.object({
-  ...scoreDefinitionShape,
-  onError: scorerErrorPolicySchema.optional(),
-  onSkipped: scorerErrorPolicySchema.optional(),
-});
+export const scoreDefinitionSchema = z
+  .object({
+    ...scoreDefinitionShape,
+    onError: scorerErrorPolicySchema.optional(),
+    onSkipped: scorerErrorPolicySchema.optional(),
+  })
+  .strict();
 
 /**
  * The hashing and wire form. Every semantic default is filled, which is what
  * makes an omitted `onError` and an explicitly-configured default digest
  * identically.
  */
-export const resolvedScoreDefinitionSchema = z.object({
-  ...scoreDefinitionShape,
-  onError: scorerErrorPolicySchema,
-  onSkipped: scorerErrorPolicySchema,
-});
+export const resolvedScoreDefinitionSchema = z
+  .object({
+    ...scoreDefinitionShape,
+    onError: scorerErrorPolicySchema,
+    onSkipped: scorerErrorPolicySchema,
+  })
+  .strict();
 
 export const scoreResultSchema = z
   .object({
@@ -94,6 +103,7 @@ export const scoreResultSchema = z
     error: z.string().min(1).max(MAX_ERROR_LENGTH).optional(),
     scope: predicateScopeSchema.optional(),
   })
+  .strict()
   .superRefine((row, ctx) => {
     if (row.status === "scored") {
       if (row.value === undefined) {
@@ -164,6 +174,7 @@ export const evaluationConfigSnapshotSchema = z
     hash: z.string().min(1),
     definitions: z.array(resolvedScoreDefinitionSchema),
   })
+  .strict()
   .superRefine((snapshot, ctx) => {
     // Duplicate ids make the results→definitions join ambiguous, and an
     // ambiguous join is one where a gating policy can silently resolve to the
@@ -179,4 +190,18 @@ export const evaluationConfigSnapshotSchema = z
       }
       seen.add(definition.scorerId);
     });
+
+    // The hash must DESCRIBE the definitions it ships with. A snapshot whose
+    // hash was computed over a different set is the substitution the integrity
+    // model exists to catch, and accepting it here would let the public
+    // projection hand a consumer definitions that are not the ones the run
+    // graded with.
+    const recomputed = evaluationConfigHash(snapshot.definitions);
+    if (recomputed !== snapshot.hash) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["hash"],
+        message: `evaluationConfigHash mismatch (declared ${snapshot.hash}, recomputed ${recomputed})`,
+      });
+    }
   });

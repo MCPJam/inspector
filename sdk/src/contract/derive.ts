@@ -134,6 +134,20 @@ export function buildEvaluationConfigSnapshot(
   const resolved = definitions.map((definition) =>
     resolveScoreDefinition(definition)
   );
+  // Duplicate ids make the results→definitions join ambiguous, and an
+  // ambiguous join is one where a gating policy can silently resolve to an
+  // advisory twin. Caught here, at construction, rather than downstream where
+  // the snapshot merely fails validation and the run loses its scores.
+  const seen = new Set<string>();
+  for (const definition of resolved) {
+    if (seen.has(definition.scorerId)) {
+      throw new Error(
+        `Duplicate scorerId "${definition.scorerId}" in the evaluation config. ` +
+          `Scorer ids must be unique within a run.`
+      );
+    }
+    seen.add(definition.scorerId);
+  }
   return { hash: evaluationConfigHash(resolved), definitions: resolved };
 }
 
