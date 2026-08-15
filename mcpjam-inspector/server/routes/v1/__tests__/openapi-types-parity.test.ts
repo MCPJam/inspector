@@ -225,6 +225,12 @@ function unwrapTypeNode(node: ts.TypeNode): ts.TypeNode {
   }
 }
 
+/**
+ * `Child extends Parent` where `Parent` is not declared in `types.ts`. Asserted
+ * on below rather than swallowed — see `flatten`.
+ */
+const unresolvedHeritage: string[] = [];
+
 function parseSdkInterfaces(): Map<string, SdkInterface> {
   const source = ts.createSourceFile(
     TYPES_PATH,
@@ -347,7 +353,15 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
     onStack.add(name);
     const merged = new Map<string, SdkField>();
     for (const parent of iface.heritage) {
-      if (!out.has(parent)) continue;
+      // An `extends` target declared in ANOTHER file. Recorded rather than
+      // skipped: silently dropping it leaves the child looking like it has
+      // fewer fields than it does, and the ratchet then reports the parent's
+      // fields as spec drift — or, worse, compares a narrower type clean. The
+      // check below turns that into a visible failure instead.
+      if (!out.has(parent)) {
+        unresolvedHeritage.push(`${name} extends ${parent}`);
+        continue;
+      }
       for (const [field, value] of flatten(parent, onStack).fields) {
         merged.set(field, value);
       }
@@ -454,6 +468,20 @@ describe("openapi.json ↔ sdk/src/platform/types.ts parity", () => {
     expect(
       missingInterfaces,
       `PAIRS names SDK interfaces that no longer exist:\n  ${missingInterfaces.join(
+        "\n  "
+      )}`
+    ).toEqual([]);
+  });
+
+  it("resolves every `extends` target it was asked to flatten", () => {
+    // A parent declared outside `types.ts` cannot be flattened, so the child
+    // reads as having only its own fields. That does not fail anything on its
+    // own — it makes the comparison SMALLER, which is the failure mode this
+    // whole file exists to avoid. Fail loudly and let whoever adds the
+    // cross-file base decide how to teach the parser about it.
+    expect(
+      unresolvedHeritage,
+      `SDK interfaces extend types this parser cannot see, so their inherited fields are NOT being compared:\n  ${unresolvedHeritage.join(
         "\n  "
       )}`
     ).toEqual([]);

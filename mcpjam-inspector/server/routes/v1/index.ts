@@ -62,14 +62,23 @@ v1.route("/", publicModels);
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
 //
-// `passthroughRateLimitMiddleware` closes the last unmetered credential class.
-// The other two branches of `bearerAuthMiddleware` carry their own budgets —
-// an `sk_` key is metered per key id, a guest token per guest id — but the
-// AuthKit branch is deliberately NOT verified here (every route it fronts
-// forwards the bearer to Convex, which verifies it), and so reached the
-// handlers with nothing attached to it at all. It runs AFTER the auth
+// `passthroughRateLimitMiddleware` meters the one credential class the gateway
+// does not CHECK. An `sk_` key is validated against WorkOS and metered per key
+// id, a guest token is validated and metered per guest id — but an AuthKit JWT
+// is deliberately NOT verified here (every route it fronts forwards the bearer
+// to Convex, which verifies it against JWKS), and so reached the handlers with
+// nothing attached to it at all. Anyone can present one. It runs AFTER the auth
 // middleware because the label that middleware sets is the only thing that
 // distinguishes an asserted identity from a verified one.
+//
+// The `slk_`/`dsc_` SERVICE credentials are unmetered here too, and stay that
+// way deliberately: each is a single shared secret compared against a
+// server-side hash (`surface-service-auth.ts`), so a caller cannot mint one,
+// and the surface it fronts is our own bot rather than the public. Their real
+// ceiling is the backend's org-keyed budgets, which no gateway limiter can
+// substitute for. If a first-party surface ever needs braking, it wants its own
+// per-surface budget — not this one, which is keyed on a bearer that costs
+// nothing to rotate.
 v1.use(
   "*",
   bearerAuthMiddleware,

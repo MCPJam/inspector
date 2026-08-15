@@ -170,6 +170,25 @@ describe("translateConvexWriteError — billing_limit_reached (the daily cap)", 
     expect(error.details).toMatchObject({ limit: "maxProjects" });
     expect(error.headers).toBeUndefined();
   });
+
+  it("treats a junk reset the same as a missing one", () => {
+    // `null` in particular: a backend that serializes "no reset" as an explicit
+    // null rather than by omission must not produce `Retry-After: NaN`, which
+    // a client parses into a wait it will actually take.
+    for (const resetsAt of [null, Number.NaN, Number.POSITIVE_INFINITY, "?"]) {
+      const error = translateConvexWriteError(
+        convexError({
+          code: "billing_limit_reached",
+          limit: "insightsPerDay",
+          resetsAt,
+        }),
+        { resource: "Wave insights" }
+      );
+
+      expect(error.status).toBe(429);
+      expect(error.headers).toBeUndefined();
+    }
+  });
 });
 
 describe("the v1 header channel", () => {
@@ -288,6 +307,14 @@ describe("upstreamRetryAfter — what a proxy is willing to forward", () => {
     expect(upstreamRetryAfter(new Response(null, { status: 429 }))).toBe(
       undefined
     );
+  });
+
+  it("refuses an EMPTY header, which is not the same as an absent one", () => {
+    // A present-but-blank `Retry-After` is the shape a misconfigured proxy
+    // emits. It must not become `Retry-After: ` on our response, and it must
+    // not pass a truthiness check on its way there.
+    expect(upstreamRetryAfter(withHeader(""))).toBeUndefined();
+    expect(upstreamRetryAfter(withHeader("   "))).toBeUndefined();
   });
 });
 

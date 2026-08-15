@@ -200,10 +200,21 @@ describe("getBillingErrorMessage", () => {
   });
 
   it("falls back to the upgrade line when no reset was sent", () => {
-    // A mixed-version backend that has the cap but not the field.
+    // A mixed-version backend that has the cap but not the field. Three ways to
+    // say "no reset" — omitted, explicitly null, and not a number — and all
+    // three have to land on the same sentence rather than a half-written one.
     expect(formatBillingLimitReachedMessage("insightsPerDay", 25, true)).toBe(
       "This organization has reached its daily insights limit (25). Upgrade to continue."
     );
+    for (const resetsAt of [null, undefined, Number.NaN]) {
+      expect(
+        formatBillingLimitReachedMessage("insightsPerDay", 25, true, {
+          resetsAt: resetsAt as number | undefined,
+        })
+      ).toBe(
+        "This organization has reached its daily insights limit (25). Upgrade to continue."
+      );
+    }
   });
 
   it("formats backend limit payloads for project chatboxes", () => {

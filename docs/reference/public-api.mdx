@@ -309,9 +309,11 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
   requesting insights — answers `403` with a message naming the feature, not a
   `404` and not a validation error.
 
-  Two operations are deliberately outside the gate, because both *reduce*
-  exposure and spend: cancelling a journey run, and unpublishing a scenario. An
-  organization that loses access can still stop what is already running.
+  Five operations are deliberately outside the gate, because every one of them
+  *reduces* exposure and spend: cancelling a journey run, unpublishing a
+  scenario, and archiving a persona, journey or swarm (each one's `DELETE`). An
+  organization that loses access can still stop what is running and clean up
+  what it authored.
 
   Ask us on [Discord](https://discord.gg/JEnDtz8X6z) if you want it turned on.
 </Note>
