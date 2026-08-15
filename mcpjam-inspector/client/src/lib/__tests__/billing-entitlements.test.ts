@@ -47,10 +47,10 @@ function premiumness(
 }
 
 describe("BILLING_FEATURE_BY_TAB", () => {
-  it("maps the chatboxes tab to the chatboxes premiumness feature", () => {
-    expect(BILLING_FEATURE_BY_TAB.chatboxes).toBe("chatboxes");
-    expect(getRequiredBillingFeatureForTab("chatboxes")).toBe("chatboxes");
-    expect(getPremiumnessGateForTab("chatboxes")).toBe("chatboxes");
+  it("maps the scenarios tab to the scenarios premiumness feature", () => {
+    expect(BILLING_FEATURE_BY_TAB.scenarios).toBe("scenarios");
+    expect(getRequiredBillingFeatureForTab("scenarios")).toBe("scenarios");
+    expect(getPremiumnessGateForTab("scenarios")).toBe("scenarios");
   });
 });
 
@@ -219,12 +219,12 @@ describe("getBillingErrorMessage", () => {
     }
   });
 
-  it("formats backend limit payloads for project chatboxes", () => {
+  it("formats backend limit payloads for project scenarios", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxChatboxesPerProject",
+          limit: "maxScenariosPerProject",
           allowedValue: 5,
         })
       ),
@@ -311,7 +311,7 @@ describe("getBillingErrorMessage", () => {
       new Error(
         JSON.stringify({
           code: "billing_feature_not_included",
-          feature: "chatboxes",
+          feature: "scenarios",
           plan: "free",
           upgradePlan: "team",
         })
@@ -329,7 +329,7 @@ describe("getBillingErrorMessage", () => {
       new Error(
         JSON.stringify({
           code: "billing_feature_not_included",
-          feature: "chatboxes",
+          feature: "scenarios",
           plan: "free",
           upgradePlan: "team",
         })
@@ -423,7 +423,7 @@ describe("isGateAccessDenied", () => {
     ).toBe(true);
   });
 
-  it("allows chatboxes for enterprise when the gate decision grants access", () => {
+  it("allows scenarios for enterprise when the gate decision grants access", () => {
     expect(
       isGateAccessDenied(
         premiumness({
@@ -431,7 +431,7 @@ describe("isGateAccessDenied", () => {
           effectivePlan: "enterprise",
           gates: [
             {
-              gateKey: "chatboxes",
+              gateKey: "scenarios",
               kind: "feature",
               scope: "organization",
               canAccess: true,
@@ -441,7 +441,7 @@ describe("isGateAccessDenied", () => {
             },
           ],
         }),
-        "chatboxes"
+        "scenarios"
       )
     ).toBe(false);
   });
@@ -517,14 +517,14 @@ describe("formatPremiumnessGateKey", () => {
     // and reads as an identifier — which is the whole failure this map exists
     // to prevent, so catch it as a set rather than one case at a time.
     const gateKeys: PremiumnessGateKey[] = [
-      "chatboxes",
+      "scenarios",
       "evals",
       "cicd",
       "auditLog",
       "maxMembers",
       "maxProjects",
       "maxServersPerProject",
-      "maxChatboxesPerProject",
+      "maxScenariosPerProject",
       "maxEvalRunsPerMonth",
       "maxEvalIterationsPerMonth",
       "insightsPerDay",

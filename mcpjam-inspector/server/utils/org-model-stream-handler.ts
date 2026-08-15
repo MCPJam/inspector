@@ -118,10 +118,10 @@ export interface OrgModelHandlerOptions {
    */
   authHeader?: string;
   /**
-   * Resolved chatbox identity (post-redeem). Forwarded to /stream/org so
-   * Convex can authorize the actor against the chatbox + project.
+   * Resolved scenario identity (post-redeem). Forwarded to /stream/org so
+   * Convex can authorize the actor against the scenario + project.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   clientIp?: string | null;
   /**
@@ -277,7 +277,7 @@ export interface OrgLocalModelHandlerOptions {
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -642,7 +642,7 @@ function buildLocalOrgOnPersist(params: {
       turnId: event.turnTrace.turnId,
       promptIndex: event.turnTrace.promptIndex,
       authHeader: options.authHeader,
-      chatboxId: options.chatboxId,
+      scenarioId: options.scenarioId,
       accessVersion: options.accessVersion,
       selectedServers: options.selectedServers,
       serverIds: options.serverIds,
@@ -695,7 +695,7 @@ export async function postLocalUsage(params: {
   turnId?: string;
   promptIndex?: number;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   selectedServers?: string[];
   serverIds?: string[];
@@ -733,8 +733,8 @@ export async function postLocalUsage(params: {
         ...(typeof params.promptIndex === "number"
           ? { promptIndex: params.promptIndex }
           : {}),
-        ...(params.chatboxId ? { chatboxId: params.chatboxId } : {}),
-        ...(params.chatboxId && Number.isFinite(params.accessVersion)
+        ...(params.scenarioId ? { scenarioId: params.scenarioId } : {}),
+        ...(params.scenarioId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
           : {}),
         ...((params.serverIds ?? params.selectedServers)?.length
@@ -779,7 +779,7 @@ export async function handleHostedOrgChatModel(
     tools: options.tools,
     projectId: options.projectId,
     authHeader: options.authHeader,
-    chatboxId: options.chatboxId,
+    scenarioId: options.scenarioId,
     accessVersion: options.accessVersion,
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
@@ -808,7 +808,7 @@ export async function handleHostedOrgChatModel(
       // contract can't be silently broken by a downstream caller.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
-      // chatboxId / accessVersion are set on the body by
+      // scenarioId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
       ...((options.serverIds ?? options.selectedServers)?.length
         ? { serverIds: options.serverIds ?? options.selectedServers }

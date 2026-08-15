@@ -155,7 +155,7 @@ export interface WebChatTurnPersistContext {
   chatSessionId: string | undefined;
   projectId: string;
   /** Closed union per `chatIngestion/common.ts`. */
-  sourceType: "chatbox" | "direct";
+  sourceType: "scenario" | "direct";
   /**
    * Closed union per backend `chatOriginValidator`. Required at this boundary
    * so a new caller can't skip choosing one — `sourceType` answers the
@@ -163,11 +163,11 @@ export interface WebChatTurnPersistContext {
    * (training-data discriminator).
    */
   origin: ChatOrigin;
-  /** Only set when sourceType === "chatbox". */
+  /** Only set when sourceType === "scenario". */
   surface?: "preview" | "share_link";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
-  /** Phase 3 execution scope (chatbox/host runtime-config). Threaded into the
+  /** Phase 3 execution scope (scenario/host runtime-config). Threaded into the
    *  harness path so the backend re-resolves live access + per-swarm caps. */
   executionScope?: ExecutionScope;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
@@ -780,7 +780,7 @@ export async function streamWebChatTurn(
     await manager.disconnectAllServers();
   };
 
-  const isChatboxSession = persist.sourceType === "chatbox";
+  const isScenarioSession = persist.sourceType === "scenario";
   // Provider is REQUIRED here: bare hosted ids (`gpt-5-nano` + `openai`) only
   // canonicalize to their prefixed form (`openai/gpt-5-nano`) when the provider
   // is supplied. Without it, a bare id fails this check and the turn silently
@@ -814,7 +814,7 @@ export async function streamWebChatTurn(
       turnTrace: PersistedTurnTrace,
       harnessSessionCommit?: HarnessSessionCommitPayload
     ) => {
-      const isDirectChat = !isChatboxSession;
+      const isDirectChat = !isScenarioSession;
       // Capture the live tool catalog. Failures must never block the persist.
       // Surfaces with synthetic server ids (mcpjam-agent) opt out via
       // `persist.captureToolSnapshot === false`.
@@ -845,10 +845,10 @@ export async function streamWebChatTurn(
         projectId: persist.projectId,
         sourceType: persist.sourceType,
         origin: persist.origin,
-        ...(isChatboxSession && persist.surface
+        ...(isScenarioSession && persist.surface
           ? { surface: persist.surface }
           : {}),
-        chatboxId: persist.chatboxId,
+        scenarioId: persist.scenarioId,
         authHeader: runtime.authHeader,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
@@ -909,7 +909,7 @@ export async function streamWebChatTurn(
           modelId,
           {
             authHeader: runtime.authHeader,
-            chatboxId: persist.chatboxId,
+            scenarioId: persist.scenarioId,
             accessVersion: persist.accessVersion,
             serverIds: persist.selectedServerIds,
           }
@@ -938,7 +938,7 @@ export async function streamWebChatTurn(
         progressivePlan,
         discoveryState,
         authHeader: runtime.authHeader,
-        chatboxId: persist.chatboxId,
+        scenarioId: persist.scenarioId,
         accessVersion: persist.accessVersion,
         selectedServers: persist.selectedServerIds,
         serverIds: persist.selectedServerIds,
@@ -980,7 +980,7 @@ export async function streamWebChatTurn(
       discoveryState,
       authHeader: runtime.authHeader,
       clientIp: runtime.clientIp ?? getClientIp(c),
-      chatboxId: persist.chatboxId,
+      scenarioId: persist.scenarioId,
       accessVersion: persist.accessVersion,
       mcpClientManager: manager,
       selectedServers: persist.selectedServerIds,
@@ -1053,7 +1053,7 @@ export async function streamWebChatTurn(
     discoveryState,
     authHeader: runtime.authHeader,
     clientIp: runtime.clientIp ?? getClientIp(c),
-    chatboxId: persist.chatboxId,
+    scenarioId: persist.scenarioId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,
     // Phase 3: thread the runtime-config execution scope into the harness path

@@ -425,7 +425,7 @@ export async function runHarnessTurn(
     onLiveTextDelta,
     requireToolApproval,
     chatSessionId,
-    chatboxId,
+    scenarioId,
     sourceType,
     journeyRunId,
     hostId,
@@ -463,7 +463,7 @@ export async function runHarnessTurn(
     throw new Error("runHarnessTurn: harness id is required");
   }
   // An ephemeral box is launcher-owned and billed to its run's project; an
-  // execution scope is the host-funded GUEST path, which resolves a chatbox's
+  // execution scope is the host-funded GUEST path, which resolves a scenario's
   // own personal computer and bills the host org. The two authorize and bill
   // differently, so a turn asking for both is a wiring bug. The backend rejects
   // the combination outright — surface it HERE, before the box is bound and a
@@ -471,7 +471,7 @@ export async function runHarnessTurn(
   if (harnessSandboxBinding && executionScope) {
     throw new Error(
       "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
-        "an execution scope (the guest/host-funded path runs on the chatbox's " +
+        "an execution scope (the guest/host-funded path runs on the scenario's " +
         "own computer)"
     );
   }
@@ -882,8 +882,8 @@ export async function runHarnessTurn(
           : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
-        sourceType === "chatbox"
-          ? "chatbox-chat"
+        sourceType === "scenario"
+          ? "scenario-chat"
           : sourceType === "swarm"
           ? "swarm-chat"
           : sourceType === "eval" || sourceType === "sandbox"
@@ -923,7 +923,7 @@ export async function runHarnessTurn(
         projectId &&
         authHeader &&
         ownerType &&
-        (ownerType !== "chatbox-chat" || chatboxId) &&
+        (ownerType !== "scenario-chat" || scenarioId) &&
         // swarm-chat completeness is enforced (throw) above, so reaching here
         // with ownerType === "swarm-chat" implies all three key dimensions.
         (ownerType !== "swarm-chat" || (journeyRunId && hostId))
@@ -936,7 +936,7 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           ownerType,
           chatSessionId,
-          ...(chatboxId ? { chatboxId } : {}),
+          ...(scenarioId ? { scenarioId } : {}),
           // Swarm continuity lane — the run + pinned host key the owner so a
           // multi-turn swarm harness session resumes ONLY its own sidecar.
           ...(ownerType === "swarm-chat" && journeyRunId
@@ -960,7 +960,7 @@ export async function runHarnessTurn(
         });
         if (!claim.ok) {
           // FAIL CLOSED for chat-backed owners (this block only runs for
-          // direct-chat/chatbox-chat). Never silently start a fresh,
+          // direct-chat/scenario-chat). Never silently start a fresh,
           // non-persisted harness session when continuity can't be guaranteed —
           // that would mislead the user into thinking they're in a continuous
           // conversation.
@@ -2254,11 +2254,11 @@ export async function runHarnessTurn(
             capturedHarnessCommit = {
               ownerType: continuity.owner.ownerType as
                 | "direct-chat"
-                | "chatbox-chat"
+                | "scenario-chat"
                 | "swarm-chat",
               chatSessionId: continuity.owner.chatSessionId as string,
-              ...(continuity.owner.chatboxId
-                ? { chatboxId: continuity.owner.chatboxId }
+              ...(continuity.owner.scenarioId
+                ? { scenarioId: continuity.owner.scenarioId }
                 : {}),
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,

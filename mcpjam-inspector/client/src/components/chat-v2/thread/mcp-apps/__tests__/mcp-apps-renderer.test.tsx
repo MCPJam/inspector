@@ -263,10 +263,10 @@ import {
 import { useWidgetSurfaceStore } from "../widget-surface-store";
 import { authFetch } from "@/lib/session-token";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
@@ -445,9 +445,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("advertises hostCapabilities from the active host style preset (claude)", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -522,11 +522,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("does not rebuild when the host capabilities override is recreated without semantic changes", async () => {
     const renderTree = () => (
-      <ChatboxHostCapabilitiesOverrideProvider
+      <ScenarioHostCapabilitiesOverrideProvider
         value={{ openLinks: {}, logging: {}, serverTools: {} }}
       >
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     const { rerender } = render(renderTree());
@@ -917,7 +917,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("falls back to the spec-default 'no claims' blob when no style is resolvable", async () => {
-    // No ChatboxHostStyleProvider, isPlaygroundActive is false in this test
+    // No ScenarioHostStyleProvider, isPlaygroundActive is false in this test
     // setup, so effectiveHostStyle is null. The resolver MUST NOT silently
     // impersonate Claude here — it returns the spec-default {}.
     render(<HostedRenderer {...baseProps} />);
@@ -933,11 +933,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("flips advertised hostCapabilities when host style switches to chatgpt", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
-        <ChatboxHostThemeProvider value="dark">
+      <ScenarioHostStyleProvider value="chatgpt">
+        <ScenarioHostThemeProvider value="dark">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -965,9 +965,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // in mcpProfile.apps.mcpAppsOverrides.
     mcpAppsModalPropsRef.current = null;
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -990,9 +990,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("includes HostContext.toolInfo when the matrix has toolInfo: true (Claude default)", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1011,9 +1011,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // per its published Component-bridge table. A widget that probes
     // for that field must see undefined — same as real Copilot.
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1033,9 +1033,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1053,9 +1053,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // widgets inline by default, so the host advertises
     // ["inline", "fullscreen"] (dropping the inspector's permissive pip).
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1071,9 +1071,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("advertises all three modes on Claude (full surface matrix)", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1100,9 +1100,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // ["inline", "fullscreen"], so an unsupported pip coerces to the
     // first allowed mode (inline), not fullscreen.
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} displayMode="pip" pipWidgetId="call-1" />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1133,13 +1133,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     render(
       <ActiveMcpProfileProvider value={profile}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer
             {...baseProps}
             displayMode="fullscreen"
             fullscreenWidgetId="call-1"
           />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -1181,9 +1181,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
@@ -1225,9 +1225,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
@@ -1264,9 +1264,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
@@ -1283,7 +1283,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("suppresses widget-declared permissions in the playground permissive escape hatch (Copilot)", async () => {
     // Regression: three review bots independently flagged the same
     // miss on #2242 — the `userTogglePermissive` branch (playground
-    // + cspMode === "permissive" + non-chatbox surface + non-
+    // + cspMode === "permissive" + non-scenario surface + non-
     // minimal) still read raw `widgetPermissions`. On a Copilot
     // host with `sandboxPermissions: false`, the gate is supposed
     // to ignore widget-declared permissions; the permissive escape
@@ -1299,7 +1299,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       mcpAppsCspMode: "permissive" as const,
     });
     // In playground mode the matrix resolves against the
-    // preferences-store `sharedHostStyle`, not the chatbox provider
+    // preferences-store `sharedHostStyle`, not the scenario provider
     // — set it to a host whose `mcpAppsCapabilities.sandboxPermissions`
     // is false. Copilot isn't in the `mockPreferencesState` enum
     // (claude | chatgpt), so we route through chatgpt — its matrix
@@ -1331,7 +1331,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // ActiveMcpProfileProvider sets the matrix override directly,
     // simulating a user who configured `sandboxPermissions: false`
     // via the matrix UI. This avoids the
-    // playground-vs-chatbox-host-style routing wrinkle entirely:
+    // playground-vs-scenario-host-style routing wrinkle entirely:
     // the override path always wins regardless of which host style
     // is resolved.
     const copilotPermissionsOff: HostConfigMcpProfileV1 = {
@@ -1374,9 +1374,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
@@ -1394,14 +1394,14 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
           toolInput={{ query: "yellow" }}
           toolOutput={undefined}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1414,7 +1414,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("waits for completed tool output before booting legacy OpenAI outputTemplate widgets", async () => {
     const { rerender } = render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
@@ -1422,7 +1422,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           toolOutput={undefined}
           toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await act(async () => {
@@ -1433,7 +1433,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.connect).not.toHaveBeenCalled();
 
     rerender(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="output-available"
@@ -1444,7 +1444,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           }}
           toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1466,7 +1466,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("still waits for completed compat output when live fetch is preferred over a cached URL", async () => {
     const { rerender } = render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
@@ -1476,7 +1476,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await act(async () => {
@@ -1488,7 +1488,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.connect).not.toHaveBeenCalled();
 
     rerender(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="output-available"
@@ -1501,7 +1501,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1530,9 +1530,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       // so the resolved blob is observably distinct from both presets.
     };
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={override}>
+      <ScenarioHostCapabilitiesOverrideProvider value={override}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -1544,13 +1544,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vendorOnly).toEqual(override);
   });
 
-  it("uses chatbox host style for SEP-1865 host context outside the playground", async () => {
+  it("uses scenario host style for SEP-1865 host context outside the playground", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
-        <ChatboxHostThemeProvider value="dark">
+      <ScenarioHostStyleProvider value="chatgpt">
+        <ScenarioHostThemeProvider value="dark">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1599,11 +1599,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     render(
-      <ChatboxHostStyleProvider value="claude">
-        <ChatboxHostThemeProvider value="dark">
+      <ScenarioHostStyleProvider value="claude">
+        <ScenarioHostThemeProvider value="dark">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1717,9 +1717,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1768,9 +1768,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("aligns the sandbox iframe with the host surface while providing host chrome", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -1808,9 +1808,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as Response);
 
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} prefersBorder={false} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -2126,7 +2126,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("uses the current live compat recipe for live-preferred cached revisits", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           cachedWidgetHtmlUrl="blob:cached"
@@ -2134,7 +2134,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           injectedOpenAiCompat={false}
           injectedOpenAiCompatCapabilities={{ callTool: false }}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -2905,9 +2905,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("does not register chip-bound handlers when no capability is advertised", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{}}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{}}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2926,9 +2926,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("keeps non-gated handlers wired regardless of cap surface", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{}}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{}}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2958,9 +2958,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     "registers the %s handler when the cap is advertised",
     async (cap, handlerKey) => {
       render(
-        <ChatboxHostCapabilitiesOverrideProvider value={{ [cap]: {} }}>
+        <ScenarioHostCapabilitiesOverrideProvider value={{ [cap]: {} }}>
           <HostedRenderer {...baseProps} />
-        </ChatboxHostCapabilitiesOverrideProvider>
+        </ScenarioHostCapabilitiesOverrideProvider>
       );
 
       await vi.waitFor(() => {
@@ -2978,13 +2978,13 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     const onAppToolInvocationChange = vi.fn();
 
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{ serverTools: {} }}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{ serverTools: {} }}>
         <HostedRenderer
           {...baseProps}
           onCallTool={onCallTool}
           onAppToolInvocationChange={onAppToolInvocationChange}
         />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -3024,9 +3024,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("registers all three serverResources handlers under a single cap", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{ serverResources: {} }}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{ serverResources: {} }}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -3040,9 +3040,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("leaves serverResources handlers unregistered without the cap", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -3077,9 +3077,9 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
   it("accept: grants the widget's fullscreen request", async () => {
     render(
       <ActiveMcpProfileProvider value={profileWith("accept")}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3095,9 +3095,9 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
   it("decline: returns the current mode instead of the requested fullscreen", async () => {
     render(
       <ActiveMcpProfileProvider value={profileWith("decline")}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3117,9 +3117,9 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
     // picker. This is the behavior Claude exhibits.
     render(
       <ActiveMcpProfileProvider value={profileWith("user-initiated-only")}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3271,9 +3271,9 @@ describe("MCPAppsRenderer display-mode requests after a user close", () => {
   ) {
     render(
       <ActiveMcpProfileProvider value={profileWith(policy)}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <ControlledHost />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3519,12 +3519,12 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     const onRequestTeardown = vi.fn();
     render(
       <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer
             {...baseProps}
             onRequestTeardown={onRequestTeardown}
           />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
 
@@ -3546,13 +3546,13 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     render(
       <WidgetSurfaceHostProvider>
         <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
-          <ChatboxHostStyleProvider value="claude">
+          <ScenarioHostStyleProvider value="claude">
             <HostedRenderer
               {...baseProps}
               onRequestTeardown={onRequestTeardown}
             />
             <HostedSurfaceHost />
-          </ChatboxHostStyleProvider>
+          </ScenarioHostStyleProvider>
         </ActiveMcpProfileProvider>
       </WidgetSurfaceHostProvider>
     );
@@ -3578,9 +3578,9 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
   it("leaves request teardown unhandled when disabled", async () => {
     render(
       <ActiveMcpProfileProvider value={profileWithRequestTeardown(false)}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
 

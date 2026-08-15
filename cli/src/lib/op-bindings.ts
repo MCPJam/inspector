@@ -97,7 +97,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_capabilities: { command: "capabilities" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
-  // Supersedes the `chatboxes` group below, which is the same product under
+  // Supersedes the `scenarios` group below, which is the same product under
   // its older name.
   publish_scenario: { command: "scenarios publish" },
   unpublish_scenario: { command: "scenarios unpublish" },
@@ -187,8 +187,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   reset_computer: { command: "images reset" },
 
   // ── Chat surfaces ───────────────────────────────────────────────────────
-  list_chatboxes: { command: "chatboxes list" },
-  get_chatbox: { command: "chatboxes get" },
+  list_scenarios: { command: "scenarios list" },
+  get_scenario: { command: "scenarios get" },
   list_chat_sessions: { command: "chat-sessions list" },
   search_sessions: { command: "sessions search" },
 

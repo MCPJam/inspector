@@ -1,5 +1,5 @@
 /**
- * Assistant turn engine (Stage 1 of horizontally-safe synthetic chatbox
+ * Assistant turn engine (Stage 1 of horizontally-safe synthetic scenario
  * sessions — see plan v3 §A "engine extraction").
  *
  * `runAssistantTurn` is the shared assistant-turn driver for both the live
@@ -67,7 +67,7 @@ export type RunAssistantTurnPersistMode = "handler" | "caller";
 export interface RunAssistantTurnOptions {
   messages: ModelMessage[];
   projectId?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 
   modelDefinition: ModelDefinition;
@@ -92,7 +92,7 @@ export interface RunAssistantTurnOptions {
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
    */
-  sourceType: "direct" | "chatbox" | "eval" | "swarm";
+  sourceType: "direct" | "scenario" | "eval" | "swarm";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -348,7 +348,7 @@ function extractToolResults(
 /**
  * Build the `extraBodyFields` payload forwarded to the Convex `/stream`
  * request. (The synthesis attribution keys this used to append were removed
- * with the chatbox synthetic surface.)
+ * with the scenario synthetic surface.)
  */
 function buildExtraBodyFields(
   opts: RunAssistantTurnOptions
@@ -402,7 +402,7 @@ function buildHandlerOptions(
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
-    ...(opts.chatboxId ? { chatboxId: opts.chatboxId } : {}),
+    ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
     ...(opts.accessVersion !== undefined
       ? { accessVersion: opts.accessVersion }
       : {}),

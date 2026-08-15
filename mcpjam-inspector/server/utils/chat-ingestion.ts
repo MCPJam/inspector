@@ -53,7 +53,7 @@ interface ResumeConfig {
  * Direct-chat host configuration sent alongside the transcript so the backend
  * can dedupe per-turn config into `hostConfigs`. Mirrors the `HostConfigPayload`
  * shape accepted by the Convex `/ingest-chat` route. Only emitted for direct
- * chats (serverShare and chatbox flows skip it).
+ * chats (serverShare and scenario flows skip it).
  *
  * Phase 3 read switch: `hostStyle` carries the real host style. HostConfig v2
  * treats this as an extensible string (Claude, ChatGPT, Cursor, Codex, custom
@@ -164,7 +164,7 @@ export interface PersistedTurnTrace {
 export type ChatOrigin =
   | "playground"
   | "mcpjam_agent"
-  | "chatbox"
+  | "scenario"
   | "eval"
   | "swarm";
 
@@ -174,11 +174,11 @@ interface PersistChatSessionOptions {
   modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
   projectId?: string;
-  sourceType?: "chatbox" | "direct" | "eval" | "swarm";
+  sourceType?: "scenario" | "direct" | "eval" | "swarm";
   origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
-  chatboxId?: string;
+  scenarioId?: string;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -206,9 +206,9 @@ interface PersistChatSessionOptions {
   harnessSessionCommit?: {
     // `swarm-chat` is the journey-runner continuity lane; the backend derives
     // its journeyRunId/hostId from this ingest's top-level swarm attribution.
-    ownerType: "direct-chat" | "chatbox-chat" | "swarm-chat";
+    ownerType: "direct-chat" | "scenario-chat" | "swarm-chat";
     chatSessionId: string;
-    chatboxId?: string;
+    scenarioId?: string;
     leaseId: string;
     expectedStateVersion: number;
     harnessId: "claude-code" | "codex";
@@ -235,7 +235,7 @@ interface PersistChatSessionOptions {
    * "Synthetic" in the Sessions list, (b) default
    * `visitorDisplayName = personaLabel` when omitted, (c) exclude the
    * row from semantic clustering, and (d) join the row back to its
-   * `chatboxSynthesisRuns` parent for progress polling.
+   * `scenarioSynthesisRuns` parent for progress polling.
    */
   synthetic?: boolean;
   personaId?: string;
@@ -411,12 +411,12 @@ export async function persistChatSessionToConvex(
           ? { directVisibility: options.directVisibility }
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
-        ...(options.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(options.scenarioId ? { scenarioId: options.scenarioId } : {}),
         // `accessVersion` is deliberately NOT sent: the backend's ingest
         // query never reads it, and ingestion is deliberately NOT version
         // enforced — it persists a turn that ALREADY ran, so a rebind
         // landing mid-turn must not cost the transcript. Auth here stays the
-        // grant check (resolveHostedSessionAccess by chatboxId).
+        // grant check (resolveHostedSessionAccess by scenarioId).
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }

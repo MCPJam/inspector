@@ -45,7 +45,7 @@ interface CommonLogContext {
   accessLevel?: AccessLevel | null;
   serverId?: string | null;
   sessionId?: string | null;
-  chatboxId?: string | null;
+  scenarioId?: string | null;
   surface?: Surface | null;
   serverTransport?: ServerTransport | null;
   statusCode?: number | null;
@@ -221,13 +221,13 @@ export type RequestEventMap = {
   "chat.session.persist.failed": {
     failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
     statusCode?: number;
-    sourceType?: "chatbox" | "direct" | "eval" | "swarm";
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval" | "swarm";
+    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";
