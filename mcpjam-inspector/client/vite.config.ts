@@ -37,6 +37,11 @@ const sdkHostCompatEntry = path.resolve(
 // Tier B Phase 2: @mcpjam/sdk/widget-runtime resolves to dist via package
 // exports; alias it to source so dev:client / build:client resolve it without a
 // prior `npm run build -w @mcpjam/sdk` (mirrors the SDK subpath aliases above).
+// Versioned evaluation contract: browser-safe by construction (its SHA-256 is
+// pure-JS @noble/hashes, not node:crypto and not async Web Crypto), aliased to
+// source like its siblings so a clean checkout builds without a prior
+// `npm run build -w @mcpjam/sdk`.
+const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
 const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
@@ -118,6 +123,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/widget-react": widgetReactEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
+        "@mcpjam/sdk/contract": sdkContractEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,
