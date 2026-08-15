@@ -474,12 +474,15 @@ export function SuiteIterationsView({
     (suitePinsSandboxImage && ephemeralCloudAvailable === false
       ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
       : null);
-  // Hosts available to attach in the header's "+ Attach host" picker. The
-  // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
-  // pure-props and renderable in test environments without a Convex provider.
-  const { hosts: projectHosts } = useHostList({
+  // A LOOKUP feeding `hostNamesById` below — nothing here offers a client to
+  // pick, so it opts into private scenario-backing clients. Naming and
+  // offering are different questions: a run that already resolved against a
+  // backing client should print that client's name rather than "unknown", and
+  // withholding the name hides history instead of preventing anything.
+  const { hosts: namableHosts } = useHostList({
     isAuthenticated,
     projectId: projectId ?? null,
+    includePrivateBacking: true,
   });
 
   // Use custom hooks for data calculations
@@ -529,8 +532,8 @@ export function SuiteIterationsView({
   // backed suite has none at all, yet its runs still stamp the environment's
   // resolved host.
   const hostNamesById = useMemo(
-    () => buildHostNamesById(suite.hostAttachments, projectHosts),
-    [suite.hostAttachments, projectHosts],
+    () => buildHostNamesById(suite.hostAttachments, namableHosts),
+    [suite.hostAttachments, namableHosts],
   );
 
   const omitRunDetailIdentity = useMemo(() => {
@@ -1597,7 +1600,7 @@ export function SuiteIterationsView({
 
               {/* ── Checks ───────────────────────────────────────────── */}
               <SettingsSection
-                label="Default global gates"
+                label="Default checks"
                 labelAccessory={<GlobalGatesSectionInfoHint />}
                 layout="inline"
                 inlineSlot={

@@ -7,7 +7,7 @@
  * user-facing copy (e.g. the 429 quota message) propagates through the proxy
  * verbatim.
  */
-import { SwarmAgentError } from "./swarm-agent.js";
+import { SwarmAgentError, upstreamRetryAfter } from "./swarm-agent.js";
 import { logger } from "../utils/logger.js";
 
 // LLM-backed generation calls; generous timeout to cover slower completions.
@@ -102,7 +102,12 @@ async function postGenerate<T>(
         status: response.status,
       });
     }
-    throw new SwarmAgentError(response.status, errorText, message);
+    throw new SwarmAgentError(
+      response.status,
+      errorText,
+      message,
+      upstreamRetryAfter(response)
+    );
   }
   return (await response.json()) as T;
 }
