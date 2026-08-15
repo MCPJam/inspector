@@ -10,6 +10,10 @@ import {
 } from "@mcpjam/sdk/contract";
 import type { ScoreDefinition, ScoreResult } from "@mcpjam/sdk/contract";
 import {
+  EVAL_FAILED_BADGE_STRONG_CLASS,
+  EVAL_PASSED_BADGE_STRONG_CLASS,
+} from "../constants";
+import {
   ScoresList,
   isGatingScore,
   parseEvaluationConfig,
@@ -236,14 +240,20 @@ describe("ScoresList", () => {
     expect(screen.getByText("1 / 2 gating scores passed")).toBeInTheDocument();
   });
 
-  it("says there were no gating scores rather than claiming 0 / 0 passed", () => {
+  it("stays NEUTRAL when there was nothing to gate on", () => {
     render(
       <ScoresList
         scores={[finalizeScoreResult(advisory, { kind: "scored", value: 1 })]}
         evaluationConfig={snapshot}
       />,
     );
-    expect(screen.getByText("no gating scores")).toBeInTheDocument();
+    // Neither verdict is available to claim here: a green check would say a
+    // threshold was cleared, a red cross would report a regression that never
+    // happened. "0 / 0 passed" under either badge is the version to avoid.
+    const badge = screen.getByText("no gating scores");
+    expect(badge.className).not.toContain(EVAL_PASSED_BADGE_STRONG_CLASS);
+    expect(badge.className).not.toContain(EVAL_FAILED_BADGE_STRONG_CLASS);
+    expect(screen.queryByText(/gating scores passed/)).toBeNull();
   });
 
   it("renders a row with no matching definition as unresolved, not a crash", () => {

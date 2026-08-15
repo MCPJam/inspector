@@ -226,6 +226,16 @@ function formatValue(score: ScoreResult): string | null {
   return `${value} / ${threshold}`;
 }
 
+/** The header badge's three tones. `none` is muted: it asserts nothing. */
+const SUMMARY_TONE = {
+  passed: { icon: CheckCircle2, className: EVAL_PASSED_BADGE_STRONG_CLASS },
+  failed: { icon: XCircle, className: EVAL_FAILED_BADGE_STRONG_CLASS },
+  none: {
+    icon: MinusCircle,
+    className: "bg-muted text-muted-foreground border border-border/40",
+  },
+} as const;
+
 /**
  * Render the per-iteration score gate.
  *
@@ -267,7 +277,21 @@ export function ScoresList({
   // green — they are the ones that DID validate — so summarizing them as a
   // pass would contradict the run's own result.
   const integrityInvalid = integrity === "score_integrity_invalid";
-  const allPassed = countedFailures === 0 && !integrityInvalid;
+  // THREE states, not two. An iteration with nothing to gate on has neither
+  // met a gate nor missed one, and a binary badge has to lie in one direction
+  // or the other: a green check claims a threshold was cleared, a red cross
+  // reports a regression that did not happen. It renders neutral instead.
+  const summary: { tone: keyof typeof SUMMARY_TONE; label: string } =
+    integrityInvalid
+      ? { tone: "failed", label: "score evidence did not verify" }
+      : counted.length === 0
+        ? { tone: "none", label: "no gating scores" }
+        : {
+            tone: countedFailures === 0 ? "passed" : "failed",
+            label: `${counted.length - countedFailures} / ${counted.length} gating scores passed`,
+          };
+  const tone = SUMMARY_TONE[summary.tone];
+  const SummaryIcon = tone.icon;
 
   return (
     <div
@@ -280,24 +304,10 @@ export function ScoresList({
           Scores
         </div>
         <div
-          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            allPassed
-              ? EVAL_PASSED_BADGE_STRONG_CLASS
-              : EVAL_FAILED_BADGE_STRONG_CLASS
-          }`}
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone.className}`}
         >
-          {allPassed ? (
-            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
-          ) : (
-            <XCircle className="h-3 w-3 shrink-0" aria-hidden />
-          )}
-          {integrityInvalid
-            ? "score evidence did not verify"
-            : counted.length === 0
-              ? // "0 / 0 passed" beside a green check claims a gate was met
-                // when nothing was gated on at all.
-                "no gating scores"
-              : `${counted.length - countedFailures} / ${counted.length} gating scores passed`}
+          <SummaryIcon className="h-3 w-3 shrink-0" aria-hidden />
+          {summary.label}
         </div>
       </div>
 
