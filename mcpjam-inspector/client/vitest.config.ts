@@ -10,6 +10,9 @@ const sdkSkillReferenceEntry = path.resolve(
   "../sdk/src/skill-reference.ts",
 );
 const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
+// Versioned evaluation contract — browser-safe, so the client renders scores
+// from the same schemas and the same pure hash the SDK produced them with.
+const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
 // Same rationale as sdkBrowserEntry: the workspace-linked @mcpjam/sdk advertises
 // ./host-config/internal via its package exports, but a clean checkout has no
 // dist/host-config/internal.* until `npm run build -w @mcpjam/sdk` runs. The
@@ -142,6 +145,7 @@ export default defineConfig({
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
+      { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,

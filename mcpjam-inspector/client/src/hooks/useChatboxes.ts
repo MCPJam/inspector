@@ -93,6 +93,24 @@ export interface ChatboxSettings {
    * `chatboxes:setChatboxGuestExecution` (project-admin gated).
    */
   guestExecution?: GuestExecutionSettings | null;
+  /**
+   * Production scoring config, verbatim from the row. `null` (or absent) ⇒
+   * never configured — the same OFF as `{enabled: false}` for grading,
+   * distinct only for the editor's pristine state. Written via
+   * `productionChecks:setProductionScoring`.
+   */
+  productionScoring?: ProductionScoringSettings | null;
+}
+
+export interface ProductionScoringSettings {
+  enabled: boolean;
+  /** Fraction of real sessions graded, in [0, 1]. */
+  samplingRate: number;
+  rubric: Array<{
+    id: string;
+    label?: string;
+    predicate: Record<string, unknown>;
+  }>;
 }
 
 export interface GuestExecutionSettings {
@@ -316,6 +334,12 @@ export function useChatboxMutations() {
   const setChatboxGuestExecution = useMutation(
     "chatboxes:setChatboxGuestExecution" as any,
   );
+  // Production scoring: the grading editor's write. Lives in the
+  // `productionChecks` module backend-side, but belongs in this hook — it is
+  // a chatbox settings editor like the rest.
+  const setProductionScoring = useMutation(
+    "productionChecks:setProductionScoring" as any,
+  );
   // Environment-backed scenarios only: re-point the chatbox at a different
   // environment (admin-gated; refuses a target that already backs another
   // scenario). The setup editor on the scenario detail header commits
@@ -332,6 +356,7 @@ export function useChatboxMutations() {
     upsertChatboxMember,
     removeChatboxMember,
     setChatboxGuestExecution,
+    setProductionScoring,
     rebindEnvironmentChatbox,
   };
 }
