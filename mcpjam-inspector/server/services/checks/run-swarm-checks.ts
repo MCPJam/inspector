@@ -28,7 +28,9 @@
 import {
   buildIterationTranscript,
   evaluatePredicates,
+  summarizeRenderObservations,
 } from "@/shared/eval-matching";
+import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
 import {
   extractToolCallsFromEnvelopeMessages,
   type ChatSessionEnvelope,
@@ -64,6 +66,49 @@ type EnvelopeMessage = ChatSessionEnvelope["messages"][number];
 /** User-role messages — the unit `turnCountUnder` grades against. */
 function countUserTurns(messages: EnvelopeMessage[]): number {
   return messages.filter((msg) => msg?.role === "user").length;
+}
+
+/**
+ * The claim's token totals, validated to the shape the SDK evaluator reads.
+ * Wire data: a malformed field degrades to "unmeasured" (undefined), never to
+ * a number that could pass a budget.
+ */
+function claimUsage(
+  usage: { inputTokens?: number; outputTokens?: number } | null,
+): { inputTokens?: number; outputTokens?: number } | undefined {
+  if (!usage) return undefined;
+  const inputTokens =
+    typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)
+      ? usage.inputTokens
+      : undefined;
+  const outputTokens =
+    typeof usage.outputTokens === "number" &&
+    Number.isFinite(usage.outputTokens)
+      ? usage.outputTokens
+      : undefined;
+  if (inputTokens === undefined && outputTokens === undefined) return undefined;
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+  };
+}
+
+/**
+ * The envelope's render observations, summarized for the `widget*` predicates.
+ * Returns undefined (not `[]`) when the envelope carries none, preserving the
+ * SDK's "absent ⇒ unmeasured ⇒ fail closed" contract for sessions that never
+ * ran a browser.
+ */
+function claimRenderObservations(
+  envelope: { widgetRenderObservations?: unknown[] } | null,
+): ReturnType<typeof summarizeRenderObservations> | undefined {
+  const observations = envelope?.widgetRenderObservations;
+  if (!Array.isArray(observations) || observations.length === 0) {
+    return undefined;
+  }
+  return summarizeRenderObservations(
+    observations as RunnerWidgetRenderObservation[],
+  );
 }
 
 /**
@@ -141,9 +186,16 @@ export async function runSwarmChecks(
       // asked. (Its identity dedupe — same tool + same args collapses to one
       // entry — is a known limitation, now a single known limitation.)
       toolCalls: extractToolCallsFromEnvelopeMessages(messages),
-      // Swarm sessions carry no per-iteration token accounting on the
-      // persisted envelope, so `tokenBudgetUnder` fails closed here by design.
-      usage: undefined,
+      // Session-level token totals, materialized backend-side from turn-trace
+      // usage and returned on the claim. `null`/absent means no turn reported
+      // usage — kept absent here so `tokenBudgetUnder` fails closed on truly
+      // unmeasured sessions instead of passing against a phantom zero.
+      usage: claimUsage(claim.usage),
+      // The browser harness's render record, when the session produced one.
+      // Same summarizer the eval runner uses, so a `widget*` verdict cannot
+      // depend on which grader asked. Absent (not `[]`) when the envelope
+      // carries none — no signal is not a pass.
+      renderObservations: claimRenderObservations(claim.envelope),
       turnCount: countUserTurns(messages),
     });
 
