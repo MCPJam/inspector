@@ -15,7 +15,7 @@
  * other members' private Playground sessions never reach this client, so the
  * panel renders whatever the page contains without re-deriving policy.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { MessageSquare, Search } from "lucide-react";
@@ -154,25 +154,20 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   );
 
   /**
-   * Drop a selection that belongs to the project we just left.
+   * NO stale-selection cleanup here, deliberately.
    *
-   * Selection lives in the URL now, so it outlives a project switch that the
-   * old component state would simply have discarded — leaving the detail pane
-   * loading a thread from the previous project, which the reader cannot see in
-   * the list next to it. `replace`, because the stale URL is not a place
-   * anyone should be able to navigate Back into.
+   * Selection lives in the URL, so in principle it could outlive a project
+   * switch and leave this pane loading a thread absent from the list beside it.
+   * It cannot in practice: a real project switch snaps the app to `/servers`
+   * (`shouldSnapToServersOnActiveProjectChange` — `/sessions` is not one of the
+   * exempt tabs), which unmounts this panel and replaces the URL outright.
    *
-   * Keyed on a CHANGE, not on first render: a `?session=` deep-link must
-   * survive mount, which is the entire point of putting it in the URL.
+   * An effect here could not close that gap anyway: App renders this panel as
+   * `key={projectId}`, so a project change REMOUNTS it, and any "previous
+   * project" ref would re-initialize to the new value and never observe the
+   * transition. Machinery that cannot fire is worse than none — a reader would
+   * trust it.
    */
-  const previousProjectId = useRef(projectId);
-  useEffect(() => {
-    if (previousProjectId.current === projectId) return;
-    previousProjectId.current = projectId;
-    if (selectedThreadId) {
-      navigate(buildSessionsPath({ project: projectId }), { replace: true });
-    }
-  }, [navigate, projectId, selectedThreadId]);
 
   // The shareable form of the same link.
   const sessionLink = selectedThreadId

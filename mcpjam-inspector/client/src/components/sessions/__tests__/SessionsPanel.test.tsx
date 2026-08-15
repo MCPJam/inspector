@@ -259,23 +259,6 @@ describe("SessionsPanel — rows and detail", () => {
     expect(url.searchParams.get("project")).toBe("p1");
   });
 
-  test("drops a selection that belongs to the project just left", () => {
-    // Selection lives in the URL now, so it outlives a project switch that
-    // component state would have discarded — leaving the detail pane on a
-    // thread the reader cannot see in the list beside it.
-    window.history.replaceState({}, "", "/sessions?session=doc_abc&project=p1");
-    setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
-    const view = render(<SessionsPanel projectId="p1" />);
-    expect(screen.getByTestId("thread-detail-stub")).toBeInTheDocument();
-
-    view.rerender(<SessionsPanel projectId="p2" />);
-
-    const url = new URL(window.location.href);
-    expect(url.searchParams.get("session")).toBeNull();
-    expect(url.searchParams.get("project")).toBe("p2");
-    expect(screen.queryByTestId("thread-detail-stub")).not.toBeInTheDocument();
-  });
-
   test("opens the session named by ?session= on first render", () => {
     // The permalink case. No click, and no page-walk: the detail pane loads by
     // thread id independently of where the row falls in the list.
