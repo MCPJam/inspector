@@ -22,14 +22,22 @@
  *   - **Infrastructure failures are 5xx.** A timeout or a reset socket is not
  *     the caller's bad input; those defer to `mapRuntimeError` so a transient
  *     outage is not reported as a validation error.
+ *   - **An unrecognized failure is a 500, and it is logged.** Everything above
+ *     is a recognized outcome; what falls past all of it is a write path we do
+ *     not understand, which is ours. It used to answer 400 with Convex's prose
+ *     and no log at all — a broken write path reporting itself as the caller's
+ *     mistake, below every 5xx monitor and invisible in Sentry.
  *   - **Convex's prose is scrubbed** of `[Request ID: …]`, `Server Error` and
- *     `Uncaught ConvexError:` before it can reach a public response body.
+ *     `Uncaught ConvexError:` before it can reach a public response body, and
+ *     is not forwarded at all on the 500.
  *
  * `resource` names what the caller was addressing, so a not-found reads
  * "Server not found" rather than every router borrowing whichever noun the
  * copy it was forked from happened to use.
  */
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
+import { logger } from "../../utils/logger.js";
+import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
 
 type ConvexErrorData = { code?: unknown; message?: unknown };
 
@@ -53,7 +61,12 @@ function cleanConvexMessage(error: unknown): string {
 export interface TranslateConvexWriteErrorOptions {
   /** The noun for not-found copy — "Server", "Project", "Host". */
   resource: string;
-  /** Message for a 400 when nothing more specific is available. */
+  /**
+   * Copy for the two cases with no better wording: a structured `VALIDATION`
+   * throw that carried no message (400), and the terminal unrecognized-failure
+   * branch (500). Keep it neutral about fault — it is the only thing the caller
+   * sees in both, and the second one is ours, not theirs.
+   */
   fallbackMessage?: string;
   /** Copy for a 404 that may equally be a missing parent or no access. */
   notFoundMessage?: string;
@@ -246,9 +259,31 @@ export function translateConvexWriteError(
     return mapRuntimeError(error);
   }
 
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    cleanConvexMessage(error) || fallbackMessage
+  // ── Nothing recognized it. That is OUR bug, and it answers 500. ──────────
+  //
+  // This used to be a 400 VALIDATION_ERROR carrying Convex's prose, which got
+  // the reporting exactly backwards. Every branch above is a recognized
+  // outcome: a structured `ConvexError` code, or one of the prose shapes a
+  // mixed-version deployment still throws. An error that matches NONE of them
+  // is a write path we do not understand — a mutation throwing a new code, a
+  // renamed or undeployed function, a broken deploy — and none of those are
+  // the caller's malformed input.
+  //
+  // Reporting them as 400 was invisible twice over: no 5xx monitor counts a
+  // 400, and this function had no logger at all, so a wholly broken write path
+  // could answer "your request was invalid" to every caller and emit nothing
+  // anywhere. 500 puts it back in the range the monitors watch, and the log
+  // line below is what names it once it is there.
+  //
+  // The message stops being forwarded for the same reason the read translator
+  // never forwards its upstream text: it is written for us, it can carry
+  // function names, argument-validator output with the arguments in it, and
+  // request ids — a free read of our internals for anyone who can reach the
+  // route. The detail goes to the log; the caller gets the route's own copy.
+  logger.error(
+    `[v1.convexWrite] unrecognized ${resource} write failure`,
+    redactedErrorForCapture(error),
+    { resource, message: redactForLog(error) }
   );
+  return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, fallbackMessage);
 }
