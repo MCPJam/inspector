@@ -173,6 +173,8 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return "Eval iterations per month";
     case "insightsPerDay":
       return "Insights per day";
+    case "journeyRunsPerDay":
+      return "Journey launches per day";
     default:
       return gateKey;
   }
