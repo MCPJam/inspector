@@ -4,8 +4,8 @@ import {
   getModelById,
   isBedrockModelId,
   type ModelDefinition,
-  type ModelProvider,
 } from "@/shared/types";
+import { classifyModelIdProvider } from "@/shared/model-provider";
 import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
@@ -722,50 +722,22 @@ export async function resolveSyntheticModelSource(args: {
 // ---------------------------------------------------------------------------
 
 /**
- * Map a model-id prefix to a ModelProvider. The catalog uses
- * provider/model ids where the prefix is the canonical provider name
- * with one quirk: `meta-llama/...` lives under provider `meta`, and
- * `x-ai/...` lives under provider `xai`. Mirrors the catalog entries in
- * `shared/types.ts::SUPPORTED_MODELS`.
- */
-const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
-  anthropic: "anthropic",
-  azure: "azure",
-  bedrock: "bedrock",
-  deepseek: "deepseek",
-  google: "google",
-  "meta-llama": "meta",
-  minimax: "minimax",
-  moonshotai: "moonshotai",
-  openai: "openai",
-  ollama: "ollama",
-  openrouter: "openrouter",
-  qwen: "qwen",
-  mistral: "mistral",
-  "x-ai": "xai",
-  "z-ai": "z-ai",
-};
-
-/**
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
  * `runtime.config.modelId` returns from `fetchChatboxRuntimeConfig`).
  *
  * Resolution order:
- *   1. `getModelById(modelId)` — MCPJam catalog hit returns the full
- *      definition unchanged (correct provider, contextLength, etc.).
- *   2. `custom:` prefix — provider="custom", customProviderName is the
- *      segment after `custom:` up to the first `:` or `/` (the picker
- *      mints `custom:<slug>:<modelId>`). Matches the
- *      `deriveOrgProviderKey` shape for custom providers.
- *   3. Known catalog-prefix shape (`anthropic/...`, `meta-llama/...`,
- *      `ollama/...`, etc.) — provider is derived from the prefix via
- *      ID_PREFIX_TO_PROVIDER.
- *   4. Bedrock-shaped bare id (`[geo.]vendor.name...:N`) — provider
- *      "bedrock". Org Bedrock models surface bare inference-profile ids
- *      in the picker, so chatbox runtime configs store them unprefixed.
- *   5. Bare id with no recognized shape — fall back to "ollama" since
- *      bare ids are how Ollama BYOK models are typically stored on
- *      chatbox runtime configs (no catalog ID uses a bare shape).
+ *   1. Blank id — THROWS. An unpinned host persists modelId "", and without
+ *      this guard the bare-id fallback silently classifies it as an Ollama
+ *      BYOK model, with the failure surfacing many hops later as an opaque
+ *      backend "model is required".
+ *   2. `getModelById(modelId)` — MCPJam catalog hit returns the full
+ *      definition unchanged (correct provider, contextLength, curated display
+ *      name). This is the one step the shared classifier cannot do: it is pure
+ *      and has no catalog.
+ *   3. Everything else is {@link classifyModelIdProvider} — `custom:` slugs,
+ *      the `<prefix>/` map and its aliases, bare Bedrock shapes, and the
+ *      bare-id Ollama catch-all. See `shared/model-provider.ts` for the rules;
+ *      this function deliberately holds NO copy of them.
  *
  * Callers: the synthetic session runner (which only has
  * `runtime.config.modelId` — the chatbox runtime endpoint doesn't expose
@@ -776,12 +748,10 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
 export function buildSyntheticModelDefinition(
   modelId: string,
 ): ModelDefinition {
-  // An unpinned host persists modelId "" — without this guard the bare-id
-  // fallback below silently classifies it as an Ollama BYOK model and the
-  // failure surfaces many hops later as an opaque backend "model is
-  // required". Both interactive host-wins call sites gate on a truthy
-  // modelId before reaching here, so only genuinely modelless flows throw.
-  if (!modelId.trim()) {
+  const classification = classifyModelIdProvider(modelId);
+  // Both interactive host-wins call sites gate on a truthy modelId before
+  // reaching here, so only genuinely modelless flows throw.
+  if (!classification) {
     throw new Error(
       "No model selected for this chat. Pick a model on the host before running."
     );
@@ -790,51 +760,13 @@ export function buildSyntheticModelDefinition(
   const supported = getModelById(modelId);
   if (supported) return supported;
 
-  if (modelId.startsWith("custom:")) {
-    const rest = modelId.slice("custom:".length);
-    // Picker-minted ids are `custom:<slug>:<modelId>` (both the local and
-    // org builders in model-helpers use a colon; the evals runner parses
-    // the same way); tolerate `custom:<slug>/<modelId>` too. The slug is
-    // the segment before the first `:` or `/`.
-    const customProviderName = rest.split(/[:/]/, 1)[0];
-    return {
-      id: modelId,
-      name: modelId,
-      provider: "custom",
-      customProviderName: customProviderName || undefined,
-    };
-  }
-
-  const slashIdx = modelId.indexOf("/");
-  if (slashIdx > 0) {
-    const prefix = modelId.slice(0, slashIdx);
-    const provider = ID_PREFIX_TO_PROVIDER[prefix];
-    if (provider) {
-      return {
-        id: modelId,
-        name: modelId,
-        provider,
-      };
-    }
-  }
-
-  if (isBedrockModelId(modelId)) {
-    return {
-      id: modelId,
-      name: modelId,
-      provider: "bedrock",
-    };
-  }
-
-  // Bare id (no `/`, not Bedrock-shaped) — Ollama BYOK is the remaining
-  // realistic case since no catalog id is bare. If the org has a different
-  // bare-id provider in the future, deriveOrgProviderKey will produce
-  // "ollama" and the resolver round-trip will fail with a clearer error
-  // than the previously-fatal catalog-miss path.
   return {
     id: modelId,
     name: modelId,
-    provider: "ollama",
+    provider: classification.provider,
+    ...(classification.customProviderName !== undefined
+      ? { customProviderName: classification.customProviderName }
+      : {}),
   };
 }
 

@@ -174,6 +174,78 @@ describe("MessageView", () => {
     });
   });
 
+  describe("renderAssistantTurnFooter", () => {
+    it("renders the footer under an assistant message", () => {
+      const message = createMessage({
+        id: "msg-assistant-rated",
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+      const renderFooter = vi.fn(() => (
+        <div data-testid="turn-rating-stub">stars</div>
+      ));
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderAssistantTurnFooter={renderFooter}
+        />
+      );
+
+      expect(renderFooter).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-assistant-rated" })
+      );
+      expect(screen.getByTestId("turn-rating-stub")).toBeInTheDocument();
+    });
+
+    it("does not render the footer for user messages", () => {
+      // The thing being rated is the RESPONSE; a rating widget under the
+      // tester's own prompt has nothing to judge.
+      const message = createMessage({
+        role: "user",
+        parts: [{ type: "text", text: "a prompt" }],
+      });
+      const renderFooter = vi.fn(() => (
+        <div data-testid="turn-rating-stub">stars</div>
+      ));
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderAssistantTurnFooter={renderFooter}
+        />
+      );
+
+      expect(renderFooter).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("turn-rating-stub")).not.toBeInTheDocument();
+    });
+
+    it("renders the footer outside the hover-only copy actions", () => {
+      // A rating prompt nobody can see until they hover is a rating nobody
+      // leaves, so the footer must not inherit the `opacity-0` block.
+      const message = createMessage({
+        id: "msg-assistant-visible",
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderAssistantTurnFooter={() => (
+            <div data-testid="turn-rating-stub">stars</div>
+          )}
+        />
+      );
+
+      const footer = screen.getByTestId("turn-rating-stub");
+      expect(footer.closest(".opacity-0")).toBeNull();
+    });
+  });
+
   describe("editing a past user message", () => {
     const editableMessage = () =>
       createMessage({

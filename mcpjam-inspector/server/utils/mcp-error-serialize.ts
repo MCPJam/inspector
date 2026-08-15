@@ -6,7 +6,6 @@
 import {
   describeError,
   extractInsufficientScopeChallenge,
-  originOf,
 } from "@mcpjam/sdk";
 export {
   extractInsufficientScopeChallenge,
@@ -83,7 +82,11 @@ export function jsonError(c: any, error: unknown, fallbackStatus = 500) {
       error: details.message as string,
       mcpError: details,
       normalized,
-      origin: originOf(normalized),
+      // The EFFECTIVE origin from the capture decision above, not
+      // `originOf(normalized)` — the meta (and Sentry) already use the
+      // promoted value, and a body that recomputes the declared one reports
+      // `ambiguous` for a failure we just paged ourselves for.
+      origin,
     },
     status,
   );

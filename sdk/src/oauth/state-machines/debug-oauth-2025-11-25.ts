@@ -8,6 +8,10 @@
  * - Client ID Metadata Documents (CIMD) support per draft-parecki-oauth-client-id-metadata-document-03
  */
 
+import {
+  describeAuthenticatedRequestFailure,
+  describeTokenRequestFailure,
+} from "./shared/response-error.js";
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
 import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
@@ -1626,7 +1630,7 @@ export const createDebugOAuthStateMachine = (
                   httpHistory: updatedHistoryToken,
                   // Clear the authorization code so it won't be retried
                   authorizationCode: undefined,
-                  error: `Token request failed: ${response.body?.error || response.statusText} - ${response.body?.error_description || "Unknown error"}`,
+                  error: describeTokenRequestFailure(response),
                   isInitiatingAuth: false,
                 });
                 return;
@@ -1928,7 +1932,7 @@ export const createDebugOAuthStateMachine = (
                 updateState({
                   lastResponse: mcpResponseData,
                   httpHistory: updatedHistoryMcp,
-                  error: `Authenticated request failed: ${response.status} ${response.statusText}`,
+                  error: describeAuthenticatedRequestFailure(response),
                   isInitiatingAuth: false,
                 });
                 return;
