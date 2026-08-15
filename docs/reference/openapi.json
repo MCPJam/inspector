@@ -92,6 +92,10 @@
     {
       "name": "Swarm insights",
       "description": "What a swarm run revealed. The scorecard and findings are deterministic and free; requesting wave insights runs models and draws on your shared daily ledger."
+    },
+    {
+      "name": "User testing",
+      "description": "Publishing an environment for real visitors, and controlling who can reach it. Several of these NARROW access and take effect immediately."
     }
   ],
   "paths": {
@@ -6916,6 +6920,524 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/environments/{environmentId}/scenario": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/environmentId"
+        }
+      ],
+      "put": {
+        "operationId": "publishScenario",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Publish an environment for user testing",
+        "description": "PUT, not POST, because publishing is IDEMPOTENT: one scenario per environment, and publishing an already-published environment returns the existing one rather than minting a second. `created` says which happened.\n\nRequires project ADMIN.",
+        "requestBody": {
+          "required": false,
+          "description": "Optional create-time overrides. A bodyless publish is the common case.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioPublishRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The scenario, new or existing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Scenario"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unpublishScenario",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Unpublish an environment",
+        "description": "Takes the scenario down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live scenario down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` \u2014 a no-op, not an error.",
+        "responses": {
+          "200": {
+            "description": "The scenario was removed (or there was none).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "patch": {
+        "operationId": "updateUserTestingScenario",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Update a scenario",
+        "description": "Change a scenario's identity or its exposure \u2014 but not both in one call. **Send `mode` on its own.** Identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.\n\nNarrowing `mode` bumps `accessVersion` upstream and invalidates sessions minted under the old one.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated scenario.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTestingScenario"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "get": {
+        "operationId": "listUserTestingSessions",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "List a scenario's sessions",
+        "description": "What visitors did, as summaries. Project members only \u2014 this route is deliberately absent from the guest allowlist, so a share-link visitor can never read other visitors' sessions.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "A page of sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTestingSessionPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        },
+        {
+          "$ref": "#/components/parameters/sessionId"
+        }
+      ],
+      "get": {
+        "operationId": "getUserTestingSession",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Get a session transcript",
+        "description": "The projected transcript, paged. Tool payloads and blobs are dropped, and the stored blob URL is never returned.\n\nCheck `transcriptUnavailable` before trusting `messageCount`: an unreadable transcript reports `null`, never `0`.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "The session and its messages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTestingSessionDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "put": {
+        "operationId": "setGuestExecution",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Set the guest-execution caps",
+        "description": "The spend dial for anonymous visitors. A FULL REPLACEMENT \u2014 send every field. These caps only mean something as a set, and a partial update that raised one while leaving another stale would produce a combination nobody chose.\n\nRequires project ADMIN: it is the one exposure control that genuinely does, because it authorizes strangers to spend.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuestExecution"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The caps now in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuestExecution"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "post": {
+        "operationId": "rotateScenarioLink",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Rotate the share link",
+        "description": "Mints a new share link and stops the old URL from granting access. Everyone you shared it with needs the new one.\n\n**Rotation does NOT evict anyone who already redeemed the old link.** Their grant is a stored row, not a property of the URL, and it survives rotation \u2014 `accessVersion` is deliberately not bumped here. So rotation alone does not undo a leak: rotate to close the door, then `DELETE .../members/{memberIdOrEmail}` for anyone who already walked through it.\n\nBodyless: the scenario is the whole request, and the new secret is minted server-side by definition.",
+        "responses": {
+          "200": {
+            "description": "The new link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioLinkRotated"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/members": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "put": {
+        "operationId": "upsertScenarioMember",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Invite a member",
+        "description": "Upsert by email, so re-inviting somebody is not an error. Only meaningful while `mode` is `invited_only`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioMemberRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The member list was updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTestingScenario"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        },
+        {
+          "$ref": "#/components/parameters/memberIdOrEmail"
+        }
+      ],
+      "delete": {
+        "operationId": "removeScenarioMember",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Remove a member",
+        "description": "Removal NARROWS access, so it bumps `accessVersion` and cuts off any session that member already had \u2014 it takes effect at once rather than at expiry.",
+        "responses": {
+          "200": {
+            "description": "The member was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioMemberRemoved"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "post": {
+        "operationId": "rebindScenario",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Point a scenario at a different environment",
+        "description": "Keeps the scenario's LINK, its members and its session history while changing what visitors actually reach. The alternative \u2014 unpublish and republish \u2014 mints a new link, which means re-sharing it with everyone.\n\nThe new environment must belong to THIS project; one that does not answers 404 rather than confirming it exists elsewhere.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioRebindRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The scenario now points at the new environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Scenario"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -13602,6 +14124,540 @@
           "force": {
             "type": "boolean",
             "description": "Regenerate over a wave that already has insights. OFF by default because it SPENDS a second time against your organization's shared daily ledger \u2014 and the common cause of a repeated request is a caller that did not poll."
+          }
+        }
+      },
+      "Scenario": {
+        "type": "object",
+        "description": "A published environment: what a visitor lands on when you share a link.",
+        "required": [
+          "id",
+          "environmentId",
+          "name",
+          "mode",
+          "accessVersion",
+          "link"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "environmentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "Who may open the share link:\n- `project_members` \u2014 signed-in members of the project only\n- `invited_only` \u2014 named members, invited individually\n- `anyone_with_link` \u2014 **anyone holding the URL**, signed in or not",
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link"
+            ]
+          },
+          "accessVersion": {
+            "type": "integer",
+            "description": "Bumped whenever access NARROWS \u2014 a mode change, a member removal, a link rotation. Sessions minted under an older version stop working, which is what makes those changes take effect at once rather than at expiry."
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The share link. `null` when the scenario has no link token."
+          },
+          "created": {
+            "type": "boolean",
+            "description": "False when the environment was ALREADY published and this returned the existing scenario. Publishing is idempotent, so this is how you tell \"I published it\" from \"it was already there\" without a preflight read."
+          },
+          "overridesIgnored": {
+            "type": "boolean",
+            "description": "True when the create-time overrides (`name`, `description`, `mode`) were NOT applied because the environment was already published. Paired with `created: false` \u2014 change an existing scenario with `PATCH .../user-testing/scenarios/{scenarioId}`."
+          }
+        }
+      },
+      "ScenarioPublishRequest": {
+        "type": "object",
+        "description": "Optional CREATE-TIME overrides, applied in the same call so the scenario is never briefly live in a wider mode than you asked for. Ignored on a republish \u2014 see `overridesIgnored`.",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "mode": {
+            "type": "string",
+            "description": "Who may open the share link:\n- `project_members` \u2014 signed-in members of the project only\n- `invited_only` \u2014 named members, invited individually\n- `anyone_with_link` \u2014 **anyone holding the URL**, signed in or not",
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link"
+            ]
+          }
+        }
+      },
+      "ScenarioDeleted": {
+        "type": "object",
+        "required": [
+          "environmentId",
+          "deleted"
+        ],
+        "properties": {
+          "environmentId": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "False when the environment had no scenario. NOT an error \u2014 unpublishing something already unpublished is a no-op."
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "UserTestingScenario": {
+        "type": "object",
+        "description": "Scenario metadata after an update. Deliberately WITHOUT `accessVersion`: a mode change bumps it upstream, but the envelope this route re-reads does not carry the new value \u2014 reporting a stale one would document a revocation signal the response cannot deliver. The publish response carries the real one.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "description",
+          "mode"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link",
+              null
+            ]
+          }
+        }
+      },
+      "ScenarioUpdateRequest": {
+        "type": "object",
+        "description": "At least one field. **Send `mode` on its own**: identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "mode": {
+            "type": "string",
+            "description": "Who may open the share link:\n- `project_members` \u2014 signed-in members of the project only\n- `invited_only` \u2014 named members, invited individually\n- `anyone_with_link` \u2014 **anyone holding the URL**, signed in or not",
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link"
+            ]
+          }
+        }
+      },
+      "UserTestingSession": {
+        "type": "object",
+        "description": "One visitor's session with a published scenario. A SUMMARY, not a transcript.",
+        "required": [
+          "id",
+          "chatSessionId",
+          "messageCount",
+          "preview",
+          "visitor",
+          "feedback",
+          "startedAt",
+          "lastActivityAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The address for the transcript route."
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "messageCount": {
+            "type": "integer"
+          },
+          "preview": {
+            "type": "string",
+            "description": "First message only. The transcript is a separate, explicit read."
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "toolCallCount": {
+            "type": "integer"
+          },
+          "authInterrupted": {
+            "type": "boolean",
+            "description": "The visitor abandoned mid-flow because a server demanded auth."
+          },
+          "visitor": {
+            "type": "object",
+            "properties": {
+              "displayName": {
+                "type": "string"
+              },
+              "segment": {
+                "type": "string"
+              },
+              "authType": {
+                "type": "string",
+                "enum": [
+                  "signedIn",
+                  "guest"
+                ]
+              },
+              "recency": {
+                "type": "string",
+                "enum": [
+                  "new",
+                  "returning"
+                ]
+              },
+              "deviceKind": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              }
+            }
+          },
+          "feedback": {
+            "type": "object",
+            "required": [
+              "rating",
+              "comment",
+              "count"
+            ],
+            "properties": {
+              "rating": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "comment": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "count": {
+                "type": "integer"
+              }
+            }
+          },
+          "theme": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "keywords"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "startedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "lastActivityAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "UserTestingSessionPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserTestingSession"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists."
+          }
+        }
+      },
+      "TranscriptMessage": {
+        "type": "object",
+        "description": "One projected transcript message. Tool payloads and blobs are dropped.",
+        "required": [
+          "role",
+          "text"
+        ],
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "UserTestingSessionDetail": {
+        "type": "object",
+        "description": "A session's transcript, paged. The stored blob URL is NEVER returned: it is a direct handle with no further authorization, so handing it out would turn one authorized read into an unbounded, unrevocable one.",
+        "required": [
+          "id",
+          "scenarioId",
+          "chatSessionId",
+          "modelId",
+          "startedAt",
+          "lastActivityAt",
+          "messageCount",
+          "messages"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scenarioId": {
+            "type": "string"
+          },
+          "chatSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "lastActivityAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "messageCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`null` \u2014 never `0` \u2014 when the transcript could not be read. Zero would be a claim the visitor said nothing, the opposite of what an unreadable blob means, and a caller checking only this field would act on it."
+          },
+          "transcriptUnavailable": {
+            "type": "boolean",
+            "description": "True when the stored conversation could not be read. Distinct from an empty `messages`, which means the visitor genuinely said nothing."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptMessage"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "GuestExecution": {
+        "type": "object",
+        "description": "The spend dial for ANONYMOUS visitors. Replaced as a whole, never patched: these caps only mean something as a set, and a partial update that raised `dailyCreditCap` while leaving a stale `maxConcurrentComputers` behind would produce a combination nobody chose.",
+        "required": [
+          "enabled",
+          "computerEnabled",
+          "sharedSkillsEnabled",
+          "dailyCreditCap",
+          "dailyComputerStartCap",
+          "maxConcurrentComputers"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch. Everything below is inert while this is false."
+          },
+          "computerEnabled": {
+            "type": "boolean"
+          },
+          "sharedSkillsEnabled": {
+            "type": "boolean"
+          },
+          "dailyCreditCap": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Hard ceiling on what visitors can spend per day, in credits."
+          },
+          "dailyComputerStartCap": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxConcurrentComputers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "harnessEnabled": {
+            "type": "boolean"
+          },
+          "dailyHarnessSpendCapMicros": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Integer USD micros."
+          },
+          "dailyHarnessCallCap": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxConcurrentHarnessRuns": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ScenarioLinkRotated": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "rotated",
+          "link"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "rotated": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The NEW share link. The old one stops working immediately."
+          }
+        }
+      },
+      "ScenarioMemberRemoved": {
+        "type": "object",
+        "required": [
+          "scenarioId",
+          "projectId",
+          "removed"
+        ],
+        "properties": {
+          "scenarioId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "string",
+            "description": "The id or email that was removed, echoed back."
+          }
+        }
+      },
+      "ScenarioMemberRequest": {
+        "type": "object",
+        "description": "UPSERT by email, so re-inviting somebody is not an error.",
+        "required": [
+          "email"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "sendInviteEmail": {
+            "type": "boolean",
+            "description": "OFF by default: adding somebody quietly is not the same as inviting them."
+          }
+        }
+      },
+      "ScenarioRebindRequest": {
+        "type": "object",
+        "required": [
+          "environmentId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "environmentId": {
+            "type": "string",
+            "description": "The environment to point this scenario at. Must belong to the SAME project."
           }
         }
       }

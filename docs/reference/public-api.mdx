@@ -435,6 +435,42 @@ and dismissed, and hiding one never claims it stopped happening.
   the feature is not available to your organization — waiting will never help.
 </Warning>
 
+**User testing** (`/projects/{projectId}/environments/{environmentId}/scenario`,
+`.../user-testing/scenarios/...`) — publishing an environment for real visitors,
+reading what they did, and controlling who can reach it. A **scenario** is a
+published environment: one per environment, addressed by its own id once it
+exists.
+
+| Endpoint | What it does |
+| --- | --- |
+| `PUT .../environments/{environmentId}/scenario` | **Publish.** Idempotent — republishing returns the existing scenario, and `created: false` says so. Project **admin** |
+| `DELETE .../environments/{environmentId}/scenario` | **Unpublish.** The link dies and live sessions end. `deleted: false` when there was nothing published |
+| `PATCH .../user-testing/scenarios/{scenarioId}` | Rename, re-describe, or change `mode` |
+| `GET .../user-testing/scenarios/{scenarioId}/sessions` | What visitors did: one row per session, with feedback and a first-message preview |
+| `GET .../user-testing/scenarios/{scenarioId}/sessions/{sessionId}` | One session's transcript, paged. Tool payloads and blobs are dropped |
+| `PUT .../user-testing/scenarios/{scenarioId}/guest-execution` | The spend dial for anonymous visitors: daily credits, computer starts, concurrency |
+| `POST .../user-testing/scenarios/{scenarioId}/rotate-link` | **Mint a new share link.** No body — the new secret is minted server-side |
+| `PUT .../user-testing/scenarios/{scenarioId}/members` | Invite someone (or change their role) on an `invited_only` scenario |
+| `DELETE .../user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}` | Remove someone. Their grant is revoked, ending their live sessions |
+| `POST .../user-testing/scenarios/{scenarioId}/rebind` | Point the scenario at a different environment in the same project |
+
+<Warning>
+  **Rotating the link does not evict anyone who already used it.** It stops the
+  old URL from granting NEW access; the grants already redeemed under it stay
+  valid. That is the single most important thing to know here, because rotation
+  is what you reach for when a link leaks — and on its own it does not undo the
+  leak. Rotate *and* remove the members you did not intend to have.
+
+  What DOES take effect at once, ending live sessions rather than waiting for
+  expiry: unpublishing, tightening `mode`, and removing a member. Those bump
+  the scenario's `accessVersion`, and a session minted under an older version
+  stops working. None of them reverse by calling the opposite — a re-invited
+  member gets a new session, not their old one.
+
+  Read `accessVersion` off the publish and rebind responses. The update and
+  rotate responses do not carry it.
+</Warning>
+
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.

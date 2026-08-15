@@ -41,6 +41,11 @@ const BODYLESS_WRITES = new Set([
   // to say about it beyond which finding.
   "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
   "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  // Rotating a share link takes no options: the path scenarioId names what to
+  // rotate, and the new secret is minted server-side by definition. A body
+  // here could only be a place to pass the next secret in, which is exactly
+  // what a rotation must not accept.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
@@ -77,20 +82,15 @@ const KNOWN_UNDOCUMENTED = new Set([
   // the one surface a flag CANNOT gate — a Mintlify page is visible to
   // everyone regardless of who the flag is on for.
   //
-  // The SWARMS half of this beta is now documented, with the gate's behaviour
-  // (403 `FEATURE_UNAVAILABLE` for an unflagged organization) stated on the
-  // page instead of the routes being hidden — a caller who cannot use a route
-  // yet is better served by a documented refusal than by an endpoint that
-  // appears not to exist. What is left below is USER TESTING, which is the
-  // same flag but has not had that treatment yet.
-  "put /projects/{projectId}/environments/{environmentId}/scenario",
-  "delete /projects/{projectId}/environments/{environmentId}/scenario",
-  // The rest of user testing: what a published scenario produced, and who may
-  // reach it. Same beta, and the exposure controls want their own security
-  // review in the docs before they are advertised publicly.
-  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}",
+  // Both halves of this beta — SWARMS and USER TESTING — are now documented,
+  // with the gate's behaviour (403 `FEATURE_UNAVAILABLE` for an unflagged
+  // organization) stated on the page instead of the routes being hidden. A
+  // caller who cannot use a route yet is better served by a documented refusal
+  // than by an endpoint that appears not to exist.
+  //
+  // What is left below is the INSIGHTS layer of user testing, which is a
+  // different gate (the pre-GA actionable-insights program at the top of this
+  // list), not this one.
   "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
   "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
   "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
@@ -100,11 +100,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
-  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
-  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
-  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
 
   // A PLANNING read, not a product surface: it reports the caller's own role,
   // the beta gate's state and their plan limits so an agent on a static

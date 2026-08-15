@@ -139,6 +139,19 @@ const PAIRS: Readonly<Record<string, string>> = {
   WaveInsights: "PlatformWaveInsights",
   WaveInsightsRequested: "PlatformWaveInsightsRequested",
   WaveInsightsCanceled: "PlatformWaveInsightsCanceled",
+
+  // ── A4: User testing ──────────────────────────────────────────────────
+  //
+  // `ScenarioLinkRotated`, `ScenarioMemberRemoved` and the three request
+  // bodies have no SDK twin: the client returns those responses inline and
+  // takes the bodies as parameters, so there is no interface to compare.
+  Scenario: "PlatformScenario",
+  ScenarioDeleted: "PlatformScenarioDeleted",
+  UserTestingScenario: "PlatformUserTestingScenario",
+  UserTestingSession: "PlatformUserTestingSession",
+  UserTestingSessionDetail: "PlatformUserTestingSessionDetail",
+  TranscriptMessage: "PlatformTranscriptMessage",
+  GuestExecution: "PlatformGuestExecution",
 };
 
 /**
@@ -381,9 +394,14 @@ function schemaIsNullable(schema: Schema): boolean {
 function schemaRefName(schema: Schema): string | null {
   const direct = schema.$ref ?? schema.items?.$ref;
   if (direct) return direct.split("/").pop() ?? null;
-  // The nullable-ref form above: the real type is the non-null branch.
+  // The nullable-ref form above: the real type is the non-null branch. RECURSE
+  // rather than reading `branch.$ref` — a nullable ARRAY OF refs puts the ref
+  // one level further down, at `branch.items.$ref`, and stopping short there
+  // reports "no nested type" for a field that has one, which is a comparison
+  // that always succeeds.
   for (const branch of branches(schema) ?? []) {
-    if (branch.$ref) return branch.$ref.split("/").pop() ?? null;
+    const nested = schemaRefName(branch);
+    if (nested) return nested;
   }
   return null;
 }
