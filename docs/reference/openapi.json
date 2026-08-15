@@ -7207,6 +7207,18 @@
             ],
             "description": "Epoch milliseconds, `null` until terminal."
           },
+          "scoreIntegrity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Whether the run's score evidence verified at ingest. TRI-STATE, and the third state matters: `valid` means the backend checked and definitions and results agree; `invalid` means they do not; `null` (or absent) means NO VERDICT was produced, on a deployment that predates integrity checking. A score gate must treat `null` exactly like `invalid` — absent evidence is not valid evidence.",
+            "enum": [
+              "valid",
+              "invalid",
+              null
+            ]
+          },
           "environment": {
             "$ref": "#/components/schemas/EvalRunEnvironment"
           }
@@ -7332,6 +7344,218 @@
               "string",
               "null"
             ]
+          },
+          "scores": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "description": "Per-scorer verdicts for this iteration. `null` when the run predates scoring, or when the stored payload failed validation at the boundary — partially-trusted score data is never projected.",
+            "items": {
+              "$ref": "#/components/schemas/ScoreResult"
+            }
+          },
+          "evaluationConfig": {
+            "description": "The scorer definitions `scores` were produced under. Present exactly when `scores` is: results carry only a `definitionHash`, so without this a caller cannot tell a gating failure from an advisory one.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationConfigSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scoreIntegrity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the backend downgraded this iteration's verdict because its gating score evidence was malformed.",
+            "enum": [
+              "score_integrity_invalid",
+              null
+            ]
+          }
+        }
+      },
+      "ScoreResult": {
+        "type": "object",
+        "description": "One scorer's verdict for one iteration. `passed` is DERIVED as `value >= passThreshold` — never asserted by the scorer or the model.",
+        "required": [
+          "scorerId",
+          "scorerVersion",
+          "definitionHash",
+          "status",
+          "passThreshold",
+          "deterministic"
+        ],
+        "properties": {
+          "scorerId": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "scorerVersion": {
+            "type": "string"
+          },
+          "definitionHash": {
+            "type": "string",
+            "description": "Joins this result to its definition in `evaluationConfig.definitions`."
+          },
+          "status": {
+            "type": "string",
+            "description": "`error` is never a low score — a crashed judge is not a disagreeing judge. `not_applicable` never gates and is excluded from aggregation denominators, which is what distinguishes it from `skipped`.",
+            "enum": [
+              "scored",
+              "error",
+              "skipped",
+              "not_applicable"
+            ]
+          },
+          "value": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Present only when `status` is `scored`."
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "passed": {
+            "type": "boolean",
+            "description": "Derived as `value >= passThreshold`; present only when `status` is `scored`."
+          },
+          "rationale": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          "deterministic": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "promptHash": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Present only when `status` is `error`."
+          },
+          "scope": {
+            "type": "object",
+            "description": "Absent means case-level; `{kind:\"turn\",promptIndex}` means the check was authored on a single turn.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ResolvedScoreDefinition": {
+        "type": "object",
+        "description": "A scorer definition with every semantic default resolved. This is the form that is hashed, so an omitted `onError` and an explicitly-configured default digest identically.",
+        "required": [
+          "scorerId",
+          "idSource",
+          "scorerVersion",
+          "implementationHash",
+          "deterministic",
+          "passThreshold",
+          "role",
+          "onError",
+          "onSkipped"
+        ],
+        "properties": {
+          "scorerId": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "idSource": {
+            "type": "string",
+            "description": "`generated` ids are positional and UNSTABLE across config edits; only `explicit` ids may be referenced by a gate policy or tracked across runs.",
+            "enum": [
+              "explicit",
+              "generated"
+            ]
+          },
+          "scorerVersion": {
+            "type": "string"
+          },
+          "implementationHash": {
+            "type": "string",
+            "description": "Digest of what the scorer actually does — the canonicalized predicate, or the judge prompt plus template version. Required so two judges with different prompts cannot hash identically."
+          },
+          "label": {
+            "type": "string",
+            "description": "Presentation only; deliberately excluded from the hash."
+          },
+          "deterministic": {
+            "type": "boolean"
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "role": {
+            "type": "string",
+            "description": "Only `gating` scorers decide the iteration's verdict.",
+            "enum": [
+              "gating",
+              "advisory"
+            ]
+          },
+          "onError": {
+            "type": "string",
+            "description": "What an `error` status does to a gating iteration. Defaults to `fail`.",
+            "enum": [
+              "fail",
+              "ignore"
+            ]
+          },
+          "onSkipped": {
+            "type": "string",
+            "description": "What a `skipped` status does to a gating iteration. Separate from `onError`: a crashed judge and a judge that never ran are different failures.",
+            "enum": [
+              "fail",
+              "ignore"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "EvaluationConfigSnapshot": {
+        "type": "object",
+        "description": "The scorer definitions a run graded with, plus their hash. Changing scorer configuration changes this hash but NOT the case identity — a threshold edit must not fork a scenario's history.",
+        "required": [
+          "hash",
+          "definitions"
+        ],
+        "properties": {
+          "hash": {
+            "type": "string",
+            "description": "`evaluationConfigHash` over the resolved definitions. Order-independent — the hash sorts internally."
+          },
+          "definitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResolvedScoreDefinition"
+            }
           }
         }
       },

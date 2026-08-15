@@ -18,6 +18,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  toRunScoreIntegrity,
+  toScoreProjection,
+} from "./eval-score-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
@@ -952,6 +956,12 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    // Whether the run's score evidence verified at ingest. ABSENT means no
+    // verdict was produced — a deployment that does not yet check integrity —
+    // and a score gate must treat that exactly like `"invalid"`: absent
+    // evidence is not valid evidence. Omitted rather than nulled so the DTO is
+    // unchanged for every run predating integrity checking.
+    ...toRunScoreIntegrity(run.scoreIntegrity),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
   };
@@ -986,6 +996,7 @@ function toIterationDto(iteration: IterationDoc) {
     actualToolCalls: iteration.actualToolCalls ?? [],
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     error: iteration.error ?? null,
+    ...toScoreProjection(iteration.metadata),
   };
 }
 
