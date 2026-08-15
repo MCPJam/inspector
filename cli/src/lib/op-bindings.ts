@@ -189,6 +189,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_chatboxes: { command: "chatboxes list" },
   get_chatbox: { command: "chatboxes get" },
   list_chat_sessions: { command: "chat-sessions list" },
+  search_sessions: { command: "sessions search" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "tunnel" },
