@@ -271,6 +271,26 @@ function resolveFeatureLabel(payload: BillingErrorPayload): string | null {
   return null;
 }
 
+/**
+ * "Resets Aug 16, 12:00 AM" — the same sentence every daily cap needs.
+ *
+ * Extracted because four limits now want it and each inline copy was a chance
+ * to format the date slightly differently. The instant comes from the
+ * backend's `resetsAt` (epoch ms of the UTC day roll) and is rendered in the
+ * VIEWER's locale and zone: the cap is a UTC boundary, but "when can I try
+ * again" is a question about the reader's clock.
+ */
+function resetsSentence(resetsAt: number): string {
+  if (!Number.isFinite(resetsAt)) return "";
+  const resetTime = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(resetsAt));
+  return `Resets ${resetTime}.`;
+}
+
 export function formatBillingLimitReachedMessage(
   limitName: BillingLimitName | string | undefined,
   allowedValue: number | null | undefined,
@@ -294,13 +314,9 @@ export function formatBillingLimitReachedMessage(
       typeof options?.resetsAt === "number" &&
       Number.isFinite(options.resetsAt)
     ) {
-      const resetTime = new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date(options.resetsAt));
-      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}.`;
+      return `This organization has reached its eval iteration limit (${allowedValue}). ${resetsSentence(
+        options.resetsAt
+      )}`;
     }
     return canManageBilling
       ? `This organization has reached its eval iteration limit (${allowedValue}). Upgrade to continue.`
@@ -312,9 +328,28 @@ export function formatBillingLimitReachedMessage(
       : `This project has reached its swarm limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "insightsPerDay") {
+    if (typeof options?.resetsAt === "number") {
+      return `This organization has reached its daily insights limit (${allowedValue}). ${resetsSentence(
+        options.resetsAt
+      )}`;
+    }
     return canManageBilling
       ? `This organization has reached its daily insights limit (${allowedValue}). Upgrade to continue.`
       : `This organization has reached its daily insights limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "journeyRunsPerDay") {
+    // A DAILY cap, so "Upgrade to continue" is the wrong lead: the limit lifts
+    // by itself at the UTC roll, and sending someone to a pricing page for a
+    // wait would be the same mistake as reporting a 429 as a 402. The upgrade
+    // line stays as the fallback for a payload that carried no reset.
+    if (typeof options?.resetsAt === "number") {
+      return `This organization has reached its daily journey launch limit (${allowedValue}). ${resetsSentence(
+        options.resetsAt
+      )}`;
+    }
+    return canManageBilling
+      ? `This organization has reached its daily journey launch limit (${allowedValue}). Upgrade to launch more.`
+      : `This organization has reached its daily journey launch limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxMembers") {
     return canManageBilling
@@ -331,13 +366,9 @@ export function formatBillingLimitReachedMessage(
       typeof options?.resetsAt === "number" &&
       Number.isFinite(options.resetsAt)
     ) {
-      const resetTime = new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date(options.resetsAt));
-      return `Daily computer limit reached (${allowedValue}). Resets ${resetTime}.`;
+      return `Daily computer limit reached (${allowedValue}). ${resetsSentence(
+        options.resetsAt
+      )}`;
     }
     return `Daily computer limit reached (${allowedValue}).`;
   }
