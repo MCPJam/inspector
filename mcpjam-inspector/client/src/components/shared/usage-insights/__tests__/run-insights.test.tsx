@@ -163,19 +163,29 @@ function finding(overrides: Partial<SwarmFinding> = {}): SwarmFinding {
   };
 }
 
+const INSIGHTS_ELEMENT = (onOpenSession: () => void) => (
+  <RunInsights
+    surface={{
+      kind: "swarm",
+      projectId: "proj-1",
+      swarmRunGroupId: "run-1",
+    }}
+    onOpenSession={onOpenSession}
+  />
+);
+
 function renderInsights() {
   const onOpenSession = vi.fn();
-  render(
-    <RunInsights
-      surface={{
-        kind: "swarm",
-        projectId: "proj-1",
-        swarmRunGroupId: "run-1",
-      }}
-      onOpenSession={onOpenSession}
-    />,
-  );
+  render(INSIGHTS_ELEMENT(onOpenSession));
   return onOpenSession;
+}
+
+/** Render, then hand back a `refresh` that re-renders the SAME tree after the
+ * mocked signals change — how a live subscription update reaches the rows. */
+function renderRefreshableInsights() {
+  const onOpenSession = vi.fn();
+  const { rerender } = render(INSIGHTS_ELEMENT(onOpenSession));
+  return { refresh: () => rerender(INSIGHTS_ELEMENT(onOpenSession)) };
 }
 
 beforeEach(() => {
@@ -264,6 +274,105 @@ describe("one row per problem", () => {
   });
 });
 
+/**
+ * Evidence integrity — the rail must not lend its authority to a row nobody
+ * can check.
+ *
+ * The backend now refuses to mine or narrate an exemplar-less candidate, but
+ * an older server, a cached payload, or a future detector can still hand this
+ * component one. When that happens the deterministic sentence stays (it is a
+ * true statement about counts) and everything that requires evidence — the
+ * expander, the model's cause and fix, the session chips — does not appear.
+ */
+describe("evidence integrity", () => {
+  const unevidenced = () =>
+    signals({ candidates: [signal({ exemplarSessionIds: [] })] });
+
+  it("will not expand a row with no failing session to open", () => {
+    state.signals = unevidenced();
+    state.dto = completed();
+    renderInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(
+      screen.queryByTestId("run-insight-detail"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the deterministic sentence for that row", () => {
+    // Suppressing the row entirely would hide a real count. Only the
+    // unverifiable half is withheld.
+    state.signals = unevidenced();
+    renderInsights();
+    expect(screen.getByTestId("run-insight-headline")).toHaveTextContent(
+      /never called a tool/i,
+    );
+  });
+
+  it("never renders a Clean chip without a failing one beside it", () => {
+    state.signals = signals({
+      candidates: [
+        signal({ exemplarSessionIds: [], contrastSessionIds: ["s-9"] }),
+      ],
+    });
+    state.dto = completed();
+    renderInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(
+      screen.queryByTestId("run-insight-session-link"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reports its disclosure state to assistive tech, evidence and all", () => {
+    state.dto = completed();
+    const { refresh } = renderRefreshableInsights();
+    const headline = () => screen.getByTestId("run-insight-headline");
+    expect(headline()).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(headline());
+    expect(headline()).toHaveAttribute("aria-expanded", "true");
+
+    // Evidence pulled out from under an open row. The attribute goes AWAY
+    // rather than reading "false": with nothing to expand, the click is a
+    // no-op and there is no chevron, so this button is not a disclosure
+    // control at all — and announcing it as a collapsed one describes a
+    // control that does not exist.
+    state.signals = unevidenced();
+    refresh();
+    expect(headline()).not.toHaveAttribute("aria-expanded");
+
+    state.signals = signals();
+    refresh();
+    expect(headline()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("closes an OPEN row when its evidence disappears under it", () => {
+    // Signals are a live subscription. Without this, a refresh that dropped
+    // the exemplars left the model's Why/Fix on screen with nothing behind
+    // it — the row was merely un-openable, not closed.
+    state.dto = completed();
+    const { refresh } = renderRefreshableInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.getByTestId("run-insight-detail")).toBeInTheDocument();
+
+    state.signals = unevidenced();
+    refresh();
+    expect(
+      screen.queryByTestId("run-insight-detail"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still expands once a failing exemplar is present", () => {
+    state.signals = signals({
+      candidates: [signal({ contrastSessionIds: ["s-9"] })],
+    });
+    state.dto = completed();
+    renderInsights();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Why:/);
+    expect(screen.getAllByTestId("run-insight-session-link")).toHaveLength(2);
+  });
+});
+
 describe("summary and caveats", () => {
   it("leads with the summary and demotes caveats to the footer", () => {
     state.dto = completed();
@@ -319,20 +428,25 @@ describe("summary and caveats", () => {
   });
 });
 
+/** A FUNCTION, not a constant element: React bails out of re-rendering a
+ * subtree handed the identical element object, so a shared constant would make
+ * `rerender` silently no-op. */
+const bannerAndRecommendations = () => (
+  <RunInsightsProvider
+    surface={{
+      kind: "swarm",
+      projectId: "proj-1",
+      swarmRunGroupId: "run-1",
+    }}
+    onOpenSession={vi.fn()}
+  >
+    <RunInsightsBanner />
+    <RunInsightsRecommendations />
+  </RunInsightsProvider>
+);
+
 function renderBannerAndRecommendations() {
-  return render(
-    <RunInsightsProvider
-      surface={{
-        kind: "swarm",
-        projectId: "proj-1",
-        swarmRunGroupId: "run-1",
-      }}
-      onOpenSession={vi.fn()}
-    >
-      <RunInsightsBanner />
-      <RunInsightsRecommendations />
-    </RunInsightsProvider>,
-  );
+  return render(bannerAndRecommendations());
 }
 
 describe("RunInsightsBanner + Recommendations", () => {
@@ -361,6 +475,60 @@ describe("RunInsightsBanner + Recommendations", () => {
     fireEvent.click(screen.getByTestId("run-insight-headline"));
     expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Why:/i);
     expect(screen.getByTestId("run-insight-detail")).toHaveTextContent(/Fix:/i);
+  });
+
+  it("announces disclosure state on BOTH of its triggers", () => {
+    // This row has two buttons opening one panel — the count and the
+    // headline. A keyboard user who lands on either must be told the same
+    // thing, so state cannot live on just one of them.
+    state.dto = completed();
+    state.findings = [finding()];
+    renderBannerAndRecommendations();
+    for (const id of ["run-insight-count", "run-insight-headline"]) {
+      expect(screen.getByTestId(id)).toHaveAttribute("aria-expanded", "false");
+    }
+
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    for (const id of ["run-insight-count", "run-insight-headline"]) {
+      expect(screen.getByTestId(id)).toHaveAttribute("aria-expanded", "true");
+    }
+  });
+
+  it("closes an OPEN recommendation when its evidence disappears", () => {
+    state.dto = completed();
+    state.findings = [finding()];
+    const { rerender } = renderBannerAndRecommendations();
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(screen.getByTestId("run-insight-detail")).toBeInTheDocument();
+
+    state.signals = signals({
+      candidates: [signal({ exemplarSessionIds: [] })],
+    });
+    rerender(bannerAndRecommendations());
+    expect(
+      screen.queryByTestId("run-insight-detail"),
+    ).not.toBeInTheDocument();
+  });
+
+  // The rail has TWO row components. The evidence rule is a property of the
+  // surface, not of one layout, so it is pinned on both.
+  it("holds the same evidence rule as the compact rail", () => {
+    state.signals = signals({
+      candidates: [
+        signal({ exemplarSessionIds: [], contrastSessionIds: ["s-9"] }),
+      ],
+    });
+    state.dto = completed();
+    state.findings = [finding()];
+    renderBannerAndRecommendations();
+
+    fireEvent.click(screen.getByTestId("run-insight-headline"));
+    expect(
+      screen.queryByTestId("run-insight-detail"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("run-insight-session-link"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -589,6 +757,23 @@ describe("signalSentence", () => {
         }),
       ),
     ).toContain("5.0×");
+  });
+
+  it("names SESSIONS as the unit for target failures", () => {
+    // The bare "(1 of 2)" this used to print was ambiguous, and while the
+    // detector still had an attempt-outcome fire path those numbers were
+    // launch attempts being read as sessions.
+    expect(
+      signalSentence(
+        signal({
+          detector: "target_failures",
+          subjectKind: "environment",
+          subjectLabel: "Prod stack",
+          affectedSessions: 3,
+          sliceTotal: 4,
+        }),
+      ),
+    ).toBe("Tool errors concentrate on Prod stack in 3 of 4 sessions");
   });
 
   it("never divides by a missing comparison", () => {
