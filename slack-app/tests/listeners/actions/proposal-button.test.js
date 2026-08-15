@@ -408,6 +408,28 @@ describe('handleProposalButton', () => {
     assert.match(posted[0].text, /<@U_CLICKER>/);
   });
 
+  it('starts a LIVE swarm message when the approval produced a journey run', async () => {
+    // Same recognition rule as eval runs — the server-sent resource TYPE —
+    // but a different watcher: journey status vocabulary and verdicts differ,
+    // and routing them into the eval watcher misreports rate-limited fan-outs.
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'launch_journey_run',
+        kind: 'start',
+        resource: { type: 'journey_run', id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /swarm running…/);
+    assert.match(posted[0].text, /watch it here/);
+    assert.match(posted[0].text, /<@U_CLICKER>/);
+    assert.ok(posted[0].text.includes('https://app/swarms/jr_1'));
+  });
+
   it('posts a plain announcement when the approval produced no run', async () => {
     stub({
       executeBody: { status: 'succeeded', operation: 'cancel_eval_run', kind: 'cancel', result: {} },

@@ -294,12 +294,17 @@ export function useUsageInsights({
 
   // The thread list is a chatbox-surface concern; the swarm Sessions browser
   // has its own project-scoped listing, so a swarm scope never subscribes.
+  // Filters go to the SERVER, not just to a client-side pass afterward. The
+  // query applies them inside its index walk while filling the page; the page
+  // caps at 100 rows, so filtering only on the client would narrow that page
+  // instead of the scenario, silently hiding every older session that matches.
   const chatboxArgs =
     wantThreads && effectiveScope?.kind === "chatbox"
       ? ({
           chatboxId: effectiveScope.chatboxId,
           limit: 100,
           includeInternal: true,
+          ...(filters ? { filters: toServerFilters(filters) } : {}),
         } as any)
       : "skip";
 
@@ -329,18 +334,18 @@ export function useUsageInsights({
     (isSwarm
       ? "chatSessions:getSwarmUsageBreakdown"
       : "chatSessions:getUsageBreakdown") as any,
-    breakdownArgs,
+    breakdownArgs
   ) as UsageBreakdown | null | undefined;
 
   const rebuildChatbox = useMutation(
-    "chatSessions:rebuildChatboxInsights" as any,
+    "chatSessions:rebuildChatboxInsights" as any
   ) as unknown as (args: {
     chatboxId: string;
     force?: boolean;
     tuning?: ClusterTuning;
   }) => Promise<RebuildResult>;
   const rebuildSwarm = useMutation(
-    "chatSessions:rebuildSwarmInsights" as any,
+    "chatSessions:rebuildSwarmInsights" as any
   ) as unknown as (args: {
     projectId: string;
     force?: boolean;
@@ -373,7 +378,7 @@ export function useUsageInsights({
         : effectiveScope?.chatboxId,
       rebuildChatbox,
       rebuildSwarm,
-    ],
+    ]
   );
 
   return {
@@ -446,7 +451,7 @@ export function useGoalOutcomeDrilldown({
     (scope?.kind === "swarm"
       ? "chatSessions:listSwarmSessionsBySelection"
       : "chatSessions:listSessionsByGoalOutcome") as any,
-    args,
+    args
   ) as GoalOutcomeDrilldown | undefined;
 
   return {
