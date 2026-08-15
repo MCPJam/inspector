@@ -548,8 +548,22 @@ export interface SwarmChecksClaim {
   checkDocId: string;
   sessionDocId: string;
   criteria: JourneyCriterion[];
-  /** Persisted transcript envelope, or null when it could not be read. */
-  envelope: { messages?: unknown[]; spans?: unknown[] } | null;
+  /**
+   * Persisted transcript envelope, or null when it could not be read.
+   * `widgetRenderObservations` rides along when the session's browser harness
+   * recorded any — the signal the `widget*` predicates grade against.
+   */
+  envelope: {
+    messages?: unknown[];
+    spans?: unknown[];
+    widgetRenderObservations?: unknown[];
+  } | null;
+  /**
+   * Session-level token totals (Σ of turn-trace usage), or null when no turn
+   * reported usage. Null is semantic — it keeps `tokenBudgetUnder` failing
+   * closed — so it must never be coerced to zeros.
+   */
+  usage: { inputTokens?: number; outputTokens?: number } | null;
 }
 
 /**
@@ -606,6 +620,9 @@ export async function claimSwarmChecks(
     sessionDocId: data.sessionDocId,
     criteria: data.criteria,
     envelope: data.envelope ?? null,
+    // Tolerates a backend that predates the field: `undefined` collapses to
+    // the same null as "no usage recorded", both of which fail closed.
+    usage: data.usage ?? null,
   };
 }
 

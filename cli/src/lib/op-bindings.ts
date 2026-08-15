@@ -102,6 +102,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   publish_scenario: { command: "scenarios publish" },
   unpublish_scenario: { command: "scenarios unpublish" },
   // ── User testing: everything you do with a scenario once it exists ──────
+  get_user_testing_scenario: { command: "user-testing get" },
   update_user_testing_scenario: { command: "user-testing update" },
   list_user_testing_sessions: { command: "user-testing sessions" },
   get_user_testing_session: { command: "user-testing session" },

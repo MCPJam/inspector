@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { originOf } from "@mcpjam/sdk";
 import {
   describeBackendStreamFailure,
+  isMcpjamOwnedFailureCode,
   isUserOwnedDenialCode,
 } from "../mcpjam-stream-handler.js";
 
@@ -21,23 +22,63 @@ describe("describeBackendStreamFailure", () => {
   });
 
   it.each([401, 403])(
-    "reads a %i as a provider credential wall, not an MCPJam outage",
+    "reads a bare %i as a user-owned credential wall",
     (status) => {
       const normalized = describeBackendStreamFailure(status, "invalid api key");
 
       expect(normalized.slug).toBe("provider/auth_error");
-      // Defaults to the BYO reading: the key's owner is not plumbed to this
-      // layer, and staying quiet is the safe direction to be wrong in.
+      // With no MCPJam-owned code on the body, a 401 from `/stream` is its own
+      // auth gate (`auth_required` — sign in), which the user owns.
       expect(originOf(normalized)).toBe("user_config");
     },
   );
 
-  it("reads a 429 as a quota wall", () => {
+  it("reads a bare 429 as a quota wall", () => {
     const normalized = describeBackendStreamFailure(429, "rate limited");
 
     expect(normalized.slug).toBe("provider/quota");
     expect(originOf(normalized)).toBe("user_config");
   });
+
+  // The regression this change exists for. `categorizeError` in the backend
+  // mirrors the UPSTREAM provider's status onto our own response, so MCPJam's
+  // revoked managed key arrives as a 401 and MCPJam's own quota as a 429 —
+  // statuses whose catalog origin is `user_config`, which `mcpjam_internal`
+  // refuses to promote. A total hosted outage was filed as the user's problem.
+  it.each([
+    [401, "mcpjam_api_error"],
+    [403, "mcpjam_api_error"],
+    [429, "mcpjam_rate_limit"],
+    [500, "mcpjam_config_error"],
+    // Also at 200: the spend-precheck shape is a 200 JSON denial, and an
+    // MCPJam-owned code can ride the same envelope.
+    [200, "mcpjam_api_error"],
+  ])("owns a %i whose body names us via %s", (status, code) => {
+    const normalized = describeBackendStreamFailure(status, "boom", code);
+
+    expect(originOf(normalized)).toBe("mcpjam");
+  });
+
+  it("keeps the status-derived slug when the code names us", () => {
+    // The user-facing copy stays accurate — the provider DID reject the key.
+    // Only the ownership verdict changes: it was our key.
+    const normalized = describeBackendStreamFailure(
+      401,
+      "boom",
+      "mcpjam_api_error",
+    );
+
+    expect(normalized.slug).toBe("provider/auth_error");
+  });
+
+  it.each(["user_rate_limit", "auth_required", "invalid_request", undefined])(
+    "leaves a %s body on the status verdict",
+    (code) => {
+      expect(originOf(describeBackendStreamFailure(401, "boom", code))).toBe(
+        "user_config",
+      );
+    },
+  );
 
   it("makes no claim about a 4xx it does not recognize", () => {
     const normalized = describeBackendStreamFailure(400, "bad request");
@@ -85,5 +126,43 @@ describe("isUserOwnedDenialCode", () => {
     // costs the blindness this work exists to remove.
     expect(isUserOwnedDenialCode("something_new")).toBe(false);
     expect(isUserOwnedDenialCode(undefined)).toBe(false);
+  });
+});
+
+describe("isMcpjamOwnedFailureCode", () => {
+  it.each(["mcpjam_rate_limit", "mcpjam_api_error", "mcpjam_config_error"])(
+    "claims %s, which the backend itself marks 'not user's fault'",
+    (code) => {
+      expect(isMcpjamOwnedFailureCode(code)).toBe(true);
+    },
+  );
+
+  it.each([
+    "user_rate_limit",
+    "wallet_locked",
+    "auth_required",
+    "provider_rate_limit",
+    "provider_error",
+    "invalid_model",
+  ])("does not claim the user- or provider-owned code %s", (code) => {
+    expect(isMcpjamOwnedFailureCode(code)).toBe(false);
+  });
+
+  it("does not claim an unrecognized or absent code", () => {
+    // Allowlist, not a `mcpjam_` prefix rule: a new backend code must be read
+    // and classified rather than inheriting a page from its name.
+    expect(isMcpjamOwnedFailureCode("mcpjam_something_new")).toBe(false);
+    expect(isMcpjamOwnedFailureCode(undefined)).toBe(false);
+  });
+
+  it("is disjoint from the user-owned set", () => {
+    const ours = ["mcpjam_rate_limit", "mcpjam_api_error", "mcpjam_config_error"];
+    const theirs = ["user_rate_limit", "wallet_locked", "org_rate_limit"];
+    for (const code of ours) {
+      expect(isUserOwnedDenialCode(code)).toBe(false);
+    }
+    for (const code of theirs) {
+      expect(isMcpjamOwnedFailureCode(code)).toBe(false);
+    }
   });
 });

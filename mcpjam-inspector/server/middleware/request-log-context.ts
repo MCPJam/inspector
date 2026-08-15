@@ -100,17 +100,70 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     const body = c.res.body;
     if (body) {
       const closedCtx: RequestLogContext = { ...enriched };
-      const ts = new TransformStream({
-        flush() {
-          const durationMs = Date.now() - startedAt;
-          logger.event(
-            "http.stream.closed",
-            { ...closedCtx, durationMs },
-            { statusCode: closedCtx.statusCode ?? status, durationMs },
-          );
+      // Hand-rolled pull wrapper instead of a TransformStream: flush() only
+      // runs on a NORMAL end-of-stream, so a producer error or a client
+      // disconnect used to leave no `http.stream.closed` at all — the most
+      // common streaming failure produced zero telemetry. read()/cancel()
+      // cover all three exits deterministically, and pull() is demand-driven
+      // so backpressure is preserved.
+      const reader = body.getReader();
+      let closedEmitted = false;
+      const emitClosed = (
+        outcome: "completed" | "aborted" | "errored",
+        error?: unknown,
+      ) => {
+        // Exactly once: cancel and a pending read rejection can race.
+        if (closedEmitted) return;
+        closedEmitted = true;
+        const durationMs = Date.now() - startedAt;
+        // Guarded extraction: a rejection reason can be a value whose
+        // message getter or string coercion throws (Proxy trap, null-proto
+        // object). Letting that escape here would swallow the closed row AND
+        // replace the stream error with a secondary failure from the
+        // telemetry code — same precedent as reportRouteFailure's
+        // "[unreadable error value]" handling.
+        let errorMessage: string | undefined;
+        if (outcome === "errored" && error !== undefined) {
+          try {
+            errorMessage = (
+              error instanceof Error ? error.message : String(error)
+            ).slice(0, 500);
+          } catch {
+            errorMessage = "[unreadable error value]";
+          }
+        }
+        logger.event(
+          "http.stream.closed",
+          { ...closedCtx, durationMs },
+          {
+            statusCode: closedCtx.statusCode ?? status,
+            durationMs,
+            outcome,
+            ...(errorMessage ? { errorMessage } : {}),
+          },
+        );
+      };
+      const wrapped = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              emitClosed("completed");
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          } catch (err) {
+            emitClosed("errored", err);
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          emitClosed("aborted", reason);
+          return reader.cancel(reason);
         },
       });
-      c.res = new Response(body.pipeThrough(ts), {
+      c.res = new Response(wrapped, {
         status: c.res.status,
         statusText: c.res.statusText,
         headers: c.res.headers,
