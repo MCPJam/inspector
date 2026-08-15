@@ -99,6 +99,7 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useHostList } from "@/hooks/useClients";
+import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
@@ -413,10 +414,16 @@ export function NewSwarmCreateFlow({
     isAuthenticated && shouldQueryProjectId(projectId);
   const attachmentsQueryEnabled =
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
-  const { hosts, isLoading: hostsLoading } = useHostList({
+  const { hosts: allHosts, isLoading: hostsLoading } = useHostList({
     isAuthenticated,
     projectId,
   });
+  // A swarm pinned to a private scenario-backing client would break when that
+  // scenario is deleted, and would block the deletion until then.
+  const hosts = useMemo(
+    () => withoutPrivateScenarioBackingHosts(allHosts),
+    [allHosts],
+  );
   const { serverAttachments, isLoading: attachmentsLoading } =
     useProjectServerAttachments({ isAuthenticated, projectId });
   const [previewedHostId] = usePreviewedHostId(projectId);

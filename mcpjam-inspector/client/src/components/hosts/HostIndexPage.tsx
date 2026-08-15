@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Plus, Loader2, Server } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";
+import {
+  useHostList,
+  useHostMutations,
+  type HostListItem,
+} from "@/hooks/useClients";
+import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import { HostCard } from "./HostCard";
 import { CreateHostDialog } from "./CreateHostDialog";
 
@@ -18,7 +23,18 @@ export function HostIndexPage({
   isAuthenticated,
   onSelectHost,
 }: HostIndexPageProps) {
-  const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
+  const { hosts: allHosts, isLoading } = useHostList({
+    isAuthenticated,
+    projectId,
+  });
+  // Private scenario-backing clients are not clients a person owns: they are
+  // retired with the scenario that minted them, so listing them here would
+  // offer Edit/Duplicate/Delete on something that answers to a different
+  // lifecycle.
+  const hosts = useMemo(
+    () => withoutPrivateScenarioBackingHosts(allHosts),
+    [allHosts],
+  );
   const { deleteHost, duplicateHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);

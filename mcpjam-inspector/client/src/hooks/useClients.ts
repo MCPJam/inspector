@@ -4,17 +4,13 @@ import type { ChatboxMode } from "./useChatboxes";
 import { shouldQueryProjectId } from "./useProjects";
 
 /**
- * Product ownership of a host, mirrored from the backend `hosts.ownerScope`
- * (see mcpjam-backend convex/schema.ts). `null` = untagged/legacy (visible to
- * both products). `journeys` = standalone, Swarm-owned, NO publish surface.
- * NOT an auth signal — it drives product filtering, badges, and whether the
- * Chatbox surface offers a publish surface at all.
+ * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
+ * the "hide private scenario-backing clients" predicate — a pure module, so
+ * surfaces that mock this hooks module in tests still get the real rule.
+ * Re-exported here because host consumers reach for it beside `HostListItem`.
  */
-export type HostOwnerScope =
-  | { type: "suite"; testSuiteId: string }
-  | { type: "chatbox"; chatboxId: string }
-  | { type: "journeys" }
-  | null;
+export type { HostOwnerScope } from "@/lib/host-owner-scope";
+import type { HostOwnerScope } from "@/lib/host-owner-scope";
 
 export interface HostListItem {
   hostId: string;
@@ -130,13 +126,24 @@ export function useHostMutations() {
     name: string;
     input: HostConfigInputV2;
     // `'journeys'` → mint a standalone (chatbox-less) host owned by the Swarm
-    // surface. Absent → legacy behavior (a chatbox is minted).
-    owner?: "journeys";
+    // surface. `'user_testing'` → mint the host, an ad-hoc environment over
+    // it, and an ENVIRONMENT-backed chatbox, all in one transaction; the
+    // scenario's servers then resolve live from the host config instead of
+    // being copied into the chatbox. Absent → legacy behavior (a host-backed
+    // chatbox is minted).
+    owner?: "journeys" | "user_testing";
     // Access mode for the auto-minted chatbox. Absent → 'project_members'.
     // Set here rather than with a follow-up setChatboxMode so a scenario is
     // never briefly readable by the wrong audience. Ignored for journeys hosts.
     chatboxMode?: ChatboxMode;
-  }) => Promise<{ hostId: string; hostConfigId: string; chatboxId: string | null }>;
+  }) => Promise<{
+    hostId: string;
+    hostConfigId: string;
+    chatboxId: string | null;
+    // Present only for `owner: 'user_testing'` — the ad-hoc environment the
+    // scenario resolves through, needed to rebind its setup later.
+    environmentId?: string;
+  }>;
 
   const updateHost = useMutation("hosts:updateHost" as any) as unknown as (args: {
     hostId: string;

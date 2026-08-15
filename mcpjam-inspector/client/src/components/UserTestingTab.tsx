@@ -19,6 +19,10 @@ import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEna
 import { environmentLabel } from "@/lib/environment-label";
 import { settingsFromChatboxAccessPreset } from "@/lib/chatbox-access-presets";
 import { isDeliberateScenario } from "@/lib/user-testing-scenarios";
+import {
+  describeScenarioDeletion,
+  type ScenarioBackingRetirement,
+} from "@/lib/scenario-backing";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
@@ -357,19 +361,22 @@ export function UserTestingTab({
           nameOf: (row) => row.name,
         });
         try {
-          await deleteChatbox({ chatboxId: target.chatboxId } as any);
+          const result = (await deleteChatbox({
+            chatboxId: target.chatboxId,
+          } as any)) as { retirement?: ScenarioBackingRetirement } | undefined;
           return {
             status: "chatbox_deleted",
             scenarioId: target.chatboxId,
             chatboxId: target.chatboxId,
             name: target.name,
-            // Deleting a published scenario never touches the environment it
-            // was published from; saying so keeps the model from reporting
-            // more damage than was done.
             environmentId: target.environmentId ?? null,
-            note: target.environmentId
-              ? "The scenario and its history are gone. The environment it was published from is unchanged."
-              : "The scenario and its history are gone.",
+            // Driven by what the mutation actually did, not by a fixed
+            // sentence: a scenario created by the User Testing flow now
+            // retires its private setup and client with it, while one
+            // published from a saved environment still leaves that
+            // environment alone. Asserting either outcome unconditionally
+            // would have the model report the wrong amount of damage.
+            note: describeScenarioDeletion(target.environmentId, result?.retirement),
           };
         } catch (e) {
           throw createInspectorCommandClientError(
@@ -506,20 +513,29 @@ export function UserTestingTab({
         isAuthenticated={effectiveAuth}
         onCancel={goOverview}
         onCreateScenario={async ({ name, input, chatboxMode }) => {
-          // The one write. `hosts.createHost` mints the host, its chatbox and
-          // the access mode in a single mutation, so a half-created scenario
-          // isn't reachable. It returns the host id; the route wants the
-          // chatbox id, and the ladder above resolves one to the other on the
-          // next render — the list has already refetched by then.
-          const { hostId } = await createHost({
+          // The one write. `owner: 'user_testing'` makes `hosts.createHost`
+          // mint the client, an ad-hoc environment over it, and an
+          // ENVIRONMENT-backed chatbox in a single mutation, so a
+          // half-created scenario isn't reachable.
+          //
+          // Why the owner tag matters here and not just as a label: the
+          // env-backed chatbox resolves its servers LIVE from the client's
+          // config on every read. The old host-backed mint copied them at
+          // create time — except it copied nothing, so every scenario made
+          // this way served testers zero MCP servers.
+          const { chatboxId } = await createHost({
             projectId,
             name,
             input,
             chatboxMode,
+            owner: "user_testing",
           });
           toast.success("Scenario created");
-          navigate(buildUserTestingScenarioPath(hostId), { replace: true });
-          return { hostId };
+          // Navigate by CHATBOX id, like the environment flow above. The
+          // host-keyed ladder deliberately filters env-backed rows out, so a
+          // host id would resolve to nothing here.
+          navigate(buildUserTestingScenarioPath(chatboxId!), { replace: true });
+          return { chatboxId: chatboxId! };
         }}
       />
     );

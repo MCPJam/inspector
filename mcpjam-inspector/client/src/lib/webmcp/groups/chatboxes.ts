@@ -106,7 +106,7 @@ export function buildChatboxesUiTools(): UiToolDefinition[] {
     {
       name: "ui_delete_chatbox",
       description:
-        "Permanently delete a User Testing scenario — its share link stops working and its saved tester-session history is cleared. Irreversible; be sure the user wants this exact scenario gone. Addressed by scenario name or id, exactly as the scenario list shows it. The environment behind the scenario is left untouched.",
+        "Permanently delete a User Testing scenario — its share link stops working and its saved tester-session history is cleared. Irreversible; be sure the user wants this exact scenario gone. Addressed by scenario name or id, exactly as the scenario list shows it. What happens to the setup behind it depends on the scenario: one created by the User Testing flow also retires its private setup and the client backing it, while one published from a saved environment leaves that environment untouched. The result says which happened — report that rather than assuming.",
       inputSchema: {
         type: "object",
         properties: {
