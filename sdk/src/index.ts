@@ -960,6 +960,29 @@ export type {
   ScorerRunOptions,
 } from "./scorers/index.js";
 
+// The gate engine. ONE evaluator behind `assertGate` (code-first) and
+// `mcpjam eval gate` (hosted), so a CI gate cannot be green on one path and
+// red on the other.
+export {
+  GateError,
+  assertGate,
+  evaluateGates,
+  formatGateReport,
+  gateInputFromPlatformRun,
+  gateInputFromRunResult,
+  gateInputFromSuiteResult,
+  passRateFractionFromPercent,
+} from "./gates.js";
+export type {
+  GateInput,
+  GatePolicy,
+  GateReport,
+  GateScore,
+  GateStatus,
+  GateVerdict,
+  ScoreIntegrity,
+} from "./gates.js";
+
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
 export { evaluateToolCalls } from "./matchers.js";
 export type {
