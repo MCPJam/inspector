@@ -15,6 +15,20 @@ import {
 
 const EXPECTED_STEP_KINDS = ["prompt", "interact", "toolCall"] as const;
 
+/**
+ * `widgetToolCalled` is excluded from the picker ON PURPOSE, and the exclusion
+ * costs nothing.
+ *
+ * It does not belong to the group these four sit in ("What's on screen"): it
+ * asserts the widget INVOKED a tool, which is a claim about behavior, not
+ * about what is rendered. And it is not unreachable — the step's own Assertion
+ * dropdown (`WIDGET_ASSERTION_KINDS` in `step-list-editor.tsx`) lists all five
+ * kinds and `WidgetAssertionFields` has its `calledToolName` input, so an
+ * author adds any widget check here and switches it there.
+ *
+ * If it is ever promoted into the picker it needs its own group, not a fifth
+ * row under "What's on screen".
+ */
 const EXPECTED_WIDGET_CHECK_KINDS = [
   "textVisible",
   "elementVisible",

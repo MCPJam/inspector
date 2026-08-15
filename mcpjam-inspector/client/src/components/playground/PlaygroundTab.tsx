@@ -62,6 +62,7 @@ interface PlaygroundTabProps {
   isWorkOsAuthLoading?: boolean;
   isConvexAuthenticated?: boolean;
   isProjectProvisioned?: boolean;
+  isClientConfigSyncPending?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
@@ -199,6 +200,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     isWorkOsAuthLoading: props.isWorkOsAuthLoading,
     isConvexAuthenticated: props.isConvexAuthenticated,
     isProjectProvisioned: props.isProjectProvisioned,
+    isClientConfigSyncPending: props.isClientConfigSyncPending,
     hasSeenFirstRunOnboarding: props.hasSeenFirstRunOnboarding,
     isServerSyncing: props.isServerSyncing,
     onConnect: props.onConnect,

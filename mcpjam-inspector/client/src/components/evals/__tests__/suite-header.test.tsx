@@ -426,7 +426,7 @@ describe("SuiteHeader", () => {
     expect(onRerun).not.toHaveBeenCalled();
   });
 
-  it("keeps overview actions shrink-wrapped on the right with Run all last", () => {
+  it("wraps overview actions onto a second row, right-aligned, with Run all last", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
@@ -464,8 +464,8 @@ describe("SuiteHeader", () => {
 
     const actions = screen.getByTestId("suite-overview-actions");
     expect(actions).toHaveClass("ml-auto");
-    expect(actions).toHaveClass("shrink-0");
-    expect(actions).toHaveClass("flex-nowrap");
+    expect(actions).toHaveClass("flex-wrap");
+    expect(actions).toHaveClass("justify-end");
 
     const setupSdk = screen.getByRole("button", { name: /Setup SDK/i });
     const generate = screen.getByRole("button", { name: /^Generate$/i });

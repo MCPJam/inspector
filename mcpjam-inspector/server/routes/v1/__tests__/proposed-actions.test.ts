@@ -63,7 +63,10 @@ vi.mock("../../../services/slack-backend.js", () => ({
 }));
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
-  getConvexBearerForRequest: getConvexBearerMock,
+  // Execution mints the clicker's token UNCACHED, so it can carry this
+  // action's id — every write the operation makes then lands an audit row
+  // naming the proposal a human approved rather than the clicker acting alone.
+  getConvexBearerForApprovedAction: getConvexBearerMock,
 }));
 
 vi.mock("../../../utils/self-app.js", () => ({
@@ -143,9 +146,7 @@ function executeRequest(
           "x-mcpjam-slack-user-id": opts.slackUserId ?? "U_CLICKER",
           ...opts.headers,
         },
-        ...(opts.body !== undefined
-          ? { body: JSON.stringify(opts.body) }
-          : {}),
+        ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
       }
     )
   );

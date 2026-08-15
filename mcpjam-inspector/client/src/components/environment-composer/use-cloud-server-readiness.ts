@@ -43,7 +43,14 @@ export function useCloudServerReadiness({
   environments: readonly ProjectEnvironmentView[];
 }): CloudServerReadiness {
   const { isAuthenticated } = useConvexAuth();
-  const { hosts } = useHostList({ isAuthenticated, projectId });
+  // A LOOKUP, not a picker: `hostById` below resolves the client of an
+  // environment that already exists, so a filtered-out private scenario
+  // backing would read as UNKNOWN readiness rather than as "not offered".
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId,
+    includePrivateBacking: true,
+  });
   const { servers } = useProjectServers({ isAuthenticated, projectId });
   const { serverAttachments } = useProjectServerAttachments({
     isAuthenticated,

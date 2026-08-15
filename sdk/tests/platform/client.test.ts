@@ -58,6 +58,23 @@ describe("PlatformApiClient", () => {
     expect(second.url.searchParams.get("organizationId")).toBe("org-1");
   });
 
+  it("reads organizations from the bare collection route", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ items: [{ id: "org-1", name: "Alpha" }] })
+    );
+    const client = makeClient(fetchMock);
+
+    const page = await client.listOrganizations();
+
+    const { url, init } = requestOf(fetchMock);
+    // No query params and no body: the scope of the answer is the credential's,
+    // never the caller's to widen.
+    expect(url.href).toBe("https://api.example.com/api/v1/organizations");
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    expect(page.items[0]?.id).toBe("org-1");
+  });
+
   it("resolves auth lazily per request", async () => {
     const tokens = ["token-a", "token-b"];
     const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
@@ -470,5 +487,102 @@ describe("PlatformApiClient", () => {
     const error = await pending;
     expect(error).not.toBeInstanceOf(PlatformApiError);
     expect((error as DOMException).name).toBe("AbortError");
+  });
+
+  // The three cases below are about the SECOND half of a request. `fetch`
+  // resolving means headers arrived, not that the request is over — a server
+  // can send headers and then stall the body forever. An earlier revision
+  // cleared the deadline and detached the caller's signal as soon as headers
+  // landed, which left the body read bounded by nothing at all.
+
+  /** Headers now, body never. `signal` is the only way out. */
+  function stallingBodyFetch() {
+    return vi.fn(
+      (_url: unknown, init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          text: () =>
+            new Promise<string>((_resolve, reject) => {
+              const fail = () =>
+                reject(new DOMException("aborted", "AbortError"));
+              if (init?.signal?.aborted) {
+                fail();
+                return;
+              }
+              init?.signal?.addEventListener("abort", fail);
+            }),
+        } as unknown as Response)
+    );
+  }
+
+  it("synthesizes TIMEOUT when the deadline expires during the body read", async () => {
+    const error = await makeClient(stallingBodyFetch(), { timeoutMs: 10 })
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    // Not INTERNAL_ERROR. A stalled body is the server being slow, and calling
+    // it an internal failure sends someone hunting a bug on our side.
+    expect((error as PlatformApiError).code).toBe("TIMEOUT");
+  });
+
+  it("lets a caller abort a body that never arrives", async () => {
+    const controller = new AbortController();
+    // The abort has to land AFTER the body read has begun, or the test proves
+    // nothing: aborting before the fetch await resumes fires while the listener
+    // is still attached no matter how this is written, and passes either way.
+    let bodyReadStarted!: () => void;
+    const readingBody = new Promise<void>((resolve) => {
+      bodyReadStarted = resolve;
+    });
+    const fetchMock = vi.fn(
+      (_url: unknown, init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          text: () =>
+            new Promise<string>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () =>
+                reject(new DOMException("aborted", "AbortError"))
+              );
+              bodyReadStarted();
+            }),
+        } as unknown as Response)
+    );
+
+    // Far above any time this should take, so finishing at all proves the
+    // caller's signal — not the deadline — is what ended it.
+    const pending = makeClient(fetchMock, { timeoutMs: 60_000 })
+      .getMe({ signal: controller.signal })
+      .catch((caught: unknown) => caught);
+    await readingBody;
+    controller.abort();
+
+    const error = await pending;
+    expect(error).not.toBeInstanceOf(PlatformApiError);
+    expect((error as DOMException).name).toBe("AbortError");
+  });
+
+  it("still reports an ordinary body-read failure as an internal error", async () => {
+    // The arm that must survive the two above: a body that fails for its own
+    // reasons, with nothing aborted, is still ours to report.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        text: () => Promise.reject(new Error("connection reset")),
+      } as unknown as Response)
+    );
+
+    const error = await makeClient(fetchMock)
+      .getMe()
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("INTERNAL_ERROR");
   });
 });
