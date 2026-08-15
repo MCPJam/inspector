@@ -72,6 +72,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
@@ -2086,21 +2087,11 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   // to load it — including an authorization refusal for a caller who can see
   // the run but not its insights — omits the field rather than failing the
   // read: the run itself is the resource here.
-  let insights: Record<string, unknown> | undefined;
-  try {
-    const envelope = await convex.query(
-      "serverQuality:getEvalRunInsightsEnvelope" as any,
-      { suiteRunId: runId },
-    );
-    if (envelope) insights = envelope as Record<string, unknown>;
-  } catch (error) {
-    // Omission is the documented degradation (an older backend has no such
-    // query), but a genuine failure — schema drift, a rename, a transient
-    // error — looks identical from outside. Log so the two are separable in
-    // production; the run itself is still the resource, so the read stands.
-    console.warn("[v1.evals] insights envelope unavailable", error);
-    insights = undefined;
-  }
+  const insights = await loadInsightsEnvelope("v1.evals", () =>
+    convex.query("serverQuality:getEvalRunInsightsEnvelope" as any, {
+      suiteRunId: runId,
+    }),
+  );
 
   return v1Resource(c, {
     ...toRunDto(run!),
@@ -2135,8 +2126,11 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
   // rather than a silently-empty body that bills anyway, and `force` must be
   // a real boolean — `{"force":"false"}` is a truthy string, and treating it
   // as consent would charge for a regeneration nobody asked for.
-  const raw = (await c.req.text()).trim();
-  let body: unknown = undefined;
+  const raw = await c.req.text();
+  // Only an ACTUALLY empty body is bodyless. Whitespace is malformed JSON,
+  // and a literal `null` is a value the schema should reject — treating
+  // either as "no body" would bill for a request nobody wrote.
+  let body: unknown = {};
   if (raw.length > 0) {
     try {
       body = JSON.parse(raw);
@@ -2150,7 +2144,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
   }
   const force = parseWithSchema(
     z.object({ force: z.boolean().optional() }).strict(),
-    body ?? {},
+    body,
   ).force;
 
   try {
