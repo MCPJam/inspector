@@ -30,6 +30,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import type { ElementLocator, StepAssertion } from "@/shared/scripted-steps";
+import { WIDGET_ASSERTION_LABELS } from "@/shared/steps";
 
 /** What the editor captured on an assert-mode click. */
 export type AssertPick = {
@@ -49,28 +50,36 @@ export type AssertPick = {
  */
 type PickKind = Exclude<StepAssertion["type"], "widgetToolCalled">;
 
+/**
+ * Per-kind presentation for the chooser grid.
+ *
+ * The NAMES are not here: they come from `WIDGET_ASSERTION_LABELS`, the one
+ * vocabulary every widget-assertion surface reads, so the kind a user picks by
+ * clicking an element is called the same thing in the step list and the Add
+ * Step picker. `StepAssertion` (keyed on `type`) and `WidgetAssertion` (keyed
+ * on `kind`) are separate unions but share these kind names exactly, so the
+ * lookup is total for every `PickKind`. What stays local is the help sentence,
+ * which is written for THIS surface — "this element" refers to the one the
+ * user just clicked, which no other surface has.
+ */
 const KIND_META: Record<
   PickKind,
-  { label: string; help: string; Icon: typeof Eye; needsValue?: "text" | "equals" }
+  { help: string; Icon: typeof Eye; needsValue?: "text" | "equals" }
 > = {
   elementVisible: {
-    label: "Is visible",
     help: "Pass when this element is on screen.",
     Icon: Eye,
   },
   elementHidden: {
-    label: "Is hidden",
     help: "Pass when this element is absent or not visible.",
     Icon: EyeOff,
   },
   textVisible: {
-    label: "Shows text…",
     help: "Pass when the given text is visible in the widget.",
     Icon: Type,
     needsValue: "text",
   },
   inputValue: {
-    label: "Input equals…",
     help: "Pass when this input's value equals the given text.",
     Icon: FormInput,
     needsValue: "equals",
@@ -193,7 +202,7 @@ export function AssertPickChooser({
               >
                 <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
                   <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                  {m.label}
+                  {WIDGET_ASSERTION_LABELS[k]}
                 </span>
                 <span className="text-[11px] leading-tight text-muted-foreground">
                   {m.help}

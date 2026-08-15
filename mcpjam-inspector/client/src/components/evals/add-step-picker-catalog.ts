@@ -6,7 +6,7 @@
  * see add-step-picker-catalog.test.ts for the load-bearing integrity check.
  */
 
-import type { WidgetAssertion } from "@/shared/steps";
+import { WIDGET_ASSERTION_LABELS, type WidgetAssertion } from "@/shared/steps";
 import {
   PREDICATE_KIND_LABELS,
   labelForInlineAssert,
@@ -34,7 +34,15 @@ export type PickerCatalogEntry = {
   group: PickerGroupId;
   tier: PickerTier;
   label: string;
-  /** Optional one-line hint shown under the label (essentials only). */
+  /**
+   * Optional one-line hint shown under the label.
+   *
+   * Two jobs: disambiguating the essentials, and marking every `widget-check`
+   * item as evaluated against the LIVE view rather than the transcript. That
+   * distinction is invisible from the label alone — "Text visible" and "View
+   * rendered" read alike — but it decides whether the check can ever be
+   * re-evaluated from stored data. See the union comment in `shared/steps.ts`.
+   */
   hint?: string;
   keywords: string[];
   choice: AddStepPickerChoice;
@@ -193,7 +201,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:textVisible",
     group: "viewContent",
     tier: "secondary",
-    label: "Text visible",
+    label: WIDGET_ASSERTION_LABELS.textVisible,
+    hint: "Checked in the live view",
     keywords: ["text", "visible", "dom"],
     choice: { kind: "widget-check", widgetKind: "textVisible" },
   },
@@ -201,7 +210,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:elementVisible",
     group: "viewContent",
     tier: "secondary",
-    label: "Element visible",
+    label: WIDGET_ASSERTION_LABELS.elementVisible,
+    hint: "Checked in the live view",
     keywords: ["element", "visible", "selector"],
     choice: { kind: "widget-check", widgetKind: "elementVisible" },
   },
@@ -209,7 +219,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:elementHidden",
     group: "viewContent",
     tier: "secondary",
-    label: "Element hidden",
+    label: WIDGET_ASSERTION_LABELS.elementHidden,
+    hint: "Checked in the live view",
     keywords: ["element", "hidden"],
     choice: { kind: "widget-check", widgetKind: "elementHidden" },
   },
@@ -217,7 +228,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:inputValue",
     group: "viewContent",
     tier: "secondary",
-    label: "Input value equals",
+    label: WIDGET_ASSERTION_LABELS.inputValue,
+    hint: "Checked in the live view",
     keywords: ["input", "value", "form"],
     choice: { kind: "widget-check", widgetKind: "inputValue" },
   },

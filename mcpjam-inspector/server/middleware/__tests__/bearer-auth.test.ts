@@ -22,12 +22,15 @@ import { Hono } from "hono";
 // above the imports. `vi.hoisted` is the supported way to initialize the mock
 // fns before those factories run (a plain `const fooMock = vi.fn()` lands in
 // the temporal dead zone when the factory executes at import time).
-const { validateApiKeyMock, resolveUserByExternalIdMock, lookupWorkosKeyBindingMock } =
-  vi.hoisted(() => ({
-    validateApiKeyMock: vi.fn(),
-    resolveUserByExternalIdMock: vi.fn(),
-    lookupWorkosKeyBindingMock: vi.fn(),
-  }));
+const {
+  validateApiKeyMock,
+  resolveUserByExternalIdMock,
+  lookupWorkosKeyBindingMock,
+} = vi.hoisted(() => ({
+  validateApiKeyMock: vi.fn(),
+  resolveUserByExternalIdMock: vi.fn(),
+  lookupWorkosKeyBindingMock: vi.fn(),
+}));
 
 vi.mock("../../services/workos-client.js", () => ({
   getWorkOSClient: () => ({
@@ -68,7 +71,7 @@ function createApp(): Hono {
       workosUserId: c.get("workosUserId") ?? null,
       mcpjamUserId: c.get("mcpjamUserId") ?? null,
       mcpjamOrganizationId: c.get("mcpjamOrganizationId") ?? null,
-    }),
+    })
   );
   return app;
 }
@@ -155,6 +158,56 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     // `x-mcpjam-acting-in-org`.
     expect(body.mcpjamOrganizationId).toBe("org_42");
     expect(lookupWorkosKeyBindingMock).toHaveBeenCalledWith("api_key_42");
+  });
+
+  it("puts the bound org on the request LOG context, not just the request vars", async () => {
+    // `/api/v1/*` rows reached Axiom with no `orgId` at all, which structurally
+    // disabled the error-class-spike monitor's "affects >= 3 organizations"
+    // rule for the whole public API: the rule cannot fire on a field that is
+    // never populated, so an error class spiking across every customer counted
+    // as one org forever. This is the only place the API-key path knows the org.
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_log", owner: { id: "user_log" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValueOnce({
+      _id: "mcpjam_user_log",
+    });
+    lookupWorkosKeyBindingMock.mockResolvedValueOnce({
+      mcpjamOrganizationId: "org_log",
+    });
+
+    const app = new Hono();
+    // Stand in for `requestLogContextMiddleware`, which seeds the context this
+    // merges into — `setRequestLogContext` no-ops when there is none, so the
+    // seed is what makes the assertion meaningful rather than vacuous.
+    app.use("*", async (c, next) => {
+      c.set("requestLogContext", {
+        event: "http.request.completed",
+        timestamp: new Date().toISOString(),
+        environment: "test",
+        release: null,
+        component: "http",
+        requestId: "req_log",
+        route: "pending",
+        method: "GET",
+        authType: "unknown",
+      } as never);
+      await next();
+    });
+    app.use("*", bearerAuthMiddleware);
+    app.get("/test", (c) =>
+      c.json({
+        orgId:
+          (c.get("requestLogContext") as { orgId?: string })?.orgId ?? null,
+      })
+    );
+
+    const res = await app.request("/test", {
+      headers: { authorization: "Bearer sk_live_log" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { orgId: unknown }).orgId).toBe("org_log");
   });
 
   it("returns 401 UNAUTHORIZED with details.reason ORPHANED_KEY when the key has no org binding", async () => {
