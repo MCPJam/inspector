@@ -62,6 +62,7 @@ export {
 } from "./schemas.js";
 
 export {
+  aggregateEvaluationConfigHash,
   buildEvaluationConfigSnapshot,
   definitionHash,
   errorScoreResult,

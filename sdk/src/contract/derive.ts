@@ -106,6 +106,22 @@ export function evaluationConfigHash(
 }
 
 /**
+ * Roll several per-case evaluation-config hashes into ONE run-level hash.
+ *
+ * A suite grades each case with its own definition set, but a run has a single
+ * fingerprint. Digesting the sorted list of per-case hashes gives an
+ * order-independent value that changes when any case's scorers change, and
+ * also when a case is added or removed.
+ *
+ * Duplicates are deliberately KEPT: two cases sharing an identical scorer set
+ * is a different configuration from one case with that set, and collapsing them
+ * would hide a deleted case from the fingerprint.
+ */
+export function aggregateEvaluationConfigHash(hashes: string[]): string {
+  return sha256Hex(canonicalJson([...hashes].sort()));
+}
+
+/**
  * Build the join table shipped with a run. Accepts authored definitions and
  * resolves them, so callers cannot accidentally hash an unresolved shape.
  *

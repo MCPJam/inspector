@@ -15,11 +15,30 @@ import {
   type EvalMatchOptions,
   type EvalToolCallMatchResult,
 } from "./matchers.js";
-import {
-  allPredicatesPassed,
-  evaluatePredicates,
-} from "./predicates/evaluate.js";
+import { evaluatePredicates } from "./predicates/evaluate.js";
 import { buildIterationTranscript } from "./predicates/transcript.js";
+import {
+  buildEvaluationConfigSnapshot,
+  errorScoreResult,
+  notApplicableScoreResult,
+} from "./contract/derive.js";
+import {
+  fromLegacyTestOutcome,
+  fromToolMatchResult,
+  legacyTestScoreDefinition,
+  predicateScoreDefinition,
+  scoreResultFromPredicateResult,
+  toolMatchScoreDefinition,
+} from "./contract/adapters.js";
+import type {
+  EvaluationConfigSnapshot,
+  ResolvedScoreDefinition,
+  ScoreResult,
+  ScorerContextV1,
+} from "./contract/types.js";
+import { runScorers, scoresPassed } from "./scorers/run.js";
+import { Semaphore } from "./scorers/concurrency.js";
+import type { Scorer } from "./scorers/types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
@@ -70,6 +89,14 @@ export interface EvalTestConfig {
   matchOptions?: EvalMatchOptions;
   /** Deterministic transcript predicates that gate each iteration. */
   predicates?: Predicate[];
+  /**
+   * Additional scorers run against each iteration.
+   *
+   * `test()`, `expectedToolCalls` and `predicates` are themselves projected
+   * into scores — scoring is the ONE verdict path, not a fifth system beside
+   * them — so these compose with the built-ins rather than replacing them.
+   */
+  scorers?: Scorer[];
 }
 
 /**
@@ -84,6 +111,10 @@ export interface EvalTestRunOptions {
   /** Called with a failure report if any iterations fail */
   onFailure?: (report: string) => void;
   mcpjam?: MCPJamReportingConfig;
+  /** Max scorers in flight per iteration. Default 4. */
+  scorerConcurrency?: number;
+  /** Fallback per-scorer hard timeout. Default 60000. */
+  scorerTimeoutMs?: number;
   /** @internal used by EvalSuite to prevent duplicate per-test uploads */
   __suppressMcpjamAutoSave?: boolean;
 }
@@ -110,10 +141,26 @@ export interface IterationResult {
    * require threading the snapshot into `PromptResult`.)
    */
   hostSnapshot?: import("./host-config/public-types.js").HostJson;
-  /** Deterministic predicate verdicts, in authored order. */
+  /**
+   * Deterministic predicate verdicts, in authored order.
+   *
+   * @deprecated as the verdict source — `passed` is now derived from
+   * {@link scores}. Still populated (from the same single evaluation that feeds
+   * the scores, so the two cannot disagree) and still on the wire at
+   * `metadata.predicates` for existing readers.
+   */
   predicateResults?: PredicateResult[];
-  /** Local expected/actual tool-call verdict, when expectations were configured. */
+  /**
+   * Local expected/actual tool-call verdict, when expectations were configured.
+   *
+   * @deprecated as the verdict source — see {@link predicateResults}.
+   */
   toolMatch?: EvalToolCallMatchResult;
+  /**
+   * Every scorer's verdict for this iteration, in the contract's one shape.
+   * THE verdict source: `passed` is derived from the gating rows here.
+   */
+  scores?: ScoreResult[];
 }
 
 /**
@@ -137,35 +184,14 @@ export interface EvalRunResult {
     mcp: LatencyStats;
     perIteration: LatencyBreakdown[];
   };
-}
-
-/**
- * Semaphore for controlling concurrency
- */
-class Semaphore {
-  private permits: number;
-  private waiting: (() => void)[] = [];
-
-  constructor(permits: number) {
-    this.permits = permits;
-  }
-
-  async acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
-      return;
-    }
-    await new Promise<void>((resolve) => this.waiting.push(resolve));
-  }
-
-  release(): void {
-    const next = this.waiting.shift();
-    if (next) {
-      next();
-    } else {
-      this.permits++;
-    }
-  }
+  /**
+   * The scorer definitions this run graded with, plus their hash.
+   *
+   * Carried locally (not only on the wire) so `evaluateGates` can join results
+   * to their definitions — role and error policies live here, and results alone
+   * cannot tell a gating failure from an advisory one.
+   */
+  evaluationConfig?: EvaluationConfigSnapshot;
 }
 
 const ITERATION_ABORT_GRACE_MS = 1000;
@@ -287,6 +313,7 @@ function wrapAgentWithAbortSignal(
 export class EvalTest {
   private config: EvalTestConfig;
   private lastRunResult: EvalRunResult | null = null;
+  private lastEvaluationConfig: EvaluationConfigSnapshot | null = null;
 
   constructor(config: EvalTestConfig) {
     if (!config.test) {
@@ -326,6 +353,11 @@ export class EvalTest {
     const testFn = this.config.test;
     const iterationResults: IterationResult[] = [];
     const total = options.iterations;
+    // One snapshot per run: scorer definitions are configuration, not per-
+    // iteration state, and the hash must be stable across every iteration of
+    // the run so the backend can fold ONE value into the run fingerprint.
+    const evaluationConfig = this.buildEvaluationConfig();
+    this.lastEvaluationConfig = evaluationConfig;
 
     const runSingleIteration = async (): Promise<IterationResult> => {
       await semaphore.acquire();
@@ -366,12 +398,13 @@ export class EvalTest {
             const promptResults = iterationAgent.getPromptHistory();
             const promptMetrics = collectPromptMetrics(promptResults);
             const predicates = this.config.predicates ?? [];
-            const predicateResults = this.evaluateIterationPredicates(
+            const graded = await this.scoreIteration({
               promptResults,
-              promptMetrics.tokens
-            );
-            const predicatePassed = allPredicatesPassed(predicateResults);
-            const toolMatch = this.evaluateIterationToolCalls(promptResults);
+              tokens: promptMetrics.tokens,
+              legacy: { kind: "returned", passed },
+              evaluationConfig,
+              options,
+            });
             // Per-iteration host snapshot: for HostRuntime this captures
             // the live Host state at iteration end, so the metadata
             // stamp reflects what THIS iteration ran with — not the
@@ -380,15 +413,24 @@ export class EvalTest {
             const iterationHostSnapshot = iterationAgent.getHostSnapshot?.();
 
             return {
-              passed: passed && predicatePassed && (toolMatch?.passed ?? true),
+              // Derived exclusively from the gating scores. The legacy
+              // expression `passed && predicatePassed && toolMatch.passed` is
+              // now one projection among several rather than the verdict — and
+              // it is equivalent by construction, because `test()`,
+              // `expectedToolCalls` and each predicate each contribute one
+              // gating score of exactly that value.
+              passed: graded.passed,
               ...promptMetrics,
               ...(timeoutTriggered && !passed
                 ? { error: timeoutError.message }
                 : {}),
               retryCount: attempt,
               hostSnapshot: iterationHostSnapshot,
-              ...(predicates.length > 0 ? { predicateResults } : {}),
-              ...(toolMatch ? { toolMatch } : {}),
+              ...(predicates.length > 0
+                ? { predicateResults: graded.predicateResults }
+                : {}),
+              ...(graded.toolMatch ? { toolMatch: graded.toolMatch } : {}),
+              scores: graded.scores,
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
@@ -413,12 +455,20 @@ export class EvalTest {
         // not an empty transcript. A retry-exhausted iteration may well have
         // called tools, and reporting fabricated verdicts against zeroed
         // signals would put wrong reasons on the dashboard's check chips.
-        const failedPredicateResults = this.evaluateIterationPredicates(
-          failedPromptResults,
-          promptMetrics.tokens
-        );
-        const failedToolMatch =
-          this.evaluateIterationToolCalls(failedPromptResults);
+        //
+        // Deterministic scorers still say something true about that partial
+        // transcript; non-deterministic ones are SKIPPED, because a judge's
+        // number over a truncated run means nothing. A gating judge skipped
+        // here fails closed by default, which is the correct reading of "the
+        // gate never ran".
+        const graded = await this.scoreIteration({
+          promptResults: failedPromptResults,
+          tokens: promptMetrics.tokens,
+          legacy: { kind: "threw", error: lastError ?? "iteration failed" },
+          evaluationConfig,
+          options,
+          skipNonDeterministic: "iteration errored before scoring",
+        });
 
         return {
           passed: false,
@@ -426,10 +476,11 @@ export class EvalTest {
           error: lastError,
           retryCount: retries,
           hostSnapshot: iterationHostSnapshot,
-          ...(failedPredicateResults.length > 0
-            ? { predicateResults: failedPredicateResults }
+          ...(graded.predicateResults.length > 0
+            ? { predicateResults: graded.predicateResults }
             : {}),
-          ...(failedToolMatch ? { toolMatch: failedToolMatch } : {}),
+          ...(graded.toolMatch ? { toolMatch: graded.toolMatch } : {}),
+          scores: graded.scores,
         };
       } finally {
         semaphore.release();
@@ -446,7 +497,7 @@ export class EvalTest {
     const results = await Promise.all(promises);
     iterationResults.push(...results);
 
-    const runResult = this.aggregateResults(iterationResults);
+    const runResult = this.aggregateResults(iterationResults, evaluationConfig);
 
     // Call onFailure callback if there are any failures
     if (options.onFailure && runResult.failures > 0) {
@@ -510,37 +561,76 @@ export class EvalTest {
       apiKey,
       baseUrl: config?.baseUrl,
       strict: config?.strict,
+      // Joins the run fingerprint on the backend: same externalRunId with a
+      // different evaluation config is a conflict, not a duplicate upload.
+      ...(this.lastEvaluationConfig
+        ? { evaluationConfigHash: this.lastEvaluationConfig.hash }
+        : {}),
       results,
     });
   }
 
   /**
-   * Deterministic predicate verdicts for one iteration, in authored order.
+   * The versioned input every scorer grades against, built ONCE per iteration.
    *
    * The transcript is built from the FULL trace — messages *and* spans — not a
    * bare message list: `buildIterationTranscript` derives tool errors from the
    * trace's spans, so a message-only trace leaves `noToolErrors` with nothing
    * to inspect and it passes vacuously even when every tool call failed.
    */
-  private evaluateIterationPredicates(
+  private buildScorerContext(
     promptResults: PromptResult[],
     tokens: { input: number; output: number; total: number }
+  ): ScorerContextV1 {
+    const traceMessages = traceMessagesFromPrompts(promptResults);
+    const trace = iterationTraceFromPrompts(promptResults, traceMessages);
+    const usage = {
+      inputTokens: tokens.input,
+      outputTokens: tokens.output,
+      totalTokens: tokens.total,
+    };
+    return {
+      version: 1,
+      scenario: { title: this.getName() },
+      transcript: buildIterationTranscript({
+        trace,
+        toolCalls: actualToolCallsFromPrompts(promptResults),
+        usage,
+      }),
+      trace: {
+        messages: traceMessages,
+        // `iterationTraceFromPrompts` returns the widest wire shape (a string
+        // and a bare message array are both legal traces); only the object form
+        // carries spans, and only spans are useful to a scorer.
+        ...(trace &&
+        typeof trace === "object" &&
+        !Array.isArray(trace) &&
+        trace.spans
+          ? { spans: trace.spans }
+          : {}),
+      },
+      ...(this.config.expectedToolCalls
+        ? { expectedToolCalls: this.config.expectedToolCalls }
+        : {}),
+      usage,
+    };
+  }
+
+  /**
+   * Deterministic predicate verdicts for one iteration, in authored order.
+   *
+   * Called EXACTLY ONCE per iteration. Its results feed both the compat
+   * `predicateResults` field and the predicate score rows — one evaluation,
+   * two projections — so the legacy view and the contract view are the same
+   * verdict rendered twice rather than two independent judgements that could
+   * drift.
+   */
+  private evaluateIterationPredicates(
+    context: ScorerContextV1
   ): PredicateResult[] {
     const predicates = this.config.predicates ?? [];
     if (predicates.length === 0) return [];
-    const traceMessages = traceMessagesFromPrompts(promptResults);
-    return evaluatePredicates(
-      buildIterationTranscript({
-        trace: iterationTraceFromPrompts(promptResults, traceMessages),
-        toolCalls: actualToolCallsFromPrompts(promptResults),
-        usage: {
-          inputTokens: tokens.input,
-          outputTokens: tokens.output,
-          totalTokens: tokens.total,
-        },
-      }),
-      predicates
-    );
+    return evaluatePredicates(context.transcript, predicates);
   }
 
   /**
@@ -553,7 +643,7 @@ export class EvalTest {
    * never declared `expectedToolCalls`.
    */
   private evaluateIterationToolCalls(
-    promptResults: PromptResult[]
+    context: ScorerContextV1
   ): EvalToolCallMatchResult | undefined {
     const expected = this.config.expectedToolCalls ?? [];
     if (expected.length === 0) return undefined;
@@ -562,9 +652,138 @@ export class EvalTest {
         toolName: toolCall.toolName,
         arguments: toolCall.arguments ?? {},
       })),
-      actualToolCallsFromPrompts(promptResults),
+      context.transcript.toolCalls,
       resolveMatchOptions(this.config.matchOptions)
     );
+  }
+
+  /**
+   * The scorer definitions for this test, resolved and hashed once.
+   *
+   * `test()`, `expectedToolCalls` and each predicate are each projected into
+   * one definition here, which is what makes scoring the single verdict path
+   * rather than a fifth system running alongside them.
+   *
+   * The tool-match definition is emitted even when the test configured no
+   * expectations: its row is `not_applicable`, and a row with no definition to
+   * join to would be unrenderable and — per the gate engine's fail-closed join
+   * — indistinguishable from tampering.
+   */
+  private buildEvaluationConfig(): EvaluationConfigSnapshot {
+    const definitions = [
+      legacyTestScoreDefinition(),
+      toolMatchScoreDefinition({
+        expectedToolCalls: this.config.expectedToolCalls ?? [],
+        matchOptions: resolveMatchOptions(this.config.matchOptions),
+      }),
+      ...(this.config.predicates ?? []).map((predicate, index) =>
+        predicateScoreDefinition(predicate, { ordinal: index })
+      ),
+      ...(this.config.scorers ?? []).map((scorer) => scorer.definition),
+    ];
+    return buildEvaluationConfigSnapshot(definitions);
+  }
+
+  /**
+   * Grade one iteration and derive its verdict.
+   *
+   * Ordering mirrors the config: `test()`, then `expectedToolCalls`, then
+   * predicates in authored order, then custom scorers — so the dashboard list
+   * reads the way the test does.
+   */
+  private async scoreIteration(params: {
+    promptResults: PromptResult[];
+    tokens: { input: number; output: number; total: number };
+    legacy: { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
+    evaluationConfig: EvaluationConfigSnapshot;
+    options: EvalTestRunOptions;
+    skipNonDeterministic?: string;
+  }): Promise<{
+    scores: ScoreResult[];
+    predicateResults: PredicateResult[];
+    toolMatch: EvalToolCallMatchResult | undefined;
+    passed: boolean;
+  }> {
+    const context = this.buildScorerContext(params.promptResults, params.tokens);
+    const definitions = params.evaluationConfig.definitions;
+    const byId = new Map(
+      definitions.map((definition) => [definition.scorerId, definition])
+    );
+    const definitionFor = (scorerId: string): ResolvedScoreDefinition => {
+      const definition = byId.get(scorerId);
+      if (!definition) {
+        // Unreachable: `buildEvaluationConfig` emits one definition per source.
+        // Loud rather than silent — a missing definition would make its score
+        // unjoinable, and an unjoinable score fails the gate closed.
+        throw new Error(`No score definition registered for "${scorerId}"`);
+      }
+      return definition;
+    };
+
+    const scores: ScoreResult[] = [];
+
+    // 1. test()
+    const legacyDefinition = definitionFor(legacyTestScoreDefinition().scorerId);
+    scores.push(
+      params.legacy.kind === "returned"
+        ? fromLegacyTestOutcome(legacyDefinition, params.legacy.passed)
+        : // A thrown/timed-out test is an ERROR, not a `false`. It still fails
+          // the iteration (gating, onError "fail"), but the row says why.
+          errorScoreResult(legacyDefinition, params.legacy.error)
+    );
+
+    // 2. expectedToolCalls — ONE evaluation, two projections.
+    const toolMatchDefinition = definitionFor(
+      toolMatchScoreDefinition({
+        expectedToolCalls: this.config.expectedToolCalls ?? [],
+        matchOptions: resolveMatchOptions(this.config.matchOptions),
+      }).scorerId
+    );
+    const toolMatch = this.evaluateIterationToolCalls(context);
+    scores.push(
+      toolMatch
+        ? fromToolMatchResult(toolMatchDefinition, toolMatch)
+        : notApplicableScoreResult(
+            toolMatchDefinition,
+            "no expected tool calls were configured"
+          )
+    );
+
+    // 3. predicates — ONE evaluation, two projections.
+    const predicateResults = this.evaluateIterationPredicates(context);
+    predicateResults.forEach((result, index) => {
+      const predicate = (this.config.predicates ?? [])[index];
+      if (!predicate) return;
+      scores.push(
+        scoreResultFromPredicateResult(
+          definitionFor(
+            predicateScoreDefinition(predicate, { ordinal: index }).scorerId
+          ),
+          result
+        )
+      );
+    });
+
+    // 4. custom scorers, under the runner's bounds.
+    const custom = this.config.scorers ?? [];
+    if (custom.length > 0) {
+      scores.push(
+        ...(await runScorers(custom, context, {
+          concurrency: params.options.scorerConcurrency,
+          timeoutMs: params.options.scorerTimeoutMs,
+          ...(params.skipNonDeterministic
+            ? { skipNonDeterministicReason: params.skipNonDeterministic }
+            : {}),
+        }))
+      );
+    }
+
+    return {
+      scores,
+      predicateResults,
+      toolMatch,
+      passed: scoresPassed(scores, definitions),
+    };
   }
 
   private buildEvalResultInputs(
@@ -579,11 +798,15 @@ export class EvalTest {
       reporting?.failOnToolError,
       hostExtras,
       this.config.predicates,
-      this.config.matchOptions
+      this.config.matchOptions,
+      this.lastEvaluationConfig ?? undefined
     );
   }
 
-  private aggregateResults(iterations: IterationResult[]): EvalRunResult {
+  private aggregateResults(
+    iterations: IterationResult[],
+    evaluationConfig?: EvaluationConfigSnapshot
+  ): EvalRunResult {
     const allLatencies = iterations.flatMap((r) => r.latencies);
 
     // Handle empty latencies array
@@ -630,6 +853,7 @@ export class EvalTest {
             : defaultStats,
         perIteration: allLatencies,
       },
+      ...(evaluationConfig ? { evaluationConfig } : {}),
     };
 
     return this.lastRunResult;

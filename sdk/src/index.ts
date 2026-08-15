@@ -906,6 +906,60 @@ export type {
   ListAllServerSkillsResult,
 } from "./operations.js";
 
+// The versioned evaluation contract (browser-safe; also exported in full from
+// `@mcpjam/sdk/contract`). Re-exported here so a code-first author can build a
+// custom scorer without a second import path.
+export {
+  aggregateEvaluationConfigHash,
+  buildEvaluationConfigSnapshot,
+  canonicalDigest,
+  canonicalJson,
+  definitionHash,
+  errorScoreResult,
+  evaluationConfigHash,
+  finalizeScoreResult,
+  notApplicableScoreResult,
+  resolveScoreDefinition,
+  scorePassed,
+  sha256Hex,
+  skippedScoreResult,
+  PREDICATES_VERSION,
+  evaluationConfigSnapshotSchema,
+  resolvedScoreDefinitionSchema,
+  scoreResultSchema,
+} from "./contract/index.js";
+export type {
+  EvaluationConfigSnapshot,
+  ResolvedScoreDefinition,
+  ScoreDefinition,
+  ScoreRawOutcome,
+  ScoreResult,
+  ScoreStatus,
+  ScorerContextV1,
+  ScorerErrorPolicy,
+  ScorerIdSource,
+  ScorerRole,
+} from "./contract/index.js";
+
+// The scorer runtime. Main-entry only — `judgeScorer` reaches the model
+// factory, which is not browser-safe.
+export {
+  DEFAULT_JUDGE_THRESHOLD,
+  DEFAULT_SCORER_CONCURRENCY,
+  DEFAULT_SCORER_TIMEOUT_MS,
+  JUDGE_TEMPLATE_VERSION,
+  judgeScorer,
+  predicateScorer,
+  runScorers,
+  scoresPassed,
+} from "./scorers/index.js";
+export type {
+  JudgeScorerOptions,
+  PredicateScorerOptions,
+  Scorer,
+  ScorerRunOptions,
+} from "./scorers/index.js";
+
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
 export { evaluateToolCalls } from "./matchers.js";
 export type {
