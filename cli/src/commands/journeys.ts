@@ -106,11 +106,7 @@ function pageArgs(options: PageOptions): { cursor?: string; limit?: number } {
   let limit: number | undefined;
   if (options.limit !== undefined) {
     limit = Number(options.limit);
-    if (
-      !Number.isInteger(limit) ||
-      limit < LIMIT_MIN ||
-      limit > LIMIT_MAX
-    ) {
+    if (!Number.isInteger(limit) || limit < LIMIT_MIN || limit > LIMIT_MAX) {
       throw usageError(
         `--limit must be a whole number between ${LIMIT_MIN} and ${LIMIT_MAX} (got "${options.limit}")`
       );
@@ -128,7 +124,12 @@ function addPageOptions(command: Command): Command {
     .option("--limit <n>", "Items per page (1-200)");
 }
 
-export function registerJourneysCommands(program: Command): void {
+/**
+ * Returns the `journeys` group so the authoring and insight subcommands in
+ * `./swarms.ts` can hang off the SAME group. A user should not have to learn
+ * that `journeys run` and `journeys create` come from different files.
+ */
+export function registerJourneysCommands(program: Command): Command {
   const journeys = program
     .command("journeys")
     .description(
@@ -339,4 +340,6 @@ export function registerJourneysCommands(program: Command): void {
       writeResult(result, globalOptions.format);
     }
   );
+
+  return journeys;
 }

@@ -4,6 +4,7 @@ import {
   ChevronRight,
   RefreshCw,
   ShieldAlert,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { useState } from "react";
@@ -39,6 +40,16 @@ interface ErrorBoxProps {
   /** Raw retry hint in milliseconds. Used by the concurrency banner to render
    * second-level granularity ("Retry in N seconds"). */
   retryAfterMs?: number;
+  /**
+   * Open the client's MCP Protocol settings.
+   *
+   * Rendered INSTEAD of a retry, never beside it: this banner's failure is a
+   * pinned protocol version the server doesn't offer, and resending the same
+   * turn fails identically until the setting changes. A named pair rather than
+   * a generic action slot, matching how every other affordance here is passed
+   * — the caller owns navigation, this component owns the button.
+   */
+  onChangeProtocolVersion?: () => void;
 }
 
 const parseErrorDetails = (details: string | undefined) => {
@@ -66,6 +77,7 @@ export function ErrorBox({
   walletLocked,
   limitKind,
   retryAfterMs,
+  onChangeProtocolVersion,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
@@ -244,6 +256,18 @@ export function ErrorBox({
             >
               Ask org admin to top up credits
             </span>
+          ) : null}
+          {onChangeProtocolVersion ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onChangeProtocolVersion}
+              className="gap-1.5"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Change protocol version
+            </Button>
           ) : null}
           {isRetryable && onRetry && (
             <Button

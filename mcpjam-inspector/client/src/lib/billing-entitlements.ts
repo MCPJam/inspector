@@ -173,6 +173,8 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return "Eval iterations per month";
     case "insightsPerDay":
       return "Insights per day";
+    case "journeyRunsPerDay":
+      return "Journey launches per day";
     default:
       return gateKey;
   }
@@ -271,6 +273,47 @@ function resolveFeatureLabel(payload: BillingErrorPayload): string | null {
   return null;
 }
 
+/**
+ * "Resets Aug 16, 12:00 AM" — the same sentence every daily cap needs.
+ *
+ * Extracted because four limits now want it and each inline copy was a chance
+ * to format the date slightly differently. The instant comes from the
+ * backend's `resetsAt` (epoch ms of the UTC day roll) and is rendered in the
+ * VIEWER's locale and zone: the cap is a UTC boundary, but "when can I try
+ * again" is a question about the reader's clock.
+ */
+function resetsSentence(resetsAt: number): string | null {
+  // `Number.isFinite` is not enough. `Number.MAX_VALUE` is finite and outside
+  // the range `Date` can represent, so `new Date(it)` is an Invalid Date and
+  // `Intl.DateTimeFormat.format` THROWS on it — turning a malformed field in
+  // an error payload into a second, worse error while the caller was already
+  // trying to explain the first one.
+  if (!Number.isFinite(resetsAt)) return null;
+  const date = new Date(resetsAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const resetTime = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  return `Resets ${resetTime}.`;
+}
+
+/**
+ * `resetsSentence` for a value that may be absent or malformed.
+ *
+ * The four daily/monthly caps all had to answer the same question — "is this
+ * `resetsAt` worth rendering?" — and each answered it with its own inline
+ * guard. One of them used a weaker guard than the others, which is exactly the
+ * kind of divergence a shared helper exists to prevent.
+ */
+function resolveResetsSentence(
+  resetsAt: number | null | undefined
+): string | null {
+  return typeof resetsAt === "number" ? resetsSentence(resetsAt) : null;
+}
+
 export function formatBillingLimitReachedMessage(
   limitName: BillingLimitName | string | undefined,
   allowedValue: number | null | undefined,
@@ -290,17 +333,9 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxEvalIterationsPerMonth") {
-    if (
-      typeof options?.resetsAt === "number" &&
-      Number.isFinite(options.resetsAt)
-    ) {
-      const resetTime = new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date(options.resetsAt));
-      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}.`;
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `This organization has reached its eval iteration limit (${allowedValue}). ${resets}`;
     }
     return canManageBilling
       ? `This organization has reached its eval iteration limit (${allowedValue}). Upgrade to continue.`
@@ -312,9 +347,26 @@ export function formatBillingLimitReachedMessage(
       : `This project has reached its swarm limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "insightsPerDay") {
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `This organization has reached its daily insights limit (${allowedValue}). ${resets}`;
+    }
     return canManageBilling
       ? `This organization has reached its daily insights limit (${allowedValue}). Upgrade to continue.`
       : `This organization has reached its daily insights limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "journeyRunsPerDay") {
+    // A DAILY cap, so "Upgrade to continue" is the wrong lead: the limit lifts
+    // by itself at the UTC roll, and sending someone to a pricing page for a
+    // wait would be the same mistake as reporting a 429 as a 402. The upgrade
+    // line stays as the fallback for a payload that carried no reset.
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `This organization has reached its daily journey launch limit (${allowedValue}). ${resets}`;
+    }
+    return canManageBilling
+      ? `This organization has reached its daily journey launch limit (${allowedValue}). Upgrade to launch more.`
+      : `This organization has reached its daily journey launch limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxMembers") {
     return canManageBilling
@@ -327,17 +379,9 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its project limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "computerStartsPerDay") {
-    if (
-      typeof options?.resetsAt === "number" &&
-      Number.isFinite(options.resetsAt)
-    ) {
-      const resetTime = new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date(options.resetsAt));
-      return `Daily computer limit reached (${allowedValue}). Resets ${resetTime}.`;
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `Daily computer limit reached (${allowedValue}). ${resets}`;
     }
     return `Daily computer limit reached (${allowedValue}).`;
   }

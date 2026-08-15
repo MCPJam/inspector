@@ -79,29 +79,65 @@ export function registerScenariosCommands(program: Command): void {
       "Publish project environments for user testing, and take them down again"
     );
 
+  const SCENARIO_MODES = [
+    "project_members",
+    "invited_only",
+    "anyone_with_link",
+  ] as const;
+
   addPlatformOptions(
     scenarios
       .command("publish")
       .description(
-        "Publish an environment as a scenario and print its share link. Idempotent — re-publishing returns the existing scenario, with created: false."
+        "Publish an environment as a scenario and print its share link. Idempotent — re-publishing returns the existing scenario, with created: false. --name, --description and --mode apply at CREATE TIME, in the same call; on a re-publish they are ignored and the result says overridesIgnored: true (use `mcpjam user-testing update` to change an existing scenario)."
       )
       .requiredOption("--environment <id>", "Project environment ID")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
       )
+      .option("--name <name>", "Scenario name (create time only)")
+      .option("--description <text>", "Scenario description (create time only)")
+      .option(
+        "--mode <mode>",
+        "Who may open the share link (create time only): project_members | invited_only | anyone_with_link"
+      )
   ).action(
     async (
-      options: PlatformOptions & { project?: string; environment: string },
+      options: PlatformOptions & {
+        project?: string;
+        environment: string;
+        name?: string;
+        description?: string;
+        mode?: string;
+      },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      // A misspelled mode is a usage error, answered here — not a server round
+      // trip that spends a request to learn the flag was typed wrong.
+      const mode = options.mode as (typeof SCENARIO_MODES)[number] | undefined;
+      if (mode !== undefined && !SCENARIO_MODES.includes(mode)) {
+        command.error(
+          `error: option '--mode <mode>' must be one of ${SCENARIO_MODES.join(
+            ", "
+          )}`
+        );
+      }
       const result = await runPlatformCommand(
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
           publishScenarioOperation.execute(
-            { project: options.project, environment: options.environment },
+            {
+              project: options.project,
+              environment: options.environment,
+              ...(options.name !== undefined ? { name: options.name } : {}),
+              ...(options.description !== undefined
+                ? { description: options.description }
+                : {}),
+              ...(mode !== undefined ? { mode } : {}),
+            },
             { client, signal }
           )
       );

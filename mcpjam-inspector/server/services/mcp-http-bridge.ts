@@ -1,5 +1,7 @@
 import { MCPClientManager, describeError } from "@mcpjam/sdk";
+import type { NormalizedError } from "@mcpjam/sdk";
 import { z } from "zod";
+import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -18,6 +20,15 @@ export type JsonRpcBridgeOptions = {
     toolName?: string;
     toolInput?: unknown;
   }) => void | Promise<void>;
+  /**
+   * Typed-telemetry seam: every real bridge failure leaves this process as
+   * an HTTP 200 carrying a JSON-RPC error envelope (or, in manager mode, a
+   * success envelope with `isError: true`), so `http.request.failed` never
+   * sees it. The reporter records it as `route.operation.failed`. Reporter
+   * failures are isolated exactly like `onToolCallError` — telemetry can
+   * never change the JSON-RPC response.
+   */
+  failureReporter?: StreamFailureReporter;
 };
 
 type JsonRpcBody = {
@@ -183,6 +194,90 @@ export async function handleJsonRpc(
 
   const respond = (payload: any) => ({ jsonrpc: "2.0", id, ...payload });
 
+  /**
+   * Whether a `-32020 HeaderMismatch` from this connection is MCPJam's bug.
+   *
+   * Per 2026-07-28 §Server Validation the server MUST answer `-32020` when the
+   * mirrored `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` /
+   * `Mcp-Param-*` headers disagree with the body; the spec's own table calls
+   * the sender a "Non-conforming client". MCPJam builds those headers
+   * mechanically from the body, so a rejection means OUR mirroring was wrong —
+   * and upstream's evict-refetch-retry recovery has already failed by the time
+   * one reaches here. This is not hypothetical: #3620 shipped exactly this bug
+   * on the hosted MRTR resume leg, and its only wire signature was a `-32020`
+   * filed as `ambiguous`.
+   *
+   * EXCEPT when the user asked for it. `toolParamHeaderMirroring: "omit"`
+   * (surfaced as `mirrorToolParamHeaders: false`) deliberately simulates a
+   * client that never mirrors, precisely so a user can check whether their
+   * server answers `-32020` instead of silently serving the request. That is
+   * the debugger working, and claiming it would page the team on a feature.
+   */
+  const isOwnRequestConstructionFault = (
+    normalized: NormalizedError | undefined,
+  ): boolean => {
+    if (normalized?.slug !== "jsonrpc/header_mismatch") return false;
+    // Optional call, not `manager.getServerConfig(...)`. This runs inside
+    // `reportOperationFailure`'s swallowing try/catch, so a manager without
+    // the accessor (a partial test double, an older embedder) would throw and
+    // silently drop the ENTIRE report rather than just this refinement.
+    const config = clientManager.getServerConfig?.(serverId);
+    // Absent config reads as conforming, matching the knob's own default:
+    // `mirrorToolParamHeaders` is opt-OUT, so only an explicit `false` is a
+    // simulated non-conforming client.
+    return config?.mirrorToolParamHeaders !== false;
+  };
+
+  // One call per failed operation. `hop: "user_server_hop"` at every site
+  // except the one above: the bridge is a proxy into the user's own MCP
+  // server, so the catalog's verdict stands and only MCPJam-positive slugs
+  // escalate. Parse/Invalid-Request 400s deliberately do NOT report (already
+  // visible as 4xx rows), nor does -32601 Method-not-implemented (a declared
+  // client outcome).
+  const reportOperationFailure = (
+    error: unknown,
+    rpcMethod: string,
+    normalized?: NormalizedError,
+    context?: Record<string, unknown>,
+  ) => {
+    try {
+      // An UPSTREAM -32601 (the connected server rejecting an unknown
+      // method, surfaced through the passthrough or outer catch) is the same
+      // declared client outcome as our own -32601 short-circuit below —
+      // excluded for the same reason.
+      if ((error as { code?: unknown } | undefined)?.code === -32601) {
+        return;
+      }
+      const ownRequestFault = isOwnRequestConstructionFault(normalized);
+      options.failureReporter?.({
+        message: `[mcp-bridge] ${rpcMethod} failed`,
+        error,
+        source: "mcp.bridge.rpc",
+        hop: ownRequestFault
+          ? "mcpjam_request_construction"
+          : "user_server_hop",
+        transport: "rpc_envelope",
+        ...(normalized ? { normalized } : {}),
+        errorCode: "-32000",
+        rpcMethod,
+        context: {
+          serverId,
+          mode,
+          // The envelope code is always -32000; the UPSTREAM code is what
+          // distinguishes a header mismatch, and a triager reading the row
+          // should not have to infer it from the slug.
+          ...(typeof (error as { code?: unknown } | undefined)?.code ===
+          "number"
+            ? { upstreamCode: (error as { code: number }).code }
+            : {}),
+          ...(context ?? {}),
+        },
+      });
+    } catch {
+      // Telemetry must never alter the JSON-RPC response.
+    }
+  };
+
   try {
     switch (method) {
       case "ping":
@@ -275,6 +370,19 @@ export async function handleJsonRpc(
             // Observation-only: never turn a side-channel failure into an MCP
             // tool failure different from the upstream error.
           }
+          const normalized = describeError(e);
+          // In the SHARED catch, before the mode branch, deliberately:
+          // manager mode answers with a SUCCESS envelope carrying
+          // `isError: true` — a failure invisible to HTTP status AND to
+          // JSON-RPC error accounting — and it must count exactly like the
+          // adapter-mode -32000.
+          reportOperationFailure(e, "tools/call", normalized, {
+            ...(observedToolName ? { toolName: observedToolName } : {}),
+            // A prefixed name ("otherServer:tool") reroutes the call; the
+            // failure belongs to the server that actually executed it, not
+            // the one in the URL.
+            targetServerId,
+          });
           if (mode === "manager") {
             const result = {
               content: [
@@ -288,7 +396,7 @@ export async function handleJsonRpc(
             error: {
               code: -32000,
               message: e?.message || String(e),
-              data: { normalized: describeError(e) },
+              data: { normalized },
             },
           });
         }
@@ -332,11 +440,13 @@ export async function handleJsonRpc(
           // adapter mode returns raw content
           return respond({ result: resource });
         } catch (e: any) {
+          const normalized = describeError(e);
+          reportOperationFailure(e, "resources/read", normalized);
           return respond({
             error: {
               code: -32000,
               message: e?.message || String(e),
-              data: { normalized: describeError(e) },
+              data: { normalized },
             },
           });
         }
@@ -375,11 +485,13 @@ export async function handleJsonRpc(
           // adapter mode returns raw content
           return respond({ result: prompt });
         } catch (e: any) {
+          const normalized = describeError(e);
+          reportOperationFailure(e, "prompts/get", normalized);
           return respond({
             error: {
               code: -32000,
               message: e?.message || String(e),
-              data: { normalized: describeError(e) },
+              data: { normalized },
             },
           });
         }
@@ -401,11 +513,13 @@ export async function handleJsonRpc(
             const result = await managed.request({ method, params } as any);
             return respond({ result: result ?? {} });
           } catch (e: any) {
+            const normalized = describeError(e);
+            reportOperationFailure(e, method, normalized);
             return respond({
               error: {
                 code: -32000,
                 message: e?.message || String(e),
-                data: { normalized: describeError(e) },
+                data: { normalized },
               },
             });
           }
@@ -421,11 +535,13 @@ export async function handleJsonRpc(
       }
     }
   } catch (e: any) {
+    const normalized = describeError(e);
+    reportOperationFailure(e, method, normalized);
     return respond({
       error: {
         code: -32000,
         message: e?.message || String(e),
-        data: { normalized: describeError(e) },
+        data: { normalized },
       },
     });
   }
