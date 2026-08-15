@@ -337,13 +337,28 @@ export function evalTestFromPlatformCase(
         // `deriveExpectedToolCalls` does. `minCount` and per-assert matching
         // are dropped IDENTICALLY on both sides — this is parity, not loss.
         if (predicate.type === "toolCalledWith") {
-          expectedToolCalls.push({
-            toolName: predicate.toolName,
-            arguments:
-              (predicate as { args?: { args?: Record<string, unknown> } }).args
-                ?.args ?? {},
-          });
-          return;
+          // Convert to an EXPECTATION only when the assertion carries nothing
+          // the expectation cannot express. `expectedToolCalls` has no
+          // `minCount` and no per-call `argumentMatching`, so converting an
+          // assertion that uses either would grade it more loosely than the
+          // dashboard does — a local pass where hosted fails.
+          //
+          // Anything else stays a PREDICATE, which is not a fallback: the
+          // predicate engine evaluates `toolCalledWith` locally with full
+          // fidelity, including both fields. The conversion exists only for
+          // parity with hosted `deriveExpectedToolCalls` on the plain case.
+          const minCount = predicate.minCount;
+          const argumentMatching = predicate.args?.argumentMatching;
+          const isPlain =
+            (minCount === undefined || minCount === 1) &&
+            (argumentMatching === undefined || argumentMatching === "partial");
+          if (isPlain) {
+            expectedToolCalls.push({
+              toolName: predicate.toolName,
+              arguments: predicate.args?.args ?? {},
+            });
+            return;
+          }
         }
         stepPredicates.push(predicate);
         return;

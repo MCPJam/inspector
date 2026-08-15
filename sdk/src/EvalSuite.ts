@@ -235,18 +235,21 @@ export class EvalSuite {
     reporting?: MCPJamReportingConfig,
     hostExtras?: Record<string, string | number | boolean>
   ): EvalResultInput[] {
-    const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
+    // Null prototype on ALL FOUR of these: they are keyed by test NAME in the
+    // same loop, so a test called `__proto__` would run the prototype setter
+    // instead of creating an own property and vanish from every one of them.
+    // Fixing one and leaving three is worse than fixing none — it reads as
+    // handled.
+    const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> =
+      Object.create(null);
     const predicatesByTest: Record<
       string,
       import("./predicates/types.js").Predicate[]
-    > = {};
+    > = Object.create(null);
     const matchOptionsByTest: Record<
       string,
       import("./matchers.js").EvalMatchOptions | undefined
-    > = {};
-    // Null prototype: a test named `__proto__` would otherwise mutate the
-    // record's prototype instead of storing an entry, silently dropping that
-    // case's identity and grading metadata from the upload.
+    > = Object.create(null);
     const caseIdentityByTest: Record<
       string,
       import("./eval-result-mapping.js").EvalCaseIdentity | undefined

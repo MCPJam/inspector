@@ -555,3 +555,70 @@ describe("guards the reviewers found", () => {
     );
   });
 });
+
+describe("toolCalledWith conversion preserves what it cannot express", () => {
+  function caseWith(assertion: Record<string, unknown>) {
+    return evalTestFromPlatformCase(
+      evalCase({
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "go" },
+          { id: "s2", kind: "assert", assertion },
+        ],
+      })
+    ).getConfig();
+  }
+
+  it("converts the PLAIN case to an expectation, matching hosted", () => {
+    const config = caseWith({
+      type: "toolCalledWith",
+      toolName: "issue_refund",
+      args: { args: { orderId: "A1" } },
+    });
+    expect(config.expectedToolCalls).toEqual([
+      { toolName: "issue_refund", arguments: { orderId: "A1" } },
+    ]);
+    expect(config.predicates ?? []).toEqual([]);
+  });
+
+  const UNEXPRESSIBLE: Array<{ label: string; assertion: Record<string, unknown> }> = [
+    {
+      label: "minCount > 1",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "t",
+        args: { args: {} },
+        minCount: 3,
+      },
+    },
+    {
+      label: "exact argument matching",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "t",
+        args: { args: { a: 1 }, argumentMatching: "exact" },
+      },
+    },
+  ];
+
+  it.each(UNEXPRESSIBLE)(
+    "keeps $label as a PREDICATE rather than under-grading it",
+    ({ assertion }) => {
+      const config = caseWith(assertion);
+      // `expectedToolCalls` has no minCount and no per-call argumentMatching,
+      // so converting would grade more loosely than the dashboard — a local
+      // pass where hosted fails. The predicate engine handles both natively.
+      expect(config.expectedToolCalls ?? []).toEqual([]);
+      expect(config.predicates?.map((p) => p.type)).toEqual(["toolCalledWith"]);
+    }
+  );
+
+  it("treats explicit defaults as plain", () => {
+    const config = caseWith({
+      type: "toolCalledWith",
+      toolName: "t",
+      args: { args: {}, argumentMatching: "partial" },
+      minCount: 1,
+    });
+    expect(config.expectedToolCalls).toHaveLength(1);
+  });
+});

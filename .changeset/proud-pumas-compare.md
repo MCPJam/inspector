@@ -6,8 +6,9 @@
 Add run-over-run comparison and comparative gates.
 
 `compareEvalRun` on the platform client fetches
-`GET /projects/{p}/eval-runs/{runId}/compare`: per-case status (regressed,
-fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the
+`GET /projects/{p}/eval-runs/{runId}/compare`: per-case status (`regressed`,
+`fixed`, `new_case`, `removed_case`, `changed`, `unchanged_passed`,
+`unchanged_failed`), per-scorer pass-rate and mean deltas from the
 evaluation contract, and whether the evaluation config changed. Omitting
 `baseRunId` compares against the nearest earlier completed run in the same
 suite; a run with no comparable predecessor throws a `PlatformApiError` with
@@ -34,8 +35,9 @@ population change, since they join by case key.
 New `mcpjam eval compare` applies that policy to a hosted run and sets an
 exit code (0 pass, 1 regression, 2 usage, 3 incomplete), with
 `--reporter json-summary|junit-xml` and `--out` via the same structured
-report the server-diff reporter uses. It has no `--wait`: comparing against
-an unfinished run compares against a partial population.
+report the server-diff reporter uses. It has no `--wait`: an unfinished run
+returns an incomplete comparison (exit 3) rather than being gated against a
+partial population.
 
 Also exported: `calculateLatencyStats` / `calculatePercentile` from the main
 entry, already used internally by the gate engine.
@@ -44,7 +46,9 @@ Also adds the hosted-corpus core: `buildCorpus` / `loadCorpusFromLock`
 materialize hosted eval cases into local `EvalTest`s and record them in a
 lock whose content hash is a versioned semantic allowlist. A case a local run
 cannot execute (a widget step, a direct tool call) raises
-`HostedOnlyCaseError` naming the case and step rather than being dropped.
+`HostedOnlyCaseError` naming the case and step. `unsupported: "skip"` records
+it under `skipped` and omits it from both the materialized cases and the lock —
+inspect `skipped` to detect an incomplete corpus.
 `EvalTestConfig` gains `externalCaseId`, `isNegativeTest` and
 `expectedOutput`, so a materialized case keeps hosted grading semantics and
 joins the hosted case's history on the run page.
