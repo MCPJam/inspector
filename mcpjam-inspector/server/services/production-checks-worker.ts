@@ -19,9 +19,17 @@
  *     tool-call walker the swarm checks runner uses, so a verdict cannot
  *     depend on which grader asked.
  *
- * Gated by `PRODUCTION_CHECKS_WORKER_ENABLED === '1'` (the backend enqueue,
- * routes, and cron have their own `PRODUCTION_CHECKS_ENABLED` gate; a 404
- * from the claim route means that gate is off and the loop backs off).
+ * ONE switch, and it is the backend's `PRODUCTION_CHECKS_ENABLED`. This worker
+ * has deliberately no flag of its own, unlike its scheduled-evals and
+ * github-checks siblings — a second gate here bought nothing the two existing
+ * ones don't already provide, and cost the failure mode where the feature
+ * reads as ON while silently doing nothing:
+ *
+ *   - being a worker at all requires `CONVEX_HTTP_URL` +
+ *     `INSPECTOR_SERVICE_TOKEN`; a deployment without them is not an
+ *     infrastructure peer and never starts the loop;
+ *   - the feature being off means the claim route 404s, which this loop reads
+ *     as "disabled" and backs off to one poll a minute until it flips.
  */
 
 import { logger } from "../utils/logger";
@@ -61,10 +69,6 @@ type ClaimOutcome =
   /** A trigger was consumed without producing work — poll again immediately. */
   | { kind: "drained" }
   | { kind: "disabled" };
-
-export function isProductionChecksWorkerEnabled(): boolean {
-  return process.env.PRODUCTION_CHECKS_WORKER_ENABLED === "1";
-}
 
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -300,8 +304,9 @@ export interface ProductionChecksWorkerHandle {
 }
 
 /**
- * Start the polling loop. Call once from server bootstrap when
- * {@link isProductionChecksWorkerEnabled}. One grade in flight per instance;
+ * Start the polling loop. Called unconditionally from server bootstrap — it
+ * self-gates on the service-token env below, so a deployment that is not an
+ * infrastructure peer gets an inert handle. One grade in flight per instance;
  * multiple instances race safely (the claim is an atomic Convex mutation).
  */
 export function startProductionChecksWorker(options?: {
@@ -317,10 +322,10 @@ export function startProductionChecksWorker(options?: {
   const claim = options?.claim ?? claimNext;
   const execute = options?.execute ?? executeClaimedCheck;
 
+  // Not a worker peer — every local dev and self-hosted inspector lands here.
+  // Silent on purpose: with no flag to contradict, absent credentials are the
+  // normal case rather than a misconfiguration worth warning about.
   if (!requiredEnv()) {
-    logger.warn(
-      "[production-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
-    );
     return { stop: async () => {} };
   }
 
