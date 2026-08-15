@@ -973,6 +973,7 @@ export {
   gateInputFromSuiteResult,
   passRateFractionFromPercent,
 } from "./gates.js";
+export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
 export type {
   GateInput,
   GatePolicy,
@@ -982,6 +983,32 @@ export type {
   GateVerdict,
   ScoreIntegrity,
 } from "./gates.js";
+
+// Run-over-run comparison: the statistics, and the gates built on them.
+// Separate from the single-run engine because the question is different —
+// "did these two runs measure the same thing, and if so did it get worse?"
+export { evaluateCompareGates } from "./compare-gates.js";
+export type {
+  CompareGateInput,
+  DeterministicScoreRegression,
+} from "./compare-gates.js";
+export {
+  DEFAULT_MIN_EFFECT_SIZE,
+  DEFAULT_MIN_SAMPLE_SIZE,
+  Z_95,
+  assessPassRateRegression,
+  detectFlakyCases,
+  newcombeDifferenceInterval,
+  wilsonInterval,
+} from "./compare-stats.js";
+export type {
+  ConfidenceInterval,
+  DifferenceInterval,
+  FlakyCase,
+  ProportionSample,
+  RegressionAssessment,
+  RegressionVerdict,
+} from "./compare-stats.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
 export { evaluateToolCalls } from "./matchers.js";

@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  COMPARATIVE_GATE_FIELDS,
   GateError,
   assertGate,
   evaluateGates,
@@ -21,6 +22,7 @@ import {
   gateInputFromRunResult,
   passRateFractionFromPercent,
   type GateInput,
+  type GatePolicy,
   type GateScore,
 } from "../src/gates.js";
 import {
@@ -688,5 +690,59 @@ describe("formatGateReport", () => {
     );
     expect(text).toContain("INCOMPLETE");
     expect(text).toContain("score integrity: unknown");
+  });
+});
+
+// ── comparative fields in a single-run policy (Tranche 2) ──────────────────
+//
+// The failure mode this guards is quiet: a policy that says "fail on
+// regressions", handed to an evaluator that cannot see a baseline, silently
+// evaluating nothing and reporting green. CI would pass either way, which is
+// exactly the state a gate exists to prevent. Every comparative field must be
+// a loud usage error here.
+
+describe("evaluateGates — comparative fields fail closed", () => {
+  const COMPARATIVE_POLICIES: Array<{ label: string; policy: GatePolicy }> = [
+    { label: "noDeterministicRegressions", policy: { noDeterministicRegressions: true } },
+    { label: "maximumP95LatencyIncreaseMs", policy: { maximumP95LatencyIncreaseMs: 50 } },
+    { label: "passRateRegression", policy: { passRateRegression: {} } },
+  ];
+
+  it.each(COMPARATIVE_POLICIES)(
+    "$label is a usage error, never a silent no-op",
+    ({ label, policy }) => {
+      const report = evaluateGates(input({}), policy);
+      expect(report.outcome).toBe("usage_error");
+      const verdict = report.verdicts.find((row) => row.gate === label);
+      expect(verdict?.status).toBe("usage_error");
+      // Points at the surface that CAN answer it.
+      expect(verdict?.message).toContain("mcpjam eval compare");
+    }
+  );
+
+  it("reports a comparative field even alongside a passing single-run gate", () => {
+    const report = evaluateGates(input({}), {
+      minimumPassRate: 0,
+      noDeterministicRegressions: true,
+    });
+    // usage_error outranks everything: nothing this policy says can be trusted.
+    expect(report.outcome).toBe("usage_error");
+    expect(report.verdicts.map((verdict) => verdict.gate)).toContain(
+      "minimumPassRate"
+    );
+  });
+
+  it("covers every field listed in COMPARATIVE_GATE_FIELDS", () => {
+    // Guards the guard: a new comparative field added to GatePolicy without a
+    // fail-closed case here would leave this suite green while the hole is
+    // open.
+    expect([...COMPARATIVE_GATE_FIELDS].sort()).toEqual(
+      COMPARATIVE_POLICIES.map((entry) => entry.label).sort()
+    );
+  });
+
+  it("stays silent when no comparative field is present", () => {
+    const report = evaluateGates(input({}), { minimumPassRate: 0 });
+    expect(report.outcome).not.toBe("usage_error");
   });
 });
