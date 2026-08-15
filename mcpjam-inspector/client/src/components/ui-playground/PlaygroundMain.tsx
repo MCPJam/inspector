@@ -252,10 +252,14 @@ const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 // template like "claude-code" would both leak the gated client to everyone
 // and have no working way to be filtered out.
 const PLAYGROUND_SEED_TEMPLATE_IDS = [
-  "chatgpt",
   "claude",
+  "chatgpt",
   "cursor",
 ] as const;
+
+const PLAYGROUND_SEED_MODEL_OVERRIDES: Partial<Record<string, string>> = {
+  chatgpt: "openai/gpt-5.6-luna",
+};
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
@@ -1305,6 +1309,11 @@ export function PlaygroundMain({
   // per-project ref so it fires at most once per empty project and never
   // blocks a different empty project from getting its own default hosts.
   const playgroundSeededProjectIdsRef = useRef(new Set<string>());
+  // While the three first-run hosts are being created, a subscription can
+  // surface ChatGPT before Claude. Do not let the generic missing-preview
+  // fallback turn that timing artifact into the selected default; the seed
+  // writes Claude as the lead after all three creates succeed.
+  const playgroundSeedingProjectIdsRef = useRef(new Set<string>());
   // Retry plumbing for the two failure paths below (single-host create
   // rejected / 3-host seed rolled back). Both clear the project's "seeded"
   // marker, which permits a retry but cannot cause one — this tick is what
@@ -1313,6 +1322,10 @@ export function PlaygroundMain({
   const seedRetryCountsRef = useRef(new Map<string, number>());
   const seedRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const [seedRetryTick, setSeedRetryTick] = useState(0);
+  // A seed completion only mutates a ref. This tick lets the missing-preview
+  // fallback run again when a user changed the compare lineup mid-seed and
+  // the seed correctly declined to overwrite that choice.
+  const [seedCompletionTick, setSeedCompletionTick] = useState(0);
   useEffect(() => {
     const timers = seedRetryTimersRef.current;
     return () => {
@@ -1451,14 +1464,20 @@ export function PlaygroundMain({
     const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
     const preSeedPreviewedHostId = loadPreviewedHostId(seedProjectId);
     playgroundSeededProjectIdsRef.current.add(seedProjectId);
+    playgroundSeedingProjectIdsRef.current.add(seedProjectId);
     Promise.allSettled(
       seeds.map(({ host, template }) =>
         createPlaygroundHost({
           projectId: seedProjectId,
           name: host!.label,
-          input: cloneHostTemplateInput(template, {
-            themeMode: seedThemeMode,
-          }),
+          input: {
+            ...cloneHostTemplateInput(template, {
+              themeMode: seedThemeMode,
+            }),
+            ...(PLAYGROUND_SEED_MODEL_OVERRIDES[host!.id]
+              ? { modelId: PLAYGROUND_SEED_MODEL_OVERRIDES[host!.id] }
+              : {}),
+          },
         })
       )
     ).then(async (results) => {
@@ -1549,6 +1568,9 @@ export function PlaygroundMain({
         setPreviewedHostId(leadHostId);
         setSelectedHostIds(hostIds);
       }
+    }).finally(() => {
+      playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
+      setSeedCompletionTick((tick) => tick + 1);
     });
   }, [
     isConvexAuthenticated,
@@ -1575,6 +1597,9 @@ export function PlaygroundMain({
     ) {
       return;
     }
+    if (playgroundSeedingProjectIdsRef.current.has(multiHostProjectId)) {
+      return;
+    }
     const previewedHostIsValid =
       previewedHostId !== null &&
       hostList.some((host) => host.hostId === previewedHostId);
@@ -1589,6 +1614,7 @@ export function PlaygroundMain({
     previewedHostId,
     resolveFallbackHostId,
     setPreviewedHostId,
+    seedCompletionTick,
   ]);
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
