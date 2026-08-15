@@ -13,6 +13,7 @@
 import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
@@ -60,7 +61,21 @@ v1.route("/", publicModels);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
-v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
+//
+// `passthroughRateLimitMiddleware` closes the last unmetered credential class.
+// The other two branches of `bearerAuthMiddleware` carry their own budgets —
+// an `sk_` key is metered per key id, a guest token per guest id — but the
+// AuthKit branch is deliberately NOT verified here (every route it fronts
+// forwards the bearer to Convex, which verifies it), and so reached the
+// handlers with nothing attached to it at all. It runs AFTER the auth
+// middleware because the label that middleware sets is the only thing that
+// distinguishes an asserted identity from a verified one.
+v1.use(
+  "*",
+  bearerAuthMiddleware,
+  passthroughRateLimitMiddleware,
+  guestRateLimitMiddleware
+);
 
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
