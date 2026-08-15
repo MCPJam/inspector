@@ -20,6 +20,17 @@ name: Prod canary
 #   app fails, no such pair    -> report the statuses; a non-2xx with no
 #                                cf-ray may never have reached Cloudflare
 #   only the MCP target fails  -> the canary's target, app probes passed
+#   only /api/v1 fails         -> the public API is broken while the app shell
+#                                 is healthy; see the note below
+#
+# THE PUBLIC-API PROBE is the only signal here that catches a SILENT-404
+# regression. The health endpoints are unauthenticated and answer from the app
+# shell, so they stay green while every authenticated /api/v1 route 404s — a
+# shape that surface can genuinely reach when a backend validator change makes
+# argument classification answer "the resource you named cannot exist" to every
+# caller. That is deploy skew: not a 5xx, so no rate monitor sees it, and (by
+# design, so stale-id retry loops stay cheap) no Sentry event. It requires
+# `secrets.CANARY_API_KEY`; without it the probe is skipped and says so.
 #
 # cf-ray is recorded only from a FAILING 5xx request: a cf-ray from a healthy
 # path says nothing about a different path, and a 4xx behind Cloudflare is a
@@ -133,6 +144,74 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Probe the public API (authenticated)
+        id: v1
+        if: steps.control.outputs.ok == 'true'
+        env:
+          CANARY_API_KEY: ${{ secrets.CANARY_API_KEY }}
+        run: |
+          set -uo pipefail
+          # The ONLY signal that catches a silent-404 regression on /api/v1.
+          #
+          # The health endpoints above are unauthenticated and answer from the
+          # app shell, so they stay green while every authenticated public-API
+          # route 404s — which is a shape this surface can genuinely reach: a
+          # backend validator change makes `translateConvexReadError` classify
+          # a caller-shaped argument as "the resource you named cannot exist"
+          # and answer 404 to EVERY caller. That is deploy skew, it is not a
+          # 5xx, and no rate monitor watches it. Only an authenticated probe
+          # asserting a real body notices.
+          #
+          # BODY SHAPE, not just status. A 200 carrying an error envelope, or
+          # an empty object from a half-deployed backend, is a regression that
+          # a status-only probe reports as healthy.
+          if [ -z "${CANARY_API_KEY:-}" ]; then
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            echo "::notice::CANARY_API_KEY is not set; skipping the public API probe. Mint a key and add it as a repo secret to enable it."
+            exit 0
+          fi
+          base="${BASE_URL%"${BASE_URL##*[!/]}"}"
+          url="${base}/api/v1/me"
+          # --retry-all-errors covers a single dropped packet; the key travels
+          # in a header from the environment so it never reaches the log.
+          code=$(curl -sS --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors \
+            -H "Authorization: Bearer ${CANARY_API_KEY}" \
+            -H 'Accept: application/json' \
+            -o /tmp/v1_body.txt -w '%{http_code}' "$url" || echo "000")
+          # Cap the body: a gateway error page can be arbitrarily large, and
+          # this string is going into a Slack post.
+          snippet=$(head -c 300 /tmp/v1_body.txt | tr -d '\r' | tr '\n' ' ')
+          # `.id` is `MeDto`'s primary field. `// empty` keeps jq quiet on a
+          # non-object body so a malformed response reads as a shape failure
+          # rather than a jq crash.
+          id=$(jq -r '.id // empty' /tmp/v1_body.txt 2>/dev/null || true)
+
+          status=ok
+          detail=""
+          if [ "$code" = "200" ] && [ -n "$id" ]; then
+            status=ok
+          elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            # Reported SEPARATELY from an outage. The overwhelmingly likely
+            # cause is the canary's own key being rotated, revoked, or its org
+            # losing access — an operator problem. It still has to be loud:
+            # from this moment the probe is blind, and a blind probe that says
+            # nothing is indistinguishable from a healthy one.
+            status=failed
+            detail="\`GET /api/v1/me\` -> HTTP ${code}. The canary credential is rejected, so this probe is BLIND until it is replaced — rotate CANARY_API_KEY. This is not by itself evidence of an outage."
+          elif [ "$code" = "200" ]; then
+            status=failed
+            detail="\`GET /api/v1/me\` -> HTTP 200 but the body has no \`id\`. A contract regression or a half-deployed backend; the status alone would have read as healthy. Body: ${snippet}"
+          else
+            status=failed
+            detail="\`GET /api/v1/me\` -> HTTP ${code}: ${snippet}"
+          fi
+          {
+            echo "status=${status}"
+            echo "detail<<EOF"
+            echo "${detail}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
         if: steps.control.outputs.ok == 'true' && env.MCP_TARGET_URL != ''
         with:
@@ -166,12 +245,16 @@ jobs:
       - name: Post the diagnosis
         if: >-
           steps.control.outputs.ok == 'true' &&
-          (steps.app.outputs.failures != '' || steps.mcp.outputs.status == 'failed')
+          (steps.app.outputs.failures != '' ||
+           steps.v1.outputs.status == 'failed' ||
+           steps.mcp.outputs.status == 'failed')
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
           APP_FAILURES: ${{ steps.app.outputs.failures }}
           APP_DETAILS: ${{ steps.app.outputs.details }}
           ORIGIN_5XX_RAY: ${{ steps.app.outputs.origin_5xx_ray }}
+          V1_STATUS: ${{ steps.v1.outputs.status }}
+          V1_DETAIL: ${{ steps.v1.outputs.detail }}
           MCP_STATUS: ${{ steps.mcp.outputs.status }}
           MCP_DETAIL: ${{ steps.mcp.outputs.detail }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -181,6 +264,8 @@ jobs:
           [ -n "${APP_FAILURES// /}" ] && app_down=true
           mcp_down=false
           [ "${MCP_STATUS}" = "failed" ] && mcp_down=true
+          v1_down=false
+          [ "${V1_STATUS}" = "failed" ] && v1_down=true
 
           # The disambiguation matrix, resolved here so the message states a
           # conclusion rather than making whoever is on call re-derive it.
@@ -197,6 +282,13 @@ jobs:
             headline=":rotating_light: Prod canary: the app returned 5xx and Cloudflare handled the response (cf-ray ${ORIGIN_5XX_RAY}). This is the hosted-502 shape, but cf-ray alone does NOT separate a Cloudflare-generated 5xx (520-524) from our origin failing — check the status and body below, then the origin logs."
           elif [ "$app_down" = true ]; then
             headline=":rotating_light: Prod canary: the app probe failed with no 5xx-plus-cf-ray. Check the statuses below — a non-2xx without a cf-ray may mean the request never reached Cloudflare."
+          elif [ "$v1_down" = true ]; then
+            # The distinctive case, and the reason this probe exists. The
+            # unauthenticated health endpoints answer from the app shell, so
+            # they stay green while the authenticated public API is broken —
+            # including the silent-404 shape, where a backend validator change
+            # makes every v1 route answer 404 with no 5xx and no log line.
+            headline=":rotating_light: Prod canary: the public API is failing while the app health probes PASS. The failure is inside /api/v1, not the app shell — check the v1 5xx monitor and recent backend deploys."
           else
             headline=":warning: Prod canary: the MCP target probe is failing; the app probes passed."
           fi
@@ -208,6 +300,9 @@ jobs:
             printf '*Base URL:* %s\n' "$BASE_URL"
             if [ -n "${APP_DETAILS:-}" ]; then
               printf '\n*App probe failures:*\n%s\n' "$APP_DETAILS"
+            fi
+            if [ -n "${V1_DETAIL:-}" ]; then
+              printf '\n*Public API probe:*\n%s\n' "$V1_DETAIL"
             fi
             if [ -n "${MCP_DETAIL:-}" ]; then
               printf '\n*MCP probe:*\n```\n%s\n```\n' "$MCP_DETAIL"

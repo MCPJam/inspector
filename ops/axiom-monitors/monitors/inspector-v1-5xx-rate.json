@@ -1,0 +1,53 @@
+{
+  "key": "inspector-v1-5xx-rate",
+  "name": "MCPJam Inspector /api/v1 5xx rate (prod)",
+  "tier": "PAGE",
+  "owner": "marcelo",
+  "dataset": "inspector-logs",
+  "notifier": "mcpjam-alerts-page",
+  "monitor": {
+    "type": "Threshold",
+    "columnName": "Count",
+    "operator": "Above",
+    "threshold": 5,
+    "rangeMinutes": 30,
+    "intervalMinutes": 5,
+    "notifyByGroup": false,
+    "alertOnNoData": false,
+    "resolvable": true,
+    "notifyEveryRun": false
+  },
+  "aplQuery": [
+    "['inspector-logs']",
+    "| where _sysTime >= ago(30m)",
+    "| where event == 'http.request.failed'",
+    "| where tostring(environment) in ('prod','production')",
+    "| where tostring(route) startswith '/api/v1/'",
+    "| where toint(statusCode) >= 500",
+    "| summarize Count = count()"
+  ],
+  "description": [
+    "PAGE — owner: marcelo. The public API returned more than 5 server errors in 30 minutes (prod).",
+    "",
+    "WHY A SEPARATE MONITOR: 'MCPJam Inspector 5xx rate' is calibrated for the busy web surface — 100/hour, ~1.5x the measured hourly p99. The public API is a low-traffic surface next to it, so a v1 route failing for 100% of its callers produces a rate that global monitor cannot see. At launch volumes the whole of /api/v1 could be down for an hour without moving a threshold sized for /api/web. Only 'new error class' (WARN, hourly, >=10 events) would have said anything, and only if the failure happened to be a NEW class.",
+    "",
+    "THIS MONITOR ONLY WORKS BECAUSE OF THE v1 CAPTURE FIX. Until it landed, `v1OnError` returned the envelope without recording anything, so every /api/v1 failure row carried the `errorCode: \"internal_error\"` fallback with no message, origin or slug, and `translateConvexWriteError`'s terminal fallback answered 400 for a broken write path — a 5xx-shaped outage that this query would never have counted. If you are reading this because the monitor is silent during a known v1 incident, check that `webErrorMeta` is still being set in `routes/v1/envelope.ts` before adjusting anything here.",
+    "",
+    "WHY 5 / 30m: deliberately LOW, and deliberately provisional. This is a pre-launch guardrail on a surface with no production history to size against — the honest baseline does not exist yet. 5 is chosen to be below any plausible real failure and above single transient blips (the smoke-test 502 that motivated this work was one event). RE-BASELINE AFTER THE FIRST WEEK OF REAL TRAFFIC: run the query below at ago(7d), take the 30-minute p99, and raise the threshold to roughly 1.5x it. A monitor that pages on ordinary traffic gets muted, and a muted monitor is worse than none.",
+    "",
+    "SCOPE: statusCode >= 500 only, so `http.request.failed`'s one 4xx member (424, 'we could not reach the dependency the request named') does not page. A 424 on v1 is a user's own MCP server being unreachable — real, measured, and not ours. 4xx classes on v1 are covered by 'MCPJam Inspector error class spiking' via its rate rule.",
+    "",
+    "ROUTE MATCHING: `route` is Hono's `c.req.routePath`, which for the sub-router mounted at `app.route('/api/v1', v1Routes)` is the FULL path pattern ('/api/v1/me', '/api/v1/journeys/:id') rather than the sub-router-relative one. The `startswith` filter depends on that; if the mount ever changes shape, this monitor goes quiet rather than loud.",
+    "",
+    "NAME THE FAILING ROUTE (the alert only carries a count):",
+    "['inspector-logs'] | where _time > ago(3h) | where event == 'http.request.failed' | where tostring(environment) in ('prod','production') | where tostring(route) startswith '/api/v1/' | where toint(statusCode) >= 500 | summarize n = count(), orgs = dcount(orgId), sample = any(errorMessage), origins = make_set(origin, 5), slugs = make_set(slug, 5) by tostring(route), tostring(errorCode) | sort by n desc",
+    "",
+    "TRIAGE:",
+    "1. Read `origin` and `slug` on the failing rows first. `origin == 'mcpjam'` means the capture policy already paged Sentry for the same failures — go to the Sentry issue, it has the stack. `origin == 'ambiguous'` on a v1 row is unusual after the boundary declaration and suggests the failure is being classified as an upstream hop; check whether the route proxies to something.",
+    "2. Check concentration with `orgs`. One org with all the volume is a single caller hitting a bad code path (bad input reaching an unguarded branch). Many orgs is a deploy or a dependency.",
+    "3. Check `errorCode`. INTERNAL_ERROR from `translateConvexWriteError` means a Convex mutation is throwing something no branch recognizes — most often a backend deploy that changed a validator or a thrown code. Compare `release` against the previous window on both sides.",
+    "4. Cross-check the canary. `prod-canary.yml` probes `GET /api/v1/me`; if that is also failing the whole surface is down rather than one route.",
+    "",
+    "ROLLBACK: revert the definition file, then `node ops/axiom-monitors/apply.mjs --apply --only inspector-v1-5xx-rate`. The --apply flag is required — the script defaults to read-only plan mode. Raise the threshold only against measured traffic (see WHY 5 / 30m), never to silence an active regression."
+  ]
+}
