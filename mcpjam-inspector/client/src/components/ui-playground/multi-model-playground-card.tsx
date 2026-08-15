@@ -17,6 +17,7 @@ import { Thread } from "@/components/chat-v2/thread";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
+import { useChangeProtocolVersionAction } from "@/hooks/use-change-protocol-version-action";
 import {
   cloneUiMessages,
   formatErrorMessage,
@@ -214,7 +215,7 @@ interface MultiModelPlaygroundCardProps {
 export function MultiModelPlaygroundCard({
   compareId,
   compareLabel,
-  compareKind: _compareKind,
+  compareKind,
   compareSubLabel,
   model,
   comparisonSummaries,
@@ -464,6 +465,15 @@ export function MultiModelPlaygroundCard({
     [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn]
   );
   const errorMessage = formatErrorMessage(error);
+  // In host mode each column IS a different client, and `compareId` is that
+  // client's id — so the column's own host is the one holding the pin that
+  // failed here, not the turn's. In model mode every column shares the turn's
+  // client, and `compareId` is a model id, which must not be used as one.
+  const changeProtocolVersionHandler = useChangeProtocolVersionAction({
+    error: errorMessage,
+    hostId: compareKind === "host" ? compareId : hostedContext?.hostId,
+    location: "playground_compare_card",
+  });
   const mergedToolRenderOverrides = useMemo(
     () => ({
       ...injectedToolRenderOverrides,
@@ -747,6 +757,7 @@ export function MultiModelPlaygroundCard({
               statusCode={errorMessage.statusCode}
               isRetryable={errorMessage.isRetryable}
               isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+              onChangeProtocolVersion={changeProtocolVersionHandler}
             />
           </div>
         ) : null}

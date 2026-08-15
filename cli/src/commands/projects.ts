@@ -1,5 +1,7 @@
 import type { Command } from "commander";
 import {
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   createProjectOperation,
   deleteProjectOperation,
   listProjectsOperation,
@@ -20,6 +22,7 @@ import {
 import { writeResult } from "../lib/output.js";
 import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions } from "../lib/server-config.js";
+import { openUrlInBrowser } from "@mcpjam/sdk";
 
 type PlatformOptions = {
   apiKey?: string;
@@ -36,13 +39,82 @@ function addPlatformOptions(command: Command): Command {
     );
 }
 
+/**
+ * The one place `--api-key`, `--api-url` and `--project` are resolved.
+ *
+ * READ THIS BEFORE USING `options.x` FOR ANY OF THE THREE. Each is declared on
+ * the `servers` group AND on its subcommands, and Commander does not give the
+ * subcommand a copy: whichever command declares a flag NEAREST THE TOP consumes
+ * it, wherever it appears on the line. `projects server connect --project alpha`
+ * stores `alpha` on `servers`, and `connect`'s own `options.project` is
+ * `undefined` — so reading it there silently ignores what the caller typed and
+ * falls back to the default project. That is not a hypothetical; it is what the
+ * connect command did.
+ *
+ * The same mechanism makes a `requiredOption` on such a subcommand impossible
+ * to satisfy — the group eats the value, then the subcommand fails the parse
+ * for not having received it — which is why the duplicate declarations here are
+ * plain `option()` and required-ness is checked in the action instead.
+ *
+ * Ancestors are merged first and the action command last, so the nearest
+ * declaration wins. Commander's own `optsWithGlobals()` reduces the other way
+ * — its source comments the loop "globals overwrite locals" — which is the
+ * wrong precedence for a flag the caller repeated closer to the command they
+ * were running. Undefined values are skipped so a future Commander that
+ * materializes an unset flag as `undefined` cannot erase a real value.
+ */
+function platformOptionsOf(command: Command): PlatformOptions {
+  const nearestFirst: Command[] = [];
+  for (
+    let current: Command | null = command;
+    current !== null;
+    current = current.parent
+  ) {
+    nearestFirst.push(current);
+  }
+
+  const merged: Record<string, unknown> = {};
+  for (const cmd of nearestFirst.reverse()) {
+    for (const [key, value] of Object.entries(cmd.opts())) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+  return merged as PlatformOptions;
+}
+
+/**
+ * `--project`, for the commands that cannot run without one.
+ *
+ * These used to be `requiredOption`, which the `servers` group's own
+ * `--project` made unsatisfiable — Commander consumed the value at the group
+ * and then failed the subcommand for not having it, so `projects servers get
+ * --project alpha --server srv-1` could not be typed at all. Enforcing it here
+ * keeps the same outcome for the same mistake (`command.error` raises the
+ * `CommanderError` the CLI already maps to a usage error) while letting the
+ * value arrive from wherever Commander actually put it.
+ */
+function requireProject(command: Command, options: PlatformOptions): string {
+  const project = options.project?.trim();
+  if (!project) {
+    command.error("error: required option '--project <id-or-name>' not specified");
+  }
+  return project;
+}
+
 async function runPlatformCommand<TOutput>(
   options: PlatformOptions,
   timeoutMs: number,
   execute: (context: {
     client: ReturnType<typeof buildPlatformClient>["client"];
     signal: AbortSignal;
-  }) => Promise<TOutput>
+  }) => Promise<TOutput>,
+  /**
+   * Cancels the request from outside its own deadline — today that is Ctrl-C
+   * during a poll. Without it the only way out of an in-flight request is the
+   * timeout, so a user who interrupted a watch still waits the better part of
+   * `timeoutMs` for the terminal to come back.
+   */
+  externalSignal?: AbortSignal
 ): Promise<TOutput> {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
@@ -57,6 +129,10 @@ async function runPlatformCommand<TOutput>(
     );
   }, timeoutMs);
   timeoutHandle.unref?.();
+
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) onExternalAbort();
+  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
   try {
     const { client } = buildPlatformClient({ ...options, timeoutMs });
@@ -74,6 +150,7 @@ async function runPlatformCommand<TOutput>(
     throw toCliError(error);
   } finally {
     clearTimeout(timeoutHandle);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -85,14 +162,41 @@ export function registerProjectsCommands(program: Command): void {
     );
 
   addPlatformOptions(
-    projects.command("list").description("List the projects you can access")
-  ).action(async (options: PlatformOptions, command) => {
+    projects
+      .command("list")
+      .description("List the projects you can access")
+      // The operation has always taken this filter; the CLI had no way to pass
+      // it, and no way to learn an id to pass either. `organizations list`
+      // supplies the id, so the flag is finally usable end to end.
+      //
+      // Named `--organization-id`, matching `projects create`, because both
+      // take an ID and only an ID. (`--project` elsewhere is a name-OR-id
+      // selector, which is why that one has no `-id` suffix.)
+      .option(
+        "--organization-id <id>",
+        "Restrict the listing to one organization (see `mcpjam organizations list`)"
+      )
+  ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const rawOrganization = (command.opts() as { organizationId?: string })
+      .organizationId;
+    // A supplied-but-blank value is a typo, not "no filter". Silently widening
+    // it to every accessible project is the wrong answer to a request that
+    // asked to narrow — same reasoning as `requireProject` above.
+    if (rawOrganization !== undefined && rawOrganization.trim() === "") {
+      command.error(
+        "error: option '--organization-id <id>' cannot be empty"
+      );
+    }
+    const organizationId = rawOrganization?.trim();
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
-        listProjectsOperation.execute({}, { client, signal })
+        listProjectsOperation.execute(
+          organizationId ? { organizationId } : {},
+          { client, signal }
+        )
     );
 
     if (globalOptions.format === "human") {
@@ -136,7 +240,7 @@ export function registerProjectsCommands(program: Command): void {
           : { visibility: options.visibility }),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           createProjectOperation.execute(input, { client, signal })
@@ -156,7 +260,6 @@ export function registerProjectsCommands(program: Command): void {
   ).action(
     async (
       options: PlatformOptions & {
-        project: string;
         name?: string;
         description?: string;
         visibility?: string;
@@ -164,8 +267,9 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const platformOptions = platformOptionsOf(command);
       const input = updateProjectOperation.inputSchema.parse({
-        project: options.project,
+        project: requireProject(command, platformOptions),
         ...(options.name === undefined ? {} : { name: options.name }),
         ...(options.description === undefined
           ? {}
@@ -175,7 +279,7 @@ export function registerProjectsCommands(program: Command): void {
           : { visibility: options.visibility }),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptions,
         globalOptions.timeout,
         ({ client, signal }) =>
           updateProjectOperation.execute(input, { client, signal })
@@ -189,13 +293,14 @@ export function registerProjectsCommands(program: Command): void {
       .command("delete")
       .description("Delete a project and its project-owned resources")
       .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(async (options: PlatformOptions & { project: string }, command) => {
+  ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
     const input = deleteProjectOperation.inputSchema.parse({
-      project: options.project,
+      project: requireProject(command, platformOptions),
     });
     const result = await runPlatformCommand(
-      options,
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         deleteProjectOperation.execute(input, { client, signal })
@@ -212,14 +317,15 @@ export function registerProjectsCommands(program: Command): void {
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
   );
-  servers.action(async (options: PlatformOptions, command) => {
+  servers.action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectServersOperation.execute(
-          { project: options.project },
+          { project: platformOptions.project },
           { client, signal }
         )
     );
@@ -244,16 +350,18 @@ export function registerProjectsCommands(program: Command): void {
       .command("create")
       .alias("add")
       .description("Create a saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--body <json>", "Server JSON body")
   ).action(async (options: PlatformOptions & { body: string }, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
+    const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
-      options,
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         createProjectServerOperation.execute(
-          { project: options.project, body: parseBody(options.body) as never },
+          { project, body: parseBody(options.body) as never },
           { client, signal }
         )
     );
@@ -264,16 +372,18 @@ export function registerProjectsCommands(program: Command): void {
     servers
       .command("get")
       .description("Get one saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
+    const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
-      options,
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         getProjectServerOperation.execute(
-          { project: options.project, serverId: options.server },
+          { project, serverId: options.server },
           { client, signal }
         )
     );
@@ -284,7 +394,7 @@ export function registerProjectsCommands(program: Command): void {
     servers
       .command("update")
       .description("Update one saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
       .requiredOption("--body <json>", "Patch JSON body")
   ).action(
@@ -293,13 +403,15 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const platformOptions = platformOptionsOf(command);
+      const project = requireProject(command, platformOptions);
       const result = await runPlatformCommand(
-        options,
+        platformOptions,
         globalOptions.timeout,
         ({ client, signal }) =>
           updateProjectServerOperation.execute(
             {
-              project: options.project,
+              project,
               serverId: options.server,
               body: parseBody(options.body),
             },
@@ -315,21 +427,149 @@ export function registerProjectsCommands(program: Command): void {
       .command("delete")
       .alias("remove")
       .description("Delete one saved MCP server")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
+    const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
-      options,
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         deleteProjectServerOperation.execute(
-          { project: options.project, serverId: options.server },
+          { project, serverId: options.server },
           { client, signal }
         )
     );
     writeResult(result, globalOptions.format);
   });
+
+  addPlatformOptions(
+    servers
+      .command("connect")
+      .description(
+        "Connect an MCP server URL to a project, authorizing in a browser if needed"
+      )
+      .requiredOption("--url <url>", "MCP server URL to connect")
+      .option("--project <id-or-name>", "Project name or ID")
+      .option(
+        "--server <id>",
+        "Existing server ID, when the project has several on this URL"
+      )
+      .option("--name <name>", "Name for the server, if one is created")
+      .option("--reauthorize", "Force a fresh authorization")
+      .option("--no-browser", "Print the authorization link instead of opening it")
+      .option("--no-wait", "Return as soon as the request is created")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        url: string;
+        server?: string;
+        name?: string;
+        reauthorize?: boolean;
+        browser?: boolean;
+        wait?: boolean;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const platformOptions = platformOptionsOf(command);
+
+      // Parsed at the keyboard, like every sibling command here. Commander
+      // hands back whatever was typed, so without this `--url " "` and
+      // `--url file:///etc/passwd` travel all the way to the API to be
+      // rejected there — a slower, vaguer error for a mistake visible now.
+      const input = connectProjectServerOperation.inputSchema.parse({
+        url: options.url,
+        // NOT `options.project` — the `servers` group declares `--project` too
+        // and therefore consumes it, so the subcommand's own copy is always
+        // undefined and this command quietly connected to the default project
+        // instead of the one that was named.
+        project: platformOptions.project,
+        serverId: options.server,
+        name: options.name,
+        reauthorize: options.reauthorize,
+      });
+
+      const created = await runPlatformCommand(
+        platformOptions,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          connectProjectServerOperation.execute(input, { client, signal })
+      );
+
+      if (created.handoffUrl) {
+        // Printed even when we open it: a browser that fails to launch, or
+        // launches on the wrong machine over SSH, otherwise leaves the user
+        // with a request they cannot finish and no link to finish it with.
+        process.stderr.write(
+          `Open this link to finish connecting:\n  ${created.handoffUrl}\n`
+        );
+        if (options.browser !== false) {
+          await openUrlInBrowser(created.handoffUrl).catch(() => {
+            process.stderr.write(
+              "Could not open a browser automatically — open the link above.\n"
+            );
+          });
+        }
+      }
+
+      if (options.wait === false || isTerminalConnectionStatus(created.status)) {
+        if (options.wait === false && !isTerminalConnectionStatus(created.status)) {
+          process.stderr.write(
+            `Not waiting. Follow it with:\n  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+          );
+        }
+        writeResult(created, globalOptions.format);
+        return;
+      }
+
+      const settled = await pollConnection(
+        platformOptions,
+        globalOptions.timeout,
+        created.connectionRequestId,
+        created.expiresAt
+      );
+      // An interrupt during the first request leaves no fresher status than the
+      // one the create call returned, so report that rather than nothing.
+      const latest = settled.result ?? created;
+      writeResult(latest, globalOptions.format);
+      if (settled.gaveUp) {
+        // A script must be able to tell "it finished" from "I stopped
+        // watching". Returning the last poll silently made those identical.
+        process.stderr.write(
+          `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
+            `  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+        );
+        process.exitCode = 1;
+      }
+    }
+  );
+
+  addPlatformOptions(
+    servers
+      .command("connect-status")
+      .description("Check a connection request started by `server connect`")
+      .requiredOption("--request <id>", "Connection request id (scr_…)")
+  ).action(
+    async (options: PlatformOptions & { request: string }, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = getProjectServerConnectionStatusOperation.inputSchema.parse({
+        connectionRequestId: options.request,
+      });
+      const payload = await runPlatformCommand(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          getProjectServerConnectionStatusOperation.execute(input, {
+            client,
+            signal,
+          })
+      );
+      writeResult(payload, globalOptions.format);
+    }
+  );
 
   addPlatformOptions(
     projects
@@ -341,14 +581,15 @@ export function registerProjectsCommands(program: Command): void {
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
       )
-  ).action(async (options: PlatformOptions, command) => {
+  ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
+    const platformOptions = platformOptionsOf(command);
     const payload = await runPlatformCommand(
-      options,
+      platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         showServersOperation.execute(
-          { project: options.project },
+          { project: platformOptions.project },
           { client, signal }
         )
     );
@@ -361,4 +602,151 @@ export function registerProjectsCommands(program: Command): void {
     // Exit 0 even with unreachable servers: this is a status report, not an
     // assertion. CI gating can parse the summary from the JSON payload.
   });
+}
+
+const TERMINAL_CONNECTION_STATUSES = new Set([
+  "ready",
+  "failed",
+  "expired",
+  "cancelled",
+]);
+
+function isTerminalConnectionStatus(status: string): boolean {
+  return TERMINAL_CONNECTION_STATUSES.has(status);
+}
+
+/** How long to keep watching when the server did not say when it expires. */
+const FALLBACK_POLL_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Poll until the request settles.
+ *
+ * Backs off from 2s to 10s: the first few seconds are when discovery finishes
+ * for an unauthenticated server, and after that the flow is waiting on a human
+ * at a browser, where a tighter interval buys nothing.
+ *
+ * THE DEADLINE COMES FROM THE SERVER. The request's own `expiresAt` is the
+ * authority on how long it can still be finished; a duplicated 60-minute
+ * constant here would silently disagree the moment that TTL changed, and would
+ * disagree in the wrong direction — watching a request that already expired, or
+ * abandoning one that had not. The constant above is only for a response that
+ * omitted the field.
+ *
+ * CTRL-C STOPS THE POLLING, NOT THE REQUEST. The request lives in the cloud, so
+ * a user who gives up on watching can still open the link and finish. Saying so
+ * matters: the default reading of Ctrl-C is "I cancelled it", and acting on that
+ * belief means abandoning a request that was about to succeed.
+ *
+ * Returns `gaveUp` so the caller can tell "it finished" from "I stopped
+ * watching" — a distinction a script cannot recover from the status alone.
+ */
+async function pollConnection(
+  options: PlatformOptions,
+  timeoutMs: number,
+  connectionRequestId: string,
+  expiresAt?: string | null
+): Promise<{
+  /**
+   * Undefined only when Ctrl-C landed during the very first status request, so
+   * no poll ever returned. The caller has the create response and prints that
+   * instead — there is nothing newer to report, and inventing a status would be
+   * worse than saying what we last knew.
+   */
+  result:
+    | Awaited<
+        ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
+      >
+    | undefined;
+  gaveUp: boolean;
+}> {
+  let delayMs = 2_000;
+
+  const expiryMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+  const deadline = Number.isFinite(expiryMs)
+    ? expiryMs
+    : Date.now() + FALLBACK_POLL_WINDOW_MS;
+
+  let interrupted = false;
+  /** Wakes the backoff sleep so Ctrl-C is felt now rather than in up to ten
+   * seconds. Without it the handler sets a flag that nothing reads until the
+   * timer fires, and the terminal looks hung at exactly the moment the user
+   * asked for it back. */
+  let wakeSleep: (() => void) | undefined;
+  /** The other half of the same promise. Waking the sleep is no help when the
+   * interrupt lands while a status request is in flight: the flag is not read
+   * again until that request resolves, so the terminal stays hung for up to the
+   * request timeout after the user asked for it back. */
+  const interruptController = new AbortController();
+  /** The last status we actually received, so an interrupt mid-request can
+   * still report something true rather than failing the command. */
+  let lastResult:
+    | Awaited<
+        ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
+      >
+    | undefined;
+  const onInterrupt = () => {
+    interrupted = true;
+    process.stderr.write(
+      "\nStopped watching. The request continues in the cloud — open the link above to finish it.\n"
+    );
+    wakeSleep?.();
+    interruptController.abort(new Error("Interrupted by the user."));
+  };
+  // Registered only for the duration of the wait, and `once`, so a second
+  // Ctrl-C still terminates the process the way a user expects.
+  process.once("SIGINT", onInterrupt);
+
+  try {
+    for (;;) {
+      // Already merged by the caller — this helper receives resolved options
+      // rather than a Commander command.
+      let current: Awaited<
+        ReturnType<typeof getProjectServerConnectionStatusOperation.execute>
+      >;
+      try {
+        current = await runPlatformCommand(
+          options,
+          timeoutMs,
+          ({ client, signal }) =>
+            getProjectServerConnectionStatusOperation.execute(
+              { connectionRequestId },
+              { client, signal }
+            ),
+          interruptController.signal
+        );
+      } catch (error) {
+        // OUR abort, not a failure: the user asked to stop and we cancelled the
+        // request to make that immediate. Any other error is still the caller's
+        // to see.
+        if (!interrupted) throw error;
+        return { result: lastResult, gaveUp: true };
+      }
+      lastResult = current;
+
+      if (isTerminalConnectionStatus(current.status)) {
+        return { result: current, gaveUp: false };
+      }
+      if (interrupted) return { result: current, gaveUp: true };
+      // Checked BEFORE the sleep. Checking after it meant spending a round trip
+      // to discover the deadline had passed while we were asleep.
+      if (Date.now() + delayMs > deadline) {
+        return { result: current, gaveUp: true };
+      }
+
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, delayMs);
+        wakeSleep = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      wakeSleep = undefined;
+      if (interrupted) {
+        return { result: current, gaveUp: true };
+      }
+      delayMs = Math.min(delayMs * 1.5, 10_000);
+    }
+  } finally {
+    process.removeListener("SIGINT", onInterrupt);
+  }
 }

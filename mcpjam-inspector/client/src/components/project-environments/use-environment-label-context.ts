@@ -45,6 +45,11 @@ export function useEnvironmentLabelContext(
   const { hosts } = useHostList({
     isAuthenticated,
     projectId: normalizedProjectId,
+    // A LOOKUP, not a picker: this builds the hostId → name map every
+    // environment label falls back to, and an ad-hoc environment's client is
+    // often a private scenario-backing one. Filtering it out here would label
+    // those rows "Unknown client" — hiding a name, not a choice.
+    includePrivateBacking: true,
   });
   const computersEnabled = useComputersEnabled();
   const hasPinnedImage = (environments ?? []).some(
