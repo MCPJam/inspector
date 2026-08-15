@@ -315,6 +315,45 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
     ).toBe(status);
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "A journey needs a goal",
+    "Environment does not belong to this project",
+    'Environment "prod" is archived',
+    "A journey must target at least one host",
+  ])("keeps a deliberate prose refusal a 400 with its message: %s", (copy) => {
+    // The backend's mutations throw `new ConvexError('<prose>')` — string
+    // data, no {code} — as their ordinary user-facing refusals, and ConvexError
+    // data is what production redaction preserves, which is why customer copy
+    // lives there. Routing these into the 500 fallback would page the on-call
+    // every time a user forgets a goal, and replace the sentence written to
+    // help them with a generic error.
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const convexError = Object.assign(
+      new Error(`Uncaught ConvexError: ${copy}`),
+      { data: copy }
+    );
+
+    const result = translateConvexWriteError(convexError, {
+      resource: "Journey",
+    });
+    expect(result.status).toBe(400);
+    expect(result.code).toBe(ErrorCode.VALIDATION_ERROR);
+    expect(result.message).toBe(copy);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("does not let string data bypass the coded prose mappings", () => {
+    // A string that happens to say "already exists" must keep its 409 — the
+    // prose branches run first, and this pins that ordering.
+    const convexError = Object.assign(
+      new Error("Uncaught ConvexError: a persona with that name already exists"),
+      { data: "a persona with that name already exists" }
+    );
+    expect(
+      translateConvexWriteError(convexError, { resource: "Persona" }).status
+    ).toBe(409);
+  });
 });
 
 describe("translateConvexReadError — argument validation is warned, not paged", () => {

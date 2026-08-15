@@ -259,15 +259,38 @@ export function translateConvexWriteError(
     return mapRuntimeError(error);
   }
 
+  // ── A DELIBERATE prose refusal keeps its 400 and its message. ────────────
+  //
+  // The backend's mutations throw `new ConvexError('A journey needs a goal')`
+  // — string data, no `{code}` — as their ordinary user-facing refusals, and
+  // `ConvexError` data is the one thing Convex's production redaction
+  // preserves, which is exactly why the backend puts customer copy there. So
+  // string data IS the recognition: someone chose this message for the
+  // caller. Routing these into the 500 below would page the on-call every
+  // time a user submits a journey with no goal, and hand that user a generic
+  // error in place of the sentence written to help them. The structured
+  // branches above stay first so a string that happens to say "not found"
+  // still cannot bypass the coded mappings — this branch only sees errors no
+  // prose pattern claimed.
+  const proseData = (error as { data?: unknown } | null)?.data;
+  if (typeof proseData === "string" && proseData.trim().length > 0) {
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      proseData.trim()
+    );
+  }
+
   // ── Nothing recognized it. That is OUR bug, and it answers 500. ──────────
   //
   // This used to be a 400 VALIDATION_ERROR carrying Convex's prose, which got
   // the reporting exactly backwards. Every branch above is a recognized
-  // outcome: a structured `ConvexError` code, or one of the prose shapes a
-  // mixed-version deployment still throws. An error that matches NONE of them
-  // is a write path we do not understand — a mutation throwing a new code, a
-  // renamed or undeployed function, a broken deploy — and none of those are
-  // the caller's malformed input.
+  // outcome: a structured `ConvexError` code, string-data prose the backend
+  // wrote for the caller, or one of the prose shapes a mixed-version
+  // deployment still throws. An error that matches NONE of them is a write
+  // path we do not understand — a mutation throwing a new code, a renamed or
+  // undeployed function, a broken deploy — and none of those are the
+  // caller's malformed input.
   //
   // Reporting them as 400 was invisible twice over: no 5xx monitor counts a
   // 400, and this function had no logger at all, so a wholly broken write path
