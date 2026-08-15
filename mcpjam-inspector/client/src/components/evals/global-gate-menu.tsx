@@ -51,17 +51,17 @@ export function AddGlobalGateMenu({
           variant="outline"
           size="sm"
           aria-haspopup="dialog"
-          aria-label="Add global gate"
+          aria-label="Add whole-run check"
           className={cn("h-8 gap-1.5 border-dashed text-xs", className)}
         >
           <Plus className="h-3.5 w-3.5" />
-          Add gate…
+          Add check…
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={4} className="w-72 p-1">
         <div className="px-2 pb-1.5 pt-1">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Add global gate
+            Add whole-run check
           </span>
         </div>
         <ul className="space-y-0.5">

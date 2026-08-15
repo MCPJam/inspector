@@ -381,6 +381,119 @@ describe("v1 host routes", () => {
       );
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
+
+    // ── FORWARD-CLIENT INVARIANT ─────────────────────────────────────────
+    // A client with no model cannot back a headless environment: resolution
+    // falls through to `ENV_MODEL_REQUIRED` at LAUNCH, long after creation.
+    // These hold the failure at the moment the choice is made.
+    describe("the model invariant", () => {
+      it.each([
+        ["missing", {}],
+        ["null", { modelId: null }],
+        ["empty", { modelId: "" }],
+        ["whitespace-only", { modelId: "   " }],
+        ["a non-string", { modelId: 42 }],
+      ])(
+        "rejects a config whose modelId is %s (400)",
+        async (_label, extra) => {
+          const res = await request("POST", "/api/v1/projects/p1/hosts", {
+            body: { name: "Alpha", config: { systemPrompt: "hi", ...extra } },
+          });
+          expect(res.status).toBe(400);
+          expect(((await res.json()) as { code?: string }).code).toBe(
+            "VALIDATION_ERROR"
+          );
+          expect(convexMutationMock).not.toHaveBeenCalled();
+        }
+      );
+
+      it("reports the XOR problem — not the model — for an empty config", async () => {
+        // `{}` picked neither branch. Naming the model would send the caller
+        // to add one field when they need to choose a shape.
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", config: {} },
+        });
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(await res.json())).toMatch(
+          /exactly one of .template. or a non-empty .config./i
+        );
+      });
+
+      it("TRIMS a padded model rather than persisting it verbatim", async () => {
+        // The id is stored and compared verbatim downstream, so a padded value
+        // would be persisted as a distinct — and unrecognized — model.
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", config: { modelId: "  openai/gpt-5  " } },
+        });
+        // Assert the create SUCCEEDED before reading the mutation args: a
+        // rejected request never calls the mutation, and `createdHostInput()`
+        // would then throw on a missing call — a confusing failure for what is
+        // really "the route 400'd".
+        expect(res.status).toBe(201);
+        expect(createdHostInput()).toMatchObject({
+          modelId: "openai/gpt-5",
+        });
+      });
+
+      it("TRIMS a padded model on the TEMPLATE branch too", async () => {
+        // The trim belongs to the write boundary, not to one of the two ways of
+        // reaching it. A catalog entry is authored data as much as a posted
+        // config, and a padded id from either side persists a model that no
+        // downstream verbatim comparison recognizes.
+        const catalog = clone(bundledHostCompatCatalog());
+        catalog.hostsById.claude = {
+          ...catalog.hostsById.claude,
+          modelId: "  anthropic/claude-sonnet-4-5  ",
+        };
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            new Response(JSON.stringify(catalogEnvelope(catalog)), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+          )
+        );
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", template: "claude" },
+        });
+        expect(res.status).toBe(201);
+        expect(createdHostInput()).toMatchObject({
+          modelId: "anthropic/claude-sonnet-4-5",
+        });
+      });
+
+      it("refuses a template that resolves without a model", async () => {
+        // A guard, never a substitution: templates carry their OWN model, and
+        // one that lost it is a catalog bug.
+        const catalog = clone(bundledHostCompatCatalog());
+        catalog.hostsById.claude = {
+          ...catalog.hostsById.claude,
+          modelId: "",
+        };
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            new Response(JSON.stringify(catalogEnvelope(catalog)), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+          )
+        );
+        const res = await request("POST", "/api/v1/projects/p1/hosts", {
+          body: { name: "Alpha", template: "claude" },
+        });
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(await res.json())).toMatch(
+          /does not pin a model/i
+        );
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe("PATCH update", () => {
@@ -407,6 +520,96 @@ describe("v1 host routes", () => {
         "VALIDATION_ERROR"
       );
       expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    describe("the model invariant", () => {
+      it.each([
+        ["empty", ""],
+        ["whitespace-only", "   "],
+      ])(
+        "refuses to CLEAR a pinned model with an %s one (400)",
+        async (_label, modelId) => {
+          // A config PATCH replaces the config, so it is the one write here
+          // that can strip the model off an existing host — the invariant
+          // `create` enforces would otherwise be one PATCH wide open.
+          mockQuery({ "hosts:getHost": DETAIL_ROW });
+          const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+            body: { config: { systemPrompt: "hi", modelId } },
+          });
+          expect(res.status).toBe(400);
+          expect(((await res.json()) as { code?: string }).code).toBe(
+            "VALIDATION_ERROR"
+          );
+          expect(convexMutationMock).not.toHaveBeenCalled();
+        }
+      );
+
+      it("still lets a LEGACY modelless host be edited", async () => {
+        // Those rows predate the invariant and are deliberately not
+        // backfilled; holding their unrelated edits hostage to a model choice
+        // is the lockout the rule exists to avoid.
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({
+          "hosts:getHost": { ...DETAIL_ROW, config: { modelId: "" } },
+        });
+        const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+          body: { config: { systemPrompt: "edited", modelId: "" } },
+        });
+        expect(res.status).toBe(200);
+        expect(convexMutationMock).toHaveBeenCalledWith(
+          "hosts:updateHost",
+          expect.objectContaining({
+            input: { systemPrompt: "edited", modelId: "" },
+          })
+        );
+      });
+
+      it("TRIMS a padded model on the PATCH boundary too", async () => {
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+          body: { config: { modelId: "  openai/gpt-5  " } },
+        });
+        expect(res.status).toBe(200);
+        expect(convexMutationMock).toHaveBeenCalledWith(
+          "hosts:updateHost",
+          expect.objectContaining({ input: { modelId: "openai/gpt-5" } })
+        );
+      });
+    });
+  });
+
+  describe("POST duplicate", () => {
+    it("refuses to duplicate a modelless host (400)", async () => {
+      // Duplication MINTS a host, so it is held to the same invariant as
+      // create — otherwise copying a legacy row is a supported way to keep
+      // producing the state create now refuses.
+      mockQuery({
+        "hosts:getHost": { ...DETAIL_ROW, config: { modelId: "" } },
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/hosts/h1/duplicate",
+        { body: {} }
+      );
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toMatch(/does not pin a model/i);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("duplicates a host that pins one", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h2" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/hosts/h1/duplicate",
+        { body: {} }
+      );
+      expect(res.status).toBe(201);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:duplicateHost",
+        expect.objectContaining({ hostId: "h1", projectId: "p1" })
+      );
     });
   });
 
