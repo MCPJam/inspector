@@ -156,8 +156,28 @@ function describeLockDefect(lock: CorpusLock): string | undefined {
         return `case ${index} is missing "${field}"`;
       }
     }
-    if (typeof row.iterations !== "number") {
-      return `case ${index} ("${String(row.scenarioKey)}") is missing "iterations"`;
+    // The key is DERIVED, not stored twice: `buildCorpus` sets
+    // `external:<caseId>` and `loadCorpusFromLock` slices the prefix back off
+    // with a non-null assertion. A row where the two disagree crashes that
+    // lookup, and before it does, the drift join reports the corruption as a
+    // removed case plus an added one — exit 1 for a corrupt file.
+    if (row.scenarioKey !== `external:${row.caseId}`) {
+      return (
+        `case ${index} ("${String(row.scenarioKey)}") has a scenarioKey that ` +
+        `does not match its caseId`
+      );
+    }
+    // Integer and at least 1. NaN, Infinity, 0, -1 and 1.5 are all corruption.
+    //
+    // No UPPER bound, though the API caps writes at 10 today: a client that
+    // hard-codes a server constant starts rejecting valid locks the day the
+    // server raises it, and an out-of-range count is a value nobody can act on
+    // rather than a shape that breaks anything here.
+    if (!Number.isInteger(row.iterations) || (row.iterations as number) < 1) {
+      return (
+        `case ${index} ("${String(row.scenarioKey)}") has an invalid ` +
+        `"iterations" (${String(row.iterations)})`
+      );
     }
     if (!isRecord(row.normalizedContent)) {
       return `case ${index} ("${String(

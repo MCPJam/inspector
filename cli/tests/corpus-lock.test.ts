@@ -158,6 +158,18 @@ describe("readCorpusLock", () => {
         label: "duplicate scenario keys",
         lock: lockFixture({ cases: [soundRow, soundRow] as never }),
       },
+      {
+        // The key is derived from the id, and `loadCorpusFromLock` slices the
+        // prefix back off with a non-null assertion.
+        label: "a scenarioKey that disagrees with its caseId",
+        lock: lockFixture({
+          cases: [{ ...soundRow, scenarioKey: "external:somethingelse" }] as never,
+        }),
+      },
+      ...[0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY].map((iterations) => ({
+        label: `an iteration count of ${String(iterations)}`,
+        lock: lockFixture({ cases: [{ ...soundRow, iterations }] as never }),
+      })),
       { label: "a missing suite", lock: lockFixture({ suite: undefined as never }) },
       {
         label: "a missing aggregate hash",
