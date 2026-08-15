@@ -260,6 +260,14 @@ Opening the Evaluate tab takes you directly into the most recent suite's dashboa
 - **Cases tab** — every case with its latest verdict and a quick replay button.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
+#### Judge score trend
+
+When at least one run in the window has been judged, a **Judge score · advisory** card appears beside the accuracy chart. It shows the latest judged run's score and a sparkline across all judged runs. Unjudged runs are dropped from the trend rather than plotted as zero — a run that was never graded is not a run that scored 0%.
+
+The card is deliberately separate from the deterministic pass-rate chart: a judge score and a failed check are different kinds of signal and should not be read as the same thing.
+
+If a run was graded under a per-run judge override (a judge config that differs from the suite's default), its dot on the sparkline and its tooltip are marked with a **⚙** glyph so the divergence is visible rather than silent.
+
 When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
 
 The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
