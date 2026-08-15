@@ -22,14 +22,22 @@
  *   - **Infrastructure failures are 5xx.** A timeout or a reset socket is not
  *     the caller's bad input; those defer to `mapRuntimeError` so a transient
  *     outage is not reported as a validation error.
+ *   - **An unrecognized failure is a 500, and it is logged.** Everything above
+ *     is a recognized outcome; what falls past all of it is a write path we do
+ *     not understand, which is ours. It used to answer 400 with Convex's prose
+ *     and no log at all — a broken write path reporting itself as the caller's
+ *     mistake, below every 5xx monitor and invisible in Sentry.
  *   - **Convex's prose is scrubbed** of `[Request ID: …]`, `Server Error` and
- *     `Uncaught ConvexError:` before it can reach a public response body.
+ *     `Uncaught ConvexError:` before it can reach a public response body, and
+ *     is not forwarded at all on the 500.
  *
  * `resource` names what the caller was addressing, so a not-found reads
  * "Server not found" rather than every router borrowing whichever noun the
  * copy it was forked from happened to use.
  */
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
+import { logger } from "../../utils/logger.js";
+import { redactForLog } from "./redact-log-message.js";
 
 type ConvexErrorData = { code?: unknown; message?: unknown };
 
@@ -53,7 +61,12 @@ function cleanConvexMessage(error: unknown): string {
 export interface TranslateConvexWriteErrorOptions {
   /** The noun for not-found copy — "Server", "Project", "Host". */
   resource: string;
-  /** Message for a 400 when nothing more specific is available. */
+  /**
+   * Copy for the two cases with no better wording: a structured `VALIDATION`
+   * throw that carried no message (400), and the terminal unrecognized-failure
+   * branch (500). Keep it neutral about fault — it is the only thing the caller
+   * sees in both, and the second one is ours, not theirs.
+   */
   fallbackMessage?: string;
   /** Copy for a 404 that may equally be a missing parent or no access. */
   notFoundMessage?: string;
@@ -97,10 +110,62 @@ function billingDetails(
     "upgradePlan",
     "currentValue",
     "allowedValue",
+    // WHEN the cap lifts — epoch ms of the UTC midnight a daily limit rolls
+    // at. Documented on `BILLING_LIMIT_REACHED` in `web/errors.ts` since that
+    // code existed, and dropped here the whole time, which left "Plan limit
+    // reached" as advice a caller could act on only by guessing. It is also
+    // the input the 429 below turns into `Retry-After`, so dropping it cost
+    // the header as well as the field.
+    "resetsAt",
   ]) {
     if (data[key] !== undefined) details[key] = data[key];
   }
   return Object.keys(details).length > 0 ? details : undefined;
+}
+
+/**
+ * Ceiling on an advertised wait, in seconds — one day.
+ *
+ * `Number.isFinite` is not enough on its own. `Number.MAX_VALUE` is finite,
+ * and `String(Math.ceil(Number.MAX_VALUE / 1000))` is `1.797...e+305`, which
+ * `Headers` accepts and every client parses as `NaN`. That is the failure the
+ * junk-metadata guard was written to prevent, arriving through the one input
+ * shape it does not reject — so the magnitude is clamped as well as the type.
+ *
+ * A day is the longest wait worth advertising: past that a `Retry-After` reads
+ * as "this endpoint is gone" rather than "come back later", and the caps this
+ * serves all roll at UTC midnight anyway.
+ */
+const MAX_RETRY_AFTER_SECONDS = 86_400;
+
+/** Whole seconds, floored at 1 and capped at a day. Always an integer string. */
+function formatRetryAfterSeconds(deltaMs: number): string {
+  const seconds = Math.ceil(deltaMs / 1000);
+  if (!Number.isFinite(seconds)) return String(MAX_RETRY_AFTER_SECONDS);
+  return String(Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(1, seconds)));
+}
+
+/** Seconds-until, floored at 1 — the `Retry-After` value from an instant. */
+function retryAfterFromResetsAt(
+  resetsAt: unknown,
+  now: number = Date.now()
+): string | undefined {
+  if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) {
+    return undefined;
+  }
+  // A reset already in the past means the window rolled between the backend
+  // raising this and us serializing it. Advertise the floor rather than
+  // omitting the header: the caller's next attempt will succeed, and "1" says
+  // so more usefully than silence.
+  return formatRetryAfterSeconds(resetsAt - now);
+}
+
+/** Same, from a duration a token bucket measured directly. */
+function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
+  if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs)) {
+    return undefined;
+  }
+  return formatRetryAfterSeconds(retryAfterMs);
 }
 
 export function translateConvexWriteError(
@@ -169,16 +234,55 @@ export function translateConvexWriteError(
   // a customer who hit today's insight cap to a sales page for a plan they
   // already have — the shared `insightsPerDay` ledger makes that reachable on
   // an ordinary Tuesday, from either the swarms or the user-testing surface.
+  // A BURST BRAKE, distinct from the daily cap below. The backend's
+  // per-category token buckets (`lib/expensiveWriteRateLimit.ts`) refuse with
+  // this code and a measured `retryAfterMs`; without this branch it falls all
+  // the way to the terminal 500 — a refusal we deliberately raised, reported
+  // as our own bug and paged for. The wait it carries is seconds, not hours:
+  // the only correct client response is to retry, which is exactly what the
+  // header tells a generic one to do.
+  if (code === "rate_limited") {
+    const rawRetryAfterMs = (data as Record<string, unknown> | null)
+      ?.retryAfterMs;
+    const retryAfter = retryAfterFromMs(rawRetryAfterMs);
+    // Published only when it is a number we would also put in the header.
+    // Copying the raw value through would put `"soon"` or `NaN` on a public
+    // 429 while the header correctly omitted it — a caller reading the body
+    // for the same answer deserves the same guard.
+    const retryAfterMs =
+      typeof rawRetryAfterMs === "number" && Number.isFinite(rawRetryAfterMs)
+        ? rawRetryAfterMs
+        : undefined;
+    const error = new WebRouteError(
+      429,
+      ErrorCode.RATE_LIMITED,
+      structuredMessage ?? "Too many requests. Slow down and retry.",
+      retryAfterMs !== undefined ? { retryAfterMs } : undefined
+    );
+    return retryAfter
+      ? error.withHeaders({ "Retry-After": retryAfter })
+      : error;
+  }
+
   if (code === "billing_limit_reached") {
-    return new WebRouteError(
+    const details = billingDetails(data as Record<string, unknown> | null);
+    const error = new WebRouteError(
       429,
       ErrorCode.RATE_LIMITED,
       structuredMessage ?? "Plan limit reached.",
       // The backend's payload names the cap, the plan and the upgrade target.
       // Dropping it leaves a caller with "Plan limit reached" and no way to
       // say WHICH limit or what to do about it.
-      billingDetails(data as Record<string, unknown> | null)
+      details
     );
+    // A daily cap knows the INSTANT it lifts (UTC midnight), not a duration —
+    // so the header is computed here rather than read off the payload. Absent
+    // when the backend sent no `resetsAt`, which is the honest answer: a cap
+    // with no known reset should not invite a timed retry.
+    const retryAfter = retryAfterFromResetsAt(details?.resetsAt);
+    return retryAfter
+      ? error.withHeaders({ "Retry-After": retryAfter })
+      : error;
   }
   if (code === "billing_feature_not_included") {
     return new WebRouteError(
@@ -246,9 +350,65 @@ export function translateConvexWriteError(
     return mapRuntimeError(error);
   }
 
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    cleanConvexMessage(error) || fallbackMessage
-  );
+  // ── A DELIBERATE prose refusal keeps its 400 and its message. ────────────
+  //
+  // The backend's mutations throw `new ConvexError('A journey needs a goal')`
+  // — string data, no `{code}` — as their ordinary user-facing refusals, and
+  // `ConvexError` data is the one thing Convex's production redaction
+  // preserves, which is exactly why the backend puts customer copy there. So
+  // string data IS the recognition: someone chose this message for the
+  // caller. Routing these into the 500 below would page the on-call every
+  // time a user submits a journey with no goal, and hand that user a generic
+  // error in place of the sentence written to help them. The structured
+  // branches above stay first so a string that happens to say "not found"
+  // still cannot bypass the coded mappings — this branch only sees errors no
+  // prose pattern claimed.
+  const proseData = (error as { data?: unknown } | null)?.data;
+  if (typeof proseData === "string" && proseData.trim().length > 0) {
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      proseData.trim()
+    );
+  }
+
+  // ── Nothing recognized it. That is OUR bug, and it answers 500. ──────────
+  //
+  // This used to be a 400 VALIDATION_ERROR carrying Convex's prose, which got
+  // the reporting exactly backwards. Every branch above is a recognized
+  // outcome: a structured `ConvexError` code, string-data prose the backend
+  // wrote for the caller, or one of the prose shapes a mixed-version
+  // deployment still throws. An error that matches NONE of them is a write
+  // path we do not understand — a mutation throwing a new code, a renamed or
+  // undeployed function, a broken deploy — and none of those are the
+  // caller's malformed input.
+  //
+  // Reporting them as 400 was invisible twice over: no 5xx monitor counts a
+  // 400, and this function had no logger at all, so a wholly broken write path
+  // could answer "your request was invalid" to every caller and emit nothing
+  // anywhere. 500 puts it back in the range the monitors watch, and the log
+  // line below is what names it once it is there.
+  //
+  // The message stops being forwarded for the same reason the read translator
+  // never forwards its upstream text: it is written for us, it can carry
+  // function names, argument-validator output with the arguments in it, and
+  // request ids — a free read of our internals for anyone who can reach the
+  // route. The detail goes to the log; the caller gets the route's own copy.
+  // `logger.warn`, NOT `logger.error`, and the difference is one Sentry event
+  // rather than two. Every caller THROWS the `WebRouteError` this returns, so
+  // `v1OnError` maps it — 500 + INTERNAL_ERROR, exactly what the
+  // `mcpjam_internal` boundary promotes — and captures it there. A
+  // `logger.error` here would capture a *different* object (the redacted
+  // Error) which carries no stamp of its own, so the same failure would arrive
+  // in Sentry twice, under two fingerprints. This log is the Axiom record; the
+  // capture belongs to the envelope that owns the boundary declaration.
+  //
+  // The detail goes under `detail`, not `message`: `ingestToAxiom` spreads the
+  // context and THEN sets `message` from its first argument, so a `message`
+  // key here would be silently overwritten and the diagnosis lost.
+  logger.warn(`[v1.convexWrite] unrecognized ${resource} write failure`, {
+    resource,
+    detail: redactForLog(error),
+  });
+  return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, fallbackMessage);
 }

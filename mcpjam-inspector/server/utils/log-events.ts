@@ -1,4 +1,5 @@
 import type { ErrorOrigin } from "@mcpjam/sdk";
+import type { RouteFailureHop } from "./route-error-report.js";
 
 export type Environment =
   | "prod"
@@ -88,8 +89,16 @@ type RouteOperationFailedFields = {
    * `reportRouteFailure` tags Sentry with (as `route:${source}`).
    */
   source: string;
-  /** Whose hop failed, as declared at the call site. */
-  hop: "user_server_hop" | "mcpjam_internal";
+  /**
+   * Whose hop failed, as declared at the call site.
+   *
+   * Imported from `route-error-report.ts` rather than re-listed. A hand-copied
+   * union here is a literal list `tsc` only checks at the ONE call site that
+   * builds this payload — every other consumer (an APL query, a monitor
+   * predicate) silently disagrees with the source of truth, and a new hop
+   * looks like a compile error in the reporter rather than in this file.
+   */
+  hop: RouteFailureHop;
   /** Effective origin from the capture decision — see the doc block above. */
   origin: ErrorOrigin;
   /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */

@@ -41,6 +41,7 @@ import {
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { SwarmTargetHealthStrip } from "@/components/swarms/swarm-target-health-strip";
+import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
@@ -110,16 +111,16 @@ export function SwarmRunDetail({
   const queryable = shouldQueryProjectId(projectId);
   const overview = useQuery(
     SWARM_QUERIES.getSwarmOverview as any,
-    (queryable ? { projectId } : "skip") as any
+    (queryable ? { projectId } : "skip") as any,
   ) as SwarmOverview | undefined;
 
   const waves = useMemo(
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
-    [overview]
+    [overview],
   );
   const wave = useMemo(
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
-    [overview, waves, swarmId]
+    [overview, waves, swarmId],
   );
 
   // Same subscription the insights rail mounts — Convex dedupes identical
@@ -130,7 +131,7 @@ export function SwarmRunDetail({
     SWARM_QUERIES.getWaveSignals as any,
     (queryable && waveGroupId
       ? { projectId, swarmRunGroupId: waveGroupId }
-      : "skip") as any
+      : "skip") as any,
   ) as SwarmWaveSignals | null | undefined;
 
   const handleTabChange = useCallback(
@@ -178,6 +179,24 @@ export function SwarmRunDetail({
    * `replace`: arriving here from a finding pushed an entry, so a viewer who
    * came that way keeps a working browser Back too.
    */
+  // Actionable findings resolve through ANY run of the wave — the backend
+  // walks from the run to its wave, so the first run is as good a handle as
+  // any. Keyed on the RUN, not the wave id, so a legacy run that predates
+  // server-minted wave ids still gets a panel (its envelope answers
+  // `not_available`, which is the honest thing to render).
+  const actionableFindings = wave?.runs[0]?.runId ? (
+    <ActionableFindings
+      boundaryName="swarm-actionable-findings"
+      surface={{
+        kind: "journey_run",
+        projectId: queryable ? projectId : null,
+        runId: wave.runs[0].runId,
+      }}
+      context={{ rerunLabel: "this swarm wave" }}
+      onOpenSession={handleOpenSession}
+    />
+  ) : null;
+
   const handleBackToRun = useCallback(() => {
     navigate(
       buildSwarmPath(swarmId, {
@@ -188,7 +207,9 @@ export function SwarmRunDetail({
   }, [navigate, selParam, swarmId, tab]);
 
   const handleSelectionChange = useCallback(
-    (themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null) => {
+    (
+      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
+    ) => {
       navigate(
         buildSwarmPath(swarmId, {
           tab,
@@ -205,9 +226,7 @@ export function SwarmRunDetail({
     if (!wave) return [];
     return [
       ...new Set(
-        wave.runs
-          .filter((r) => !r.journeyArchived)
-          .map((r) => r.journeyRefId)
+        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId),
       ),
     ];
   }, [wave]);
@@ -220,11 +239,11 @@ export function SwarmRunDetail({
       toast.success(
         launchableJourneyIds.length === 1
           ? "Swarm run started"
-          : `Started ${launchableJourneyIds.length} goals`
+          : `Started ${launchableJourneyIds.length} goals`,
       );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not start swarm run"
+        err instanceof Error ? err.message : "Could not start swarm run",
       );
     } finally {
       setRunAgainBusy(false);
@@ -271,11 +290,9 @@ export function SwarmRunDetail({
       ? Math.min(100, Math.round((live.done / live.total) * 100))
       : 0;
   const runIds = wave.runs.map((r) => r.runId);
-  const runLabels = new Map(
-    wave.runs.map((r) => [r.runId, r.journeyName])
-  );
+  const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
-    wave.runs.map((r) => [r.journeyRefId, r.journeyName])
+    wave.runs.map((r) => [r.journeyRefId, r.journeyName]),
   );
 
   return (
@@ -419,7 +436,15 @@ export function SwarmRunDetail({
                     onOpenSessionsTab={() => handleTabChange("sessions")}
                     urlSelection={urlSelection}
                     onSelectionChange={handleSelectionChange}
-                    recommendationsSlot={<RunInsightsRecommendations />}
+                    recommendationsSlot={
+                      <>
+                        {/* Repair tasks first, patterns beneath: the rail
+                            explains what concentrated, this says what to
+                            change. */}
+                        {actionableFindings}
+                        <RunInsightsRecommendations />
+                      </>
+                    }
                     checksExtras={
                       wave.runs.some((run) => run.findings.length > 0) ? (
                         <SwarmWaveFindingsList
@@ -455,6 +480,11 @@ export function SwarmRunDetail({
                   onOpenSessionsTab={() => handleTabChange("sessions")}
                   urlSelection={urlSelection}
                   onSelectionChange={handleSelectionChange}
+                  // A wave with no group id (legacy, or an unauthenticated
+                  // view) still gets its repair tasks: the panel keys on the
+                  // RUN, and renders the envelope's own honest status when the
+                  // wave has no identity to analyze.
+                  recommendationsSlot={actionableFindings}
                   checksExtras={
                     wave.runs.some((run) => run.findings.length > 0) ? (
                       <SwarmWaveFindingsList
@@ -513,7 +543,8 @@ function DetailPersonasChip({
     for (const run of wave.runs) {
       const existing = byName.get(run.personaName);
       if (existing) existing.journeyCount += 1;
-      else byName.set(run.personaName, { name: run.personaName, journeyCount: 1 });
+      else
+        byName.set(run.personaName, { name: run.personaName, journeyCount: 1 });
     }
     return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [wave.runs]);
@@ -526,15 +557,14 @@ function DetailPersonasChip({
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
-          aria-label={`${rows.length} ${rows.length === 1 ? "persona" : "personas"}`}
+          aria-label={`${rows.length} ${
+            rows.length === 1 ? "persona" : "personas"
+          }`}
         >
           {rows.length} {rows.length === 1 ? "persona" : "personas"}
         </button>
       </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-72 max-w-[90vw] p-3"
-      >
+      <PopoverContent align="start" className="w-72 max-w-[90vw] p-3">
         <div
           className="flex flex-wrap items-center gap-1.5"
           data-testid="swarm-run-detail-personas"
