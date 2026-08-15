@@ -89,8 +89,8 @@ export interface ChecksSectionProps {
   description?: string;
   /**
    * Empty-state copy override. The default speaks eval-suite language
-   * ("every case passes the gate by default") — surfaces where checks
-   * observe rather than gate (swarm rubrics) pass their own sentence.
+   * ("every case passes by default") — surfaces where checks observe rather
+   * than gate (swarm rubrics) pass their own sentence.
    */
   emptyStateText?: string;
   /** Hide the Add-check button (used by the inherited read-only summary). */
@@ -153,7 +153,7 @@ export function ChecksSection({
           <p className="text-xs italic text-muted-foreground/70">
             {emptyStateText ??
               `No checks set${
-                !readOnly ? " — every case passes the gate by default." : "."
+                !readOnly ? " — every case passes by default." : "."
               }`}
           </p>
         )
@@ -1405,9 +1405,10 @@ export interface CaseChecksSectionProps {
    * is hosted inside a larger "Pass criteria" disclosure that already owns the
    * outer surface — duplicating the heading reads as a nested card.
    *
-   * When embedded, the inherited "ungated" notice also demotes to muted inline
-   * text rather than the warning palette: in the embedded surface, the suite-
-   * has-no-checks-and-case-inherits state is the boring default, not an alarm.
+   * When embedded, the inherited "no checks" notice also demotes to muted
+   * inline text rather than the warning palette: in the embedded surface, the
+   * suite-has-no-checks-and-case-inherits state is the boring default, not an
+   * alarm.
    */
   embedded?: boolean;
   /** Append scenario predicates to steps (parent writes steps + strips global list). */
@@ -1460,7 +1461,9 @@ export function CaseChecksSection({
       <section className="space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-1 min-w-0">
-            <h4 className="text-xs font-medium text-foreground">Global gates</h4>
+            <h4 className="text-xs font-medium text-foreground">
+              Whole-run checks
+            </h4>
             <GlobalGatesSectionInfoHint />
           </div>
           <AddCheckMenu
@@ -1570,8 +1573,8 @@ export function CaseChecksSection({
           />
         </div>
         <p className="text-xs text-muted-foreground mt-1">
-          Deterministic checks for this case. Inherit, replace, or extend the
-          suite&apos;s default checks.
+          Checks for this case. Inherit, replace, or extend the suite&apos;s
+          default checks.
         </p>
       </div>
 
@@ -1605,10 +1608,10 @@ export function CaseChecksSection({
           <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs text-foreground">
             <span aria-hidden className="mt-0.5 text-warning">⚠</span>
             <span>
-              Suite has no default checks. This case will be{" "}
-              <strong className="font-semibold">ungated</strong> — it will
-              always pass on the deterministic-checks axis. Switch to
-              Replace or Extend to author case-specific checks.
+              Suite has no default checks. This case has{" "}
+              <strong className="font-semibold">no checks</strong> — it will
+              always pass on the checks axis. Switch to Replace or Extend to
+              author case-specific checks.
             </span>
           </div>
         ) : (
@@ -1639,6 +1642,14 @@ export function CaseChecksSection({
           onChange={setList}
           availableTools={availableTools}
           title={mode === "extend" ? "Additional checks for this case" : "Checks for this case"}
+          // In extend mode the inherited suite checks still run, so the
+          // default "every case passes by default" would be false — an empty
+          // list here means no EXTRA checks, not no checks.
+          emptyStateText={
+            mode === "extend" && suiteDefaults.length > 0
+              ? "No additional checks on this case."
+              : undefined
+          }
         />
       ) : null}
     </div>

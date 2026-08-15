@@ -1,5 +1,6 @@
 import {
   describeAuthenticatedRequestFailure,
+  describeTokenRequestFailure,
   extractResponseErrorReason,
 } from "../../src/oauth/state-machines/shared/response-error.js";
 
@@ -181,5 +182,127 @@ describe("describeAuthenticatedRequestFailure", () => {
     });
 
     expect(message).not.toContain("PASSWORD");
+  });
+});
+
+describe("describeTokenRequestFailure", () => {
+  // The reported failure (INSPECTOR-CLIENT-239): the endpoint answered in a
+  // shape RFC 6749 does not describe, so the old message interpolated an object
+  // into a template literal and lost the one field that said what went wrong.
+  it("reads a non-RFC-6749 nested error instead of rendering [object Object]", () => {
+    const message = describeTokenRequestFailure({
+      status: 400,
+      statusText: "Bad Request",
+      body: { error: { code: -32600, message: "code_verifier mismatch" } },
+    });
+
+    expect(message).toBe(
+      "Token request failed: 400 Bad Request: code_verifier mismatch"
+    );
+    expect(message).not.toContain("[object Object]");
+    expect(message).not.toContain("Unknown error");
+  });
+
+  it("pairs the OAuth error code with its description", () => {
+    expect(
+      describeTokenRequestFailure({
+        status: 400,
+        statusText: "Bad Request",
+        body: {
+          error: "invalid_grant",
+          error_description: "Authorization code expired",
+        },
+      })
+    ).toBe(
+      "Token request failed: 400 Bad Request: invalid_grant: Authorization code expired"
+    );
+  });
+
+  // The status is what stays actionable when the endpoint says nothing — the
+  // old message dropped it whenever `body.error` was set, and printed a bare
+  // "Unknown error" whenever it was not.
+  it("keeps the status line when the body explains nothing", () => {
+    expect(
+      describeTokenRequestFailure({
+        status: 502,
+        statusText: "Bad Gateway",
+        body: undefined,
+      })
+    ).toBe("Token request failed: 502 Bad Gateway");
+  });
+
+  it("redacts a credential the endpoint echoed back", () => {
+    const message = describeTokenRequestFailure({
+      status: 401,
+      statusText: "Unauthorized",
+      body: {
+        error: "invalid_client",
+        error_description:
+          'rejected {"client_secret": "SECRETvalue0123456789"} for this client',
+      },
+    });
+
+    expect(message).not.toContain("SECRETvalue");
+    expect(message).toContain("invalid_client");
+  });
+});
+
+// The reason phrase is the server's text too, so it gets the reason's
+// treatment. RFC 9112 keeps it to one short line of visible characters, but the
+// endpoint is the server under test and the value crosses a proxy before it
+// reaches us — the status code beside it is the only part we can trust.
+describe("describeResponseFailure status-phrase handling", () => {
+  it("redacts a credential reflected in the reason phrase", () => {
+    const message = describeTokenRequestFailure({
+      status: 401,
+      statusText:
+        "Unauthorized - Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def",
+      body: undefined,
+    });
+
+    expect(message).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(message).toContain("401");
+  });
+
+  it("keeps a multiline phrase on one line", () => {
+    const message = describeAuthenticatedRequestFailure({
+      status: 500,
+      statusText: "Internal Error\n  at Server.handle (server.js:12)",
+      body: undefined,
+    });
+
+    expect(message).toBe(
+      "Authenticated request failed: 500 Internal Error at Server.handle (server.js:12)"
+    );
+  });
+
+  it("caps a phrase long enough to swamp the message", () => {
+    const message = describeTokenRequestFailure({
+      status: 400,
+      statusText: "y".repeat(5_000),
+      body: undefined,
+    });
+
+    expect(message).toBe(`Token request failed: 400 ${"y".repeat(300)}`);
+  });
+
+  // A proxied response can carry no phrase at all; printing the space anyway
+  // left a message ending in one.
+  it("drops an absent phrase instead of trailing a bare space", () => {
+    expect(
+      describeTokenRequestFailure({
+        status: 502,
+        statusText: "",
+        body: undefined,
+      })
+    ).toBe("Token request failed: 502");
+
+    expect(
+      describeTokenRequestFailure({
+        status: 502,
+        statusText: undefined as unknown as string,
+        body: { error: "temporarily_unavailable" },
+      })
+    ).toBe("Token request failed: 502: temporarily_unavailable");
   });
 });

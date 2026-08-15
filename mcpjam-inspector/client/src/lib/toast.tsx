@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { toast as sonnerToast } from "sonner";
 import { Check, Copy } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
+import { track } from "@/lib/analytics";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
 
 /**
  * App-wide toast.
@@ -59,10 +62,49 @@ function CopyableErrorMessage({ text }: { text: string }) {
 
 const ERROR_TOAST_DURATION_MS = 8000;
 
+/**
+ * Backstop for the one error whose fix is a specific screen.
+ *
+ * A pinned protocol version the server doesn't offer is dead-end text on its
+ * own — the user cannot act on it without knowing where the setting lives. The
+ * connect, reconnect and chat paths each attach their own action pointing at
+ * the exact client that holds the pin, which is the better link. This exists
+ * because "which toast fires" turned out to be a moving target: the same
+ * failure surfaces from several call sites, and three separate ones shipped
+ * without an action simply because nobody enumerated them.
+ *
+ * So: never override a caller's action, and where none was supplied fall back
+ * to the clients list. Less precise than a per-site link, and still a way out.
+ */
+function protocolPinFallbackAction(
+  message: unknown,
+  data: Parameters<typeof sonnerToast.error>[1],
+) {
+  if (data?.action) return undefined;
+  if (typeof message !== "string") return undefined;
+  if (!isProtocolVersionPinFailure(undefined, message)) return undefined;
+  return {
+    action: {
+      label: "Change protocol version",
+      onClick: () => {
+        track("change_protocol_version_clicked", {
+          location: "toast_fallback",
+          has_host_id: false,
+        });
+        navigateApp(routePaths.hosts);
+      },
+    },
+  };
+}
+
 const error: typeof sonnerToast.error = (message, data) =>
   sonnerToast.error(
     typeof message === "string" ? <CopyableErrorMessage text={message} /> : message,
-    { duration: ERROR_TOAST_DURATION_MS, ...data },
+    {
+      duration: ERROR_TOAST_DURATION_MS,
+      ...data,
+      ...protocolPinFallbackAction(message, data),
+    },
   );
 
 export const toast: typeof sonnerToast = Object.assign(

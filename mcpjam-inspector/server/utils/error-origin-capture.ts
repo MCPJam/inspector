@@ -79,8 +79,31 @@ export type OriginCaptureSource =
  *
  * Use it only where the failing hop is genuinely ours. On a route that
  * proxies to a user-supplied MCP server, the honest answer is no declaration.
+ *
+ * `"mcpjam_request_construction"` means: the hop was into the user's server,
+ * but what it rejected is a message MCPJam BUILT — a protocol-level "your
+ * request was malformed" verdict, where the requester is us. It promotes
+ * `ambiguous` on the same terms, and stays a separate value so a triager can
+ * tell "our infrastructure broke" from "our wire format was wrong".
+ *
+ * Kept as a caller declaration rather than a catalog origin because the same
+ * wire signal can mean the opposite thing here: MCPJam ships a knob that
+ * deliberately simulates a non-conforming client
+ * (`toolParamHeaderMirroring: "omit"`), and its conformance checks provoke
+ * these rejections on purpose. Only the call site can rule that out.
  */
-export type OriginCaptureBoundary = "mcpjam_internal";
+export type OriginCaptureBoundary =
+  | "mcpjam_internal"
+  | "mcpjam_request_construction";
+
+/**
+ * Boundaries that promote `ambiguous` to a capture. Both members qualify; the
+ * set exists so the promotion rule stays one line as boundaries are added.
+ */
+const PROMOTING_BOUNDARIES: ReadonlySet<OriginCaptureBoundary> = new Set([
+  "mcpjam_internal",
+  "mcpjam_request_construction",
+]);
 
 export type OriginCaptureDecision = {
   origin: ErrorOrigin;
@@ -112,7 +135,9 @@ export function maybeCaptureOriginError(
   const declared = originOf(normalized);
   const slug = normalized?.slug;
   const origin =
-    declared === "ambiguous" && options.boundary === "mcpjam_internal"
+    declared === "ambiguous" &&
+    options.boundary !== undefined &&
+    PROMOTING_BOUNDARIES.has(options.boundary)
       ? "mcpjam"
       : declared;
 

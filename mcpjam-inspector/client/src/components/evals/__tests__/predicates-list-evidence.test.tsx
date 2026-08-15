@@ -83,7 +83,42 @@ describe("PredicatesList — render-observation evidence", () => {
       <PredicatesList predicates={[row({ type: "widgetRendered" })]} />,
     );
     expect(screen.queryByTestId("predicate-render-evidence")).toBeNull();
-    // The verdict itself still renders.
-    expect(screen.getByText("widgetRendered")).toBeInTheDocument();
+    // The verdict itself still renders — titled with the shared human label,
+    // never the raw `widgetRendered` discriminator.
+    expect(screen.getByText("View rendered")).toBeInTheDocument();
+    expect(screen.queryByText("widgetRendered")).toBeNull();
+  });
+
+  it("titles a turn-scoped row with the SO-FAR variant, not the whole-run claim", () => {
+    // A step-scoped `noToolErrors` was evaluated at one point in the flow. It
+    // asserts nothing about the turns after it, so it must not borrow the
+    // whole-run label.
+    render(
+      <PredicatesList
+        predicates={[
+          { ...row({ type: "noToolErrors" }), scope: { kind: "turn", promptIndex: 1 } },
+        ]}
+      />,
+    );
+    expect(screen.getByText("No tool errors so far")).toBeInTheDocument();
+  });
+
+  it("keeps the whole-run label for an unscoped row of the same kind", () => {
+    render(<PredicatesList predicates={[row({ type: "noToolErrors" })]} />);
+    expect(screen.getByText("No tool errors")).toBeInTheDocument();
+    expect(screen.queryByText("No tool errors so far")).toBeNull();
+  });
+
+  it("renders a prototype-key discriminator as text instead of crashing", () => {
+    // `parseIterationPredicates` only validates that `type` is a string, so a
+    // corrupt or hostile metadata blob can carry `__proto__`. An unguarded map
+    // lookup returns an inherited OBJECT, which throws when React renders it
+    // as a child — taking the whole checks section down with it.
+    render(
+      <PredicatesList
+        predicates={[row({ type: "__proto__" } as unknown as PredicateResult["predicate"])]}
+      />,
+    );
+    expect(screen.getByText("__proto__")).toBeInTheDocument();
   });
 });

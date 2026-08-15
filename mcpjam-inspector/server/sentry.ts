@@ -1,17 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { buildServerSentryConfig } from "../shared/sentry-config.js";
-import { resolveEnvironment } from "./utils/log-events.js";
-
-/**
- * Baked into the bundle by `server/tsup.config.ts` (`define`). It MUST stay a
- * literal `process.env.X` member expression — esbuild's `define` performs a
- * syntactic substitution and cannot see through a dynamic `process.env[name]`
- * lookup, which would leave the shipped server with no release tag.
- *
- * Under tsx in dev the define is absent and this reads the real environment,
- * where npm provides `npm_package_version` as the fallback below.
- */
-const BAKED_VERSION = process.env.MCPJAM_INSPECTOR_VERSION;
+import { resolveAppVersion, resolveEnvironment } from "./utils/log-events.js";
 
 /**
  * Sentry for the standalone Hono server (hosted, npx, Docker).
@@ -35,7 +24,7 @@ export function initServerSentry(): void {
   Sentry.init({
     ...buildServerSentryConfig({
       environment: resolveEnvironment(),
-      release: blankToUndefined(BAKED_VERSION) ?? readEnv("npm_package_version"),
+      release: resolveAppVersion() ?? undefined,
       deployment:
         process.env.VITE_MCPJAM_HOSTED_MODE === "true"
           ? "hosted"
