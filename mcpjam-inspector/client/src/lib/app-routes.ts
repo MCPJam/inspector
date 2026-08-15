@@ -111,6 +111,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "screen",
     surfaceId: "project-environments",
   },
+  { path: "sessions", kind: "screen", surfaceId: "sessions" },
   { path: "playground", kind: "screen", surfaceId: "playground" },
   { path: "support", kind: "screen", surfaceId: "support" },
   { path: "settings", kind: "screen", surfaceId: "settings" },

@@ -209,6 +209,7 @@ export function SuiteRunCostEstimateHint({
   caseIds,
   iterationOverride,
   planCount,
+  environmentIds,
   suppressed = false,
   label = "Estimated credit cost of running this suite",
   className,
@@ -219,6 +220,7 @@ export function SuiteRunCostEstimateHint({
   caseIds?: readonly string[];
   iterationOverride?: number;
   planCount?: number;
+  environmentIds?: readonly string[];
   /** Set when Run all cannot launch at all (no cases, no servers configured). */
   suppressed?: boolean;
 } & HintChromeProps) {
@@ -232,6 +234,7 @@ export function SuiteRunCostEstimateHint({
       caseIds={caseIds}
       iterationOverride={iterationOverride}
       planCount={planCount}
+      environmentIds={environmentIds}
       label={label}
       className={className}
       side={side}
@@ -245,6 +248,7 @@ function SuiteEstimateFetcher({
   caseIds,
   iterationOverride,
   planCount,
+  environmentIds,
   label,
   className,
   side,
@@ -254,6 +258,7 @@ function SuiteEstimateFetcher({
   caseIds?: readonly string[];
   iterationOverride?: number;
   planCount?: number;
+  environmentIds?: readonly string[];
 } & HintChromeProps) {
   const state = useSuiteRunCostEstimate({
     enabled: true,
@@ -261,6 +266,7 @@ function SuiteEstimateFetcher({
     ...(caseIds ? { caseIds } : {}),
     ...(iterationOverride !== undefined ? { iterationOverride } : {}),
     ...(planCount !== undefined ? { planCount } : {}),
+    ...(environmentIds && environmentIds.length > 0 ? { environmentIds } : {}),
   });
   return (
     <RunCostEstimateHint
