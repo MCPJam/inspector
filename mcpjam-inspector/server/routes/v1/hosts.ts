@@ -109,6 +109,18 @@ async function resolveHostTemplateInput(
   }
 
   const input = cloneJson(template) as Record<string, unknown>;
+  // The forward-client invariant applies to the template branch too. Templates
+  // carry their OWN model (each is tuned to the client it emulates), so this is
+  // a guard, never a substitution — a catalog entry that lost its model is a
+  // catalog bug, and minting a modelless host from it would surface as an
+  // `ENV_MODEL_REQUIRED` launch refusal much later.
+  if (!hostConfigPinsAModel(input)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Host template "${templateId}" does not pin a model; pass an explicit \`config\` instead.`
+    );
+  }
   if (theme !== undefined) {
     const hostContext =
       input.hostContext &&
@@ -179,6 +191,49 @@ async function readHostDetail(
 // ── Schemas ─────────────────────────────────────────────────────────────────
 const hostConfigSchema = z.record(z.string(), z.unknown());
 
+/**
+ * FORWARD-CLIENT INVARIANT: a host created through this route must pin a
+ * model.
+ *
+ * An environment resolves its execution model from its own override, else from
+ * the host it selects, else nowhere — and "nowhere" is a hard launch refusal
+ * (`ENV_MODEL_REQUIRED`). A host minted with `modelId: ""` is therefore a host
+ * that cannot back a headless environment, and the failure would surface at
+ * launch rather than at creation.
+ *
+ * Deliberately a REFINEMENT over the passthrough record rather than a full
+ * config schema: every other config field stays untyped here on purpose (the
+ * authoritative validator is `ensureHostConfigV2` in the backend), and this
+ * route should not acquire a second copy of it that can drift. Legacy rows with
+ * an empty model are untouched — they still read, and unrelated edits still
+ * apply; only NEW hosts are held to the invariant.
+ *
+ * Applied in the outer `superRefine` rather than on the field, so the XOR
+ * message still wins for a degenerate `config: {}` — that body's real problem
+ * is that it picked neither branch, not that it forgot a model.
+ */
+function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
+  return typeof config.modelId === "string" && config.modelId.trim().length > 0;
+}
+
+/**
+ * Return `config` with `modelId` TRIMMED.
+ *
+ * The rest of the config is passed through opaquely, but the model cannot be:
+ * it is stored verbatim and compared verbatim downstream, so a padded
+ * `" anthropic/claude-sonnet-4-5 "` would be persisted as a distinct — and
+ * unrecognized — model id. Trimming matches the environment contract's
+ * `normalizeModelId`, which is the other write boundary this value reaches.
+ * Only ever a trim; the id itself is never rewritten.
+ */
+function withTrimmedModelId(
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  return typeof config.modelId === "string"
+    ? { ...config, modelId: config.modelId.trim() }
+    : config;
+}
+
 const createHostSchema = z
   .object({
     name: z.string().trim().min(1),
@@ -186,17 +241,28 @@ const createHostSchema = z
     theme: z.enum(["light", "dark"]).optional(),
     config: hostConfigSchema.optional(),
   })
-  .refine(
-    (value) => {
-      // An empty `{}` is a truthy object but not a usable host config; count
-      // config only when it actually carries fields so `--json '{}'` can't
-      // satisfy the XOR and mint a degenerate host.
-      const hasConfig =
-        value.config !== undefined && Object.keys(value.config).length > 0;
-      return (value.template ? 1 : 0) + (hasConfig ? 1 : 0) === 1;
-    },
-    { message: "Provide exactly one of `template` or a non-empty `config`." }
-  );
+  .superRefine((value, ctx) => {
+    // An empty `{}` is a truthy object but not a usable host config; count
+    // config only when it actually carries fields so `--json '{}'` can't
+    // satisfy the XOR and mint a degenerate host.
+    const hasConfig =
+      value.config !== undefined && Object.keys(value.config).length > 0;
+    if ((value.template ? 1 : 0) + (hasConfig ? 1 : 0) !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide exactly one of `template` or a non-empty `config`.",
+      });
+      return;
+    }
+    if (hasConfig && !hostConfigPinsAModel(value.config!)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config", "modelId"],
+        message:
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+      });
+    }
+  });
 
 const updateHostSchema = z
   .object({
@@ -254,9 +320,15 @@ hosts.post("/projects/:projectId/hosts", async (c) => {
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
 
-  const input = body.template
-    ? await resolveHostTemplateInput(body.template, body.theme)
-    : body.config;
+  // Trim on BOTH branches: the normalization belongs to the write boundary, not
+  // to one of the two ways of reaching it. A template is authored data too, and
+  // one carrying a padded `modelId` would otherwise persist an id that no
+  // downstream verbatim comparison recognizes.
+  const input = withTrimmedModelId(
+    body.template
+      ? await resolveHostTemplateInput(body.template, body.theme)
+      : body.config!
+  );
 
   let created: { hostId: string };
   try {
@@ -286,10 +358,32 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
   const token = await getConvexBearerForRequest(c);
 
   // `hosts:updateHost` enforces project scope from `projectId` (a host from
-  // another project throws not-found → 404), so there is no separate preflight.
+  // another project throws not-found → 404), so there is no separate preflight
+  // for AUTHORIZATION. A config write needs the current row for a different
+  // reason — see below.
   const updateArgs: Record<string, unknown> = { hostId, projectId };
   if (body.name !== undefined) updateArgs.name = body.name;
-  if (body.config !== undefined) updateArgs.input = body.config;
+  if (body.config !== undefined) {
+    // A config PATCH REPLACES the config, so it is the one write on this route
+    // that can strip the model off an existing host — the forward-client
+    // invariant that `create` enforces would otherwise be one PATCH wide open.
+    // Same rule as the Behavior tab: CLEARING a pinned model is refused, while
+    // a legacy modelless host stays editable for everything else. That needs
+    // the pre-edit model, so the read happens only on the branch that needs it.
+    const current = await readHostDetail(token, projectId, hostId);
+    if (
+      hostConfigPinsAModel(current.config) &&
+      !hostConfigPinsAModel(body.config)
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "`config.modelId` is required and must be a non-empty model id: this host pins a model, and clearing it would leave it unable to back a headless environment.",
+        { modelId: current.config.modelId }
+      );
+    }
+    updateArgs.input = withTrimmedModelId(body.config);
+  }
   const convexClient = createConvexClient(token);
   try {
     await convexClient.mutation("hosts:updateHost" as any, updateArgs);
@@ -341,6 +435,21 @@ hosts.post("/projects/:projectId/hosts/:hostId/duplicate", async (c) => {
   );
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
+
+  // Duplication MINTS a host, so it is held to the same forward-client
+  // invariant as `create`. Copying a legacy modelless row is the one way this
+  // route could keep producing the state `create` now refuses — and unlike an
+  // edit to a legacy row, nothing is stranded by refusing: the source still
+  // exists, and pinning its model makes the copy legal.
+  const source = await readHostDetail(token, projectId, hostId);
+  if (!hostConfigPinsAModel(source.config)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Host "${source.name}" does not pin a model, so duplicating it would create another host that cannot back a headless environment. Pin a model on it first.`
+    );
+  }
+
   let created: { hostId: string };
   try {
     created = (await convexClient.mutation("hosts:duplicateHost" as any, {

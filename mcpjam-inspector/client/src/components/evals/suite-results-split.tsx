@@ -352,7 +352,7 @@ function RunGroupItem({
         active ? "border-primary/40 bg-primary/[0.06]" : "border-transparent hover:bg-muted/60",
       )}
     >
-      <div className="flex items-stretch">
+      <div className="flex min-w-0 items-stretch">
         {!group.isStandalone ? (
           <button
             type="button"
@@ -365,7 +365,7 @@ function RunGroupItem({
         ) : (
           <span className="w-7 shrink-0" />
         )}
-        <button type="button" onClick={onSelect} className="flex-1 py-2.5 pr-3 text-left">
+        <button type="button" onClick={onSelect} className="min-w-0 flex-1 py-2.5 pr-3 text-left">
           <div className="flex items-center justify-between gap-2">
             <span className="truncate font-mono text-xs font-medium text-foreground">{group.label}</span>
             <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">

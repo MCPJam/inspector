@@ -451,6 +451,20 @@ Stateless mode can only be used with an HTTP-transport server, not STDIO.
 **Next steps**
 - Disable the stateless toggle for stdio servers.
 
+### Protocol version pin unsupported
+
+`sdk/protocol_version_pin_unsupported`
+
+This connection is pinned to a specific MCP protocol version that the server does not offer.
+
+**Likely causes**
+- The client profile you're using pins a protocol version this server hasn't adopted — for example, a client set to **Latest (2026-07-28)** against a server that still speaks a 2025 revision.
+- A per-server protocol override is pinned to a version the server dropped or never shipped.
+
+**Next steps**
+- Click **Change protocol version** in the error banner or toast to open the client's **MCP Protocol** tab, then set the version to **Automatic** to negotiate whatever the server supports.
+- Or pick the version the server advertises — `server/discover` (modern) or the `initialize` response (legacy) lists the supported versions.
+
 ### Paginated tool / header discovery unsupported
 
 `sdk/paginated_tool_header_discovery_unsupported`

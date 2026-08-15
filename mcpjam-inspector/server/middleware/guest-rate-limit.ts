@@ -1,9 +1,16 @@
 import type { Context, Next } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
+import { hasDedicatedPollBudget } from "./server-connection-poll-rate-limit.js";
 
 /**
  * Per-guestId rate limiting for OAuth proxy routes.
  * In-memory sliding window: 60 req/min per guestId.
+ *
+ * One route stands outside it: the connection status GET, which is polled every
+ * few seconds by design and would spend half this bucket doing what the flow
+ * tells it to. It carries its own, poll-shaped budget instead — see
+ * `server-connection-poll-rate-limit.ts`, which defines both the exemption and
+ * the limiter that replaces it.
  */
 
 const GUEST_RATE_LIMIT = 60;
@@ -35,6 +42,11 @@ export async function guestRateLimitMiddleware(
     return next();
   }
 
+  // Metered elsewhere, on a budget shaped for polling.
+  if (hasDedicatedPollBudget(c.req.method, c.req.path)) {
+    return next();
+  }
+
   const now = Date.now();
   const entry = guestWindows.get(guestId);
 
@@ -48,6 +60,19 @@ export async function guestRateLimitMiddleware(
               "Guest rate limit exceeded. Try again later or sign in for higher limits.",
           },
           429,
+          // This is a FIXED window, so the wait is exactly the remainder of it
+          // — the one 429 in the product that can state its reset precisely.
+          // It shipped without the header while the published spec promised
+          // `Retry-After` on every rate-limited response, which made the
+          // promise false on the guest path specifically.
+          {
+            "Retry-After": String(
+              Math.max(
+                1,
+                Math.ceil((entry.windowStart + GUEST_WINDOW_MS - now) / 1000)
+              )
+            ),
+          }
         );
       }
       entry.count++;
