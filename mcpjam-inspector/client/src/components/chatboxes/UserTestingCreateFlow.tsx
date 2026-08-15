@@ -58,14 +58,15 @@ interface UserTestingCreateFlowProps {
   isAuthenticated: boolean;
   onCancel: () => void;
   /**
-   * The ONLY write path. Creates the host, its chatbox and the access mode in
-   * one mutation; resolves to the new scenario's host id.
+   * The ONLY write path. Creates the client, the ad-hoc environment over it,
+   * the chatbox and the access mode in one mutation; resolves to the new
+   * scenario's CHATBOX id, which is what the scenario route is keyed on.
    */
   onCreateScenario: (draft: {
     name: string;
     input: HostConfigInputV2;
     chatboxMode: ChatboxMode;
-  }) => Promise<{ hostId: string }>;
+  }) => Promise<{ chatboxId: string }>;
 }
 
 
