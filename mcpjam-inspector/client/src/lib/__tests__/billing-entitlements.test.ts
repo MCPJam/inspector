@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BILLING_FEATURE_BY_TAB,
   formatBillingLimitReachedMessage,
+  formatPremiumnessGateKey,
   getBillingErrorMessage,
   getDisplayPriceCentsForPlan,
   getPremiumnessGateForTab,
@@ -12,6 +13,7 @@ import {
 } from "../billing-entitlements";
 import type {
   PlanCatalogEntry,
+  PremiumnessGateKey,
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
 
@@ -495,5 +497,42 @@ describe("isPremiumnessGateDeniedForShell", () => {
       }),
     });
     expect(denied).toBe(true);
+  });
+});
+
+describe("formatPremiumnessGateKey", () => {
+  it("names the daily journey launch gate", () => {
+    // The gate key ARRIVES whether or not this file knows it — the backend
+    // sends `GateDecision.gateKey` verbatim — so a missing case is not a crash,
+    // it is the raw key rendered at a user: "journeyRunsPerDay is not included
+    // in the Free plan". This pairs with the backend gate of the same name.
+    expect(formatPremiumnessGateKey("journeyRunsPerDay")).toBe(
+      "Journey launches per day"
+    );
+  });
+
+  it("names every gate key it declares", () => {
+    // The union is a hand-mirror of the backend's gate list. A key added there
+    // and mirrored here but never given a label falls through to the default
+    // and reads as an identifier — which is the whole failure this map exists
+    // to prevent, so catch it as a set rather than one case at a time.
+    const gateKeys: PremiumnessGateKey[] = [
+      "chatboxes",
+      "evals",
+      "cicd",
+      "auditLog",
+      "maxMembers",
+      "maxProjects",
+      "maxServersPerProject",
+      "maxChatboxesPerProject",
+      "maxEvalRunsPerMonth",
+      "maxEvalIterationsPerMonth",
+      "insightsPerDay",
+      "journeyRunsPerDay",
+    ];
+
+    for (const key of gateKeys) {
+      expect(formatPremiumnessGateKey(key), key).not.toBe(key);
+    }
   });
 });

@@ -41,7 +41,12 @@ export type PremiumnessGateKey =
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
-  | "insightsPerDay";
+  | "insightsPerDay"
+  // Paired with the backend's gate of the same name. A gate key with no entry
+  // here still ARRIVES — `GateDecision.gateKey` is whatever the backend sent —
+  // and falls through `formatPremiumnessGateKey` to be rendered verbatim, so
+  // the user reads "journeyRunsPerDay is not included in the Free plan".
+  | "journeyRunsPerDay";
 
 export type BillingEnforcementState =
   | "active"
