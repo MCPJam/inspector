@@ -32,6 +32,20 @@ vi.mock("../use-server-quality", () => ({
 // Stub the goal-completion judge hook so the rail stays empty in view tests
 // that aren't about the judge panel. Matches the `unavailable: true` shape
 // used for useServerQuality above so callers see no rendered card.
+vi.mock("../use-groundedness", () => ({
+  useGroundedness: vi.fn(() => ({
+    result: null,
+    pending: false,
+    requested: false,
+    failedGeneration: false,
+    error: null,
+    requestGroundedness: vi.fn(),
+    // Same rule as the goal-completion mock below: this suite is about
+    // layout, so the advisory judges stay unavailable unless a test says so.
+    unavailable: true,
+  })),
+}));
+
 vi.mock("../use-goal-completion", () => ({
   useGoalCompletion: vi.fn(() => ({
     result: null,
