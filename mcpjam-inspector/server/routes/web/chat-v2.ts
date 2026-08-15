@@ -433,8 +433,7 @@ chatV2.post("/", async (c) => {
                 "[chat-v2] chatbox attribution unavailable; running without plugin origin",
                 {
                   chatboxId,
-                  error:
-                    error instanceof Error ? error.message : String(error),
+                  error: error instanceof Error ? error.message : String(error),
                 }
               );
             }
@@ -1309,6 +1308,10 @@ chatV2.post("/", async (c) => {
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         isGuest: Boolean(c.get("guestId")),
         isChatboxSession,
+        // Lets a spend inside a shared chatbox bill the chatbox OWNER instead
+        // of the visitor, who has no wallet to charge. Only web search reads
+        // it today; the model turn and voice already send their own.
+        ...(isChatboxSession && chatboxId ? { chatboxId } : {}),
         requireToolApproval,
         // Out-of-band and in-process ONLY. Never on `config.computer`:
         // `narrowHostComputer` runs at the top of `resolveHostTools` and

@@ -188,3 +188,115 @@ describe("TurnRating", () => {
     expect(screen.getByRole("radio", { name: "5 of 5" })).toBeChecked();
   });
 });
+
+describe("TurnRating — thumbs variant", () => {
+  it("renders two thumbs as a radiogroup", () => {
+    render(<TurnRating variant="thumbs" />);
+    expect(screen.getByRole("radiogroup")).toBeInTheDocument();
+    expect(screen.getAllByRole("radio")).toHaveLength(2);
+    expect(
+      screen.getByRole("radio", { name: "Thumbs up" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: "Thumbs down" })
+    ).toBeInTheDocument();
+  });
+
+  it("submits 1 for up and 0 for down — the numeric contract is unchanged", () => {
+    const onSubmit = vi.fn();
+    const { unmount } = render(
+      <TurnRating variant="thumbs" onSubmit={onSubmit} />
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Thumbs up" }));
+    expect(onSubmit).toHaveBeenCalledWith({ value: 1 });
+
+    unmount();
+    onSubmit.mockClear();
+    render(<TurnRating variant="thumbs" onSubmit={onSubmit} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Thumbs down" }));
+    expect(onSubmit).toHaveBeenCalledWith({ value: 0 });
+  });
+
+  it("opens the comment row on the first thumb, like stars", () => {
+    const onSubmit = vi.fn();
+    render(<TurnRating variant="thumbs" onSubmit={onSubmit} />);
+
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Thumbs down" }));
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "made something up" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(onSubmit).toHaveBeenLastCalledWith({
+      value: 0,
+      comment: "made something up",
+    });
+  });
+
+  it("distinguishes a stored thumbs-down from nothing rated at all", () => {
+    // The `draftValue === undefined` sentinel earning its keep: 0 is a real
+    // judgement, and a falsy check anywhere in here would render it unrated.
+    const { rerender } = render(<TurnRating variant="thumbs" />);
+    expect(
+      screen.getByRole("radio", { name: "Thumbs down" })
+    ).not.toBeChecked();
+
+    rerender(<TurnRating variant="thumbs" value={0} status="submitted" />);
+    expect(screen.getByRole("radio", { name: "Thumbs down" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Thumbs up" })).not.toBeChecked();
+  });
+
+  it("re-clicking the other thumb switches the judgement", () => {
+    const onSubmit = vi.fn();
+    render(
+      <TurnRating
+        variant="thumbs"
+        value={0}
+        status="submitted"
+        onSubmit={onSubmit}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "Thumbs up" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({ value: 1 });
+    expect(screen.getByRole("radio", { name: "Thumbs up" })).toBeChecked();
+  });
+
+  it("blocks input while a submission is pending", () => {
+    const onSubmit = vi.fn();
+    render(
+      <TurnRating
+        variant="thumbs"
+        value={1}
+        status="pending"
+        onSubmit={onSubmit}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "Thumbs down" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("renders read-only with the comment and no inputs", () => {
+    const onSubmit = vi.fn();
+    render(
+      <TurnRating
+        variant="thumbs"
+        readOnly
+        value={0}
+        comment="wrong order"
+        status="submitted"
+        onSubmit={onSubmit}
+      />
+    );
+
+    expect(screen.getByRole("radio", { name: "Thumbs down" })).toBeChecked();
+    expect(screen.getByText(/wrong order/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Thumbs up" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});

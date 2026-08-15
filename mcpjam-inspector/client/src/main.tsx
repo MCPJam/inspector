@@ -188,19 +188,48 @@ if (isInIframe) {
     </StrictMode>
   );
 } else if (isServerConnectionHandoff()) {
-  // Rendered WITHOUT <AuthKitProvider>/Convex, and that is the point rather
-  // than an optimization: this page's visitor may be signed out or a guest,
-  // and it authenticates every call with an HttpOnly cookie it cannot read.
-  // Mounting the authenticated shell around it would start a WorkOS refresh
-  // for a user who does not exist, to obtain a credential the page has no use
-  // for. App's theme bootstrap does not run here, so apply the stored theme
+  // <AuthKitProvider> BUT NO CONVEX. The page still holds no credential of its
+  // own — every connection call authenticates with an HttpOnly cookie it
+  // cannot read — but the CLAIM has to say who the visitor is: the backend
+  // refuses an account-owned handoff link to anyone but its owner, and with no
+  // token to send it refused the owner too.
+  //
+  // The provider rather than a hand-rolled token fetch, because only the SDK
+  // knows where to ask. The `/user_management` proxy this page first tried is
+  // mounted only when `!HOSTED_MODE` (see `server/index.ts`), so in hosted it
+  // 404s and every signed-in owner is refused exactly as before — the same
+  // shape of never-passing gate this flow has already shipped twice.
+  //
+  // A signed-out visitor or a guest costs one failed refresh and proceeds
+  // unauthenticated, which is what `bestEffortAccessToken` in the page is for.
+  // App's theme bootstrap does not run here, so apply the stored theme
   // directly — same as the debug callback below.
   updateThemeMode(getInitialThemeMode());
   updateThemePreset(getInitialThemePreset());
+  const handoffWorkosClientId =
+    getRuntimeWorkosClientId() ??
+    (import.meta.env.VITE_WORKOS_CLIENT_ID as string | undefined) ??
+    "";
+  const handoffRuntimeApiHostname = getRuntimeWorkosApiHostname();
+  const handoffWorkosOptions = handoffRuntimeApiHostname
+    ? { apiHostname: handoffRuntimeApiHostname }
+    : resolveWorkosClientOptions(import.meta.env, window.location);
   const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
-      <ServerConnectionHandoff />
+      <AuthKitProvider
+        clientId={handoffWorkosClientId}
+        redirectUri={resolveWorkosRedirectUri({
+          envRedirect:
+            (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined,
+          isElectron: window.isElectron === true,
+          location: window.location,
+        })}
+        devMode={WORKOS_DEV_MODE}
+        {...handoffWorkosOptions}
+      >
+        <ServerConnectionHandoff />
+      </AuthKitProvider>
     </StrictMode>
   );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {

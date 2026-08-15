@@ -8,6 +8,10 @@
  * being absent.
  */
 import type { ServerDoctorResult } from "../server-doctor-core.js";
+import type {
+  EvaluationConfigSnapshot,
+  ScoreResult,
+} from "../contract/types.js";
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -146,8 +150,24 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /**
+   * Whether the run's score evidence verified at ingest.
+   *
+   * TRI-STATE, and the third state matters: `"valid"` means the backend
+   * checked and the definitions and results agree; `"invalid"` means they did
+   * not; `null`/absent means NO VERDICT WAS PRODUCED — an API deployment that
+   * predates integrity checking. A score gate must treat `null` exactly like
+   * `"invalid"`: absent evidence is not valid evidence.
+   */
+  scoreIntegrity?: "valid" | "invalid" | null;
   createdAt: number;
   completedAt: number | null;
+  /**
+   * The common actionable-insights envelope. Present on the DETAIL response
+   * only (lists stay compact) and absent on servers deployed before the
+   * envelope existed — treat absence as `not_available`.
+   */
+  insights?: PlatformInsightsEnvelope;
 }
 
 /**
@@ -194,7 +214,7 @@ export interface PlatformEvalRunCreated {
 export interface PlatformEvalSuiteCreated {
   suiteId: string;
   /** Suite name as persisted; echoes the request name. */
-  name: string | null;
+  name: string;
   /** The HTTP servers the suite was configured against. */
   servers?: Array<{ id: string; name?: string }>;
   /** Per-case create outcomes, mirroring eval-run caseUpsert. */
@@ -710,6 +730,22 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * Per-scorer verdicts for this iteration, in the evaluation contract's
+   * shape. `null` when the run predates scoring, or when the stored payload
+   * failed validation at the boundary — a public caller never receives
+   * partially-trusted score data.
+   */
+  scores?: ScoreResult[] | null;
+  /**
+   * The definitions those scores were produced under, plus their hash.
+   *
+   * Ships with `scores` or not at all: `role` and the error policies live here,
+   * so results without it cannot be told apart as gating or advisory.
+   */
+  evaluationConfig?: EvaluationConfigSnapshot | null;
+  /** Set when the backend downgraded this iteration's verdict at ingest. */
+  scoreIntegrity?: "score_integrity_invalid" | null;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -814,9 +850,9 @@ export type PlatformDoctorReport = ServerDoctorResult<unknown>;
  */
 export interface PlatformTunnelGrant {
   serverId: string;
-  name?: string;
+  name: string;
   /** True when a server record with this name already existed. */
-  existed?: boolean;
+  existed: boolean;
   /** Previous URL, present when the existing record's URL was replaced. */
   previousUrl?: string;
   /** Previous transport, present when the record existed (e.g. "stdio"). */
@@ -929,6 +965,9 @@ export interface PlatformJourneyRun {
   }>;
   createdAt: number;
   lastHeartbeatAt?: number;
+  /** Common insights envelope (detail response only; lists stay compact).
+   * Absent on servers deployed before the envelope existed. */
+  insights?: PlatformInsightsEnvelope;
 }
 
 export interface PlatformJourneyRunSession {
@@ -996,6 +1035,19 @@ export interface PlatformScenario {
   link: string | null;
   /** False when the environment was already published and this returned it. */
   created?: boolean;
+  /**
+   * True when `publishScenario`'s create-time overrides (`name`,
+   * `description`, `mode`) were NOT applied because the environment was
+   * already published. Paired with `created: false`.
+   *
+   * Declared here rather than as an intersection at the two call sites that
+   * return it. Both did — `Promise<PlatformScenario & { overridesIgnored?:
+   * boolean }>` — which typed the field for a caller who read it off the
+   * return value and left it invisible to anything holding a
+   * `PlatformScenario`, including the spec↔types parity check. A field the
+   * wire really carries belongs on the interface that describes the wire.
+   */
+  overridesIgnored?: boolean;
 }
 
 export interface PlatformScenarioDeleted {
@@ -1212,6 +1264,173 @@ export interface PlatformFindingDismissed {
   dismissed: boolean;
 }
 
+/**
+ * The common actionable-insights envelope — one shape across Eval runs,
+ * Swarm waves, and User Testing windows. Hand-mirrored from the backend's
+ * `lib/insightsEnvelope.ts` (two-repo type discipline).
+ *
+ * Reading rules for consumers (including agents):
+ * - Findings are AGGREGATED per run/wave/window; `evidence` points at
+ *   exemplar sessions or iterations, not one finding per session.
+ * - Only `actionTarget: "mcp_server"` with `actionability: "ready"`
+ *   authorizes proposing a change to the MCP server. Every other action
+ *   target names different work (agent config, eval case, environment,
+ *   investigation) and must NOT be "fixed" in server code.
+ * - `findings` is empty unless `status === "completed"`. An empty completed
+ *   list is a real "nothing to act on" answer.
+ * - Reads never trigger generation; `status` is observational.
+ */
+export type PlatformInsightsStatus =
+  | "not_available"
+  | "not_requested"
+  | "pending"
+  | "completed"
+  | "failed";
+
+export type PlatformInsightScope =
+  | { kind: "eval_run"; id: string }
+  | { kind: "swarm_wave"; id: string; runId: string }
+  | {
+      kind: "user_testing_window";
+      id: string;
+      scenarioId: string;
+      windowStartAt: number;
+      windowEndAt: number;
+    };
+
+export type PlatformInsightAttribution =
+  | "unknown"
+  | "server_contract"
+  | "server_runtime"
+  | "server_capability"
+  | "agent_or_prompt"
+  | "test_design"
+  | "environment";
+
+export type PlatformInsightActionTarget =
+  | "investigate"
+  | "mcp_server"
+  | "agent_configuration"
+  | "eval_case"
+  | "environment";
+
+export type PlatformInsightActionability =
+  | "informational"
+  | "investigate"
+  | "ready";
+
+export interface PlatformActionableFindingEvidence {
+  sessionId?: string;
+  iterationId?: string;
+  kind: "tool_error" | "transcript" | "feedback" | "judge" | "contrast";
+  /** Scrubbed and clipped at the producer. */
+  excerpt: string;
+  toolName?: string;
+  errorCode?: string;
+}
+
+export interface PlatformActionableFinding {
+  /** Stable remediation id (`rf_<16 hex>`) — survives dynamic error values. */
+  id: string;
+  /** The registry signal this derives from; several findings may share one. */
+  signalFingerprint: string;
+  title: string;
+  category:
+    | "unknown"
+    | "tool_contract"
+    | "tool_runtime"
+    | "capability_gap"
+    | "workflow"
+    | "agent_behavior"
+    | "test_design"
+    | "environment";
+  attribution: PlatformInsightAttribution;
+  actionTarget: PlatformInsightActionTarget;
+  actionability: PlatformInsightActionability;
+  severity: "info" | "low" | "medium" | "high";
+  confidence: "low" | "medium" | "high";
+  /** Deterministic observation — counts and identities, never model prose. */
+  observed: string;
+  rootCause?: string;
+  recommendation: string;
+  acceptanceCriteria: string[];
+  affected: {
+    count: number;
+    total: number;
+    unit: "iterations" | "sessions";
+  };
+  patternSlug?: string;
+  /** Present only when a server (and, for tool surfaces, tool) resolved
+   * against the pinned snapshot. Required for `mcp_server`/`ready`. */
+  target?: {
+    serverId: string;
+    toolName?: string;
+    surface:
+      | "description"
+      | "input_schema"
+      | "output_schema"
+      | "handler"
+      | "server_instructions"
+      | "capability";
+    fieldPath?: string;
+    snapshotHash: string;
+    currentDefinition?: {
+      description?: string;
+      inputSchemaJson?: string;
+      outputSchemaJson?: string;
+      truncated: boolean;
+    };
+  };
+  evidence: PlatformActionableFindingEvidence[];
+}
+
+export interface PlatformInsightsEnvelope {
+  schemaVersion: 1;
+  scope: PlatformInsightScope;
+  status: PlatformInsightsStatus;
+  reasonCode: string | null;
+  retryable: boolean;
+  error: { code: string; message: string } | null;
+  generatedAt: number | null;
+  updatedAt: number | null;
+  summary: string | null;
+  coverage: {
+    unit: "iterations" | "sessions";
+    analyzed: number;
+    total: number;
+    gradedCount?: number;
+    feedbackCount?: number;
+    truncated: boolean;
+    lowConfidence: boolean;
+  };
+  findings: PlatformActionableFinding[];
+  /** Swarm only. Launch outcomes never appear as findings. */
+  runHealth?: {
+    targets: Array<{
+      subjectKind: "environment" | "host";
+      subjectId: string;
+      subjectLabel: string;
+      attempted: number;
+      succeeded: number;
+      failed: number;
+      rateLimited: number;
+    }>;
+  };
+  truncation: {
+    truncated: boolean;
+    omittedFindings: number;
+    omittedEvidence: number;
+    contractTruncated: boolean;
+  };
+}
+
+/** Receipt for an eval-run insights (serverQuality) request. 202. */
+export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
 /** LLM analysis over a whole wave. Requested explicitly; produced async. */
 export interface PlatformWaveInsights {
   waveId: string;
@@ -1395,6 +1614,22 @@ export interface PlatformUserTestingScenario {
   name: string | null;
   description: string | null;
   mode: string | null;
+}
+
+/**
+ * Scenario detail — the read shape, widened with the environment link and
+ * the insights envelope.
+ */
+export interface PlatformUserTestingScenarioDetail
+  extends PlatformUserTestingScenario {
+  environmentId: string | null;
+  /**
+   * Present when the caller may have it. The envelope is gated on workspace
+   * MEMBERSHIP while the scenario itself is visible more widely, so a
+   * lower-privilege viewer gets the scenario without this field rather than
+   * an error — same degradation as an older server that cannot produce one.
+   */
+  insights?: PlatformInsightsEnvelope;
 }
 
 /** Guest execution caps — the spend dial for anonymous visitors. */

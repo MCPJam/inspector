@@ -163,7 +163,7 @@ export interface GatedProposalMeta {
    */
   resource?(
     result: unknown,
-    context: { projectId: string }
+    context: { projectId: string },
   ): ExecutedActionResource | undefined;
   /**
    * What the proposal is ABOUT, from validated input, when that is a nameable
@@ -192,7 +192,7 @@ function readString(source: unknown, path: string): string | undefined {
  * model-authored proposal may pass a name — hosts match against both).
  */
 function evalSuiteTarget(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
 ): ProposedActionTarget | undefined {
   const selector = named(input, "suite");
   return selector ? { type: "eval_suite", selector } : undefined;
@@ -207,7 +207,7 @@ function evalSuiteTarget(
  */
 function evalRunResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "runId");
   const suiteId =
@@ -219,7 +219,7 @@ function evalRunResource(
     url:
       `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}` +
       `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(
-        projectId
+        projectId,
       )}`,
   };
 }
@@ -234,7 +234,7 @@ function evalRunResource(
  */
 function journeyRunResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "run.id") ?? readString(result, "runId");
   if (!runId) return undefined;
@@ -295,7 +295,7 @@ const UNTRUSTED_SERVER_CONTENT_NOTE =
  */
 function named(
   input: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -425,7 +425,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   const keys = Object.keys(args).sort();
   const shown = keys.slice(0, PREVIEW_MAX_ARGS);
   const parts = shown.map(
-    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`
+    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`,
   );
   const omitted = keys.slice(PREVIEW_MAX_ARGS);
   if (omitted.length > 0) {
@@ -437,7 +437,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
     parts.push(
       `+${omitted.length} more: ${omitted
         .map((key) => previewIdentifier(key))
-        .join(", ")}`
+        .join(", ")}`,
     );
   }
   // The NAME is capped (inside previewIdentifier) before the whole preview
@@ -447,7 +447,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   // is being called with. That is exactly the state this preview exists to
   // prevent, and it is reachable by an agent choosing a long name.
   const rendered = toSafeLine(
-    `${previewIdentifier(toolName)}(${parts.join(", ")})`
+    `${previewIdentifier(toolName)}(${parts.join(", ")})`,
   );
   return capChars(rendered, PREVIEW_TOTAL_CHARS);
 }
@@ -992,6 +992,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Visitor conversations; not a turn concern. Available on REST/CLI/MCP.",
   get_user_testing_session:
     "A real person's conversation with your product. Available on REST/CLI/MCP.",
+  get_user_testing_scenario:
+    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. Available on REST/CLI/MCP.",
   // Access REMOVAL. The agent proposes authoring, never destruction — and
   // these two take access away from people who currently have it, with no way
   // to hand it back except by re-inviting them individually.
@@ -1107,12 +1109,12 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "direct" }> =>
-    entry.tier === "direct"
+    entry.tier === "direct",
 );
 
 const GATED_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "gated" }> =>
-    entry.tier === "gated"
+    entry.tier === "gated",
 );
 
 /**
@@ -1147,17 +1149,17 @@ export const AGENT_API_GATED_OPERATIONS: ReadonlyArray<AnyPlatformOperation> =
  */
 export const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   DIRECT_ENTRIES.filter((entry) => !entry.operation.readOnly).map(
-    (entry) => entry.operation.name
-  )
+    (entry) => entry.operation.name,
+  ),
 );
 
 const GATED_BY_NAME = new Map(
-  GATED_ENTRIES.map((entry) => [entry.operation.name, entry])
+  GATED_ENTRIES.map((entry) => [entry.operation.name, entry]),
 );
 
 /** The gated entry for an operation name, or undefined if it is not gated. */
 export function gatedEntryFor(
-  operationName: string
+  operationName: string,
 ): Extract<AgentOpEntry, { tier: "gated" }> | undefined {
   return GATED_BY_NAME.get(operationName);
 }
@@ -1175,11 +1177,11 @@ export function proposalMetaFor(operationName: string): {
   kind: ProposedActionKind;
   /** Resolved per proposal — the hazard can depend on the arguments. */
   severityFor: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => ProposedActionSeverity | undefined;
   /** What the proposal is about, when that is a nameable resource. */
   targetFor: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => ProposedActionTarget | undefined;
 } {
   const entry = GATED_BY_NAME.get(operationName);
@@ -1207,7 +1209,7 @@ export function proposalMetaFor(operationName: string): {
     description: (input: Record<string, unknown>) =>
       capChars(
         toSafeLine(entry.proposal.describe(input)),
-        DESCRIPTION_TOTAL_CHARS
+        DESCRIPTION_TOTAL_CHARS,
       ),
     buttonLabel: entry.proposal.buttonLabel,
     kind: entry.proposal.kind,

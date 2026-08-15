@@ -19,6 +19,7 @@ export {
   TurnRating,
   type TurnRatingProps,
   type TurnRatingStatus,
+  type TurnRatingVariant,
 } from "./turn-rating";
 
 // --- Part renderers (handy for custom layouts) ---

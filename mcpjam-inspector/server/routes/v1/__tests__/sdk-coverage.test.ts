@@ -198,12 +198,16 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "dismissSwarmFinding",
   "post /projects/{projectId}/journey-findings/{findingId}/undismiss":
     "undismissSwarmFinding",
+  "post /projects/{projectId}/eval-runs/{runId}/insights":
+    "requestEvalRunInsights",
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
   "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",
   // The planning read that makes the static agent surfaces survivable.
   "get /projects/{projectId}/capabilities": "getCapabilities",
   // User testing — everything you do with a scenario once it exists.
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}":
+    "getUserTestingScenario",
   "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}":
     "updateUserTestingScenario",
   "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions":

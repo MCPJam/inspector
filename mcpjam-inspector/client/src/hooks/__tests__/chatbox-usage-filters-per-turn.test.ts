@@ -137,3 +137,96 @@ describe("worst-turn policy", () => {
     ).toBe(true);
   });
 });
+
+describe("a thumbs-rated session needs no client-side filter branch", () => {
+  // SCOPE, stated plainly: the projection itself (down ⇒ 1, up ⇒ 5) happens
+  // server-side in `SUMMARY_VALUE_MAP` and is pinned in the backend's
+  // `sessionScores.test.ts`. The fixtures below therefore set `min` by hand,
+  // exactly as the backend would have written it, and a broken projection
+  // would be caught there rather than here.
+  //
+  // What these pin is the client half: given a summary carrying thumb
+  // tallies, every matcher still reads `min` and NONE of them grows a special
+  // case. That is the claim that would silently rot if someone "fixed" the
+  // filters to branch on `thumbUpCount`/`thumbDownCount`.
+
+  it("a summary carrying a down-thumb matches Low (≤2) through min alone", () => {
+    const thumbedDown = thread({
+      _id: "a",
+      feedback: summary({
+        count: 2,
+        avg: 3,
+        min: 1,
+        latestRating: 5,
+        thumbUpCount: 1,
+        thumbDownCount: 1,
+      }),
+    });
+    expect(threadMatchesUsageFilter(thumbedDown, "low_ratings")).toBe(true);
+    expect(
+      threadMatchesChip(thumbedDown, {
+        kind: "dimension",
+        key: "feedbackBucket",
+        value: "negative",
+      })
+    ).toBe(true);
+  });
+
+  it("an up-thumbs-only summary does not, and buckets positive", () => {
+    const thumbedUp = thread({
+      _id: "a",
+      feedback: summary({
+        count: 2,
+        avg: 5,
+        min: 5,
+        latestRating: 5,
+        thumbUpCount: 2,
+      }),
+    });
+    expect(threadMatchesUsageFilter(thumbedUp, "low_ratings")).toBe(false);
+    expect(
+      threadMatchesChip(thumbedUp, {
+        kind: "dimension",
+        key: "feedbackBucket",
+        value: "positive",
+      })
+    ).toBe(true);
+  });
+
+  it("no projected thumb value can land in the neutral bucket", () => {
+    // A documented dead option, not a bug: a two-state control has no neutral
+    // to express, so no projection can land on 3.
+    const thumbedDown = thread({
+      _id: "a",
+      feedback: summary({
+        count: 1,
+        avg: 1,
+        min: 1,
+        latestRating: 1,
+        thumbDownCount: 1,
+      }),
+    });
+    expect(
+      threadMatchesChip(thumbedDown, {
+        kind: "dimension",
+        key: "feedbackBucket",
+        value: "neutral",
+      })
+    ).toBe(false);
+  });
+
+  it("a mixed-style summary is judged by min, whatever wrote that turn", () => {
+    // One star row (4) and one thumbs-down (⇒ 1) — the complaint wins.
+    const mixed = thread({
+      _id: "a",
+      feedback: summary({
+        count: 2,
+        avg: 2.5,
+        min: 1,
+        latestRating: 4,
+        thumbDownCount: 1,
+      }),
+    });
+    expect(threadMatchesUsageFilter(mixed, "low_ratings")).toBe(true);
+  });
+});
