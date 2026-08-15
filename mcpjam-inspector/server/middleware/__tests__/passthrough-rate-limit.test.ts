@@ -157,6 +157,34 @@ describe("the per-IP backstop", () => {
     );
   }, 30_000);
 
+  it("A BLANK BEARER DOES NOT BUY THE SHARED IP BUDGET CHEAPLY", async () => {
+    // The same weapon as the test above, reached from the other side. A token
+    // that is only whitespace still reaches this branch — `Bearer ` with a
+    // trailing space is normalized away by the HTTP layer and 401s upstream,
+    // but a non-breaking space survives transport, satisfies the `Bearer `
+    // prefix check, and trims to nothing here. Treating that as "no token"
+    // handed the caller the whole per-IP window to spend while risking no
+    // budget of its own. Blank credentials now share one token bucket, which
+    // is the tighter of the two and bites first.
+    const a = app();
+    const shared = "198.51.100.44";
+    const blank = {
+      headers: { "x-real-ip": shared, authorization: "Bearer \u00a0" },
+    };
+
+    let refused = 0;
+    for (let i = 0; i < PASSTHROUGH_TOKEN_LIMIT + 5; i++) {
+      if ((await a.request("/x", blank)).status === 429) refused++;
+    }
+    // Refused by the TOKEN bucket, well before the looser IP window could be.
+    expect(refused).toBeGreaterThan(0);
+
+    // And the neighbour behind the same address is untouched.
+    expect((await a.request("/x", req("tok-neighbour", shared))).status).toBe(
+      200
+    );
+  });
+
   it("is looser than the per-token budget, because an IP is not a caller", async () => {
     // Offices, VPNs and mobile carriers put many real users behind one
     // address. Sized at the token limit it would refuse a floor of ordinary
@@ -209,34 +237,60 @@ describe("bounded, and fails closed when full", () => {
     ).toBe(200);
   }, 30_000);
 
-  it("applies the same ceiling to the TOKEN map", async () => {
-    // The map a churner can grow FASTEST, because minting a bearer costs
-    // nothing at all — where an IP at least costs a host to send from. Both
-    // maps are bounded for the same reason and both refuse rather than evict;
-    // this pins the second one so the guard cannot be lost on one side.
+  it("ONE HOST CANNOT FILL THE TOKEN MAP AND LOCK OUT EVERYONE ELSE", async () => {
+    // The attack the two-map design invites if insertion is not gated.
     //
-    // The fill comes from ONE address so the IP map stays at a single entry
-    // and cannot be what refuses at the end. Those requests start being
-    // refused by the IP window after its limit, which does not matter: the
-    // token is charged first, so its entry is already in the map.
+    // Minting a bearer costs nothing, so a single host can name 10k of them.
+    // If each request inserted its token entry BEFORE the IP backstop was
+    // consulted, those requests would be refused one by one and still fill the
+    // map on the way past — and a full map that refuses unknown keys then
+    // denies every legitimate caller whose token is not already resident.
+    // 10k requests every few minutes would hold the hosted API down.
+    //
+    // So a first-seen token only takes an entry once the IP window has
+    // admitted the request: the fill rate is bounded by the backstop, and this
+    // host runs out of IP budget long before it runs out of names.
     const a = app();
-    const filler = "198.51.100.60";
+    const attacker = "198.51.100.60";
     for (let i = 0; i < PASSTHROUGH_MAX_ENTRIES; i++) {
-      await a.request("/x", req(`churn-${i}`, filler));
+      await a.request("/x", req(`churn-${i}`, attacker));
     }
 
-    // A brand-new token from an address with a fresh budget: only the full
-    // token map can refuse this.
+    // An unrelated caller, from its own address, is unaffected.
     expect(
       (await a.request("/x", req("tok-brand-new", "198.51.100.61"))).status
-    ).toBe(429);
-
-    // A token already in the map is still served — the ceiling bounds growth,
-    // it does not stop the callers already being metered.
-    expect(
-      (await a.request("/x", req("churn-0", "198.51.100.62"))).status
     ).toBe(200);
   }, 30_000);
+
+  it("still refuses the attacker itself, on the backstop", async () => {
+    // The other half: bounding the FILL must not stop the flood being braked.
+    const a = app();
+    const attacker = "198.51.100.70";
+    for (let i = 0; i < PASSTHROUGH_IP_LIMIT; i++) {
+      await a.request("/x", req(`rot-${i}`, attacker));
+    }
+    expect((await a.request("/x", req("rot-next", attacker))).status).toBe(429);
+  }, 30_000);
+
+  it("degrades a FULL token map to IP-only metering rather than refusing", async () => {
+    // Filling the token map legitimately takes many hosts, and at that point
+    // the map being full is our resource problem, not the caller's. There is a
+    // real backstop underneath it, so an unclassifiable request is metered by
+    // IP instead of being refused — the opposite choice from the IP map, which
+    // has nothing beneath it and does fail closed.
+    const a = app();
+    // ~20 addresses, each staying under its own IP budget, so the token map
+    // fills while the IP map holds a couple of dozen entries — otherwise the
+    // IP map would hit its own cap first and refuse for the wrong reason.
+    const perIp = Math.floor(PASSTHROUGH_IP_LIMIT * 0.8);
+    for (let i = 0; i < PASSTHROUGH_MAX_ENTRIES; i++) {
+      await a.request("/x", req(`tok-${i}`, `10.0.0.${Math.floor(i / perIp)}`));
+    }
+
+    expect(
+      (await a.request("/x", req("tok-overflow", "192.0.2.99"))).status
+    ).toBe(200);
+  }, 60_000);
 });
 
 describe("local mode", () => {

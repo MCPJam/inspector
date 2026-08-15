@@ -123,6 +123,28 @@ function billingDetails(
   return Object.keys(details).length > 0 ? details : undefined;
 }
 
+/**
+ * Ceiling on an advertised wait, in seconds — one day.
+ *
+ * `Number.isFinite` is not enough on its own. `Number.MAX_VALUE` is finite,
+ * and `String(Math.ceil(Number.MAX_VALUE / 1000))` is `1.797...e+305`, which
+ * `Headers` accepts and every client parses as `NaN`. That is the failure the
+ * junk-metadata guard was written to prevent, arriving through the one input
+ * shape it does not reject — so the magnitude is clamped as well as the type.
+ *
+ * A day is the longest wait worth advertising: past that a `Retry-After` reads
+ * as "this endpoint is gone" rather than "come back later", and the caps this
+ * serves all roll at UTC midnight anyway.
+ */
+const MAX_RETRY_AFTER_SECONDS = 86_400;
+
+/** Whole seconds, floored at 1 and capped at a day. Always an integer string. */
+function formatRetryAfterSeconds(deltaMs: number): string {
+  const seconds = Math.ceil(deltaMs / 1000);
+  if (!Number.isFinite(seconds)) return String(MAX_RETRY_AFTER_SECONDS);
+  return String(Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(1, seconds)));
+}
+
 /** Seconds-until, floored at 1 — the `Retry-After` value from an instant. */
 function retryAfterFromResetsAt(
   resetsAt: unknown,
@@ -131,12 +153,11 @@ function retryAfterFromResetsAt(
   if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) {
     return undefined;
   }
-  const deltaMs = resetsAt - now;
   // A reset already in the past means the window rolled between the backend
   // raising this and us serializing it. Advertise the floor rather than
   // omitting the header: the caller's next attempt will succeed, and "1" says
   // so more usefully than silence.
-  return String(Math.max(1, Math.ceil(deltaMs / 1000)));
+  return formatRetryAfterSeconds(resetsAt - now);
 }
 
 /** Same, from a duration a token bucket measured directly. */
@@ -144,7 +165,7 @@ function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
   if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs)) {
     return undefined;
   }
-  return String(Math.max(1, Math.ceil(retryAfterMs / 1000)));
+  return formatRetryAfterSeconds(retryAfterMs);
 }
 
 export function translateConvexWriteError(
@@ -221,8 +242,17 @@ export function translateConvexWriteError(
   // the only correct client response is to retry, which is exactly what the
   // header tells a generic one to do.
   if (code === "rate_limited") {
-    const retryAfterMs = (data as Record<string, unknown> | null)?.retryAfterMs;
-    const retryAfter = retryAfterFromMs(retryAfterMs);
+    const rawRetryAfterMs = (data as Record<string, unknown> | null)
+      ?.retryAfterMs;
+    const retryAfter = retryAfterFromMs(rawRetryAfterMs);
+    // Published only when it is a number we would also put in the header.
+    // Copying the raw value through would put `"soon"` or `NaN` on a public
+    // 429 while the header correctly omitted it — a caller reading the body
+    // for the same answer deserves the same guard.
+    const retryAfterMs =
+      typeof rawRetryAfterMs === "number" && Number.isFinite(rawRetryAfterMs)
+        ? rawRetryAfterMs
+        : undefined;
     const error = new WebRouteError(
       429,
       ErrorCode.RATE_LIMITED,

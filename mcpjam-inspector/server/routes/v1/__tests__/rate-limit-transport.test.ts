@@ -97,6 +97,43 @@ describe("translateConvexWriteError — rate_limited (the burst brake)", () => {
       expect(error.headers).toBeUndefined();
     }
   });
+
+  it("CLAMPS A HUGE FINITE WAIT instead of shipping exponential notation", () => {
+    // The gap the guard above does not close. `Number.MAX_VALUE` IS finite, so
+    // it passes `Number.isFinite` and then `String()` renders it as
+    // `1.79e+305` — which `Headers` accepts and every client parses as `NaN`,
+    // the exact outcome the junk-metadata test calls worse than no header.
+    // Type-checking the value is not enough; the magnitude has to be bounded
+    // too. A day is the longest wait worth advertising.
+    for (const retryAfterMs of [Number.MAX_VALUE, 1e24, 400 * 86_400_000]) {
+      const error = translateConvexWriteError(
+        convexError({ code: "rate_limited", retryAfterMs }),
+        { resource: "Journey run" }
+      );
+
+      const header = error.headers?.["Retry-After"];
+      expect(header).toBeDefined();
+      expect(header).toMatch(/^\d+$/);
+      expect(Number(header)).toBeLessThanOrEqual(86_400);
+    }
+  });
+
+  it("publishes retryAfterMs in the body only when the header would take it", () => {
+    // The body and the header have to agree about what is usable. Copying the
+    // raw value through put `"soon"` on a public 429 while the header
+    // correctly omitted it — one field over from the guard, same problem.
+    const junk = translateConvexWriteError(
+      convexError({ code: "rate_limited", retryAfterMs: "soon" }),
+      { resource: "Journey run" }
+    );
+    expect(junk.details?.retryAfterMs).toBeUndefined();
+
+    const good = translateConvexWriteError(
+      convexError({ code: "rate_limited", retryAfterMs: 2000 }),
+      { resource: "Journey run" }
+    );
+    expect(good.details?.retryAfterMs).toBe(2000);
+  });
 });
 
 describe("translateConvexWriteError — billing_limit_reached (the daily cap)", () => {

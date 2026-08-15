@@ -5741,7 +5741,7 @@
           "Swarms"
         ],
         "summary": "Draft personas with a model",
-        "description": "Returns DRAFTS and persists nothing. That separation is deliberate: generation is the step most likely to produce something nobody wanted, and a route that both invented and saved would make \"let me see what you'd suggest\" indistinguishable from \"fill my project with these\".\n\nIt is also why there is no idempotency key \u2014 a call with no effect has nothing to de-duplicate, and offering one would imply the drafts are stable across retries when they are not.\n\n**SPENDS.** This runs models on your organization's account and is metered two ways: a per-minute burst brake (429, retry in seconds) and your plan's daily budget (429, resets at UTC midnight). Both send `Retry-After`.",
+        "description": "Returns DRAFTS and persists nothing. That separation is deliberate: generation is the step most likely to produce something nobody wanted, and a route that both invented and saved would make \"let me see what you'd suggest\" indistinguishable from \"fill my project with these\".\n\nIt is also why there is no idempotency key \u2014 a call with no effect has nothing to de-duplicate, and offering one would imply the drafts are stable across retries when they are not.\n\n**SPENDS.** This runs models on your organization's account and is metered two ways: a per-minute burst brake (429, retry in seconds) and your plan's daily budget (429, resets at UTC midnight). Both normally carry `Retry-After` \u2014 honor it when it is there, and back off on your own when it is not.",
         "requestBody": {
           "required": true,
           "description": "Grounding source and slate size.",
@@ -6365,7 +6365,7 @@
           "Swarm runs"
         ],
         "summary": "Launch a journey",
-        "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished \u2014 poll `GET /projects/{projectId}/journey-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets \u00d7 sessionsPerTarget` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both send `Retry-After` \u2014 honor it rather than guessing. A retried `Idempotency-Key` consumes NO quota.",
+        "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished \u2014 poll `GET /projects/{projectId}/journey-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets \u00d7 sessionsPerTarget` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both normally carry `Retry-After` \u2014 honor it when it is there, and back off on your own when it is not, rather than blocking on a header that may not come. A retried `Idempotency-Key` consumes NO quota.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -6404,9 +6404,6 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
-          },
-          "402": {
-            "$ref": "#/components/responses/Forbidden"
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
@@ -7931,7 +7928,7 @@
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/runId"
         }
       ],
       "post": {
@@ -14761,7 +14758,7 @@
           },
           "accessVersion": {
             "type": "integer",
-            "description": "Bumped whenever access NARROWS \u2014 a mode change, a member removal, a link rotation. Sessions minted under an older version stop working, which is what makes those changes take effect at once rather than at expiry."
+            "description": "Bumped whenever access NARROWS \u2014 a mode change, or a member removal. Sessions minted under an older version stop working, which is what makes those changes take effect at once rather than at expiry. A link ROTATION is deliberately not one of them: it mints a new URL without bumping this, so anyone who already redeemed the old link keeps working. Rotating is half of closing a leak \u2014 see the rotate-link operation."
           },
           "link": {
             "type": [
