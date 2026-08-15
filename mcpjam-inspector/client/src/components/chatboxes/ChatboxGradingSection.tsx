@@ -40,13 +40,29 @@ type Draft = {
   rubric: JourneyCriterion[];
 };
 
+/**
+ * Stored fraction → the percent shown in the field.
+ *
+ * NOT `Math.round`: the field accepts "12.5", so a fractional percent is a
+ * rate this very editor can write. Rounding on the way back in would show 13
+ * and silently persist 0.13 on the user's next unrelated edit.
+ *
+ * The `toFixed(4)` round-trip is what keeps that honest without printing
+ * float noise — `0.07 * 100` is `7.000000000000001`, and a field reading
+ * "7.000000000000001" is its own kind of wrong. Four decimals of a percent is
+ * finer than any sampling rate anyone can author here.
+ */
+function percentFromRate(rate: number): string {
+  return String(Number((rate * 100).toFixed(4)));
+}
+
 function draftFromSettings(chatbox: ChatboxSettings): Draft {
   const stored = chatbox.productionScoring;
   return {
     enabled: stored?.enabled ?? false,
-    samplingPercent: String(
-      stored ? Math.round(stored.samplingRate * 100) : DEFAULT_SAMPLING_PERCENT,
-    ),
+    samplingPercent: stored
+      ? percentFromRate(stored.samplingRate)
+      : String(DEFAULT_SAMPLING_PERCENT),
     rubric: (stored?.rubric ?? []) as JourneyCriterion[],
   };
 }
@@ -70,12 +86,24 @@ export function ChatboxGradingSection({
     setDirty(false);
   }
 
+  // The draft as of this render, readable from inside an in-flight save's
+  // continuation (see `save`). Every `update` mints a NEW object, so identity
+  // comparison against it answers "did the user touch anything since?".
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
   const update = (patch: Partial<Draft>) => {
     setDraft((prev) => ({ ...prev, ...patch }));
     setDirty(true);
   };
 
-  const samplingPercent = Number(draft.samplingPercent);
+  // A blank field is UNSET, not zero. `Number("")` is 0, which would sail
+  // through the range check below and persist "enabled, sampling 0%" — an
+  // scenario that looks graded and silently grades nothing.
+  const samplingPercent =
+    draft.samplingPercent.trim() === ""
+      ? Number.NaN
+      : Number(draft.samplingPercent);
   const samplingValid =
     Number.isFinite(samplingPercent) &&
     samplingPercent >= 0 &&
@@ -91,19 +119,23 @@ export function ChatboxGradingSection({
   const canSave = dirty && samplingValid && rubricValid && !enabledButEmpty;
 
   const save = async () => {
+    // What this save actually persists. Compared by identity after the await
+    // so an edit made DURING the request keeps the form dirty — clearing it
+    // unconditionally would disable Save over changes that were never sent.
+    const submitted = draft;
     setSaving(true);
     try {
       await setProductionScoring({
         chatboxId: chatbox.chatboxId,
         config: {
-          enabled: draft.enabled,
+          enabled: submitted.enabled,
           samplingRate: samplingPercent / 100,
-          rubric: serializeRubricForWire(draft.rubric),
+          rubric: serializeRubricForWire(submitted.rubric),
         },
       } as never);
-      setDirty(false);
+      if (draftRef.current === submitted) setDirty(false);
       toast.success(
-        draft.enabled
+        submitted.enabled
           ? "Grading enabled — new sessions get checked once testers go quiet"
           : "Grading saved",
       );

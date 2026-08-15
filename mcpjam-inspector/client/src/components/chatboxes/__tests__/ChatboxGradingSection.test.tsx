@@ -4,7 +4,7 @@
  * rejected before the backend ever sees it. `JourneyRubricEditor` is stubbed
  * — its id-preservation has its own tests.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { JourneyCriterion } from "@/shared/journey-rubric";
@@ -57,6 +57,10 @@ const RUBRIC = [
     id: "crit-quick",
     label: "Quick resolution",
     predicate: { type: "turnCountUnder", turns: 3 },
+    // A client-only field the wire must NOT carry. Without something here the
+    // serialization assertion below would pass whether the payload was
+    // stripped or copied wholesale.
+    draftScratch: "not for the wire",
   },
 ];
 
@@ -96,7 +100,9 @@ describe("ChatboxGradingSection", () => {
     expect(args.chatboxId).toBe("chatbox-1");
     expect(args.config.enabled).toBe(true);
     expect(args.config.samplingRate).toBe(0.25);
-    // Serialized for the wire — id/label/predicate only.
+    // Serialized for the wire — id/label/predicate only, client-only fields
+    // dropped. `toEqual` is exact, so the stray `draftScratch` on the input
+    // would fail this if the payload were passed through unserialized.
     expect(args.config.rubric).toEqual([
       {
         id: "crit-quick",
@@ -104,6 +110,104 @@ describe("ChatboxGradingSection", () => {
         predicate: { type: "turnCountUnder", turns: 3 },
       },
     ]);
+    expect(args.config.rubric[0]).not.toHaveProperty("draftScratch");
+  });
+
+  it("round-trips a fractional percent instead of rounding it away", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatboxGradingSection
+        chatbox={chatboxWith({
+          // 12.5% — a rate this very editor can author, so reopening must not
+          // silently redefine it as 13%.
+          enabled: true,
+          samplingRate: 0.125,
+          rubric: RUBRIC,
+        })}
+      />,
+    );
+
+    expect((screen.getByLabelText("Sample") as HTMLInputElement).value).toBe(
+      "12.5",
+    );
+
+    // An unrelated edit must persist the rate it was shown, unchanged.
+    await user.click(screen.getByTestId("chatbox-grading-enabled"));
+    await user.click(screen.getByTestId("chatbox-grading-save"));
+    expect(setProductionScoringMock.mock.calls[0][0].config.samplingRate).toBe(
+      0.125,
+    );
+  });
+
+  it("shows a whole percent without float noise", () => {
+    render(
+      <ChatboxGradingSection
+        chatbox={chatboxWith({
+          // 0.07 * 100 is 7.000000000000001 in IEEE 754.
+          enabled: true,
+          samplingRate: 0.07,
+          rubric: RUBRIC,
+        })}
+      />,
+    );
+    expect((screen.getByLabelText("Sample") as HTMLInputElement).value).toBe(
+      "7",
+    );
+  });
+
+  it("treats a blank sampling field as unset, never as 0%", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatboxGradingSection
+        chatbox={chatboxWith({ enabled: true, samplingRate: 1, rubric: RUBRIC })}
+      />,
+    );
+
+    await user.clear(screen.getByLabelText("Sample"));
+
+    expect(
+      screen.getByText("Sampling must be a number between 0 and 100."),
+    ).toBeTruthy();
+    expect(
+      (screen.getByTestId("chatbox-grading-save") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(setProductionScoringMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the form dirty when an edit lands mid-save", async () => {
+    const user = userEvent.setup();
+    let resolveSave: (() => void) | undefined;
+    setProductionScoringMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => resolve();
+        }),
+    );
+
+    render(
+      <ChatboxGradingSection
+        chatbox={chatboxWith({ enabled: true, samplingRate: 1, rubric: RUBRIC })}
+      />,
+    );
+
+    const sampling = screen.getByLabelText("Sample");
+    await user.clear(sampling);
+    await user.type(sampling, "25");
+    await user.click(screen.getByTestId("chatbox-grading-save"));
+
+    // The user keeps editing while the request is in flight.
+    await user.clear(sampling);
+    await user.type(sampling, "40");
+    resolveSave?.();
+
+    // The newer edit was never sent, so Save must stay live for it.
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("chatbox-grading-save") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
   });
 
   it("save stays disabled while pristine", () => {
