@@ -136,9 +136,13 @@ export function translateConvexReadError(
   // the 404 still cost nothing, while a route that has started answering 404
   // uniformly becomes something an operator can see and rate-alert on.
   if (failure.kind === "invalid-argument") {
+    // `detail`, NOT `message`: `ingestToAxiom` spreads the context and THEN
+    // sets `message` from its first argument, so a `message` key here is
+    // silently overwritten and the diagnosis — the whole point of the line —
+    // never reaches Axiom.
     logger.warn(`[${options.scope}] convex rejected read arguments`, {
       scope: options.scope,
-      message: redactForLog(error),
+      detail: redactForLog(error),
     });
     return new WebRouteError(
       404,

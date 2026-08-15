@@ -37,7 +37,7 @@
  */
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
-import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
+import { redactForLog } from "./redact-log-message.js";
 
 type ConvexErrorData = { code?: unknown; message?: unknown };
 
@@ -280,10 +280,21 @@ export function translateConvexWriteError(
   // function names, argument-validator output with the arguments in it, and
   // request ids — a free read of our internals for anyone who can reach the
   // route. The detail goes to the log; the caller gets the route's own copy.
-  logger.error(
-    `[v1.convexWrite] unrecognized ${resource} write failure`,
-    redactedErrorForCapture(error),
-    { resource, message: redactForLog(error) }
-  );
+  // `logger.warn`, NOT `logger.error`, and the difference is one Sentry event
+  // rather than two. Every caller THROWS the `WebRouteError` this returns, so
+  // `v1OnError` maps it — 500 + INTERNAL_ERROR, exactly what the
+  // `mcpjam_internal` boundary promotes — and captures it there. A
+  // `logger.error` here would capture a *different* object (the redacted
+  // Error) which carries no stamp of its own, so the same failure would arrive
+  // in Sentry twice, under two fingerprints. This log is the Axiom record; the
+  // capture belongs to the envelope that owns the boundary declaration.
+  //
+  // The detail goes under `detail`, not `message`: `ingestToAxiom` spreads the
+  // context and THEN sets `message` from its first argument, so a `message`
+  // key here would be silently overwritten and the diagnosis lost.
+  logger.warn(`[v1.convexWrite] unrecognized ${resource} write failure`, {
+    resource,
+    detail: redactForLog(error),
+  });
   return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, fallbackMessage);
 }

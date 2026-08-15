@@ -310,29 +310,37 @@ export interface MapRuntimeErrorOptions {
 }
 
 /**
- * A declared boundary applies to the UNCLASSIFIED 500 only.
+ * A declared boundary applies to the UNCLASSIFIED 5xx only.
  *
- * `mcpjam_internal` promotes `ambiguous` to a page, and every other branch of
- * `classifyRuntimeError` reaches its verdict from positive evidence about an
- * upstream hop — an auth refusal the MCP spec defines, a pinned protocol
- * version, a timeout, a connection error. The boundary doc is explicit that a
- * declaration must not overrule evidence, so those keep their catalog origin
- * even when the declaring caller owns the router.
+ * Gated on the CODE, not on the status. `mcpjam_internal` promotes `ambiguous`
+ * to a page, and every other code `classifyRuntimeError` produces carries
+ * positive evidence about an upstream hop — an auth refusal the MCP spec
+ * defines, a pinned protocol version, a timeout, a connection error. The
+ * boundary doc is explicit that a declaration must not overrule evidence, so
+ * those keep their catalog origin even when the declaring caller owns the
+ * router. `INTERNAL_ERROR` is the one code that asserts nothing about a hop:
+ * it means we do not know what happened inside our own handler.
  *
- * It also keeps DELIBERATE client outcomes out of Sentry. v1 handlers throw
+ * The status test stays as a floor rather than an equality. Today the mapper
+ * only ever pairs `INTERNAL_ERROR` with 500, so `>= 500` and `=== 500` select
+ * the same set; the floor is what keeps that true if a hand-built
+ * `WebRouteError(502, INTERNAL_ERROR)` ever appears, since v1 answers 500 for
+ * it either way and it would otherwise go to Sentry through no path at all.
+ *
+ * It also keeps DELIBERATE client outcomes out. v1 handlers throw
  * `WebRouteError(404 | 403 | 400)` as their normal control flow, and those
  * reach `onError` exactly like a crash does; promoting on the declaration
- * alone would page the on-call for every not-found. What is left after both
- * exclusions is the catch-all — an unclassified throw inside our own handler —
- * which is our bug by default, and is precisely the bucket that was reaching
- * Sentry through no path at all.
+ * alone would page the on-call for every not-found. A 4xx cannot pass the
+ * floor, and no 4xx branch carries `INTERNAL_ERROR` anyway — two independent
+ * reasons, which is the right number for a rule whose failure mode is paging
+ * a human at 3am.
  */
 function effectiveBoundary(
   routeError: WebRouteError,
   options: MapRuntimeErrorOptions | undefined
 ): OriginCaptureBoundary | undefined {
   if (options?.boundary !== "mcpjam_internal") return options?.boundary;
-  return routeError.status === 500 &&
+  return routeError.status >= 500 &&
     routeError.code === ErrorCode.INTERNAL_ERROR
     ? "mcpjam_internal"
     : undefined;

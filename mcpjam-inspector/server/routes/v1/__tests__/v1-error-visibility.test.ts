@@ -227,7 +227,7 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
   it("answers 500 and logs, not a silent 400", () => {
     // A broken write path used to report itself as the caller's malformed
     // input: below every 5xx monitor, and this function had no logger at all.
-    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     const result = translateConvexWriteError(
       new Error("Uncaught ConvexError: something nobody has seen before"),
@@ -236,11 +236,44 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
 
     expect(result.status).toBe(500);
     expect(result.code).toBe(ErrorCode.INTERNAL_ERROR);
-    expect(error).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs WITHOUT capturing — the envelope owns the single Sentry event", () => {
+    // Every caller throws this `WebRouteError`, so `v1OnError` maps it (500 +
+    // INTERNAL_ERROR, exactly what the boundary promotes) and captures there.
+    // A `logger.error` here would capture a DIFFERENT object — the redacted
+    // Error, which carries no stamp — so one failure would arrive in Sentry
+    // twice under two fingerprints.
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const routeError = translateConvexWriteError(
+      new Error("Uncaught ConvexError: unrecognized"),
+      { resource: "Journey" }
+    );
+    expect(captureException).not.toHaveBeenCalled();
+
+    mapErrorToV1(routeError, INTERNAL);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("puts the detail on a key Axiom will not overwrite", () => {
+    // `ingestToAxiom` spreads the context and THEN sets `message` from the log
+    // message, so a `message` key would be silently dropped — taking the whole
+    // diagnosis with it.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    translateConvexWriteError(new Error("Uncaught ConvexError: mystery"), {
+      resource: "Journey",
+    });
+
+    const [, context] = warn.mock.calls[0] as [string, Record<string, unknown>];
+    expect(context.message).toBeUndefined();
+    expect(context.detail).toContain("mystery");
   });
 
   it("does not forward Convex's prose to the caller on the 500", () => {
-    vi.spyOn(logger, "error").mockImplementation(() => {});
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     const result = translateConvexWriteError(
       new Error(
@@ -255,14 +288,14 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
   });
 
   it("redacts credentials out of what it does log", () => {
-    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     translateConvexWriteError(
       new Error("rejected token sk_live_abcdef123456 on write"),
       { resource: "Server" }
     );
 
-    const logged = JSON.stringify(error.mock.calls[0]);
+    const logged = JSON.stringify(warn.mock.calls[0]);
     expect(logged).not.toContain("sk_live_abcdef123456");
     expect(logged).toContain("sk_[redacted]");
   });
@@ -272,7 +305,7 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
     ["VALIDATION", 400],
     ["NOT_FOUND", 404],
   ])("still answers %s structurally, without logging", (code, status) => {
-    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     const convexError = Object.assign(new Error("x"), {
       data: { code, message: "structured" },
     });
@@ -280,7 +313,7 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
     expect(
       translateConvexWriteError(convexError, { resource: "Host" }).status
     ).toBe(status);
-    expect(error).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 
@@ -319,6 +352,19 @@ describe("translateConvexReadError — argument validation is warned, not paged"
     const logged = JSON.stringify(warn.mock.calls[0]);
     expect(logged).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
     expect(logged).toContain("[redacted-jwt]");
+  });
+
+  it("puts the detail on a key Axiom will not overwrite", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    translateConvexReadError(
+      new Error("ArgumentValidationError: bad id 'abc'"),
+      { scope: "v1.journeys" }
+    );
+
+    const [, context] = warn.mock.calls[0] as [string, Record<string, unknown>];
+    expect(context.message).toBeUndefined();
+    expect(context.detail).toContain("ArgumentValidationError");
   });
 
   it("leaves the membership 404 silent — it is a normal refusal", () => {

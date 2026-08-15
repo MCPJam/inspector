@@ -174,30 +174,48 @@ jobs:
           url="${base}/api/v1/me"
           # --retry-all-errors covers a single dropped packet; the key travels
           # in a header from the environment so it never reaches the log.
-          code=$(curl -sS --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors \
+          #
+          # The exit status is captured SEPARATELY rather than with a
+          # `|| echo "000"` tail: on a transport failure curl writes its own
+          # "000" to stdout AND exits non-zero, so the fallback would append a
+          # second one and the alert would read "HTTP 000000".
+          # Truncated first: on a transport failure curl may never write the
+          # file, and a stale body from an earlier attempt would be quoted into
+          # the alert as though it were this request's response.
+          : > /tmp/v1_body.txt
+          if ! code=$(curl -sS --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors \
             -H "Authorization: Bearer ${CANARY_API_KEY}" \
             -H 'Accept: application/json' \
-            -o /tmp/v1_body.txt -w '%{http_code}' "$url" || echo "000")
+            -o /tmp/v1_body.txt -w '%{http_code}' "$url"); then
+            code="000"
+          fi
           # Cap the body: a gateway error page can be arbitrarily large, and
           # this string is going into a Slack post.
           snippet=$(head -c 300 /tmp/v1_body.txt | tr -d '\r' | tr '\n' ' ')
-          # `.id` is `MeDto`'s primary field. `// empty` keeps jq quiet on a
-          # non-object body so a malformed response reads as a shape failure
+          # `.id` is `MeDto`'s primary field, and it must be a NON-EMPTY
+          # STRING. A looser `.id // empty` would accept `{"id": 123}` or
+          # `{"id": {}}` — jq stringifies both — and report a broken `MeDto`
+          # as healthy, which is the exact class of regression this probe
+          # exists to catch. The type guard also keeps jq quiet on a
+          # non-object body, so a malformed response reads as a shape failure
           # rather than a jq crash.
-          id=$(jq -r '.id // empty' /tmp/v1_body.txt 2>/dev/null || true)
+          id=$(jq -r 'if type == "object" and (.id | type) == "string" and (.id | length) > 0 then .id else empty end' \
+            /tmp/v1_body.txt 2>/dev/null || true)
 
           status=ok
           detail=""
           if [ "$code" = "200" ] && [ -n "$id" ]; then
             status=ok
           elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
-            # Reported SEPARATELY from an outage. The overwhelmingly likely
-            # cause is the canary's own key being rotated, revoked, or its org
-            # losing access — an operator problem. It still has to be loud:
-            # from this moment the probe is blind, and a blind probe that says
-            # nothing is indistinguishable from a healthy one.
-            status=failed
-            detail="\`GET /api/v1/me\` -> HTTP ${code}. The canary credential is rejected, so this probe is BLIND until it is replaced — rotate CANARY_API_KEY. This is not by itself evidence of an outage."
+            # Its OWN status, not `failed`. The overwhelmingly likely cause is
+            # the canary's own key being rotated, revoked, or its org losing
+            # access — an operator problem, and reporting it as a public API
+            # outage would send whoever is on call to the 5xx monitor for a
+            # service that is fine. It still has to be loud: from this moment
+            # the probe is blind, and a blind probe that says nothing is
+            # indistinguishable from a healthy one.
+            status=credential_rejected
+            detail="\`GET /api/v1/me\` -> HTTP ${code}. The canary credential is rejected, so this probe is BLIND until it is replaced — rotate CANARY_API_KEY. This is NOT evidence of an outage."
           elif [ "$code" = "200" ]; then
             status=failed
             detail="\`GET /api/v1/me\` -> HTTP 200 but the body has no \`id\`. A contract regression or a half-deployed backend; the status alone would have read as healthy. Body: ${snippet}"
@@ -247,6 +265,7 @@ jobs:
           steps.control.outputs.ok == 'true' &&
           (steps.app.outputs.failures != '' ||
            steps.v1.outputs.status == 'failed' ||
+           steps.v1.outputs.status == 'credential_rejected' ||
            steps.mcp.outputs.status == 'failed')
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
@@ -264,8 +283,12 @@ jobs:
           [ -n "${APP_FAILURES// /}" ] && app_down=true
           mcp_down=false
           [ "${MCP_STATUS}" = "failed" ] && mcp_down=true
+          # `v1_down` means the PUBLIC API failed. A rejected canary credential
+          # is deliberately NOT in it — see the credential branch below.
           v1_down=false
           [ "${V1_STATUS}" = "failed" ] && v1_down=true
+          v1_credential_rejected=false
+          [ "${V1_STATUS}" = "credential_rejected" ] && v1_credential_rejected=true
 
           # The disambiguation matrix, resolved here so the message states a
           # conclusion rather than making whoever is on call re-derive it.
@@ -289,6 +312,12 @@ jobs:
             # including the silent-404 shape, where a backend validator change
             # makes every v1 route answer 404 with no 5xx and no log line.
             headline=":rotating_light: Prod canary: the public API is failing while the app health probes PASS. The failure is inside /api/v1, not the app shell — check the v1 5xx monitor and recent backend deploys."
+          elif [ "$v1_credential_rejected" = true ]; then
+            # Deliberately NOT an outage headline. The service is answering; it
+            # is the canary's own key that stopped working, and sending an
+            # on-call to the 5xx monitor for that wastes the one thing an alert
+            # is spending.
+            headline=":warning: Prod canary: the public API probe is BLIND — its credential was rejected. The API itself is not implicated; rotate the key to restore coverage."
           else
             headline=":warning: Prod canary: the MCP target probe is failing; the app probes passed."
           fi

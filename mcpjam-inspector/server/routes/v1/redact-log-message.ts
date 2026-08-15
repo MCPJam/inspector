@@ -21,11 +21,45 @@
  */
 const LOG_MESSAGE_MAX = 400;
 
+/**
+ * `error.message` and `String(error)` both run a Proxy `get`/`toString` trap
+ * and can therefore throw. This function only ever runs while something ELSE
+ * has already failed, so a throw here escapes into the catch block that was
+ * reporting that failure — losing the original diagnostic and replacing the
+ * route's answer with a secondary failure from the logging code. Same rule,
+ * and the same fallback string, as `logger.ts`'s `safeErrorText`.
+ */
+function safeErrorText(error: unknown): string {
+  try {
+    const raw = error instanceof Error ? error.message : String(error);
+    // `Error.message` is only a string by convention — `new Error()` with a
+    // mutated or subclassed `message` can hand back anything.
+    return typeof raw === "string" ? raw : String(raw);
+  } catch {
+    return "[unreadable error value]";
+  }
+}
+
 export function redactForLog(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const scrubbed = raw
-    // `Bearer <token>`, and the token on its own if it has a known prefix.
-    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+  const scrubbed = safeErrorText(error)
+    // KEY=VALUE forms FIRST, and the ordering is the whole point of this
+    // sequence. The bare-prefix rule below matches the NAME `api_key`, so on
+    // its own it rewrites `api_key=hunter2` to `api_[redacted]=hunter2` —
+    // redacting the label and publishing the secret.
+    //
+    // The optional `Bearer ` inside the value is what stops the standalone
+    // Bearer rule from firing afterwards and leaving a double-redacted
+    // `authorization=[redacted] [redacted]`. Everything up to whitespace, a
+    // quote, an ampersand or a closing bracket is the value, so surrounding
+    // non-secret context (`&projectId=proj_123`) survives — that context is
+    // what makes the log line worth keeping.
+    .replace(
+      /\b(api[-_]?key|secret|token|password|passwd|authorization)\s*[=:]\s*(?:Bearer\s+)?["']?[^\s"'`&,)\]}]+/gi,
+      "$1=[redacted]"
+    )
+    // A standalone `Bearer <token>` with no key name in front of it.
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    // Bare credentials recognizable by their own prefix.
     .replace(/\b(sk|slk|dsc|api)_[A-Za-z0-9._-]+/g, "$1_[redacted]")
     // Anything JWT-shaped.
     .replace(/\beyJ[A-Za-z0-9._-]{10,}/g, "[redacted-jwt]");
