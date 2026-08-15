@@ -180,6 +180,7 @@ describe("v1Error — telemetry envelope", () => {
       set: (key: string, value: unknown) => {
         meta[key] = value;
       },
+      get: (key: string) => meta[key],
       json: (body: unknown, status: number) => ({ body, status }),
       meta,
     };
@@ -197,13 +198,21 @@ describe("v1Error — telemetry envelope", () => {
     });
   });
 
-  it("carries attribution when the caller has it", () => {
+  it("never clobbers the richer meta v1OnError already stashed", () => {
+    // The ordering that makes this load-bearing: `v1OnError` stashes meta WITH
+    // origin and slug, then calls `v1Error`. A blind write here would erase the
+    // attribution one line after it was resolved — reintroducing the exact
+    // blind spot this backstop exists to close.
     const c = fakeContext();
-
-    v1Error(c as never, "INTERNAL_ERROR", "boom", undefined, {
+    c.meta.webErrorMeta = {
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "classified",
       origin: "mcpjam",
       slug: "internal/unknown",
-    });
+    };
+
+    v1Error(c as never, "INTERNAL_ERROR", "classified");
 
     expect(c.meta.webErrorMeta).toMatchObject({
       origin: "mcpjam",
@@ -213,7 +222,9 @@ describe("v1Error — telemetry envelope", () => {
 
   it("omits origin/slug rather than writing empty ones", () => {
     // An absent origin must stay absent: `isempty(origin)` is how the coverage
-    // query finds unattributed rows, and an empty string would hide them.
+    // query finds unattributed rows, and an empty string would hide them. The
+    // returned path has no classification to report — only a real code and
+    // message, which still beat the middleware's `internal_error` fallback.
     const c = fakeContext();
 
     v1Error(c as never, "VALIDATION_ERROR", "bad input");

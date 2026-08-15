@@ -211,96 +211,47 @@ describe("v1 eval-ingest proxies", () => {
 });
 
 /**
- * The hop this proxy makes is to MCPJam's OWN Convex deployment, so an
- * unrecognized failure is ours. Before the internal-boundary declaration it
- * classified `transport/fetch_failed` -> `ambiguous` and could never reach the
- * MCPJam-fault monitor: measured 2026-08-15 as 44 opaque 500s in 72h with
- * nothing watching them.
+ * The measured blind spot (2026-08-15): 44 rows on this route in 72h carried
+ * `internal_error` 500 with no message, no slug, and no origin, so the
+ * MCPJam-fault monitor could never see them.
+ *
+ * `v1OnError` declares `mcpjam_internal` for the whole v1 router, and that
+ * declaration applies to the UNCLASSIFIED 5xx only — `INTERNAL_ERROR` is the
+ * one code asserting nothing about a hop. These pin both halves of that rule
+ * on the route the measurement came from.
  */
 describe("v1 eval-ingest — failure attribution", () => {
   const originalEnv = { CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL };
   const originalFetch = global.fetch;
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
-    validateGuestTokenMock.mockResolvedValue({ valid: false });
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-    process.env.CONVEX_HTTP_URL = originalEnv.CONVEX_HTTP_URL;
-  });
-
-  it("reports a transport failure against our own Convex without moving the status", async () => {
-    global.fetch = vi
-      .fn()
-      .mockRejectedValue(new TypeError("fetch failed")) as never;
-
-    const response = await request(
-      makeApp(),
-      "/api/v1/projects/default/eval-ingest/report",
-      JSON.stringify({ results: [] })
-    );
-    const body = (await response.json()) as { code?: string; message?: string };
-
-    // 500, NOT 502. `SERVER_UNREACHABLE` means the USER's target MCP server
-    // everywhere else here, and #3948 showed that reclassifying a route's
-    // status silently blinds monitors keyed on it.
-    expect(response.status).toBe(500);
-    expect(body.code).toBe("INTERNAL_ERROR");
-    // No longer opaque: these rows carried no errorMessage at all before.
-    expect(body.message).toContain("fetch failed");
-  });
-
-  it("still answers TIMEOUT for an abort rather than claiming a fault", async () => {
-    global.fetch = vi.fn().mockRejectedValue(
-      Object.assign(new Error("The operation was aborted"), {
-        name: "AbortError",
-      })
-    ) as never;
-
-    const response = await request(
-      makeApp(),
-      "/api/v1/projects/default/eval-ingest/report",
-      JSON.stringify({ results: [] })
-    );
-    const body = (await response.json()) as { code?: string };
-
-    expect(body.code).toBe("TIMEOUT");
-  });
-});
-
-describe("v1 eval-ingest — webErrorMeta reaches the middleware", () => {
-  const originalEnv = { CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL };
-  const originalFetch = global.fetch;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
-    validateGuestTokenMock.mockResolvedValue({ valid: false });
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-    process.env.CONVEX_HTTP_URL = originalEnv.CONVEX_HTTP_URL;
-  });
-
-  it("promotes a Convex transport failure all the way to origin=mcpjam", async () => {
-    // The end-to-end assertion, not a composition guess: boundary promotion ->
-    // rethrown WebRouteError -> mapErrorToV1 -> v1Error -> webErrorMeta. Every
-    // link is load-bearing and each one has silently dropped the origin before.
-    let meta: Record<string, unknown> | undefined;
+  function appCapturingMeta(): { app: Hono; meta: () => unknown } {
+    let captured: unknown;
     const app = new Hono();
     app.use("*", async (c, next) => {
       await next();
-      meta = c.get("webErrorMeta" as never) as Record<string, unknown>;
+      captured = c.get("webErrorMeta" as never);
     });
     app.route("/api/v1", v1Routes);
+    return { app, meta: () => captured };
+  }
 
-    global.fetch = vi
-      .fn()
-      .mockRejectedValue(new TypeError("fetch failed")) as never;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    process.env.CONVEX_HTTP_URL = originalEnv.CONVEX_HTTP_URL;
+  });
+
+  it("owns an unclassified 500 — the exact class that was invisible", async () => {
+    // End-to-end, not a composition guess: boundary promotion -> mapErrorToV1
+    // -> v1OnError -> webErrorMeta. Every link has silently dropped the origin
+    // at some point in this program's history.
+    global.fetch = vi.fn().mockRejectedValue(new Error("boom")) as never;
+    const { app, meta } = appCapturingMeta();
 
     await request(
       app,
@@ -308,23 +259,36 @@ describe("v1 eval-ingest — webErrorMeta reaches the middleware", () => {
       JSON.stringify({ results: [] })
     );
 
-    expect(meta).toBeDefined();
-    expect(meta).toMatchObject({ origin: "mcpjam" });
-    expect(meta).toHaveProperty("slug");
+    expect(meta()).toMatchObject({ origin: "mcpjam", code: "INTERNAL_ERROR" });
     // And a real message, where the row used to carry none at all.
-    expect(String(meta?.message)).toContain("fetch failed");
+    expect(String((meta() as { message?: string }).message)).toContain("boom");
+  });
+
+  it("does NOT claim a connection-class failure, even on this route", async () => {
+    // `SERVER_UNREACHABLE` carries positive evidence about an upstream hop, and
+    // a boundary declaration must not overrule evidence. Documented gap rather
+    // than an oversight: on a route whose only outbound hop IS our own Convex
+    // this reads conservatively, and closing it needs a narrower signal than a
+    // router-wide declaration — not a louder one.
+    global.fetch = vi
+      .fn()
+      .mockRejectedValue(new TypeError("fetch failed")) as never;
+    const { app, meta } = appCapturingMeta();
+
+    await request(
+      app,
+      "/api/v1/projects/default/eval-ingest/report",
+      JSON.stringify({ results: [] })
+    );
+
+    expect(meta()).toMatchObject({ code: "SERVER_UNREACHABLE" });
+    expect((meta() as { origin?: string }).origin).not.toBe("mcpjam");
   });
 
   it("does NOT claim a caller's own bad input", async () => {
-    // Same route, same serializer: a validation 400 must stay unattributed to
-    // MCPJam or the monitor pages on someone posting malformed JSON.
-    let meta: Record<string, unknown> | undefined;
-    const app = new Hono();
-    app.use("*", async (c, next) => {
-      await next();
-      meta = c.get("webErrorMeta" as never) as Record<string, unknown>;
-    });
-    app.route("/api/v1", v1Routes);
+    // Returned, not thrown, so it never reaches `v1OnError` — this is the path
+    // `v1Error`'s own stash covers. It must still never read `mcpjam`.
+    const { app, meta } = appCapturingMeta();
 
     await request(
       app,
@@ -332,7 +296,26 @@ describe("v1 eval-ingest — webErrorMeta reaches the middleware", () => {
       "not json at all"
     );
 
-    expect(meta).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(meta?.origin).not.toBe("mcpjam");
+    expect(meta()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((meta() as { origin?: string }).origin).not.toBe("mcpjam");
+  });
+
+  it("stashes meta for a RETURNED timeout, which never reaches v1OnError", async () => {
+    global.fetch = vi.fn().mockRejectedValue(
+      Object.assign(new Error("The operation was aborted"), {
+        name: "AbortError",
+      })
+    ) as never;
+    const { app, meta } = appCapturingMeta();
+
+    await request(
+      app,
+      "/api/v1/projects/default/eval-ingest/report",
+      JSON.stringify({ results: [] })
+    );
+
+    // A 504 that returns directly: before the backstop in `v1Error` this row
+    // logged as the bare `internal_error` fallback with no message.
+    expect(meta()).toMatchObject({ code: "TIMEOUT", status: 504 });
   });
 });

@@ -8,7 +8,11 @@
  */
 import type { Context } from "hono";
 import { describeError, isMCPAuthError, type ErrorOrigin } from "@mcpjam/sdk";
-import { ErrorCode, mapRuntimeError } from "../web/errors.js";
+import {
+  ErrorCode,
+  mapRuntimeError,
+  type MapRuntimeErrorOptions,
+} from "../web/errors.js";
 import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
 import {
   v1ErrorBody,
@@ -18,41 +22,29 @@ import {
   type V1ErrorCode,
 } from "./contract.js";
 
-/**
- * What a classified failure knows about itself, forwarded to the telemetry
- * envelope. See {@link v1Error}.
- */
-export type V1ErrorAttribution = {
-  origin?: ErrorOrigin;
-  slug?: string;
-};
-
 /** Canonical error response. */
 export function v1Error(
   c: Context,
   code: V1ErrorCode,
   message: string,
-  details?: Record<string, unknown>,
-  attribution?: V1ErrorAttribution
+  details?: Record<string, unknown>
 ) {
-  // Stash for `requestLogContextMiddleware`, exactly as `webError` does for the
-  // `/api/web/*` surface. Without it the ENTIRE `/api/v1/*` surface returned
-  // its errors without ever telling the middleware what they were, so every
-  // failure logged as a bare `internal_error` with no message, no slug, and no
-  // origin — measured on 2026-08-15 as 44 rows on `eval-ingest/report` and
-  // every other v1 5xx, all of them opaque and none of them reachable by the
-  // MCPJam-fault monitor.
+  // Backstop for the RETURNED path. `v1OnError` stashes richer meta (with
+  // origin and slug) for anything that throws, but a route that returns
+  // `v1Error(...)` directly never reaches it — `eval-ingest`'s TIMEOUT is a
+  // 504 taking exactly that path — and those rows still logged as the bare
+  // `internal_error` fallback with no message.
   //
-  // Set unconditionally, not just for classified throws: a route that calls
-  // `v1Error` directly for a declared 4xx outcome still knows its own code and
-  // message, and those are worth more on the row than `internal_error`.
-  if (typeof c?.set === "function") {
+  // Only when nothing has stashed yet, so this can never overwrite
+  // `v1OnError`'s attribution: that handler sets meta and THEN calls this
+  // function, and a blind write here would erase the origin one line later.
+  if (typeof c?.set === "function" && !readWebErrorMeta(c)) {
     c.set("webErrorMeta", {
+      // Same v1 status `v1OnError` uses, for the same reason: the middleware
+      // only trusts meta whose status matches the response it observed.
       status: V1_ERROR_STATUS[code],
       code,
       message,
-      ...(attribution?.origin ? { origin: attribution.origin } : {}),
-      ...(attribution?.slug ? { slug: attribution.slug } : {}),
     });
   }
   // Cast the dynamic numeric status to satisfy Hono's literal StatusCode union
@@ -63,6 +55,17 @@ export function v1Error(
   );
 }
 
+/** Tolerates the non-Hono context doubles several route tests pass in. */
+function readWebErrorMeta(c: Context): unknown {
+  try {
+    return typeof c?.get === "function"
+      ? (c as { get: (k: string) => unknown }).get("webErrorMeta")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Single-resource success: the resource object returned directly. */
 export function v1Resource(c: Context, resource: unknown, status = 200) {
   return c.json(resource as Record<string, unknown>, status as any);
@@ -71,6 +74,24 @@ export function v1Resource(c: Context, resource: unknown, status = 200) {
 /** Collection success: the canonical { items, nextCursor? } page. */
 export function v1PageJson<T>(c: Context, items: T[], nextCursor?: string) {
   return c.json(v1Page(items, nextCursor));
+}
+
+export type MapErrorToV1Options = MapRuntimeErrorOptions;
+
+export interface V1ErrorMapping {
+  code: V1ErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+  /**
+   * The EFFECTIVE origin the capture decision produced, including any
+   * `mcpjam_internal` promotion — not the declared catalog value, which would
+   * report `ambiguous` for a failure Sentry was just paged for as `mcpjam`.
+   * Returned so `v1OnError` can put it on `webErrorMeta`; the measurement half
+   * of the capture policy is what keeps the paging half narrow.
+   */
+  origin?: ErrorOrigin;
+  /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
+  slug?: string;
 }
 
 /**
@@ -86,21 +107,25 @@ export function v1PageJson<T>(c: Context, items: T[], nextCursor?: string) {
  * also promote them here. Without this branch, callers can't tell "your bearer
  * is bad" from "this server needs OAuth" — both flatten to UNAUTHORIZED.
  */
-export function mapErrorToV1(error: unknown): {
-  code: V1ErrorCode;
-  message: string;
-  details?: Record<string, unknown>;
-} & V1ErrorAttribution {
+export function mapErrorToV1(
+  error: unknown,
+  options?: MapErrorToV1Options
+): V1ErrorMapping {
   // The two branches below return BEFORE `mapRuntimeError`, which is where the
   // v1 chain would otherwise make its capture decision. Classify them here so
   // no path out of this function escapes unclassified — both are non-MCPJam in
   // practice (an upstream server demanding a grant, or not implementing a
   // primitive), so in practice this records the verdict and pages on nothing.
+  //
+  // They run AHEAD of the caller's boundary declaration on purpose, and this
+  // ordering is the whole reason the boundary is threaded through the mapping
+  // rather than declared by `v1OnError` before it. Capturing with
+  // `mcpjam_internal` first would stamp these two before they were classified,
+  // and an upstream server that demands OAuth or does not implement a primitive
+  // would page us as an MCPJam internal failure — someone else's server, on our
+  // on-call rotation. Their verdicts have to win, so they are taken first.
   if (safeIsMcpAuthError(error)) {
     const message = error instanceof Error ? error.message : String(error);
-    // The decision was already being made here and thrown away. Keeping it is
-    // what lets these two early returns carry attribution like every other
-    // path — otherwise the surface's most common non-500 failures stay blank.
     const decision = maybeCaptureOriginError(error, describeError(error), {
       source: "v1.mapErrorToV1",
       extra: { code: "OAUTH_REQUIRED" },
@@ -109,7 +134,7 @@ export function mapErrorToV1(error: unknown): {
       code: "OAUTH_REQUIRED",
       message,
       origin: decision.origin,
-      ...(decision.slug ? { slug: decision.slug } : {}),
+      slug: decision.slug,
     };
   }
   if (isMcpMethodNotFound(error)) {
@@ -122,10 +147,10 @@ export function mapErrorToV1(error: unknown): {
       code: "FEATURE_NOT_SUPPORTED",
       message,
       origin: decision.origin,
-      ...(decision.slug ? { slug: decision.slug } : {}),
+      slug: decision.slug,
     };
   }
-  const routeError = mapRuntimeError(error);
+  const routeError = mapRuntimeError(error, options);
   if (
     routeError.code === ErrorCode.UNAUTHORIZED &&
     routeError.details?.oauthRequired === true
@@ -134,7 +159,8 @@ export function mapErrorToV1(error: unknown): {
       code: "OAUTH_REQUIRED",
       message: routeError.message,
       details: routeError.details,
-      ...routeErrorAttribution(routeError),
+      origin: routeError.origin,
+      slug: routeError.normalized?.slug,
     };
   }
   // The upstream server refused the credentials we presented. Mapped HERE
@@ -159,32 +185,16 @@ export function mapErrorToV1(error: unknown): {
       code: "FORBIDDEN",
       message: routeError.message,
       details: routeError.details,
-      ...routeErrorAttribution(routeError),
+      origin: routeError.origin,
+      slug: routeError.normalized?.slug,
     };
   }
   return {
     code: mapInternalCode(routeError.code),
     message: routeError.message,
     details: routeError.details,
-    ...routeErrorAttribution(routeError),
-  };
-}
-
-/**
- * Read attribution off a mapped error.
- *
- * `origin` is the EFFECTIVE value `mapRuntimeError` resolved (post
- * internal-boundary promotion), never `originOf(normalized)` — recomputing the
- * declared catalog value here would report `ambiguous` for a failure Sentry
- * was just paged for as `mcpjam`, which is the drift that kept `origin=mcpjam`
- * out of Axiom in the first place.
- */
-function routeErrorAttribution(
-  routeError: ReturnType<typeof mapRuntimeError>
-): V1ErrorAttribution {
-  return {
-    ...(routeError.origin ? { origin: routeError.origin } : {}),
-    ...(routeError.normalized?.slug ? { slug: routeError.normalized.slug } : {}),
+    origin: routeError.origin,
+    slug: routeError.normalized?.slug,
   };
 }
 
@@ -214,8 +224,43 @@ function isMcpMethodNotFound(error: unknown): boolean {
   );
 }
 
-/** Hono onError handler for the v1 router. */
+/**
+ * Hono onError handler for the v1 router.
+ *
+ * Two jobs beyond returning the envelope, both of which `/api/v1/*` went
+ * without entirely: a CAPTURE decision, and the LOG metadata behind it.
+ *
+ * Capture: the v1 router's handlers are ours and its only outbound hop is our
+ * own Convex deployment, so an unclassified throw reaching here is our bug by
+ * default — declared with `boundary: "mcpjam_internal"`. Passed INTO the
+ * mapping rather than applied around it because `maybeCaptureOriginError`
+ * stamps an error the first time anyone asks; a capture bolted on after
+ * `mapErrorToV1` would find the stamp already set and promote nothing. See
+ * `effectiveBoundary` in `web/errors.ts` for why the declaration reaches only
+ * the unclassified 500 and not the deliberate 404s v1 handlers throw as
+ * ordinary control flow.
+ *
+ * Logging: `requestLogContextMiddleware` sees a RETURNED response, not the
+ * throw (Hono runs `onError` inside `next()`), so without the stash below
+ * every v1 failure row in Axiom carried the `errorCode: "internal_error"`
+ * fallback with no message, origin or slug — the same blind spot `app.onError`
+ * and `webError` already fixed for their surfaces.
+ */
 export function v1OnError(error: unknown, c: Context) {
-  const { code, message, details, origin, slug } = mapErrorToV1(error);
-  return v1Error(c, code, message, details, { origin, slug });
+  const { code, message, details, origin, slug } = mapErrorToV1(error, {
+    boundary: "mcpjam_internal",
+  });
+  const status = V1_ERROR_STATUS[code];
+  // The middleware only trusts meta whose status matches the response it
+  // observed, so this has to be the v1 status — which is not always the
+  // internal one the mapper started from (UPSTREAM_AUTH_FAILED is a 403 here
+  // and a 502 there).
+  c.set("webErrorMeta", {
+    status,
+    code,
+    message,
+    ...(origin ? { origin } : {}),
+    ...(slug ? { slug } : {}),
+  });
+  return v1Error(c, code, message, details);
 }
