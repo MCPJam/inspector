@@ -5563,6 +5563,87 @@
         "schema": {
           "type": "string"
         }
+      },
+      "personaId": {
+        "name": "personaId",
+        "in": "path",
+        "required": true,
+        "description": "Persona ID, as returned by the project's persona list.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "journeyId": {
+        "name": "journeyId",
+        "in": "path",
+        "required": true,
+        "description": "Journey ID, as returned by the project's journey list.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "swarmId": {
+        "name": "swarmId",
+        "in": "path",
+        "required": true,
+        "description": "Swarm ID, as returned by the project's swarm list.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "waveId": {
+        "name": "waveId",
+        "in": "path",
+        "required": true,
+        "description": "Wave ID \u2014 the opaque group id shared by every run of one co-launched swarm. Returned on every run in the wave.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "findingId": {
+        "name": "findingId",
+        "in": "path",
+        "required": true,
+        "description": "Finding ID. Stable across waves \u2014 that stability is what makes a recurring finding one finding rather than a new one each time.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "scenarioId": {
+        "name": "scenarioId",
+        "in": "path",
+        "required": true,
+        "description": "Scenario ID, as returned by publishing an environment or by the project's scenario reads.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "sessionId": {
+        "name": "sessionId",
+        "in": "path",
+        "required": true,
+        "description": "Chat session ID, as returned by the scenario's session list.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "windowId": {
+        "name": "windowId",
+        "in": "path",
+        "required": true,
+        "description": "Window group ID, as returned by the scenario's signals or insights reads. A window is the slice of a scenario's traffic that one analysis evaluated.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "memberIdOrEmail": {
+        "name": "memberIdOrEmail",
+        "in": "path",
+        "required": true,
+        "description": "Either the member's ID or their email address. Both are accepted deliberately: a caller who invited somebody by email should not have to look an ID up in order to revoke them.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "requestBodies": {
@@ -5693,16 +5774,12 @@
             }
           },
           "matchOptions": {
-            "type": [
-              "object",
-              "null"
-            ]
+            "type": "object",
+            "description": "Absent when the case sets none \u2014 omitted from the response rather than sent as `null`."
           },
           "checks": {
-            "type": [
-              "object",
-              "null"
-            ],
+            "type": "object",
+            "description": "Absent when the case sets none \u2014 omitted from the response rather than sent as `null`.",
             "properties": {
               "mode": {
                 "type": "string",
@@ -7112,7 +7189,15 @@
             }
           },
           "environment": {
-            "$ref": "#/components/schemas/EvalRunEnvironment"
+            "description": "The environment revision this run is pinned to. `null` on a legacy run that recorded none \u2014 always present, so a caller never has to distinguish absent from unpinned.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalRunEnvironment"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -7208,7 +7293,15 @@
             "description": "Epoch milliseconds, `null` until terminal."
           },
           "environment": {
-            "$ref": "#/components/schemas/EvalRunEnvironment"
+            "description": "The environment revision this run is pinned to. `null` on a legacy run that recorded none \u2014 always present, so a caller never has to distinguish absent from unpinned.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalRunEnvironment"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -7231,7 +7324,9 @@
         "required": [
           "id",
           "iterationNumber",
-          "status"
+          "status",
+          "expectedToolCalls",
+          "actualToolCalls"
         ],
         "properties": {
           "id": {
@@ -7470,7 +7565,8 @@
         "type": "object",
         "required": [
           "id",
-          "name"
+          "name",
+          "isCreator"
         ],
         "properties": {
           "id": {
