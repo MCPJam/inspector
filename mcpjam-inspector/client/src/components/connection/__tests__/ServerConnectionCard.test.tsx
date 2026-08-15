@@ -1072,3 +1072,90 @@ describe("ServerConnectionCard", () => {
     });
   });
 });
+
+describe("ServerConnectionCard — protocol version pin", () => {
+  const failedServer = (
+    slug: string,
+    message = "MCP server \"acme\" doesn't support MCP protocol version 2026-07-28, which this client is pinned to.",
+  ): ServerWithName => ({
+    name: "acme",
+    lastConnectionTime: new Date(),
+    connectionStatus: "failed",
+    enabled: true,
+    retryCount: 0,
+    useOAuth: false,
+    config: { url: new URL("https://acme.example/mcp") },
+    lastError: message,
+    lastNormalizedError: {
+      slug,
+      title: "t",
+      oneLine: message,
+      likelyCauses: [],
+      nextSteps: [],
+      docsAnchor: "/troubleshooting/error-codes#x",
+      severity: "error",
+      rawMessage: message,
+    },
+  });
+
+  const props = {
+    onDisconnect: vi.fn(),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
+    onRemove: vi.fn(),
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("offers the fix when the pin is what failed", () => {
+    // Prathmesh's case, on the surface he actually hit first: a connect
+    // failure whose entire cause is one dropdown.
+    render(
+      <ServerConnectionCard
+        server={failedServer("sdk/protocol_version_pin_unsupported")}
+        projectId="proj_1"
+        {...props}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /change protocol version/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("stays out of the way for every other connect failure", () => {
+    // Most failures here are the user's server being down. A button that
+    // navigates somewhere vaguely related is worse than no button.
+    render(
+      <ServerConnectionCard
+        server={failedServer(
+          "transport/econnrefused",
+          "connect ECONNREFUSED 127.0.0.1:8080",
+        )}
+        projectId="proj_1"
+        {...props}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /change protocol version/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still offers it when only the message survives", () => {
+    // The slug is the better signal but it comes from whichever copy of the
+    // describer the bundle happens to hold; a client one version behind
+    // resolves this to a generic transport slug. The sentence is authored by
+    // MCPJam and cannot be echoed by a server, so it carries the fallback.
+    render(
+      <ServerConnectionCard
+        server={failedServer("transport/fetch_failed")}
+        projectId="proj_1"
+        {...props}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /change protocol version/i }),
+    ).toBeInTheDocument();
+  });
+});

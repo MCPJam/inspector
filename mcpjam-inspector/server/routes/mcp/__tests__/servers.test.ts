@@ -496,12 +496,17 @@ describe("POST /api/mcp/servers/reconnect", () => {
       });
 
       expect(res.status).toBe(500);
-      const data = (await res.json()) as { success: boolean; error: string };
+      const data = (await res.json()) as {
+        success: boolean;
+        error: string;
+        serverName?: string;
+      };
       expect(data.success).toBe(false);
-      // Unified error wraps the underlying message with the server name —
-      // matches /api/mcp/connect's pre-existing wording.
-      expect(data.error).toContain("Connection refused");
-      expect(data.error).toContain(RECONNECT_SERVER_NAME);
+      // The underlying failure, unprefixed — same envelope as
+      // /api/mcp/connect. Which server it was rides on `serverName` rather
+      // than being pasted onto the front of the sentence a user reads.
+      expect(data.error).toBe("Connection refused");
+      expect(data.serverName).toBe(RECONNECT_SERVER_NAME);
     });
   });
 });

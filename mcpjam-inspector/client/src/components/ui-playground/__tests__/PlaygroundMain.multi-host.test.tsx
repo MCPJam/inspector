@@ -512,7 +512,7 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 // PUR-11 seed backstop reads live catalog templates (chatgpt/claude/
-// claude-code) to seed a guest's first 3 clients. `getCatalogHost` /
+// cursor) to seed a guest's first 3 clients. `getCatalogHost` /
 // `getCatalogTemplate` are the REAL sdk functions running against this fake
 // "live" catalog — only the network-fetching hook is mocked.
 const seedCatalogFixture = {
@@ -551,18 +551,18 @@ const seedCatalogFixture = {
         clientCapabilities: {},
         hostContext: {},
       },
-      "claude-code": {
-        id: "claude-code",
-        label: "Claude Code",
-        provenance: "vendor-doc",
-        rendersMcpApps: false,
-        modelId: "anthropic/claude-haiku-4.5",
+      cursor: {
+        id: "cursor",
+        label: "Cursor",
+        provenance: "probe",
+        rendersMcpApps: true,
+        modelId: "anthropic/claude-sonnet-4.5",
         systemPrompt: "",
-        temperature: 1,
+        temperature: 0.7,
         requireToolApproval: false,
         serverIds: [],
         optionalServerIds: [],
-        connectionDefaults: { headers: {}, requestTimeout: 10000 },
+        connectionDefaults: { headers: {}, requestTimeout: 30000 },
         clientCapabilities: {},
         hostContext: {},
       },
@@ -695,23 +695,23 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
-  // PUR-11: guests land with 3 pre-selected clients (ChatGPT, Claude, Claude
-  // Code) instead of a single blank "MCPJam" host + a toggle to find first.
-  it("seeds 3 default clients (ChatGPT, Claude, Claude Code) for empty projects", async () => {
+  // PUR-11: guests land with 3 pre-selected clients (Claude, ChatGPT, Cursor)
+  // instead of a single blank "MCPJam" host + a toggle to find first.
+  it("seeds 3 default clients (Claude, ChatGPT, Cursor) for empty projects", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     mockCreateHost
-      .mockResolvedValueOnce({
-        hostId: "h-chatgpt",
-        hostConfigId: "h-chatgpt-config",
-      })
       .mockResolvedValueOnce({
         hostId: "h-claude",
         hostConfigId: "h-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-claude-code",
-        hostConfigId: "h-claude-code-config",
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
       });
 
     // So the grid-render assertion below is actually wired to what the seed
@@ -728,33 +728,37 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(mockCreateHost).toHaveBeenCalledTimes(3);
     });
     expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "default", name: "ChatGPT" })
-    );
-    expect(mockCreateHost).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "default", name: "Claude" })
     );
     expect(mockCreateHost).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "default",
-        name: "Claude Code",
+        name: "ChatGPT",
+        input: expect.objectContaining({ modelId: "openai/gpt-5.6-luna" }),
+      })
+    );
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "Cursor",
         // The seed pins each template's default model — a modelless host
         // breaks synthetic/swarm runs (no picker fallback on that path).
         input: expect.objectContaining({
-          modelId: "anthropic/claude-haiku-4.5",
+          modelId: "anthropic/claude-sonnet-4.5",
         }),
       })
     );
 
-    // Lead is the first seed template (ChatGPT); the compare lineup is
+    // Lead is the first seed template (Claude); the compare lineup is
     // seeded alongside it — no manual toggle needed for a guest to land in
     // a 3-way compare.
     await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-chatgpt");
+      expect(readPreviewedHostId()).toBe("h-claude");
     });
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
-      "h-chatgpt",
       "h-claude",
-      "h-claude-code",
+      "h-chatgpt",
+      "h-cursor",
     ]);
 
     // The acceptance criterion end to end: once the host-list query catches
@@ -770,13 +774,13 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.hostList = [
       { hostId: "h-chatgpt", name: "ChatGPT" },
       { hostId: "h-claude", name: "Claude" },
-      { hostId: "h-claude-code", name: "Claude Code" },
+      { hostId: "h-cursor", name: "Cursor" },
     ];
     multiHostFixture.hosts = {
       "h-chatgpt": makeHost("h-chatgpt", "ChatGPT", { hostStyle: "chatgpt" }),
       "h-claude": makeHost("h-claude", "Claude", { hostStyle: "claude" }),
-      "h-claude-code": makeHost("h-claude-code", "Claude Code", {
-        hostStyle: "claude-code",
+      "h-cursor": makeHost("h-cursor", "Cursor", {
+        hostStyle: "cursor",
       }),
     };
     rerender(<PlaygroundMain {...defaultProps} />);
@@ -807,8 +811,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-claude-code",
-        hostConfigId: "h-claude-code-config",
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
       });
 
     render(<PlaygroundMain {...defaultProps} />);
@@ -820,7 +824,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
         "h-chatgpt",
         "h-claude",
-        "h-claude-code",
+        "h-cursor",
       ]);
     });
   });
@@ -968,8 +972,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-claude-code",
-        hostConfigId: "h-claude-code-config",
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
       });
 
     render(<PlaygroundMain {...defaultProps} />);
@@ -981,7 +985,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
         "h-chatgpt",
         "h-claude",
-        "h-claude-code",
+        "h-cursor",
       ]);
     });
   });
@@ -1018,7 +1022,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     await act(async () => {
       releaseCreate[0]({ hostId: "h-chatgpt" });
       releaseCreate[1]({ hostId: "h-claude" });
-      releaseCreate[2]({ hostId: "h-claude-code" });
+      releaseCreate[2]({ hostId: "h-cursor" });
     });
 
     await waitFor(() => {
@@ -1029,18 +1033,52 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockSetSelectedHostIds).not.toHaveBeenCalledWith([
       "h-chatgpt",
       "h-claude",
-      "h-claude-code",
+      "h-cursor",
     ]);
   });
 
-  // The mirror image of the test above, and the reason the lead guard can't
-  // simply be "did the previewed id move at all". The host-list query catches
-  // up to the FIRST create while the other two are still in flight, so the
-  // "no valid previewed host" fallback effect auto-picks that host as lead —
-  // our own write, not the user's. A guard that read it as a user selection
-  // would bail before `saveSelectedHostIds` and strand the guest with 3 hosts
-  // and no compare lineup: exactly the half-seeded state the seed prevents.
-  it("still lands the 3-way lineup when the host list catches up mid-seed and a lead is auto-picked", async () => {
+  it("chooses a fallback lead after a user changes only the compare lineup mid-seed", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
+    mockCreateHost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate.push(resolve as (host: { hostId: string }) => void);
+        })
+    );
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+    await waitFor(() => {
+      expect(releaseCreate).toHaveLength(3);
+    });
+
+    // The user changes only the compare lineup. With no previewed host yet,
+    // the fallback is deferred until the seed finishes so this choice is not
+    // overwritten by the seed itself.
+    saveSelectedHostIds("default", ["h-chatgpt"]);
+    multiHostFixture.selectedHostIds = ["h-chatgpt"];
+    multiHostFixture.hostList = [
+      { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-cursor", name: "Cursor" },
+    ];
+    rerender(<PlaygroundMain {...defaultProps} />);
+    expect(readPreviewedHostId()).toBeNull();
+
+    await act(async () => {
+      releaseCreate[0]({ hostId: "h-claude" });
+      releaseCreate[1]({ hostId: "h-chatgpt" });
+      releaseCreate[2]({ hostId: "h-cursor" });
+    });
+
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-chatgpt");
+    });
+    expect(loadSelectedHostIds("default")).toEqual(["h-chatgpt"]);
+  });
+
+  it("keeps Claude as lead when ChatGPT reaches the host list first", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     const releaseCreate: Array<(host: { hostId: string }) => void> = [];
@@ -1057,30 +1095,37 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(releaseCreate).toHaveLength(3);
     });
 
-    // Convex surfaces the first created host while creates 2 and 3 are still
-    // pending; the fallback effect promotes it because nothing is previewed.
+    // ChatGPT resolves before the first seed (Claude), so a generic fallback
+    // would otherwise make ChatGPT the automatic default.
+    await act(async () => {
+      releaseCreate[1]({ hostId: "h-chatgpt" });
+    });
     multiHostFixture.hostList = [{ hostId: "h-chatgpt", name: "ChatGPT" }];
     rerender(<PlaygroundMain {...defaultProps} />);
     await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-chatgpt");
+      expect(readPreviewedHostId()).toBeNull();
     });
+
+    multiHostFixture.hostList = [
+      { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-cursor", name: "Cursor" },
+    ];
+    rerender(<PlaygroundMain {...defaultProps} />);
 
     await act(async () => {
-      releaseCreate[0]({ hostId: "h-chatgpt" });
-      releaseCreate[1]({ hostId: "h-claude" });
-      releaseCreate[2]({ hostId: "h-claude-code" });
+      releaseCreate[0]({ hostId: "h-claude" });
+      releaseCreate[2]({ hostId: "h-cursor" });
     });
 
-    // The lineup still lands, and the auto-picked lead is kept rather than
-    // being rewritten to a different slot.
     await waitFor(() => {
       expect(loadSelectedHostIds("default")).toEqual([
-        "h-chatgpt",
         "h-claude",
-        "h-claude-code",
+        "h-chatgpt",
+        "h-cursor",
       ]);
     });
-    expect(readPreviewedHostId()).toBe("h-chatgpt");
+    expect(readPreviewedHostId()).toBe("h-claude");
   });
 
   it("seeds 3 default clients for each empty project", async () => {
@@ -1096,8 +1141,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-first-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-first-claude-code",
-        hostConfigId: "h-first-claude-code-config",
+        hostId: "h-first-cursor",
+        hostConfigId: "h-first-cursor-config",
       })
       .mockResolvedValueOnce({
         hostId: "h-second-chatgpt",
@@ -1108,8 +1153,8 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-second-claude-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-second-claude-code",
-        hostConfigId: "h-second-claude-code-config",
+        hostId: "h-second-cursor",
+        hostConfigId: "h-second-cursor-config",
       });
 
     const { rerender } = render(<PlaygroundMain {...defaultProps} />);
@@ -1121,7 +1166,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
       "h-first-chatgpt",
       "h-first-claude",
-      "h-first-claude-code",
+      "h-first-cursor",
     ]);
 
     rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
@@ -1141,12 +1186,12 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect.objectContaining({ projectId: "second", name: "Claude" })
     );
     expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "second", name: "Claude Code" })
+      expect.objectContaining({ projectId: "second", name: "Cursor" })
     );
     expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
       "h-second-chatgpt",
       "h-second-claude",
-      "h-second-claude-code",
+      "h-second-cursor",
     ]);
   });
 

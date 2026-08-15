@@ -1,3 +1,4 @@
+import { describeTokenRequestFailure } from "../../oauth/state-machines/shared/response-error.js";
 import type {
   ClientCredentialsResult,
   TrackedRequestFn,
@@ -56,9 +57,7 @@ export async function performClientCredentialsGrant({
   });
 
   if (!tokenResponse.ok) {
-    throw new Error(
-      `Token request failed: ${tokenResponse.body?.error || tokenResponse.statusText} - ${tokenResponse.body?.error_description || "Unknown error"}`,
-    );
+    throw new Error(describeTokenRequestFailure(tokenResponse));
   }
 
   if (!tokenResponse.body?.access_token) {
