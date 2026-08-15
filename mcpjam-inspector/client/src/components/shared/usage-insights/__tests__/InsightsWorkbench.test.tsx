@@ -130,7 +130,6 @@ function renderSwarmWorkbench(props: {
   journeyRunIds?: string[];
   urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
   onSelectionChange?: (themes: unknown) => void;
-  strugglesSlot?: (breakdown: never) => React.ReactNode;
 } = { projectId: "proj-1" }) {
   const { projectId, journeyRunIds, ...rest } = props;
   return render(
@@ -235,12 +234,12 @@ describe("InsightsWorkbench", () => {
     );
   });
 
-  it("fillViewport keeps the statline and diagram visible beside the drill-down", async () => {
+  it("fillViewport keeps the diagram visible beside the drill-down", async () => {
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a"] });
     const panel = screen.getByTestId("swarm-insights-panel");
     expect(panel.className).toContain("flex-col");
-    expect(screen.getByTestId("swarm-insights-statline")).toBeInTheDocument();
+    expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByTestId("swarm-insights-rail")).toBeNull();
     expect(screen.getByTestId("goal-header")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));
@@ -282,25 +281,8 @@ describe("InsightsWorkbench", () => {
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));
 
     expect(screen.queryByText(/sign in/i)).toBeNull();
-    expect(screen.getByTestId("swarm-insights-statline")).toBeInTheDocument();
+    expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.getByTestId("goal-header")).toBeInTheDocument();
-  });
-
-  it("hands a struggles-slot function the breakdown it already subscribes to", () => {
-    mockUseUsageInsights.mockReturnValue({
-      threads: undefined,
-      breakdown: { totalSessions: 4 },
-      rebuild: vi.fn(),
-    });
-    // User Testing's Feedback popover renders FROM the breakdown; a plain
-    // node would make the page subscribe a second time to decide.
-    renderSwarmWorkbench({
-      projectId: "proj-1",
-      strugglesSlot: (breakdown: { totalSessions?: number } | null) => (
-        <span data-testid="slot-sessions">{breakdown?.totalSessions}</span>
-      ),
-    });
-    expect(screen.getByTestId("slot-sessions")).toHaveTextContent("4");
   });
 
   it("does not carry a flow selection into the Clusters map", async () => {

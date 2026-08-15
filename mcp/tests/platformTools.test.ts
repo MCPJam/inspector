@@ -92,13 +92,18 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
 const PLAIN_TOOLS = [
   "get_me",
   "list_models",
+  "list_organizations",
   "list_projects",
+  "create_project",
+  "update_project",
   "list_project_servers",
   "create_project_server",
   "get_project_server",
   "update_project_server",
   "delete_project_server",
   // Server live operations are agent-oriented payloads with no widget view.
+  "connect_project_server",
+  "get_project_server_connection_status",
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
@@ -134,6 +139,59 @@ const PLAIN_TOOLS = [
   "get_eval_run_steps",
   "cancel_eval_run",
   "list_chat_sessions",
+  // Swarms + user testing. No widget views yet: these are agent-oriented
+  // payloads, and a half-designed panel is worse than the structured JSON.
+  "get_capabilities",
+  "list_personas",
+  "get_persona",
+  "create_persona",
+  "update_persona",
+  "delete_persona",
+  "generate_personas",
+  "list_journeys",
+  "get_journey",
+  "create_journey",
+  "update_journey",
+  "archive_journey",
+  "generate_journeys",
+  "list_journey_runs",
+  "get_journey_run",
+  "list_journey_run_sessions",
+  "launch_journey_run",
+  "cancel_journey_run",
+  "list_swarms",
+  "get_swarm",
+  "create_swarm",
+  "update_swarm",
+  "archive_swarm",
+  "get_swarms_overview",
+  "get_journey_run_scorecard",
+  "list_swarm_findings",
+  "dismiss_swarm_finding",
+  "undismiss_swarm_finding",
+  "get_wave_insights",
+  "request_wave_insights",
+  "cancel_wave_insights",
+  "publish_scenario",
+  "unpublish_scenario",
+  "get_user_testing_scenario",
+  "list_user_testing_sessions",
+  "get_user_testing_session",
+  "get_user_testing_metrics",
+  "get_user_testing_usage",
+  "list_user_testing_findings",
+  "get_user_testing_signals",
+  "get_user_testing_insights",
+  "update_user_testing_scenario",
+  "request_user_testing_insights",
+  "cancel_user_testing_insights",
+  "dismiss_user_testing_finding",
+  "undismiss_user_testing_finding",
+  "set_user_testing_guest_execution",
+  "rotate_user_testing_link",
+  "upsert_user_testing_member",
+  "remove_user_testing_member",
+  "rebind_user_testing_scenario",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -202,17 +260,25 @@ describe("platform tool registration", () => {
   it("registers the whole operation catalog in order", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     expect(registrations.map((registration) => registration.name)).toEqual([
       "get_me",
       "list_models",
+      "list_organizations",
       "list_projects",
+      "create_project",
+      "update_project",
       "list_project_servers",
       "create_project_server",
       "get_project_server",
       "update_project_server",
       "delete_project_server",
+      "connect_project_server",
+      "get_project_server_connection_status",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -250,6 +316,57 @@ describe("platform tool registration", () => {
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
+      "get_capabilities",
+      "list_personas",
+      "get_persona",
+      "create_persona",
+      "update_persona",
+      "delete_persona",
+      "generate_personas",
+      "list_journeys",
+      "get_journey",
+      "create_journey",
+      "update_journey",
+      "archive_journey",
+      "generate_journeys",
+      "list_journey_runs",
+      "get_journey_run",
+      "list_journey_run_sessions",
+      "launch_journey_run",
+      "cancel_journey_run",
+      "list_swarms",
+      "get_swarm",
+      "create_swarm",
+      "update_swarm",
+      "archive_swarm",
+      "get_swarms_overview",
+      "get_journey_run_scorecard",
+      "list_swarm_findings",
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "get_wave_insights",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      "publish_scenario",
+      "unpublish_scenario",
+      "get_user_testing_scenario",
+      "list_user_testing_sessions",
+      "get_user_testing_session",
+      "get_user_testing_metrics",
+      "get_user_testing_usage",
+      "list_user_testing_findings",
+      "get_user_testing_signals",
+      "get_user_testing_insights",
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "rotate_user_testing_link",
+      "upsert_user_testing_member",
+      "remove_user_testing_member",
+      "rebind_user_testing_scenario",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -260,7 +377,10 @@ describe("platform tool registration", () => {
   it("attaches the shared widget bundle to the widget-backed tools only", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     for (const registration of registrations) {
       const view = WIDGET_TOOLS[registration.name];
@@ -283,7 +403,10 @@ describe("platform tool registration", () => {
   it("marks reads read-only, the eval-run starter as non-destructive write, and call_server_tool as assume-destructive", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     const NON_DESTRUCTIVE_WRITES = new Set([
       "run_eval_case",
@@ -297,6 +420,58 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "create_project_server",
       "update_project_server",
+      // Project create/update: both are cheap, both are metadata-only (the
+      // update schema has no `servers` key at all), and neither destroys
+      // anything — so they announce a plain write, not a destructive one.
+      "create_project",
+      "update_project",
+      // Creates a connection request, and possibly a DISABLED server row.
+      // Nothing is destroyed and nothing is enabled without a person
+      // completing the flow, so it is a write rather than a destructive one.
+      "connect_project_server",
+      // Swarms authoring. Persists and is editable; nothing here removes
+      // anything, and creating a journey starts nothing.
+      "create_persona",
+      "update_persona",
+      "create_journey",
+      "update_journey",
+      "create_swarm",
+      "update_swarm",
+      // Generation writes NOTHING — it returns drafts — but it spends, so it
+      // cannot claim to be a read.
+      "generate_personas",
+      "generate_journeys",
+      // Insight lifecycle. Requesting spends; dismissing records a judgement;
+      // cancelling stops a generation nobody is waiting for.
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      // Launching spends across a fan-out, but it does not destroy anything.
+      "launch_journey_run",
+      // Publishing exposes an environment. Additive: it creates a scenario.
+      "publish_scenario",
+      // User testing writes that change state without removing anything.
+      // `rotate_user_testing_link` and `remove_user_testing_member` are below,
+      // with the destructive set: both take access away from people who have
+      // it, immediately.
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "upsert_user_testing_member",
+      "rebind_user_testing_scenario",
+    ]);
+    // Destructive AND not safe to repeat — for opposite reasons: the soft
+    // deletes 404 on a retry, the rotation mints another link.
+    const NON_IDEMPOTENT_DESTRUCTIVE = new Set([
+      "delete_persona",
+      "archive_journey",
+      "archive_swarm",
+      "remove_user_testing_member",
+      "rotate_user_testing_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
@@ -304,6 +479,18 @@ describe("platform tool registration", () => {
       // Cancelling a run terminates in-flight work, so it announces destructive.
       "cancel_eval_run",
       "delete_project_server",
+      // The swarm soft deletes: history survives, but the resource leaves the
+      // roster and a second call answers not-found. From the caller's side
+      // that is a removal.
+      "delete_persona",
+      "archive_journey",
+      "archive_swarm",
+      "cancel_journey_run",
+      // Unpublishing kills every live guest session on the scenario.
+      "unpublish_scenario",
+      // Rotating invalidates every copy of the share link that anyone holds.
+      "rotate_user_testing_link",
+      "remove_user_testing_member",
     ]);
 
     for (const registration of registrations) {
@@ -314,11 +501,14 @@ describe("platform tool registration", () => {
           idempotentHint: false,
         });
       } else if (DESTRUCTIVE_OPS.has(registration.name)) {
-        // Known-destructive ops (deletes + cancel) announce it explicitly.
+        // Known-destructive ops announce it explicitly. Whether they also
+        // announce IDEMPOTENCY is a separate claim: a soft delete answers
+        // not-found on a second call and a link rotation mints a new link, so
+        // an auto-retrying client would get a spurious error or a broken link.
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: true,
-          idempotentHint: true,
+          idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
         });
       } else if (registration.name === "call_server_tool") {
         // Arbitrary third-party tool execution: destructive/idempotent hints
@@ -352,7 +542,10 @@ describe("widget payload tagging", () => {
       },
     });
     const { registrar, registrations } = fakeRegistrar();
-    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
     const registration = registrations.find(
       (candidate) => candidate.name === "list_chatboxes"
     )!;

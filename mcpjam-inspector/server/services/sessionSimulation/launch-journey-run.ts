@@ -88,6 +88,134 @@ export interface LaunchJourneyRunResult {
   deduped?: boolean;
 }
 
+const MAX_PASSTHROUGH_REASON_LENGTH = 300;
+
+/**
+ * Every character a renderer may break a line on — not just `\n`. `String.trim`
+ * strips these at the ends but not in the middle, so a body carrying `\r` or a
+ * Unicode separator would otherwise pass as a "single sentence" and then render
+ * as multiple lines in a toast.
+ *
+ * Form feed is in the set because the toast renders with `white-space:
+ * pre-wrap`, and CSS Text converts U+000C to a segment break exactly as it does
+ * U+000D — so it breaks lines on screen even though it looks inert in a string.
+ */
+const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
+
+/**
+ * A human-readable reason from a backend launch rejection.
+ *
+ * `bodyText` is the RAW response body and is never passed through unexamined.
+ * It arrives in three shapes and only one of them is fit to show:
+ *
+ *   - a STRUCTURED rejection — a v1 envelope (`{"error":{"message":…}}`) or
+ *     Convex `ConvexError` data (`{"code":…,"message":…}`). Unwrap it; the raw
+ *     form renders as a wall of braces in a toast.
+ *   - a PLAIN SENTENCE the backend wrote for a human ("journey exceeds the
+ *     maximum host count"). This is the useful case and it survives — bounded
+ *     by {@link showableReason}, because a "sentence" that is 8 KB or full of
+ *     markup is not one. The SAME bound applies to a message unwrapped from a
+ *     structured body.
+ *   - anything else — an HTML error page from a proxy, a stack trace, an empty
+ *     body. Replaced by a sentence of our own.
+ *
+ * Deliberately tolerant: every branch is best-effort, because the failure this
+ * runs inside is already a failure and a parse error here would replace a
+ * useful message with a 500.
+ */
+export function launchFailureMessage(err: SwarmAgentError): string {
+  const fallback =
+    err.status === 402
+      ? "This launch would exceed your organization's credit limit."
+      : "This journey can't be launched.";
+  const raw = err.bodyText?.trim();
+  if (!raw) return fallback;
+
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      // v1 envelope: { error: { code, message } }
+      const envelope = parsed.error;
+      if (envelope && typeof envelope === "object") {
+        const unwrapped = showableReason(
+          (envelope as { message?: unknown }).message
+        );
+        if (unwrapped) return unwrapped;
+      }
+      // Convex structured ConvexError data: { code, message, details? }
+      const unwrapped = showableReason(parsed.message);
+      if (unwrapped) return unwrapped;
+    } catch {
+      // Not valid JSON despite the leading brace. Deliberately NOT re-tested as
+      // prose: a truncated or malformed JSON body is a broken envelope, not a
+      // sentence somebody wrote, and echoing its fragment would show braces.
+    }
+    return fallback;
+  }
+
+  return showableReason(raw) ?? fallback;
+}
+
+/**
+ * `value` if it is a string fit to put in front of a user, else `null`.
+ *
+ * The SAME policy for a structured `message` and for a plain body: a backend
+ * envelope is no more trustworthy than a bare one — it can just as easily carry
+ * a stack trace, an HTML fragment, or an unbounded diagnostic — and applying
+ * the bound to only one of the two would leave the "never passed through
+ * unexamined" promise true of the less likely case and false of the more
+ * likely one.
+ */
+function showableReason(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  const showable =
+    text.length <= MAX_PASSTHROUGH_REASON_LENGTH &&
+    !LINE_BREAK.test(text) &&
+    !text.includes("<");
+  return showable ? text : null;
+}
+
+/** Preserve structured billing/environment metadata across the WebRouteError boundary. */
+function launchFailureDetails(
+  err: SwarmAgentError
+): Record<string, unknown> | undefined {
+  const raw = err.bodyText?.trim();
+  if (!raw?.startsWith("{")) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const envelope = parsed.error;
+    const source =
+      envelope && typeof envelope === "object"
+        ? (envelope as Record<string, unknown>)
+        : parsed;
+    const details = source.details;
+    // `typeof [] === "object"`, and spreading an array yields `{0: …}` — index
+    // keys masquerading as structured metadata. A list is not a details bag.
+    const bag =
+      details && typeof details === "object" && !Array.isArray(details)
+        ? { ...(details as Record<string, unknown>) }
+        : undefined;
+    // Carry the backend's `code` alongside its details. The message is bounded
+    // and prose-shaped by design, so it is the wrong thing to branch on; a
+    // caller that needs to tell "this environment has no model"
+    // (`ENV_MODEL_REQUIRED`) from a transient resolution failure has nothing
+    // else to read. Cheap to forward, and the same code the eval and v1
+    // environment surfaces already expose.
+    const code = typeof source.code === "string" ? source.code : undefined;
+    if (!bag && !code) return undefined;
+    // The DETAILS bag wins when it carries its own `code`. A response can hold
+    // both — an envelope code describing the transport failure and a domain
+    // code inside `details` naming the specific refusal — and the domain one is
+    // the branchable half. The envelope code only fills a gap.
+    const hasDetailCode = typeof bag?.code === "string" && bag.code.length > 0;
+    return { ...(bag ?? {}), ...(code && !hasDetailCode ? { code } : {}) };
+  } catch {
+    return undefined;
+  }
+}
+
 function requireConvexHttpUrl(): string {
   const url = process.env.CONVEX_HTTP_URL;
   if (!url) {
@@ -276,19 +404,34 @@ export async function launchJourneyRun(
       // 429 matters most of the five: it is the only RETRYABLE one, and
       // reading it as invalid input turns "wait and try again" into "this
       // request can never work".
+      //
+      // 402 is the SIXTH and the other one that changes what a caller should
+      // do: the organization is out of credit, so retrying is pointless and
+      // every sibling launch in the same wave will fail identically. The
+      // swarm fan-out reads this code to stop scheduling rather than fire N
+      // more doomed requests.
       const CODE_BY_STATUS: Record<number, ErrorCode> = {
         401: ErrorCode.UNAUTHORIZED,
+        402: ErrorCode.BILLING_LIMIT_REACHED,
         403: ErrorCode.FORBIDDEN,
         404: ErrorCode.NOT_FOUND,
         409: ErrorCode.CONFLICT,
         429: ErrorCode.RATE_LIMITED,
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
-      throw new WebRouteError(
+      const routeError = new WebRouteError(
         err.status,
         code,
-        err.bodyText || "This journey can't be launched."
+        launchFailureMessage(err),
+        launchFailureDetails(err)
       );
+      // The wave fan-out and every generic client read `Retry-After` to decide
+      // WHEN to come back; the 429 alone only says "not now". The backend's
+      // daily launch cap sends the UTC roll and its burst brake sends the
+      // bucket refill, so this is the one number nobody downstream can derive.
+      throw err.retryAfter
+        ? routeError.withHeaders({ "Retry-After": err.retryAfter })
+        : routeError;
     }
     throw err;
   }
@@ -435,8 +578,7 @@ export async function launchJourneyRun(
               : {}),
             ...(connection.requestTimeoutByServerId
               ? {
-                  requestTimeoutByServerId:
-                    connection.requestTimeoutByServerId,
+                  requestTimeoutByServerId: connection.requestTimeoutByServerId,
                 }
               : {}),
           }
