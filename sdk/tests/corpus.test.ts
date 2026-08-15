@@ -666,4 +666,53 @@ describe("a negative case cannot assert a tool call, however it is expressed", (
       )
     ).toThrow(/negative case.*toolCalledWith at step 1/s);
   });
+
+  // The third route, and the one the step loop cannot see: effective checks
+  // are resolved AFTER it, so these reach the merged config without ever
+  // passing the per-step guard.
+  const TOOL_CALLED_WITH = {
+    type: "toolCalledWith",
+    toolName: "t",
+    args: { args: {} },
+  };
+
+  it("refuses a toolCalledWith arriving as a case-level check", () => {
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+          checks: { mode: "replace", list: [TOOL_CALLED_WITH] },
+        })
+      )
+    ).toThrow(/negative case.*toolCalledWith check/s);
+  });
+
+  it("refuses a toolCalledWith inherited from the suite", () => {
+    // `mode: "inherit"` is the default, so a suite-level check silently
+    // applies to every case — including the negative ones nobody re-read.
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        }),
+        { suiteChecks: [TOOL_CALLED_WITH] }
+      )
+    ).toThrow(/negative case.*toolCalledWith check/s);
+  });
+
+  it("still allows a positive case to carry the same check", () => {
+    // The guard keys on `isNegative`, not on the check — a suite-level
+    // toolCalledWith is perfectly valid for every non-negative case, and
+    // over-refusing here would break the suites that rely on it.
+    const config = evalTestFromPlatformCase(
+      evalCase({
+        isNegative: false,
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+      }),
+      { suiteChecks: [TOOL_CALLED_WITH] }
+    ).getConfig();
+    expect(config.predicates).toEqual([TOOL_CALLED_WITH]);
+  });
 });

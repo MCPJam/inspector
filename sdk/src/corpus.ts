@@ -412,15 +412,31 @@ export function evalTestFromPlatformCase(
       evalCase.matchOptions as PublicMatchOptions | undefined
     ) ?? sdkMatchOptionsFromPublic(options.suiteMatchOptions);
 
-  // Backstop. The per-step check above catches every route that can populate
-  // `expectedToolCalls` today; this stays so a future route cannot reopen the
-  // contradiction silently.
-  if (evalCase.isNegative && expectedToolCalls.length > 0) {
-    throw new Error(
-      `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
-        `(passes only when NO tool is called) but declares expected tool ` +
-        `calls. Fix the case in the dashboard, or run it hosted.`
-    );
+  // The contradiction check, completed over the MERGED config.
+  //
+  // A `toolCalledWith` reaches a case by three routes, and the per-step check
+  // above sees only two of them: checks are resolved AFTER the step loop, so a
+  // negative case carrying one in `checks` — its own, or inherited from the
+  // suite — used to sail past. Scanning the merged arrays here is what makes
+  // the guard total; the per-step throw stays because it can name the step.
+  if (evalCase.isNegative) {
+    // Any `toolCalledWith` still standing in `predicates` came from checks:
+    // the step-predicate route threw above.
+    if (predicates.some((predicate) => predicate.type === "toolCalledWith")) {
+      throw new Error(
+        `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
+          `(passes only when NO tool is called) but a toolCalledWith check ` +
+          `applies to it — from the case, or inherited from the suite. Those ` +
+          `cannot both hold. Fix the check in the dashboard, or run it hosted.`
+      );
+    }
+    if (expectedToolCalls.length > 0) {
+      throw new Error(
+        `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
+          `(passes only when NO tool is called) but declares expected tool ` +
+          `calls. Fix the case in the dashboard, or run it hosted.`
+      );
+    }
   }
 
   const config: EvalTestConfig = {
