@@ -18,7 +18,7 @@ import { createDiscordDelivery } from "./delivery.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
 import { toDeliverableResult, toReplayContent } from "./turn-result.js";
-import { watchDiscordRun } from "./watcher.js";
+import { watchDiscordJourneyRun, watchDiscordRun } from "./watcher.js";
 
 if (!config.botToken) throw new Error("DISCORD_BOT_TOKEN is required");
 for (const warning of describeConfigGaps(config)) {
@@ -462,7 +462,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
 			interaction.customId,
 			runCtx,
 		);
-		if (result.runId && interaction.channel?.isTextBased?.()) {
+		// A JOURNEY (Swarms) run, recognised by the server-sent resource type —
+		// never by operation name, and never routed into the eval watcher, whose
+		// status vocabulary would report a rate-limited fan-out as a pass.
+		if (
+			result.resource?.type === "journey_run" &&
+			result.resource.id &&
+			interaction.channel?.isTextBased?.()
+		) {
+			const surfaceDelivery = createDiscordDelivery(interaction.channel);
+			const status = await surfaceDelivery.deliver(
+				runCtx,
+				textContent(
+					`Swarm run started${result.runUrl ? ` — ${result.runUrl}` : ""}.`,
+					"info",
+				),
+			);
+			const statusHandle = status.handles.at(-1);
+			if (statusHandle) {
+				detach(
+					watchDiscordJourneyRun({
+						apiClient: api,
+						ctx: runCtx,
+						runId: result.resource.id,
+						handle: statusHandle,
+						surfaceDelivery,
+						url: result.runUrl || "",
+						actorId: interaction.user.id,
+					}),
+					`journey run watcher (${result.resource.id})`,
+				);
+			}
+		} else if (result.runId && interaction.channel?.isTextBased?.()) {
 			const surfaceDelivery = createDiscordDelivery(interaction.channel);
 			const status = await surfaceDelivery.deliver(
 				runCtx,

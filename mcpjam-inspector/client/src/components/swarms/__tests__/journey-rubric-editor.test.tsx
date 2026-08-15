@@ -131,7 +131,7 @@ describe("JourneyRubricEditor", () => {
     );
 
     await user.type(
-      screen.getByRole("textbox", { name: /name for criterion 1/i }),
+      screen.getByRole("textbox", { name: /name for check 1/i }),
       "Quick",
     );
 
@@ -145,7 +145,7 @@ describe("JourneyRubricEditor", () => {
         initial={[{ id: "a", predicate: { type: "turnCountUnder", turns: 3 } }]}
       />,
     );
-    const input = screen.getByRole("textbox", { name: /name for criterion 1/i });
+    const input = screen.getByRole("textbox", { name: /name for check 1/i });
     // A derived label stored as a value would stop tracking the predicate the
     // moment the author changed the threshold.
     expect(input).toHaveValue("");
@@ -175,7 +175,7 @@ describe("JourneyRubricEditor", () => {
       screen.queryByRole("button", { name: "add check" })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/rubric holds at most 2 criteria/i)
+      screen.getByText(/at most 2 checks/i)
     ).toBeInTheDocument();
   });
 

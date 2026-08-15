@@ -224,7 +224,10 @@ export function HostBuilderViewRedesigned({
   // Validation: recompute issues whenever draft or host display name changes.
   const attention = useHostDraftValidation(
     draftConfig ?? emptyHostConfigInputV2(),
-    draftName
+    draftName,
+    // The SAVED model, so clearing a pinned model blocks Save while a legacy
+    // host that never had one keeps saving unrelated edits.
+    { savedModelId: savedConfig?.modelId }
   );
 
   // Runtime connection state lives in `appState.servers` keyed by server

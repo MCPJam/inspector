@@ -618,6 +618,25 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     ).not.toThrow();
   });
 
+  it("uses one cap entry per case for environment-backed runs", () => {
+    const entries = buildCapEntriesFromPersistedCases(
+      [
+        {
+          title: "Environment model",
+          runs: 2,
+          models: [
+            { model: "a", provider: "p1" },
+            { model: "b", provider: "p2" },
+          ],
+          steps: [{ id: "t1", kind: "prompt", prompt: "one" }],
+        },
+      ],
+      { environmentBacked: true }
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0].runs).toBe(2);
+  });
+
   it("counts model-less prompt cases once (suite-default substitution)", () => {
     const entries = buildCapEntriesFromPersistedCases([
       { title: "No models", runs: 2, models: [] },

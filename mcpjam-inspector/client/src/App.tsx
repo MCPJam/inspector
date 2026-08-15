@@ -11,7 +11,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Loader2, Users } from "lucide-react";
+import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { HomeTab } from "./components/HomeTab";
@@ -36,6 +36,7 @@ import {
   useViewerProjectRole,
 } from "./hooks/useProjects";
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
+import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
@@ -249,6 +250,7 @@ import {
   useHostMutations,
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
+import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -573,6 +575,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <SwarmsRoute />;
     case "environments":
       return <EnvironmentsRoute />;
+    case "sessions":
+      return <SessionsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -820,10 +824,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-        ? "pending"
-        : routeHosts.some((h) => h.hostId === idShapedHostId)
-          ? "live"
-          : "dead";
+      ? "pending"
+      : routeHosts.some((h) => h.hostId === idShapedHostId)
+      ? "live"
+      : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -1419,8 +1423,7 @@ export function ChatboxesRoute() {
   // to the pathname there. Deliberately NOT `useLocation`: that throws its
   // router invariant on the no-router path.
   const pathname = getRouteFallbackPathname();
-  const rawScenarioId =
-    params.scenarioId ?? scenarioIdFromPathname(pathname);
+  const rawScenarioId = params.scenarioId ?? scenarioIdFromPathname(pathname);
   // `new` is the create route, never a scenario id. The dedicated
   // `user-testing/new` route already keeps it out of `params.scenarioId`, but
   // reserving the word here means route-ordering can't quietly turn the create
@@ -1636,6 +1639,52 @@ export function EnvironmentsRoute() {
       canManage={canManage}
       isAuthenticated={isAuthenticated}
     />
+  );
+}
+
+export function SessionsRoute() {
+  // The cross-surface Sessions feed. Flag-gated while the backing backend
+  // queries (`sessionsFeed:*`) roll out; row-level visibility (who sees whose
+  // Playground sessions, swarm's member gate) is entirely server-side, so no
+  // role gate here — the backend fail-softs a non-member to an empty page.
+  const { convexProjectId } = useAppRouteContext();
+  const unifiedSessionsEnabled = useUnifiedSessionsEnabledState();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /sessions directly. (Same tradeoff as SwarmsRoute.)
+  if (unifiedSessionsEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (unifiedSessionsEnabled === undefined) {
+    return null;
+  }
+
+  if (!convexProjectId) {
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Sessions needs a project"
+        description="Sign in and select a project to browse its sessions across Playground, User Testing, Evals, and Swarms."
+      />
+    );
+  }
+
+  return (
+    // Dark-ship guard: `usePaginatedQuery` against a not-yet-deployed backend
+    // query throws. Degrade to copy instead of white-screening the page.
+    <ErrorBoundary
+      name="sessions-panel"
+      fallback={
+        <EmptyState
+          icon={MessageSquare}
+          title="Sessions isn't available yet"
+          description="This project's deployment doesn't serve the unified sessions feed yet. It becomes available with the next backend release."
+        />
+      }
+    >
+      <SessionsPanel key={convexProjectId} projectId={convexProjectId} />
+    </ErrorBoundary>
   );
 }
 
@@ -1938,6 +1987,7 @@ export function PlaygroundRoute() {
     handleConnect,
     handleUpdateHostContext,
     isAuthenticated,
+    isClientConfigSyncPending,
     isSelectedServerSyncing,
     isWorkOsLoading,
     playgroundServerSelectorProps,
@@ -1960,6 +2010,7 @@ export function PlaygroundRoute() {
       isWorkOsAuthLoading={isWorkOsLoading}
       isConvexAuthenticated={isAuthenticated}
       isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
+      isClientConfigSyncPending={isClientConfigSyncPending}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
@@ -2963,7 +3014,7 @@ export default function App() {
   // hook for the full chain.
   const hostedClientCapabilities = useHostedClientCapabilities(
     activeHost?.clientCapabilities,
-    activeProject?.clientConfig,
+    activeProject?.clientConfig
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const projectServerConfigDto = useQuery(
@@ -4437,6 +4488,7 @@ export default function App() {
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
+    isClientConfigSyncPending,
     isGuestProjectActor,
     isBillingContextPending,
     isLoadingRemoteProjects,

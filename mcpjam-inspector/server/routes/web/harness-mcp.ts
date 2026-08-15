@@ -47,6 +47,7 @@ import {
   publishHarnessScopeStepUp,
 } from "../../utils/harness/harness-scope-step-up.js";
 import { scopeStepUpInfoFromToolError } from "../../utils/insufficient-scope-step-up.js";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 
 const harnessMcp = new Hono();
 
@@ -263,6 +264,12 @@ async function handle(c: any) {
       ),
       (manager) =>
         handleJsonRpc(serverId, body, manager, "adapter", {
+          // Bridge failures answer 200 with a JSON-RPC error envelope —
+          // invisible to http.request.failed; this is their typed record.
+          failureReporter: createRequestStreamFailureReporter(
+            c,
+            "harness-mcp",
+          ),
           onToolCallError: async (context) => {
             const info = scopeStepUpInfoFromToolError(context);
             if (!info) return;
@@ -316,11 +323,26 @@ async function handle(c: any) {
     if (!response) return c.body("Accepted", 202);
     return c.json(response);
   } catch (e: any) {
-    // Log the real cause server-side, but NEVER leak internal exception text to
-    // the sandbox — return a generic JSON-RPC error so the client can recover.
-    logger.error(
-      `[harness-mcp] proxy error serverId=${serverId}: ${e?.message ?? e}`
-    );
+    // Report the real cause server-side (classified — the old bare
+    // logger.error paged Sentry unconditionally), but NEVER leak internal
+    // exception text to the sandbox — return a generic JSON-RPC error so the
+    // client can recover. HTTP status stays 200, so this reporter call is
+    // the failure's only typed record.
+    try {
+      createRequestStreamFailureReporter(c, "harness-mcp")({
+        message: `[harness-mcp] proxy error serverId=${serverId}`,
+        error: e,
+        source: "web.harness-mcp.proxy",
+        hop: "user_server_hop",
+        transport: "rpc_envelope",
+        // The masked response below is always a -32000; carry it so these
+        // stay queryable alongside the bridge's own failures.
+        errorCode: "-32000",
+        context: { serverId },
+      });
+    } catch {
+      // Telemetry must never change the masked response.
+    }
     return c.json(
       {
         jsonrpc: "2.0",
