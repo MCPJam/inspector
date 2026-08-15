@@ -4,6 +4,12 @@ import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { EvalIteration, EvalCase } from "./types";
 import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { parseIterationPredicates } from "./predicates-list";
+import {
+  isGatingScore,
+  parseEvaluationConfig,
+  parseIterationScores,
+  scoreFailsGate,
+} from "./scores-list";
 
 interface IterationRowProps {
   iteration: EvalIteration;
@@ -36,17 +42,35 @@ export function CompactIterationRow({
 
   const actualToolCalls = iteration.actualToolCalls || [];
 
-  // X/Y checks passed badge — read from the same parsed predicate verdicts
-  // PredicatesList renders. User-facing wording is "checks"; the internal
-  // data is `metadata.predicates` (the SDK-defined PredicateResult[] shape).
+  // X/Y checks passed badge — read from the same parsed verdicts the detail
+  // view renders. User-facing wording is "checks".
+  //
+  // Gating SCORES win when present, and are not added to the predicate count:
+  // every predicate is itself projected into a gating score, so summing both
+  // would double-count the same verdict. Advisory scores are excluded outright
+  // — a red advisory judge must never make a passing run look failed in a list.
+  // Runs that predate scoring fall back to `metadata.predicates`.
+  const scores = parseIterationScores(iteration.metadata);
+  const evaluationConfig = parseEvaluationConfig(iteration.metadata);
+  const gatingScores = scores
+    ? scores.filter((score) =>
+        isGatingScore(score, evaluationConfig),
+      )
+    : [];
   const predicates = parseIterationPredicates(iteration.metadata);
   const checksBadge =
-    predicates && predicates.length > 0
+    gatingScores.length > 0
       ? {
-          total: predicates.length,
-          passed: predicates.filter((p) => p.passed).length,
+          total: gatingScores.length,
+          passed: gatingScores.filter((score) => !scoreFailsGate(score, evaluationConfig))
+            .length,
         }
-      : null;
+      : predicates && predicates.length > 0
+        ? {
+            total: predicates.length,
+            passed: predicates.filter((p) => p.passed).length,
+          }
+        : null;
   const allChecksPassed =
     checksBadge !== null && checksBadge.passed === checksBadge.total;
 

@@ -18,6 +18,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  evaluationConfigSnapshotSchema,
+  scoreResultArraySchema,
+} from "@mcpjam/sdk/contract";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
@@ -952,10 +956,71 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    // Whether the run's score evidence verified at ingest. ABSENT means no
+    // verdict was produced — a deployment that does not yet check integrity —
+    // and a score gate must treat that exactly like `"invalid"`: absent
+    // evidence is not valid evidence. Omitted rather than nulled so the DTO is
+    // unchanged for every run predating integrity checking.
+    ...(typeof run.scoreIntegrity === "string" &&
+    RUN_SCORE_INTEGRITY.has(run.scoreIntegrity)
+      ? { scoreIntegrity: run.scoreIntegrity }
+      : {}),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
   };
 }
+
+/**
+ * Public projection of an iteration's scores.
+ *
+ * Explicit whitelist fields, NEVER a `metadata` passthrough — `metadata` is an
+ * open record and carries internal signals that must not reach a public
+ * caller.
+ *
+ * Both halves ship together or neither does. Results carry only a
+ * `definitionHash`; `role`, `onError` and `onSkipped` live on the definitions,
+ * so results alone are un-joinable and a caller holding them could not tell a
+ * gating failure from an advisory one — which is exactly the distinction a CI
+ * gate hinges on. Anything that fails validation projects as absent rather than
+ * as partially-trusted data: quarantined rows and integrity-invalid raw
+ * payloads never leave the boundary, only the `scoreIntegrity` flag does.
+ */
+function toScoreProjection(metadata: unknown): Record<string, unknown> {
+  if (!metadata || typeof metadata !== "object") return {};
+  const record = metadata as Record<string, unknown>;
+
+  // Absent keys rather than explicit nulls: every field here is optional in the
+  // spec, the overwhelming majority of iterations have no scores at all, and
+  // this keeps the DTO byte-identical for them. Tolerant readers must ignore
+  // additive fields, never rely on them being absent — see the SDK's platform
+  // types.
+  const integrity =
+    typeof record.scoreIntegrity === "string" &&
+    ITERATION_SCORE_INTEGRITY.has(record.scoreIntegrity)
+      ? { scoreIntegrity: record.scoreIntegrity }
+      : {};
+
+  const scores = scoreResultArraySchema.safeParse(record.scores);
+  const config = evaluationConfigSnapshotSchema.safeParse(
+    record.evaluationConfig
+  );
+  if (!scores.success || !config.success) {
+    // The integrity flag still ships: an operator must be able to tell "this
+    // run has no scores" from "this run's scores did not verify".
+    return integrity;
+  }
+  return {
+    scores: scores.data,
+    evaluationConfig: config.data,
+    ...integrity,
+  };
+}
+
+/** Iteration-level integrity verdicts the backend may stamp. */
+const ITERATION_SCORE_INTEGRITY = new Set(["score_integrity_invalid"]);
+
+/** Run-level integrity verdicts the gate engine consumes. */
+const RUN_SCORE_INTEGRITY = new Set(["valid", "invalid"]);
 
 function toIterationDto(iteration: IterationDoc) {
   const snapshot = iteration.testCaseSnapshot ?? {};
@@ -986,6 +1051,7 @@ function toIterationDto(iteration: IterationDoc) {
     actualToolCalls: iteration.actualToolCalls ?? [],
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     error: iteration.error ?? null,
+    ...toScoreProjection(iteration.metadata),
   };
 }
 

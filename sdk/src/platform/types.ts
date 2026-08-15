@@ -8,6 +8,10 @@
  * being absent.
  */
 import type { ServerDoctorResult } from "../server-doctor-core.js";
+import type {
+  EvaluationConfigSnapshot,
+  ScoreResult,
+} from "../contract/types.js";
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -146,6 +150,16 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /**
+   * Whether the run's score evidence verified at ingest.
+   *
+   * TRI-STATE, and the third state matters: `"valid"` means the backend
+   * checked and the definitions and results agree; `"invalid"` means they did
+   * not; `null`/absent means NO VERDICT WAS PRODUCED — an API deployment that
+   * predates integrity checking. A score gate must treat `null` exactly like
+   * `"invalid"`: absent evidence is not valid evidence.
+   */
+  scoreIntegrity?: "valid" | "invalid" | null;
   createdAt: number;
   completedAt: number | null;
   /**
@@ -716,6 +730,22 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * Per-scorer verdicts for this iteration, in the evaluation contract's
+   * shape. `null` when the run predates scoring, or when the stored payload
+   * failed validation at the boundary — a public caller never receives
+   * partially-trusted score data.
+   */
+  scores?: ScoreResult[] | null;
+  /**
+   * The definitions those scores were produced under, plus their hash.
+   *
+   * Ships with `scores` or not at all: `role` and the error policies live here,
+   * so results without it cannot be told apart as gating or advisory.
+   */
+  evaluationConfig?: EvaluationConfigSnapshot | null;
+  /** Set when the backend downgraded this iteration's verdict at ingest. */
+  scoreIntegrity?: "score_integrity_invalid" | null;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
