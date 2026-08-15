@@ -8,12 +8,56 @@ import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
+  modelRejectsTemperature,
   normalizeOauthProtocolMode,
   resolveEffectiveOauthProtocolMode,
   resolveOAuthProtocolSelection,
   SERVER_FORM_OAUTH_PROTOCOL_MODES,
   SUPPORTED_MODELS,
 } from "../types.js";
+
+describe("modelRejectsTemperature", () => {
+  it("matches the affected families across every id shape we accept", () => {
+    const ids = [
+      // Hosted / prefixed, dot-separated version.
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-fable-5",
+      // Bedrock inference profiles: geo prefix, dashed version, date + revision.
+      "us.anthropic.claude-opus-4-7-20260205-v1:0",
+      "eu.anthropic.claude-sonnet-5-20260401-v1:0",
+      "global.anthropic.claude-opus-5-20260601-v1:0",
+      // Bedrock ARN.
+      "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8-20260310-v1:0",
+      // Bare (custom / anthropic-compatible providers).
+      "claude-opus-5",
+      "claude-mythos-5",
+    ];
+    for (const id of ids) {
+      expect(modelRejectsTemperature(id), id).toBe(true);
+    }
+  });
+
+  it("leaves models that still accept temperature alone", () => {
+    const ids = [
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-opus-4.6-fast",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-haiku-4.5",
+      "claude-sonnet-4-5",
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "openai/gpt-4o-mini",
+      // Ollama bare ids must not false-positive.
+      "llama3.1:8b",
+      "mistral:latest",
+    ];
+    for (const id of ids) {
+      expect(modelRejectsTemperature(id), id).toBe(false);
+    }
+  });
+});
 
 describe("MCPJam-provided model classification", () => {
   it("treats openai/gpt-4o-mini as MCPJam-provided", () => {

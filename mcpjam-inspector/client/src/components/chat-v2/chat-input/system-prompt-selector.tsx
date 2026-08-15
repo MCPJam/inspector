@@ -17,7 +17,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { ModelDefinition, isGPT5Model } from "@/shared/types";
+import {
+  ModelDefinition,
+  isGPT5Model,
+  modelRejectsTemperature,
+} from "@/shared/types";
 
 interface SystemPromptSelectorProps {
   systemPrompt: string;
@@ -84,12 +88,14 @@ export function SystemPromptSelector({
     multiModelEnabled && selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
-  const someSelectedModelsAreGpt5 = effectiveSelectedModels.some((model) =>
-    isGPT5Model(model.id),
-  );
-  const allSelectedModelsAreGpt5 = effectiveSelectedModels.every((model) =>
-    isGPT5Model(model.id),
-  );
+  // GPT-5 ignores temperature; the newer Claude families reject the field
+  // outright. Either way the slider has no effect on those models.
+  const ignoresTemperature = (model: ModelDefinition) =>
+    isGPT5Model(model.id) || modelRejectsTemperature(model.id);
+  const someSelectedModelsIgnoreTemperature =
+    effectiveSelectedModels.some(ignoresTemperature);
+  const allSelectedModelsIgnoreTemperature =
+    effectiveSelectedModels.every(ignoresTemperature);
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
@@ -186,16 +192,17 @@ export function SystemPromptSelector({
               max={2}
               step={0.1}
               className="w-full"
-              disabled={allSelectedModelsAreGpt5}
+              disabled={allSelectedModelsIgnoreTemperature}
             />
-            {allSelectedModelsAreGpt5 ? (
+            {allSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                Temperature is not supported for GPT-5 models
+                Temperature is not supported by the selected model
+                {effectiveSelectedModels.length > 1 ? "s" : ""}
               </p>
-            ) : someSelectedModelsAreGpt5 ? (
+            ) : someSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                GPT-5 models ignore temperature. The setting still applies to
-                the other selected models.
+                Some selected models don't support temperature. The setting
+                still applies to the others.
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">

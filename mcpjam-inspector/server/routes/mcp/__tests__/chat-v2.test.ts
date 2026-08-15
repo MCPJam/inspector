@@ -618,6 +618,24 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
+    it("omits temperature entirely for models that reject the field", async () => {
+      const { streamText } = await import("ai");
+      const callsBefore = vi.mocked(streamText).mock.calls.length;
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "claude-opus-4-8", provider: "anthropic" },
+        apiKey: "test-key",
+        temperature: 0.5,
+      });
+
+      // `temperature: undefined` would still be serialized onto the request,
+      // so assert the key is absent rather than falsy.
+      expect(vi.mocked(streamText).mock.calls.length).toBe(callsBefore + 1);
+      const call = vi.mocked(streamText).mock.calls.at(-1)?.[0];
+      expect(call).not.toHaveProperty("temperature");
+    });
+
     it("passes the inbound abort signal to user-provided streamText calls", async () => {
       const { streamText } = await import("ai");
 

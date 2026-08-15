@@ -49,7 +49,11 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
-import { isGPT5Model, type ModelDefinition } from "@/shared/types";
+import {
+  isGPT5Model,
+  modelRejectsTemperature,
+  type ModelDefinition,
+} from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
@@ -1340,9 +1344,15 @@ export async function prepareChatV2(
     .join("\n\n");
 
   // 4. Temperature resolution
-  const resolvedTemperature = isGPT5Model(modelDefinition.id)
-    ? undefined
-    : temperature ?? DEFAULT_TEMPERATURE;
+  //
+  // Sending the field at all is a 400 on the newer Claude families, so these
+  // models get `undefined` rather than the default — the callers spread the
+  // key in only when it is defined.
+  const resolvedTemperature =
+    isGPT5Model(modelDefinition.id) ||
+    modelRejectsTemperature(modelDefinition.id)
+      ? undefined
+      : temperature ?? DEFAULT_TEMPERATURE;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>

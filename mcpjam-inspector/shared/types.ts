@@ -692,6 +692,34 @@ export const isBedrockModelId = (modelId: string): boolean => {
 };
 
 /**
+ * Claude families that removed the sampling parameters. Anthropic rejects
+ * `temperature` (and `top_p` / `top_k`) with a 400 on Opus 4.7 and later,
+ * Sonnet 5, Fable 5, and Mythos 5; earlier families (Opus 4.6, Sonnet 4.5,
+ * Haiku 4.5, ...) still accept them. Bedrock serves the same models through
+ * the same request surface, so an inference profile for one of these families
+ * fails identically.
+ *
+ * Matched as a substring because the same model reaches us under four id
+ * shapes: hosted ("anthropic/claude-opus-4.7"), a Bedrock inference profile
+ * ("us.anthropic.claude-opus-4-7-20260205-v1:0"), a Bedrock ARN, and bare
+ * ("claude-sonnet-5"). Dots are folded to dashes first so the hosted and
+ * Bedrock spellings of a version normalize to the same token; the trailing
+ * digit guard keeps "claude-opus-5" from matching a future "claude-opus-50".
+ */
+const TEMPERATURE_REJECTING_MODEL_PATTERN =
+  /(?:^|[^a-z0-9])claude-(?:opus-4-7|opus-4-8|opus-5|sonnet-5|fable-5|mythos-5)(?![0-9])/;
+
+/**
+ * True when the model rejects a `temperature` request field. Callers must omit
+ * the field entirely rather than sending a default.
+ */
+export const modelRejectsTemperature = (modelId: string | Model): boolean => {
+  return TEMPERATURE_REJECTING_MODEL_PATTERN.test(
+    String(modelId).toLowerCase().replace(/\./g, "-")
+  );
+};
+
+/**
  * The concrete connect-form OAuth protocol eras, in chronological order
  * (oldest first). The dropdown (AuthenticationSection's PROTOCOL_OPTIONS)
  * renders newest-first separately; this tuple's order is not the UI order.
