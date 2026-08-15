@@ -80,6 +80,10 @@
     {
       "name": "Agent",
       "description": "Headless agent turns over the public API: send a message history, the server runs one assistant turn with project-scoped workspace tools (eval reads + suite creation) on a pinned hosted model, and returns the reply plus created-resource references."
+    },
+    {
+      "name": "Swarms",
+      "description": "Personas, journeys and swarm containers \u2014 the authoring half of Swarms \u2014 plus the model-backed generation that drafts them."
     }
   ],
   "paths": {
@@ -5472,6 +5476,715 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/personas": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "listPersonas",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "List personas",
+        "description": "The project's personas, newest first. Archived personas are excluded.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "A page of personas.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPersona",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Create a persona",
+        "description": "Creates one persona. To draft several with a model first, use `POST /projects/{projectId}/personas/generate` \u2014 that route persists nothing.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe create key. Replaying the SAME key with the SAME body returns the original resource instead of creating a second one; reusing it with a DIFFERENT body is a 409.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The persona to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonaCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created persona.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Persona"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/personas/{personaId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/personaId"
+        }
+      ],
+      "get": {
+        "operationId": "getPersona",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Get a persona",
+        "description": "A persona that lives in a DIFFERENT project answers 404, never 403 \u2014 the route is not an existence oracle for a project you cannot see.",
+        "responses": {
+          "200": {
+            "description": "The persona.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Persona"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updatePersona",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Update a persona",
+        "description": "Partial update. Journeys reference the persona by id, so renaming one does not disturb anything pointing at it.",
+        "requestBody": {
+          "required": true,
+          "description": "Fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonaUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated persona.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Persona"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePersona",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Delete a persona",
+        "description": "Refused with 409 while journeys still reference this persona \u2014 deleting it would strand them.",
+        "responses": {
+          "200": {
+            "description": "The persona was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/personas/generate": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "post": {
+        "operationId": "generatePersonas",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Draft personas with a model",
+        "description": "Returns DRAFTS and persists nothing. That separation is deliberate: generation is the step most likely to produce something nobody wanted, and a route that both invented and saved would make \"let me see what you'd suggest\" indistinguishable from \"fill my project with these\".\n\nIt is also why there is no idempotency key \u2014 a call with no effect has nothing to de-duplicate, and offering one would imply the drafts are stable across retries when they are not.\n\n**SPENDS.** This runs models on your organization's account and is metered two ways: a per-minute burst brake (429, retry in seconds) and your plan's daily budget (429, resets at UTC midnight). Both send `Retry-After`.",
+        "requestBody": {
+          "required": true,
+          "description": "Grounding source and slate size.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonaGenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Draft personas and journeys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationDrafts"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journeys/generate": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "post": {
+        "operationId": "generateJourneys",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Draft journeys for a persona",
+        "description": "Returns DRAFTS and persists nothing \u2014 see `POST /projects/{projectId}/personas/generate` for why, and for what this spends.",
+        "requestBody": {
+          "required": true,
+          "description": "Grounding source and the persona to draft for.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyGenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Draft journeys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationDrafts"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journeys/{journeyId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/journeyId"
+        }
+      ],
+      "get": {
+        "operationId": "getJourney",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Get a journey",
+        "responses": {
+          "200": {
+            "description": "The journey.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Journey"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateJourney",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Update a journey",
+        "description": "Editing a journey never disturbs a run already under way: a run pins its own immutable snapshot of the definition at launch.",
+        "requestBody": {
+          "required": true,
+          "description": "Fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated journey.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Journey"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "archiveJourney",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Archive a journey",
+        "description": "ARCHIVES rather than deletes, and the response says so. Existing runs keep pointing at the definition they executed, so their history stays readable.",
+        "responses": {
+          "200": {
+            "description": "The journey was archived.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyArchived"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/swarms": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "listSwarms",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "List swarms",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "A page of swarms.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwarmPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSwarm",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Create a swarm",
+        "description": "A swarm is an authoring container holding DEFAULTS for the journeys made under it. Creating one starts nothing.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe create key. Replaying the SAME key with the SAME body returns the original resource instead of creating a second one; reusing it with a DIFFERENT body is a 409.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The swarm to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwarmCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created swarm.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Swarm"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/swarms/{swarmId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/swarmId"
+        }
+      ],
+      "get": {
+        "operationId": "getSwarm",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Get a swarm",
+        "responses": {
+          "200": {
+            "description": "The swarm.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Swarm"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateSwarm",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Update a swarm",
+        "description": "Changes the container's DEFAULTS. Journeys already authored under it keep the values they were created with \u2014 this is not a cascade.",
+        "requestBody": {
+          "required": true,
+          "description": "Fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwarmUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated swarm.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Swarm"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "archiveSwarm",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Archive a swarm",
+        "description": "ARCHIVES the container. The journeys authored under it are not touched \u2014 they keep their own definitions and stay launchable.",
+        "responses": {
+          "200": {
+            "description": "The swarm was archived.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwarmArchived"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10370,6 +11083,784 @@
           "modelMatrix": {
             "type": "boolean",
             "description": "Environment cells may vary by model on one host (the compare grid)."
+          }
+        }
+      },
+      "Persona": {
+        "type": "object",
+        "description": "A reusable synthetic character. The GOAL lives on the journey, not here \u2014 one persona can be pointed at many different tasks.",
+        "required": [
+          "id",
+          "projectId",
+          "slug",
+          "name",
+          "role",
+          "notes",
+          "source",
+          "avatar",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Durable id \u2014 what journeys reference and what every route here addresses."
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string",
+            "description": "Stable slug key, shared with exported session data. Useful for correlating transcripts; NOT an address for this API."
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "How the persona came to exist.",
+            "enum": [
+              "manual",
+              "generated",
+              "cluster"
+            ]
+          },
+          "seedKeywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present on cluster-derived personas: the terms the cluster was built from."
+          },
+          "avatar": {
+            "type": "object",
+            "description": "Look, as indices into the app's fixed shape/palette sets. `null` when unset \u2014 the app then derives one from the id.",
+            "required": [
+              "shape",
+              "palette"
+            ],
+            "properties": {
+              "shape": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "palette": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "PersonaPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Persona"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists. Opaque \u2014 do not parse it."
+          }
+        }
+      },
+      "PersonaCreateRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "role"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "1\u2013120 characters."
+          },
+          "role": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "What this person is, in the product's terms \u2014 \"finance ops lead\", \"first-time buyer\". 1\u2013120 characters."
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Free-text context the model is grounded in. Up to 2000 characters."
+          },
+          "avatarShape": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Index into the app's fixed shape set. Out of range is a 400 naming the field, not an upstream error about a constant you have never seen."
+          },
+          "avatarPalette": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Index into the app's fixed palette set."
+          }
+        }
+      },
+      "PersonaUpdateRequest": {
+        "type": "object",
+        "description": "At least one field is required \u2014 an empty patch is a 400 rather than a silent no-op.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "1\u2013120 characters."
+          },
+          "role": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "What this person is, in the product's terms \u2014 \"finance ops lead\", \"first-time buyer\". 1\u2013120 characters."
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Free-text context the model is grounded in. Up to 2000 characters."
+          },
+          "avatarShape": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Index into the app's fixed shape set. Out of range is a 400 naming the field, not an upstream error about a constant you have never seen."
+          },
+          "avatarPalette": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Index into the app's fixed palette set."
+          }
+        }
+      },
+      "PersonaDeleted": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "deleted"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "Journey": {
+        "type": "object",
+        "description": "A persona's task: what they are trying to accomplish, and across which targets. Launching one is `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "goal",
+          "personaId",
+          "swarmId",
+          "environmentIds",
+          "sessionsPerTarget",
+          "maxTurns",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string",
+            "description": "What the persona is trying to accomplish. This drives the whole run."
+          },
+          "personaId": {
+            "type": "string"
+          },
+          "swarmId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The swarm container this journey was authored under. Provenance only \u2014 nothing resolves through it at run time, and a journey created outside a swarm has none."
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Environments this journey fans out across. EMPTY on a host-pinned journey \u2014 that is a different execution model, not a journey with no targets."
+          },
+          "serverAttachmentId": {
+            "type": "string",
+            "description": "Legacy host-pinned grounding. Absent on an environment-based journey."
+          },
+          "sessionsPerTarget": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Sessions run against EACH target. Total sessions = targets \u00d7 this."
+          },
+          "maxTurns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "JourneyPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Journey"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists. Opaque \u2014 do not parse it."
+          }
+        }
+      },
+      "JourneyCreateRequest": {
+        "type": "object",
+        "required": [
+          "goal",
+          "personaId",
+          "sessionsPerTarget",
+          "maxTurns"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 4000,
+            "description": "1\u20134000 characters."
+          },
+          "personaId": {
+            "type": "string",
+            "description": "An existing persona in this project."
+          },
+          "swarmId": {
+            "type": "string",
+            "description": "Authoring provenance only \u2014 which swarm container this was made in."
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "The environments to fan out across. NON-EMPTY when present: `[]` reads as \"these, naming none\", and would silently fall back to something else."
+          },
+          "serverAttachmentId": {
+            "type": "string",
+            "description": "Legacy host-pinned grounding."
+          },
+          "hostIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      },
+      "JourneyUpdateRequest": {
+        "type": "object",
+        "description": "PATCH with a TRI-STATE, and the third state is the point: a field absent leaves it alone, present sets it, and `null` CLEARS it. There is no other way to say \"stop fanning this journey out across environments and go back to its host targets\".\n\n`sessionsPerTarget` and `maxTurns` must be sent TOGETHER \u2014 they are one config object upstream, so a partial update would need a read-modify-write that could silently clobber a concurrent edit. Requiring both is a 400 you can fix rather than a lost update you never see.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "environmentIds": {
+            "description": "A non-empty list to set, or `null` to clear and fall back to host targets.",
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serverAttachmentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` clears the attachment."
+          },
+          "hostIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      },
+      "JourneyArchived": {
+        "type": "object",
+        "description": "Journeys ARCHIVE rather than delete: existing runs keep pointing at the definition they executed.",
+        "required": [
+          "id",
+          "projectId",
+          "archived"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "archived": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "Swarm": {
+        "type": "object",
+        "description": "An authoring container for journeys. It holds DEFAULTS, not execution state \u2014 launching happens per journey.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "description",
+          "environmentIds",
+          "sessionsPerTarget",
+          "maxTurns",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Default fan-out for journeys authored under this container."
+          },
+          "sessionsPerTarget": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "maxTurns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "SwarmPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Swarm"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists. Opaque \u2014 do not parse it."
+          }
+        }
+      },
+      "SwarmCreateRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "sessionsPerTarget",
+          "maxTurns"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      },
+      "SwarmUpdateRequest": {
+        "type": "object",
+        "description": "Same tri-state as the journey patch (`null` clears), and the same rule that `sessionsPerTarget` and `maxTurns` travel together.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "environmentIds": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      },
+      "SwarmArchived": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "archived"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "archived": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "PersonaGenerateRequest": {
+        "type": "object",
+        "description": "Exactly ONE grounding source: `serverAttachmentId` or `environmentId`. Sending both is a 400 \u2014 a request that is already confused about what it wants should not have a winner picked for it.",
+        "additionalProperties": false,
+        "properties": {
+          "serverAttachmentId": {
+            "type": "string"
+          },
+          "environmentId": {
+            "type": "string"
+          },
+          "journeyCount": {
+            "type": "integer",
+            "description": "Journeys to draft per persona."
+          },
+          "personaCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "description": "Ask for a SLATE of N personas. Omitting it is not the same as `1`: it selects the legacy single-persona response shape, so a default would switch the response under a caller that only knows the other one."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Free-text audience brief, forwarded verbatim into the prompt."
+          },
+          "existingPersonas": {
+            "type": "array",
+            "description": "Personas you already have, so the model drafts different ones. A prompt hint, not a data feed \u2014 only the first few dozen are used.",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "role"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "JourneyGenerateRequest": {
+        "type": "object",
+        "description": "Exactly ONE grounding source: `serverAttachmentId` or `environmentId`. Sending both is a 400 \u2014 a request that is already confused about what it wants should not have a winner picked for it.",
+        "required": [
+          "persona"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "serverAttachmentId": {
+            "type": "string"
+          },
+          "environmentId": {
+            "type": "string"
+          },
+          "journeyCount": {
+            "type": "integer"
+          },
+          "persona": {
+            "type": "object",
+            "description": "The persona to draft journeys FOR, passed BY VALUE rather than by id. Not an oversight: the create flow drafts a persona and its journeys before either exists, so requiring a persisted persona would force you to save a draft you may discard.",
+            "required": [
+              "name",
+              "role"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        }
+      },
+      "GenerationDrafts": {
+        "type": "object",
+        "description": "DRAFTS. Nothing here is persisted \u2014 feed what you want to keep to `POST /projects/{projectId}/personas` or `POST /projects/{projectId}/journeys`.\n\nThe shape depends on the request: `POST /personas/generate` returns `{persona, journeys}` without `personaCount` and `{personas: [{persona, journeys}]}` with it; `POST /journeys/generate` returns `{journeys}`.",
+        "additionalProperties": true,
+        "properties": {
+          "persona": {
+            "$ref": "#/components/schemas/PersonaDraft"
+          },
+          "personas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "persona": {
+                  "$ref": "#/components/schemas/PersonaDraft"
+                },
+                "journeys": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JourneyDraft"
+                  }
+                }
+              }
+            }
+          },
+          "journeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JourneyDraft"
+            }
+          }
+        }
+      },
+      "PersonaDraft": {
+        "type": "object",
+        "description": "A generated persona draft. Nothing is persisted until you create it.",
+        "required": [
+          "name",
+          "role"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      },
+      "JourneyDraft": {
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "suggestedChecks": {
+            "type": "array",
+            "description": "Deterministic checks the backend suggests. Only `toolCalledAtLeastOnce` is ever suggested \u2014 it is the one kind whose validity the grounding snapshot can prove, because the tool provably exists.",
+            "items": {
+              "type": "object",
+              "required": [
+                "type",
+                "toolName"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "toolCalledAtLeastOnce"
+                  ]
+                },
+                "toolName": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }

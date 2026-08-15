@@ -295,6 +295,48 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | `GET .../chatboxes` | List the project's published chatboxes: name, access mode, attached servers, share link |
 | `GET .../chatboxes/{chatboxId}` | One chatbox's settings: model, system prompt, tool-approval policy, resolved servers |
 
+**Swarms — authoring** (`/projects/{projectId}/personas...`, `.../journeys...`,
+`.../swarms...`) — the definitions a swarm run executes. A **persona** is a
+reusable synthetic character; a **journey** is the task you point one at; a
+**swarm** is an authoring container holding defaults for the journeys made
+under it. Nothing here starts anything — launching is
+`POST .../journeys/{journeyId}/runs`.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../personas` | List the project's personas |
+| `POST .../personas` | Create a persona (accepts `Idempotency-Key`) |
+| `GET .../personas/{personaId}` | One persona |
+| `PATCH .../personas/{personaId}` | Update a persona. Journeys reference it by id, so renaming is safe |
+| `DELETE .../personas/{personaId}` | Delete a persona. **409** while journeys still reference it |
+| `GET .../journeys/{journeyId}` | One journey |
+| `PATCH .../journeys/{journeyId}` | Update a journey. `null` CLEARS `environmentIds`; `sessionsPerTarget` and `maxTurns` must be sent together |
+| `DELETE .../journeys/{journeyId}` | **Archive** a journey — existing runs keep pointing at the definition they executed |
+| `GET .../swarms` | List swarm containers |
+| `POST .../swarms` | Create a swarm container (accepts `Idempotency-Key`) |
+| `GET .../swarms/{swarmId}` | One swarm |
+| `PATCH .../swarms/{swarmId}` | Update the container's defaults. Not a cascade — existing journeys keep their own values |
+| `DELETE .../swarms/{swarmId}` | **Archive** a swarm. The journeys under it stay launchable |
+
+**Swarms — generation** — drafts a model writes for you. Both routes return
+candidates and **persist nothing**: feed what you want to keep to the create
+routes above. That is also why neither accepts an `Idempotency-Key` — a call
+with no effect has nothing to de-duplicate, and offering one would imply the
+drafts are stable across retries when they are not.
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../personas/generate` | Draft a slate of personas (and journeys for each) grounded in a server attachment or an environment |
+| `POST .../journeys/generate` | Draft journeys for a persona passed **by value**, so you can draft before you save |
+
+<Warning>
+  The generation routes **spend** — they run models on your organization's
+  account. They are metered two ways, and the two mean different waits: a
+  per-minute burst brake (`429`, retry in seconds) and your plan's daily
+  budget (`429`, resets at UTC midnight). Both send `Retry-After`; honor it
+  rather than guessing.
+</Warning>
+
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.

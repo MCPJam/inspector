@@ -83,22 +83,7 @@ const KNOWN_UNDOCUMENTED = new Set([
   // Authoring — personas, journeys, swarm containers — and the generation that
   // drafts them. Same flag, same reason: these are the WRITES the gate exists
   // for, so they cannot be advertised in a document the flag cannot reach.
-  "get /projects/{projectId}/personas",
-  "post /projects/{projectId}/personas",
-  "get /projects/{projectId}/personas/{personaId}",
-  "patch /projects/{projectId}/personas/{personaId}",
-  "delete /projects/{projectId}/personas/{personaId}",
-  "post /projects/{projectId}/personas/generate",
-  "get /projects/{projectId}/journeys/{journeyId}",
   "post /projects/{projectId}/journeys",
-  "patch /projects/{projectId}/journeys/{journeyId}",
-  "delete /projects/{projectId}/journeys/{journeyId}",
-  "post /projects/{projectId}/journeys/generate",
-  "get /projects/{projectId}/swarms",
-  "post /projects/{projectId}/swarms",
-  "get /projects/{projectId}/swarms/{swarmId}",
-  "patch /projects/{projectId}/swarms/{swarmId}",
-  "delete /projects/{projectId}/swarms/{swarmId}",
   // The insights layer. Reads are ungated at the API like every other swarm
   // read, but they describe a beta product and belong with it in the spec.
   "get /projects/{projectId}/journeys-overview",

@@ -105,6 +105,20 @@ const PAIRS: Readonly<Record<string, string>> = {
   ChatboxDetail: "PlatformChatboxDetail",
   TunnelGrant: "PlatformTunnelGrant",
   TunnelClosed: "PlatformTunnelClosed",
+
+  // ── A1: Swarms authoring ──────────────────────────────────────────────
+  //
+  // `GenerationDrafts` is deliberately NOT paired: its SDK twin is an index
+  // signature (`{[field: string]: unknown}`) because the response shape
+  // depends on the request, so a field-by-field comparison would report every
+  // documented property as missing from a type that says "anything".
+  Persona: "PlatformPersona",
+  PersonaDeleted: "PlatformPersonaDeleted",
+  PersonaDraft: "PlatformPersonaDraft",
+  Journey: "PlatformJourney",
+  JourneyArchived: "PlatformJourneyArchived",
+  Swarm: "PlatformSwarm",
+  SwarmArchived: "PlatformSwarmArchived",
 };
 
 /**
