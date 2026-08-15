@@ -36,6 +36,7 @@ import { beforeAll, describe, it } from "vitest";
 import {
   assertGate,
   formatGateReport,
+  gateInputFromRunResult,
   gateInputFromSuiteResult,
   type EvalRunResult,
   type EvalSuite,
@@ -238,6 +239,11 @@ export type EvalTestVitestOptions = EvalSuiteVitestOptions;
  * Not implemented by wrapping the test in a throwaway `EvalSuite`: a suite
  * aggregates and uploads as a unit, so a synthetic one would change what is
  * reported for a case that is not part of any suite.
+ *
+ * `gate` is honoured here exactly as in `describeEvalSuite` — via
+ * `gateInputFromRunResult` rather than the suite variant. Accepting the option
+ * and ignoring it would be the worst outcome available: a policy that reports
+ * green because nothing evaluated it.
  */
 export function testEval(
   test: EvalTest,
@@ -259,5 +265,21 @@ export function testEval(
     it(title, () => {
       runAndAssertCase(run, name, () => test.getFailureReport());
     });
+
+    if (options.gate) {
+      it(GATE_TEST_TITLE, () => {
+        if (!run) {
+          throw new Error("The eval did not run, so it cannot be gated.");
+        }
+        try {
+          assertGate(
+            gateInputFromRunResult(run),
+            options.gate as GatePolicy
+          );
+        } catch (error) {
+          throw new Error(gateFailureMessage(error));
+        }
+      });
+    }
   });
 }

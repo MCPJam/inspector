@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:packaging": "node tests/packaging.e2e.mjs",
+    "prepack": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {

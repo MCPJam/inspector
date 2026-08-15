@@ -25,7 +25,7 @@ const corpus = loadCorpusFromLock(lock);
 
 describeEvalSuite("refund flows", corpus.toEvalSuite(), {
   factory: () => buildExecutor(),
-  run: { iterations: 5 },
+  run: { iterations: 25 },
   gate: {
     minimumPassRate: 0.9,
     maximumP95LatencyMs: 30_000,

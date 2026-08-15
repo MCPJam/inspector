@@ -15,7 +15,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { EvalSuite, EvalTest } from "@mcpjam/sdk";
-import { describeEvalSuite, planEvalSuite, runAndAssertCase } from "../src/index.js";
+import {
+  describeEvalSuite,
+  planEvalSuite,
+  runAndAssertCase,
+  testEval,
+} from "../src/index.js";
 import { StubExecutor } from "./support/stub-executor.js";
 
 function passingSuite(): EvalSuite {
@@ -51,6 +56,25 @@ describeEvalSuite("a hosted-style eval suite", passingSuite(), {
   gate: { minimumPassRate: 1 },
   hookTimeoutMs: 30_000,
 });
+
+// The single-test seat, with a gate. Registers "a standalone eval" and
+// "eval gate" — the gate test exists here to prove `testEval` HONOURS the
+// policy rather than accepting the option and dropping it.
+testEval(
+  new EvalTest({
+    name: "a standalone eval",
+    test: async (executor) => {
+      await executor.run("hello");
+      return true;
+    },
+  }),
+  {
+    executor: new StubExecutor({ text: "ok" }),
+    run: { iterations: 1, mcpjam: { enabled: false } },
+    gate: { minimumPassRate: 1 },
+    hookTimeoutMs: 30_000,
+  }
+);
 
 describe("registration", () => {
   it("plans one case per test plus a gate", () => {

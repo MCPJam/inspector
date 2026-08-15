@@ -31,8 +31,10 @@ export function stubResult(prompt: string, turn: StubTurn): PromptResult {
 /**
  * Answers every prompt with the same canned turn.
  *
- * `withOptions` returns `this`: the wrapper never calls it, and returning a
- * fresh stub would quietly discard the prompt history tests assert on.
+ * `withOptions` returns `this` because `EvalTest.run` calls it once per
+ * iteration (to attach an abort signal). Returning a fresh stub there would
+ * hand each iteration its own empty prompt history, discarding the record
+ * tests assert on.
  */
 export class StubExecutor implements HostExecutor {
   private history: PromptResult[] = [];

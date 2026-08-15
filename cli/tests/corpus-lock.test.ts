@@ -166,7 +166,10 @@ describe("readCorpusLock", () => {
           cases: [{ ...soundRow, scenarioKey: "external:somethingelse" }] as never,
         }),
       },
-      ...[0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY].map((iterations) => ({
+      // Only values JSON can actually carry. `NaN` and `Infinity` serialize to
+      // `null`, so listing them here would claim coverage of guards that the
+      // `null` case is really what exercises.
+      ...[0, -1, 1.5, null].map((iterations) => ({
         label: `an iteration count of ${String(iterations)}`,
         lock: lockFixture({ cases: [{ ...soundRow, iterations }] as never }),
       })),
