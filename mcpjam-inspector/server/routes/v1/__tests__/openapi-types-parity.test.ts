@@ -127,6 +127,18 @@ const PAIRS: Readonly<Record<string, string>> = {
   JourneyRunSession: "PlatformJourneyRunSession",
   JourneyRunLaunched: "PlatformJourneyRunLaunched",
   JourneyRunCanceled: "PlatformJourneyRunCanceled",
+
+  // ── A3: Swarm insights ────────────────────────────────────────────────
+  ScorecardCriterion: "PlatformScorecardCriterion",
+  RunScorecard: "PlatformRunScorecard",
+  SwarmFinding: "PlatformSwarmFinding",
+  FindingDismissed: "PlatformFindingDismissed",
+  SwarmOverviewFinding: "PlatformSwarmOverviewFinding",
+  SwarmOverviewRun: "PlatformSwarmOverviewRun",
+  SwarmOverview: "PlatformSwarmOverview",
+  WaveInsights: "PlatformWaveInsights",
+  WaveInsightsRequested: "PlatformWaveInsightsRequested",
+  WaveInsightsCanceled: "PlatformWaveInsightsCanceled",
 };
 
 /**

@@ -37,6 +37,10 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
   // Same shape on the swarm side, for the same reason.
   "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  // Dismissal is addressed entirely by the path findingId — there is nothing
+  // to say about it beyond which finding.
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
@@ -82,14 +86,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   "post /projects/{projectId}/journeys",
   // The insights layer. Reads are ungated at the API like every other swarm
   // read, but they describe a beta product and belong with it in the spec.
-  "get /projects/{projectId}/journeys-overview",
-  "get /projects/{projectId}/journey-runs/{runId}/scorecard",
-  "get /projects/{projectId}/journey-findings",
-  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
-  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
-  "get /projects/{projectId}/waves/{waveId}/insights",
-  "post /projects/{projectId}/waves/{waveId}/insights",
-  "delete /projects/{projectId}/waves/{waveId}/insights",
   // Same flag, same reason (`sandboxes-enabled` gates both products).
   "put /projects/{projectId}/environments/{environmentId}/scenario",
   "delete /projects/{projectId}/environments/{environmentId}/scenario",

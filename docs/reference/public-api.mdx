@@ -371,6 +371,47 @@ Three things worth knowing before you write the client:
   Both send `Retry-After`.
 </Warning>
 
+**Swarms — insights** — what a run revealed. Read these in order of cost: the
+roll-up and the scorecard are deterministic and free, the findings registry
+aggregates them, and wave insights run a model.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../journeys-overview` | Project roll-up: recent runs, goal-completion rates, repeat failures, trend |
+| `GET .../journey-runs/{runId}/scorecard` | One run's deterministic rubric result. No model, no spend |
+| `GET .../journey-findings` | Criteria that keep failing, tracked across waves |
+| `POST .../journey-findings/{findingId}/dismiss` | Hide a finding |
+| `POST .../journey-findings/{findingId}/undismiss` | Un-hide it |
+| `GET .../waves/{waveId}/insights` | Poll a wave's generated insights. **404 = nobody asked** |
+| `POST .../waves/{waveId}/insights` | Request them. `202` — scheduled, not done |
+| `DELETE .../waves/{waveId}/insights` | Cancel a generation still `pending` |
+
+Two arithmetic traps worth naming, because both produce numbers that look
+plausible and are wrong:
+
+- **Divide by `sessionsGraded`, never by the session total.** Three failures
+  out of four graded sessions, in a run that attempted forty, is 75% — not
+  7.5%.
+- **`failedGradingCount` is not `failCount`.** A crashed judge is not a
+  regression, and folding the two together makes one look like the other.
+
+And one modelling note: a finding's `status` is a lifecycle —
+`new | recurring | regressed | resolved`. `dismissed` is *not* one of them.
+Dismissal is the orthogonal `dismissedAt`, so a finding can be both recurring
+and dismissed, and hiding one never claims it stopped happening.
+
+<Warning>
+  Requesting wave insights **spends**, and draws on the `insightsPerDay`
+  ledger that is **shared** with eval-run and user-testing insights — burning
+  it here takes it from there too. Poll the `GET` rather than re-requesting;
+  `force: true` deliberately spends a second time.
+
+  Three refusals, three different meanings: a short `429` is the per-minute
+  brake (wait seconds), a `429` naming `insightsPerDay` is the daily ledger
+  (`Retry-After` counts to UTC midnight), and a `403` means the feature is not
+  available to your organization — waiting will never help.
+</Warning>
+
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.

@@ -88,6 +88,10 @@
     {
       "name": "Swarm runs",
       "description": "Launching journeys and reading what they produced. Launching SPENDS \u2014 see the per-operation notes."
+    },
+    {
+      "name": "Swarm insights",
+      "description": "What a swarm run revealed. The scorecard and findings are deterministic and free; requesting wave insights runs models and draws on your shared daily ledger."
     }
   ],
   "paths": {
@@ -6486,6 +6490,360 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/journeys-overview": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "getSwarmOverview",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "Project swarm roll-up",
+        "description": "Recent runs with their goal-completion rates and repeat-failure findings, plus a project-wide trend. Deterministic and free \u2014 start here.",
+        "responses": {
+          "200": {
+            "description": "The roll-up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwarmOverview"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journey-runs/{runId}/scorecard": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/runId"
+        }
+      ],
+      "get": {
+        "operationId": "getJourneyRunScorecard",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "Get a run's rubric scorecard",
+        "description": "The deterministic rubric result for one run. No model, no spend.\n\nDivide by `sessionsGraded`, never `sessionsTotal`, and keep `failedGradingCount` separate from `failCount` \u2014 a crashed judge is not a regression.",
+        "responses": {
+          "200": {
+            "description": "The scorecard.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunScorecard"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journey-findings": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "listSwarmFindings",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "List swarm findings",
+        "description": "Criteria that keep failing, tracked across waves. One finding is one problem OVER TIME \u2014 `occurrenceCount` and `status` carry the history, so do not treat repeat appearances as separate problems.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/cursorBody"
+        },
+        "responses": {
+          "200": {
+            "description": "A page of findings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwarmFindingPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journey-findings/{findingId}/dismiss": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/findingId"
+        }
+      ],
+      "post": {
+        "operationId": "dismissSwarmFinding",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "Dismiss a finding",
+        "description": "Hides a finding from your view. ORTHOGONAL to `status`: dismissing does not claim the problem stopped happening, and a dismissed finding that fires again stays `recurring`.\n\nAddressed entirely by the path `findingId` \u2014 there is no body.",
+        "responses": {
+          "200": {
+            "description": "The finding was dismissed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingDismissed"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/journey-findings/{findingId}/undismiss": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/findingId"
+        }
+      ],
+      "post": {
+        "operationId": "undismissSwarmFinding",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "Undismiss a finding",
+        "description": "Reverses a dismissal. Bodyless, like its twin.",
+        "responses": {
+          "200": {
+            "description": "The finding was undismissed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingDismissed"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/waves/{waveId}/insights": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/waveId"
+        }
+      ],
+      "get": {
+        "operationId": "getWaveInsights",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "Get wave insights",
+        "description": "Poll this after requesting insights. **404 means nobody asked** \u2014 it is deliberately not an empty `status: \"none\"` body, so a caller in a polling loop cannot mistake \"never requested\" for \"asked and still working\".",
+        "responses": {
+          "200": {
+            "description": "The wave's insights.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaveInsights"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "requestWaveInsights",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "Request wave insights",
+        "description": "Answers **202**: generation is scheduled, not done. Poll the GET above rather than re-requesting.\n\n**SPENDS.** This runs models on your organization's account and draws on the `insightsPerDay` ledger, which is SHARED with eval-run and user-testing insights \u2014 burning it here takes it from there too.\n\nThree refusals, and they mean different things:\n- `429` with `code: \"RATE_LIMITED\"` and a short `Retry-After` \u2014 the per-minute burst brake. Wait seconds.\n- `429` naming `insightsPerDay` in `details` \u2014 the daily ledger. `Retry-After` counts to UTC midnight.\n- `403` \u2014 the feature is not available to your organization. Waiting will never help; collapsing this into the 429s would send someone who hit today's cap shopping for a plan they already have.",
+        "requestBody": {
+          "required": false,
+          "description": "Optional. Omit the body entirely for the common case.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaveInsightsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Generation was scheduled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaveInsightsRequested"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelWaveInsights",
+        "tags": [
+          "Swarm insights"
+        ],
+        "summary": "Cancel a pending wave-insights generation",
+        "description": "Stops a generation that is still `pending`. A wave with no generation in progress answers 409 \u2014 there is nothing to cancel, and reporting success would tell a caller it stopped something it did not.",
+        "responses": {
+          "200": {
+            "description": "The generation was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaveInsightsCanceled"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -12620,6 +12978,559 @@
           "finalized": {
             "type": "integer",
             "description": "Attempts this call moved to terminal. Zero on an idempotent replay."
+          }
+        }
+      },
+      "ScorecardCriterion": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "passCount",
+          "failCount",
+          "pendingCount",
+          "failedGradingCount"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "passCount": {
+            "type": "integer"
+          },
+          "failCount": {
+            "type": "integer"
+          },
+          "pendingCount": {
+            "type": "integer",
+            "description": "Claimed for grading and unfinished \u2014 includes crashed runners."
+          },
+          "failedGradingCount": {
+            "type": "integer",
+            "description": "Sessions whose GRADING broke. Deliberately separate from `failCount`: folding them together makes a crashed judge look like a regression."
+          }
+        }
+      },
+      "RunScorecard": {
+        "type": "object",
+        "description": "Deterministic rubric result for one run. NO MODEL IS INVOLVED and nothing is spent \u2014 reach for this before the model-generated wave insights, which usually is not the question you actually have.",
+        "required": [
+          "runId",
+          "criteria",
+          "sessionsTotal",
+          "sessionsGraded"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "criteria": {
+            "type": "array",
+            "description": "EVERY criterion the run's rubric declared, in snapshot order \u2014 including ones nothing was graded against. An absent row would be indistinguishable from a criterion that was never configured.",
+            "items": {
+              "$ref": "#/components/schemas/ScorecardCriterion"
+            }
+          },
+          "sessionsTotal": {
+            "type": "integer"
+          },
+          "sessionsGraded": {
+            "type": "integer",
+            "description": "The DENOMINATOR for any rate you compute. Never divide by `sessionsTotal` \u2014 3 failures of 4 graded sessions out of 40 attempted is not 7.5%."
+          }
+        }
+      },
+      "SwarmFinding": {
+        "type": "object",
+        "description": "A criterion that keeps failing, tracked ACROSS waves. One finding is one problem over time, not one row per occurrence.",
+        "required": [
+          "id",
+          "fingerprint",
+          "dimension",
+          "subject",
+          "status",
+          "occurrenceCount",
+          "lastSeenWaveId",
+          "firstSeenAt",
+          "lastSeenAt",
+          "resolvedAt",
+          "dismissedAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "Stable identity across waves \u2014 this is what makes a streak a streak rather than a new finding each time."
+          },
+          "dimension": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "label"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "description": "Identity. The fingerprint is built from this, never from the label."
+              },
+              "label": {
+                "type": "string",
+                "description": "Display only; refreshed on every firing so renames show through."
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "description": "A LIFECYCLE: first seen, seen again, came back after being resolved, stopped firing. Note what is NOT here \u2014 `dismissed` is not a status. Dismissal is the orthogonal `dismissedAt` below, so a finding can be both recurring and dismissed.",
+            "enum": [
+              "new",
+              "recurring",
+              "regressed",
+              "resolved"
+            ]
+          },
+          "occurrenceCount": {
+            "type": "integer"
+          },
+          "lastSeenWaveId": {
+            "type": "string"
+          },
+          "firstSeenAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "lastSeenAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "resolvedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "dismissedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds. ORTHOGONAL to `status` \u2014 dismissing hides a finding from your view without claiming it stopped happening."
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "SwarmFindingPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmFinding"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists."
+          }
+        }
+      },
+      "FindingDismissed": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "dismissed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "dismissed": {
+            "type": "boolean",
+            "description": "The finding's dismissal state AFTER this call."
+          }
+        }
+      },
+      "SwarmOverviewFinding": {
+        "type": "object",
+        "required": [
+          "criterionId",
+          "label",
+          "kind",
+          "failCount",
+          "pendingCount",
+          "failedGradingCount",
+          "sessionsGraded",
+          "runStreak"
+        ],
+        "properties": {
+          "criterionId": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failCount": {
+            "type": "integer"
+          },
+          "pendingCount": {
+            "type": "integer"
+          },
+          "failedGradingCount": {
+            "type": "integer"
+          },
+          "sessionsGraded": {
+            "type": "integer",
+            "description": "The DENOMINATOR for any rate you compute. Never divide by the session total."
+          },
+          "runStreak": {
+            "type": "integer",
+            "description": "Consecutive runs of this journey where the criterion failed."
+          }
+        }
+      },
+      "SwarmOverviewRun": {
+        "type": "object",
+        "required": [
+          "runId",
+          "journeyId",
+          "journeyName",
+          "journeyArchived",
+          "personaName",
+          "status",
+          "summary",
+          "goalCompletion",
+          "findings",
+          "targets",
+          "createdAt"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "journeyId": {
+            "type": "string"
+          },
+          "journeyName": {
+            "type": "string"
+          },
+          "journeyArchived": {
+            "type": "boolean",
+            "description": "The run stays readable after its journey is archived; this is how you tell."
+          },
+          "personaName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "waveId": {
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/JourneyRunSummary"
+          },
+          "goalCompletion": {
+            "description": "`null` when nothing has been graded \u2014 never zeroes, which would read as \"everything failed\".",
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "gradedCount",
+                  "passedCount",
+                  "avgScore",
+                  "pendingCount",
+                  "failedCount"
+                ],
+                "properties": {
+                  "gradedCount": {
+                    "type": "integer"
+                  },
+                  "passedCount": {
+                    "type": "integer"
+                  },
+                  "avgScore": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "pendingCount": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "failedCount": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmOverviewFinding"
+            }
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "hostName",
+                "modelId"
+              ],
+              "properties": {
+                "hostName": {
+                  "type": "string"
+                },
+                "modelId": {
+                  "type": "string"
+                },
+                "environmentName": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "SwarmOverview": {
+        "type": "object",
+        "description": "Project-wide roll-up across recent runs. Deterministic; nothing is spent.",
+        "required": [
+          "runs",
+          "runsConsidered",
+          "goalCompletion"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmOverviewRun"
+            }
+          },
+          "runsConsidered": {
+            "type": "integer",
+            "description": "How many runs the roll-up scanned. Bounded \u2014 this is not \"all runs ever\"."
+          },
+          "goalCompletion": {
+            "type": "object",
+            "required": [
+              "gradedCount",
+              "passedCount",
+              "passRate",
+              "runsWithGrades",
+              "trend"
+            ],
+            "properties": {
+              "gradedCount": {
+                "type": "integer"
+              },
+              "passedCount": {
+                "type": "integer"
+              },
+              "passRate": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "`null` when nothing is graded yet \u2014 never `0`, which would read as \"everything failed\"."
+              },
+              "runsWithGrades": {
+                "type": "integer"
+              },
+              "trend": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "dayStartMs",
+                    "gradedCount",
+                    "passedCount",
+                    "passRate"
+                  ],
+                  "properties": {
+                    "dayStartMs": {
+                      "type": "number",
+                      "description": "UTC day start, epoch milliseconds."
+                    },
+                    "gradedCount": {
+                      "type": "integer"
+                    },
+                    "passedCount": {
+                      "type": "integer"
+                    },
+                    "passRate": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "WaveInsights": {
+        "type": "object",
+        "description": "Model analysis over a whole wave. Produced asynchronously \u2014 POLL this rather than re-requesting, because a second request SPENDS again.",
+        "required": [
+          "waveId",
+          "status",
+          "insights",
+          "discovery",
+          "errorCode",
+          "errorMessage",
+          "updatedAt"
+        ],
+        "properties": {
+          "waveId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "completed",
+              "failed"
+            ]
+          },
+          "insights": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The DIRECTED lane: an explanation of the findings the deterministic pass already surfaced. `null` until generation completes. An opaque object \u2014 read it, do not pattern-match its internals.",
+            "additionalProperties": true
+          },
+          "discovery": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The DISCOVERY lane: what the model noticed unprompted. `null` while only the directed lane has finished, which is a normal intermediate state rather than a failure. Opaque, like `insights`.",
+            "additionalProperties": true
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "WaveInsightsRequested": {
+        "type": "object",
+        "required": [
+          "waveId",
+          "projectId",
+          "status"
+        ],
+        "properties": {
+          "waveId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
+          }
+        }
+      },
+      "WaveInsightsCanceled": {
+        "type": "object",
+        "required": [
+          "waveId",
+          "projectId",
+          "canceled"
+        ],
+        "properties": {
+          "waveId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "canceled": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "WaveInsightsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Regenerate over a wave that already has insights. OFF by default because it SPENDS a second time against your organization's shared daily ledger \u2014 and the common cause of a repeated request is a caller that did not poll."
           }
         }
       }
