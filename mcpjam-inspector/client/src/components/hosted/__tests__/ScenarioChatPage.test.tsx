@@ -289,6 +289,29 @@ describe("ScenarioChatPage", () => {
     );
   });
 
+  it("does not brand the shell as Claude while the link is still redeeming", async () => {
+    // Reported by testers on an org-invited scenario: the header showed the
+    // Claude mark and the word "Claude" for the whole load, on a scenario that
+    // wasn't a Claude host at all. The redeem is held open here so the
+    // bootstrapping frame is the one under assertion.
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = render(<ScenarioChatPage pathToken="tok_loading" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      container.querySelector('[data-host-style="claude"]')
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="mcpjam"]')
+    ).toBeInTheDocument();
+    // No host identity is claimed until the redeem says which host this is —
+    // painting one brand and swapping to another reads as a glitch.
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+  });
+
   // Removed: "uses the Claude loading indicator variant for Claude-style
   // hosted scenarios". The indicator no longer flows through a
   // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads

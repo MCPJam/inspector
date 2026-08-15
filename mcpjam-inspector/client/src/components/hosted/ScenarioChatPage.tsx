@@ -59,6 +59,7 @@ import {
   getScenarioHostLogo,
   getScenarioShellStyle,
 } from "@/lib/scenario-client-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
 
 interface ScenarioChatPageProps {
   pathToken?: string | null;
@@ -952,7 +953,11 @@ export function ScenarioChatPage({
     [markOAuthRequired]
   );
 
-  const hostStyle = session?.payload.hostStyle ?? "claude";
+  // Before the redeem resolves we don't know which host this scenario
+  // emulates. Seeding "claude" made every tester watch a Claude-branded shell
+  // load a Cursor scenario; DEFAULT_HOST_STYLE is MCPJam precisely so
+  // unresolved surfaces don't impersonate a vendor.
+  const hostStyle = session?.payload.hostStyle ?? DEFAULT_HOST_STYLE.id;
   const chatUiOverride = session?.payload.chatUiOverride;
   const shellStyle = getScenarioShellStyle(hostStyle, themeMode, chatUiOverride);
   const clientLabel = getScenarioHostLabel(hostStyle, chatUiOverride);
@@ -1156,14 +1161,26 @@ export function ScenarioChatPage({
                             the scenario's internal name is the author's
                             label for it and means nothing to them. */}
                         <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <img
-                            src={clientLogoSrc}
-                            alt=""
-                            className="size-5 shrink-0 object-contain"
-                          />
-                          <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">
-                            {clientLabel}
-                          </h1>
+                          {session ? (
+                            <>
+                              <img
+                                src={clientLogoSrc}
+                                alt=""
+                                className="size-5 shrink-0 object-contain"
+                              />
+                              <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">
+                                {clientLabel}
+                              </h1>
+                            </>
+                          ) : (
+                            // Placeholder rather than the default host's mark:
+                            // painting one brand and swapping to another once
+                            // the redeem lands reads as a glitch.
+                            <div
+                              aria-hidden
+                              className="h-5 w-28 animate-pulse rounded bg-muted"
+                            />
+                          )}
                         </div>
                         <button
                           onClick={handleOpenMcpJam}
