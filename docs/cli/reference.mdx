@@ -634,6 +634,54 @@ Both pin fields are narrower than they look:
 
 ---
 
+## `scenarios` commands
+
+Publish project environments for user testing and take them down again. All `scenarios` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`. Publishing is behind a per-organization beta flag; unpublishing is not gated so you can always take a live scenario down.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `scenarios publish`
+
+Publish an environment as a scenario and print its share link. Idempotent — re-publishing an already-published environment returns the existing scenario with `created: false`.
+
+`--name`, `--description`, and `--mode` are **create-time only**: they are applied in the same call that creates the scenario, so the link is never briefly live in a wider mode than you asked for. On a re-publish they are ignored and the response includes `overridesIgnored: true`. To change an existing scenario's name, description, or mode, use `mcpjam user-testing update`.
+
+A misspelled `--mode` value is caught locally and reported as a usage error before any network call.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id>` | Yes | Project environment ID to publish |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--name <name>` | No | Scenario name (create time only) |
+| `--description <text>` | No | Scenario description (create time only) |
+| `--mode <mode>` | No | Who may open the share link (create time only): `project_members`, `invited_only`, or `anyone_with_link` |
+
+```bash
+# Publish with default access
+mcpjam scenarios publish --environment env_abc123
+
+# Publish and restrict to invited users only, with a custom name
+mcpjam scenarios publish --environment env_abc123 \
+  --name "Beta feedback" \
+  --mode invited_only
+```
+
+### `scenarios unpublish`
+
+Take an environment's scenario down, invalidating its share link and any live guest sessions. Idempotent.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id>` | Yes | Project environment ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
 ## `images` commands
 
 Manage custom Computer sandbox images in your hosted MCPJam projects. An image is defined by a **blueprint** — YAML with a digest-pinned `base` image, `initialize` steps baked into the image at build time, and `maintenance` / `knowledge` text delivered to the agent at runtime (never executed automatically):
