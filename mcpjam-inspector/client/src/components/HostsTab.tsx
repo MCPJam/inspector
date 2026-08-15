@@ -470,6 +470,7 @@ export function HostsTab({
                   <ConnectViewHeader
                     value="servers"
                     previewedHostId={previewedHostId}
+                    projectId={projectId}
                     onChange={(next) => {
                       // `onSelectHost` is wired to `handleSelectHost` in
                       // HostsRoute, which itself calls `navigate(buildHostsPath(...))`

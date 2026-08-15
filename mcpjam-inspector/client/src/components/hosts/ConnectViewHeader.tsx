@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { HostCanvasSelector } from "@/components/hosts/redesigned/HostCanvasSelector";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import { track } from "@/lib/analytics";
 
@@ -15,6 +17,17 @@ export type ConnectViewValue =
 interface ConnectViewHeaderProps {
   value: ConnectViewValue;
   previewedHostId: string | null;
+  /**
+   * Renders the client selector in the left column when set. Connect's
+   * connection behavior differs per client, so the control belongs beside the
+   * view it changes rather than in the global nav bar (PUR-21) — and the host
+   * canvas already mounts the same selector in the same column, so switching
+   * between Connect's views never moves it.
+   *
+   * Omitted where there is no project to read clients from (local mode with
+   * no cloud project), which leaves the column empty exactly as before.
+   */
+  projectId?: string | null;
   onChange: (next: ConnectViewValue) => void;
   /**
    * Optional content placed in the third grid column (typically the
@@ -28,6 +41,7 @@ interface ConnectViewHeaderProps {
 export function ConnectViewHeader({
   value,
   previewedHostId,
+  projectId,
   onChange,
   rightSlot,
   testId = "hosts-tab-header-chrome",
@@ -65,7 +79,27 @@ export function ConnectViewHeader({
           and the container — not the window — is narrow. Below the container
           breakpoint the selector and right slot stack into one column. */}
       <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
-        <div className="hidden @2xl:block" aria-hidden="true" />
+        {/* Same column, same component, same position as the host canvas
+            mounts it (see HostBuilderViewRedesigned) — so the client selector
+            never moves as the user switches between Connect's views.
+            Gated on `shouldQueryProjectId`, not bare truthiness: a
+            local/placeholder or UUID project id mid-transition is truthy but
+            `useHostList` skips it, which would otherwise leave this selector
+            on a permanent loading skeleton instead of the empty column it
+            renders while there's genuinely no project to read clients from. */}
+        {projectId && shouldQueryProjectId(projectId) ? (
+          <div className="flex min-w-0 justify-center @2xl:justify-start">
+            <HostCanvasSelector
+              projectId={projectId}
+              activeHostId={previewedHostId}
+              // These views don't render a client the way the canvas does, so
+              // switching must leave the user on Servers/Computer/Skills.
+              syncCanvasRoute={false}
+            />
+          </div>
+        ) : (
+          <div className="hidden @2xl:block" aria-hidden="true" />
+        )}
         <div className="flex min-w-0 justify-center">
           <ViewModeSelector
             value={value}

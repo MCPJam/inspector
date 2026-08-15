@@ -245,4 +245,37 @@ describe("HostCanvasSelector", () => {
     expect(deleteBtn).not.toBeDisabled();
     expect(deleteBtn).not.toHaveAttribute("title");
   });
+
+  it("persists the fallback host as the previewed host when no client is previewed yet", () => {
+    render(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
+
+    // A fresh project has no previewed host in storage — the pill falls back
+    // to the first client for display, but callers reading the previewed
+    // host directly (ConnectViewHeader's disabled "Client" tab, the global
+    // HostOverlayBar's own visibility check) need that fallback persisted,
+    // not just shown here.
+    expect(mockSetPreviewedHostId).toHaveBeenCalledWith("host-a");
+  });
+
+  it("does not overwrite an already-resolved previewed host", () => {
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
+  });
+
+  it("persists the fallback host when the requested id is stale (host deleted elsewhere)", () => {
+    // Same fallback path as a null id: the pill falls back to displaying the
+    // first host, but the caller's own state still points at the dead id
+    // until this persists the host actually on screen.
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="deleted-host" />);
+
+    expect(mockSetPreviewedHostId).toHaveBeenCalledWith("host-a");
+  });
+
+  it("does not persist a fallback while the host list is still loading", () => {
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: true });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
+
+    expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
+  });
 });

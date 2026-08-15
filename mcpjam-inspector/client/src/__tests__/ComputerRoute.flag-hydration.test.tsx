@@ -15,14 +15,18 @@ const { mockRouteContext, mockNavigate } = vi.hoisted(() => ({
   mockNavigate: vi.fn(),
 }));
 
+// A full replacement, so every export the module has must be listed here or
+// its consumers throw at render. `useLocalComputerEnabled` arrived with the
+// local-engine dark launch (#3851) and `useComputerEngine` calls it, which is
+// reached through ComputerTabView once the guard lets the route render.
+//
+// Off, matching the real hook's fail-closed default — this test is about the
+// COMPUTERS flag's hydration window, and a live local engine would only add
+// state it doesn't exercise.
 vi.mock("../hooks/useComputersEnabled", () => ({
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => flagState,
   useComputersEnabled: () => flagState === true,
-  // The local-engine dark-launch flag lives in the same module and is read by
-  // `useComputerEngine`, which this route renders through `ComputerTabView`.
-  // This mock replaces the module wholesale, so omitting the export throws
-  // rather than falling through to the real hook.
   LOCAL_COMPUTER_FEATURE_FLAG: "local-computer-enabled",
   useLocalComputerEnabled: () => false,
 }));

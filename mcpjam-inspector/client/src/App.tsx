@@ -321,6 +321,40 @@ const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 const FIRST_RUN_PLAYGROUND_ROLLOUT_MS = Date.parse("2026-06-16T00:00:00.000Z");
 const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
 
+/**
+ * Tabs that show the client selector in the GLOBAL header bar.
+ *
+ * An ALLOW-list, deliberately (PUR-21). It used to be a deny-list, which meant
+ * every screen added since inherited a client selector by default and someone
+ * had to remember to opt out — nobody did, so it turned up on Registry and
+ * Support, where the active client changes nothing. Matches how
+ * `shouldShowActiveServerSelector` already scopes the server picker.
+ *
+ * Values are nav segments (`pathnameToActiveTab` output), NOT surface ids —
+ * the Hosts surface's segment is `clients`. See shared/app-surfaces.ts.
+ *
+ * Connect is absent on purpose: its views mount the same selector in their own
+ * nav row via `ConnectViewHeader` / `HostBuilderViewRedesigned`, beside the
+ * canvas it acts on. `clients` stays only for bare `/hosts` with no client
+ * previewed yet, where the canvas selector has nothing to render and this is
+ * the only way to pick one.
+ */
+const HOST_BAR_TABS: ReadonlySet<string> = new Set([
+  "clients",
+  "host-compare",
+  // Server-scoped screens whose results depend on the active client. Left
+  // untouched by PUR-21 pending a product call on whether the client selector
+  // earns its place next to their existing server picker.
+  "tools",
+  "resources",
+  "prompts",
+  "tasks",
+  "conformance",
+  "compatibility",
+  "tracing",
+  "auth",
+]);
+
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
   const error = params.get("error");
@@ -1247,6 +1281,7 @@ export function ComputerRoute() {
       <ConnectViewHeader
         value="computer"
         previewedHostId={previewedHostId}
+        projectId={convexProjectId}
         onChange={(next) => {
           if (next === "servers") {
             navigate(routePaths.servers);
@@ -1816,6 +1851,7 @@ export function SkillsRoute() {
       <ConnectViewHeader
         value="skills"
         previewedHostId={previewedHostId}
+        projectId={convexProjectId}
         onChange={(next) => {
           if (next === "servers") {
             navigate(routePaths.servers);
@@ -4378,22 +4414,10 @@ export default function App() {
         }
       : undefined;
 
-  const isEvalsTab = activeTab === "evals";
   const globalHostBarProps =
     isAuthenticated &&
     convexProjectId &&
-    !isEvalsTab &&
-    // The playground has its own client chip in the chat-input toolbar
-    // (switch / compare / add host), so the global host bar is redundant
-    // there. User Testing and Swarms are project-scoped lists, not per-host
-    // screens, so a global host selector would be selecting nothing.
-    activeTab !== "playground" &&
-    activeTab !== "chatboxes" &&
-    activeTab !== "swarms" &&
-    // The OAuth / XAA debuggers target a specific server via their own server
-    // picker; the global host/client bar is irrelevant there.
-    activeTab !== "oauth-flow" &&
-    activeTab !== "xaa-flow"
+    HOST_BAR_TABS.has(activeTab)
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
