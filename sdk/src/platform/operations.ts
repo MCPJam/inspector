@@ -36,6 +36,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
@@ -2423,6 +2424,52 @@ export const getEvalRunOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const compareEvalRunInput = evalRunScopedInput.extend({
+  baseRunId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite.",
+    ),
+});
+
+export type CompareEvalRunInput = z.infer<typeof compareEvalRunInput>;
+
+export type CompareEvalRunResult = {
+  project: SelectedProjectInfo;
+  compare: PlatformRunCompare;
+};
+
+export const compareEvalRunOperation: PlatformOperation<
+  CompareEvalRunInput,
+  CompareEvalRunResult
+> = {
+  name: "compare_eval_run",
+  title: "Compare MCPJam eval runs",
+  description:
+    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
+  readOnly: true,
+  inputSchema: compareEvalRunInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const compare = await client.compareEvalRun(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        baseRunId: input.baseRunId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), compare };
   },
 };
 
@@ -7187,6 +7234,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,

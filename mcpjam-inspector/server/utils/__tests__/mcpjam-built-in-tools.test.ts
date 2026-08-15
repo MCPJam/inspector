@@ -149,6 +149,7 @@ describe("workspace tool catalog", () => {
       "run_eval_case",
       "run_eval_suite",
       "get_eval_run",
+      "compare_eval_run",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",

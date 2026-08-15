@@ -30,6 +30,7 @@ import type {
   PlatformJourneyArchived,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformRunCompare,
   PlatformRunScorecard,
   PlatformGuestExecution,
   PlatformScenario,
@@ -1064,6 +1065,44 @@ export class PlatformApiClient {
         params.runId,
       )}/iterations/${encodeURIComponent(params.iterationId)}/steps`,
       {},
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-runs/{runId}/compare` — this run against a
+   * baseline.
+   *
+   * Omitting `baseRunId` selects the nearest earlier COMPLETED run in the same
+   * suite. Baseline resolution is server-side on purpose: `listEvalSuiteRuns`
+   * has no cursor, so a client-side walk cannot be bounded-correct, and the
+   * policy belongs beside the backend's other baseline resolvers.
+   *
+   * THROWS `PlatformApiError` (404, `details.reason === "BASELINE_NOT_FOUND"`)
+   * when no baseline resolves — a suite's first run, or one whose whole lookup
+   * window never completed. That is an incomplete comparison, not a failing
+   * one; callers must not map it to a regression.
+   */
+  compareEvalRun(
+    params: {
+      projectId: string;
+      runId: string;
+      baseRunId?: string;
+      previewChars?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRunCompare> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/compare`,
+      {
+        query: {
+          baseRunId: params.baseRunId,
+          previewChars: params.previewChars,
+        },
+      },
       options,
     );
   }

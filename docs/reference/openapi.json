@@ -1952,6 +1952,60 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/compare": {
+      "get": {
+        "operationId": "compareEvalRun",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Compare a run against a baseline",
+        "description": "Compare this run against a baseline run: per-case status (`regressed`, `fixed`, `new_case`, `removed_case`, `changed`), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. Omit `baseRunId` to compare against the nearest earlier **completed** run in the same suite. Returns `404` with `details.reason` = `BASELINE_NOT_FOUND` when there is no comparable predecessor — that is an incomplete comparison, not a failing one. A scorer whose `definitionChanged` is `true` was graded by a different definition on each side, so its delta is not a regression.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          },
+          {
+            "name": "baseRunId",
+            "in": "query",
+            "required": false,
+            "description": "Run ID to compare against. Omit to use the nearest earlier completed run in the same suite.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The comparison.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunCompare"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-runs/{runId}/iterations": {
       "get": {
         "operationId": "listEvalRunIterations",
@@ -9987,6 +10041,487 @@
             "description": "The common actionable-insights envelope. Present on the DETAIL response only \u2014 lists stay compact \u2014 and absent when the caller may not have it or the deployment cannot produce one. Treat absence exactly like `status: \"not_available\"`."
           }
         }
+      },
+      "NumericDiff": {
+        "description": "A base/compare pair with its delta. Rate-valued instances are FRACTIONS unless the field name ends in `Percent`.",
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "compare": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "percentDelta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "base",
+          "compare",
+          "delta",
+          "percentDelta"
+        ]
+      },
+      "ScoreContractSide": {
+        "type": "object",
+        "properties": {
+          "evaluationConfigHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scoreIntegrity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "valid",
+              "invalid",
+              null
+            ],
+            "description": "`null` means no verdict was produced. A gate must treat it exactly like `invalid` — absent evidence is not valid evidence."
+          },
+          "scoredIterations": {
+            "type": "integer"
+          },
+          "quarantinedIterations": {
+            "type": "integer",
+            "description": "Iterations with at least one row that failed to verify at ingest. Counted here, and excluded from every rate."
+          }
+        },
+        "required": [
+          "evaluationConfigHash",
+          "scoreIntegrity",
+          "scoredIterations",
+          "quarantinedIterations"
+        ]
+      },
+      "ScoreContractScorer": {
+        "type": "object",
+        "properties": {
+          "scorerId": {
+            "type": "string"
+          },
+          "gating": {
+            "type": "boolean"
+          },
+          "deterministic": {
+            "type": "boolean"
+          },
+          "definitionChanged": {
+            "type": "boolean",
+            "description": "The same scorer id was graded under a different definition hash on each side. Its delta is NOT a regression — the two runs did not measure the same thing."
+          },
+          "passRate": {
+            "$ref": "#/components/schemas/NumericDiff"
+          },
+          "meanValue": {
+            "$ref": "#/components/schemas/NumericDiff"
+          },
+          "errorCount": {
+            "type": "object",
+            "properties": {
+              "base": {
+                "type": "integer"
+              },
+              "compare": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "base",
+              "compare"
+            ]
+          }
+        },
+        "required": [
+          "scorerId",
+          "gating",
+          "deterministic",
+          "definitionChanged",
+          "passRate",
+          "meanValue",
+          "errorCount"
+        ]
+      },
+      "CaseScoreSide": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "scored",
+              "error",
+              "skipped",
+              "not_applicable"
+            ]
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "value",
+          "passed"
+        ]
+      },
+      "CaseScoreDelta": {
+        "type": "object",
+        "properties": {
+          "scorerId": {
+            "type": "string"
+          },
+          "gating": {
+            "type": "boolean"
+          },
+          "deterministic": {
+            "type": "boolean"
+          },
+          "definitionChanged": {
+            "type": "boolean"
+          },
+          "base": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CaseScoreSide"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "compare": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CaseScoreSide"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/NumericDiff"
+          }
+        },
+        "required": [
+          "scorerId",
+          "gating",
+          "deterministic",
+          "definitionChanged",
+          "base",
+          "compare",
+          "value"
+        ]
+      },
+      "EvalRunCompareCaseSide": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "absent"
+            ]
+          },
+          "iterationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "representativeIterationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "outcome",
+          "iterationIds",
+          "representativeIterationId",
+          "error"
+        ]
+      },
+      "EvalRunCompareCase": {
+        "type": "object",
+        "properties": {
+          "caseKey": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unchanged_passed",
+              "unchanged_failed",
+              "regressed",
+              "fixed",
+              "new_case",
+              "removed_case",
+              "changed"
+            ]
+          },
+          "configChanged": {
+            "type": "boolean",
+            "description": "The scenario's own config (prompt, steps, expectations) changed."
+          },
+          "evaluationConfigChanged": {
+            "type": "boolean",
+            "description": "This case's evaluation config changed."
+          },
+          "scoreDeltas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseScoreDelta"
+            }
+          },
+          "base": {
+            "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          },
+          "compare": {
+            "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          }
+        },
+        "required": [
+          "caseKey",
+          "title",
+          "status",
+          "configChanged",
+          "evaluationConfigChanged",
+          "scoreDeltas",
+          "base",
+          "compare"
+        ]
+      },
+      "EvalRunCompareSide": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "runNumber": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "completedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "passed": {
+                    "type": "integer"
+                  },
+                  "failed": {
+                    "type": "integer"
+                  },
+                  "passRate": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "total",
+                  "passed",
+                  "failed",
+                  "passRate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "runNumber",
+          "result",
+          "createdAt",
+          "completedAt",
+          "summary"
+        ]
+      },
+      "EvalRunCompare": {
+        "type": "object",
+        "properties": {
+          "suite": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          },
+          "baseline": {
+            "type": "object",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": [
+                  "previous_completed",
+                  "run"
+                ]
+              },
+              "baseRunId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "policy",
+              "baseRunId"
+            ]
+          },
+          "baseRun": {
+            "$ref": "#/components/schemas/EvalRunCompareSide"
+          },
+          "compareRun": {
+            "$ref": "#/components/schemas/EvalRunCompareSide"
+          },
+          "passSummary": {
+            "description": "Run-summary counters. Named `passSummary`, not `scores`, so it cannot be confused with `scoreContract` — the two answer different questions.",
+            "type": "object",
+            "properties": {
+              "passRatePercent": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "total": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "passed": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "failed": {
+                "$ref": "#/components/schemas/NumericDiff"
+              }
+            },
+            "required": [
+              "passRatePercent",
+              "total",
+              "passed",
+              "failed"
+            ]
+          },
+          "metrics": {
+            "type": "object",
+            "properties": {
+              "wallDurationMs": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "totalTokens": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "estimatedCostUsd": {
+                "$ref": "#/components/schemas/NumericDiff"
+              }
+            },
+            "required": [
+              "wallDurationMs",
+              "totalTokens",
+              "estimatedCostUsd"
+            ]
+          },
+          "scoreContract": {
+            "type": "object",
+            "properties": {
+              "base": {
+                "$ref": "#/components/schemas/ScoreContractSide"
+              },
+              "compare": {
+                "$ref": "#/components/schemas/ScoreContractSide"
+              },
+              "evaluationConfigChanged": {
+                "type": "boolean"
+              },
+              "scorers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ScoreContractScorer"
+                }
+              }
+            },
+            "required": [
+              "base",
+              "compare",
+              "evaluationConfigChanged",
+              "scorers"
+            ]
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalRunCompareCase"
+            }
+          }
+        },
+        "required": [
+          "suite",
+          "baseline",
+          "baseRun",
+          "compareRun",
+          "passSummary",
+          "metrics",
+          "scoreContract",
+          "cases"
+        ]
       },
       "EvalRunPage": {
         "type": "object",
