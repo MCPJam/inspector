@@ -226,7 +226,7 @@ function hashableStep(step: PlatformEvalStep): Record<string, unknown> {
 }
 
 /** Bump when the allowlist below changes — the hash is versioned by it. */
-export const CORPUS_LOCK_VERSION = 1;
+export const CORPUS_LOCK_VERSION = 2;
 
 /**
  * Stable digest of a case's SEMANTIC content.
@@ -383,6 +383,18 @@ export function evalTestFromPlatformCase(
       evalCase.matchOptions as PublicMatchOptions | undefined
     ) ?? sdkMatchOptionsFromPublic(options.suiteMatchOptions);
 
+  // Hosted allows both; the matcher cannot honour both. Refused HERE, naming
+  // the case, rather than at EvalTest construction where the message would not
+  // say which corpus case is wrong.
+  if (evalCase.isNegative && expectedToolCalls.length > 0) {
+    throw new Error(
+      `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
+        `(passes only when NO tool is called) but also asserts ` +
+        `toolCalledWith, which the matcher never reads. Fix the case in the ` +
+        `dashboard, or run it hosted.`
+    );
+  }
+
   const config: EvalTestConfig = {
     name: options.name ?? evalCase.title,
     test: async (executor: HostExecutor) => {
@@ -428,6 +440,16 @@ export type CorpusLock = {
   project?: string;
   suite: { id: string; name?: string };
   fetchedAt: string;
+  /**
+   * Suite-level inputs, persisted because a case can INHERIT them.
+   *
+   * Without these, `loadCorpusFromLock` rebuilds an inheriting case with no
+   * suite checks and default match options — which changes its resolved
+   * scorer definitions, so the rebuilt `evaluationConfigHash` differs from the
+   * one recorded here and `--frozen` reports drift on a case nobody touched.
+   */
+  suiteChecks?: unknown[];
+  suiteMatchOptions?: PublicMatchOptions;
   /** Aggregate over per-case evaluation-config hashes. Never over `fetchedAt`. */
   evaluationConfigHash: string;
   cases: Array<{
@@ -510,7 +532,13 @@ export function buildCorpus(input: BuildCorpusInput): LoadedCorpus {
         name: names.get(evalCase.id) ?? evalCase.title,
       });
     } catch (error) {
-      if (input.unsupported === "skip") {
+      // ONLY a hosted-only case may be skipped. Malformed data — an unknown
+      // predicate, a case with no prompt — is a broken corpus, and silently
+      // dropping it would produce a suite that looks complete and is not.
+      if (
+        input.unsupported === "skip" &&
+        error instanceof HostedOnlyCaseError
+      ) {
         skipped.push({
           caseId: evalCase.id,
           caseTitle: evalCase.title,
@@ -544,6 +572,10 @@ export function buildCorpus(input: BuildCorpusInput): LoadedCorpus {
       ...(input.project !== undefined ? { project: input.project } : {}),
       suite: input.suite,
       fetchedAt: input.fetchedAt,
+      ...(input.suiteChecks ? { suiteChecks: input.suiteChecks } : {}),
+      ...(input.suiteMatchOptions
+        ? { suiteMatchOptions: input.suiteMatchOptions }
+        : {}),
       cases: [...byKey.values()].map((entry) => ({
         entry,
         source: sourceById.get(entry.scenarioKey.slice("external:".length))!,
@@ -561,13 +593,22 @@ export function buildCorpusLock(args: {
   project?: string;
   suite: { id: string; name?: string };
   fetchedAt: string;
+  suiteChecks?: unknown[];
+  suiteMatchOptions?: PublicMatchOptions;
   cases: Array<{ entry: CorpusCase; source: PlatformEvalCase }>;
 }): CorpusLock {
   // Sorted by scenarioKey so the file is byte-stable across fetches — a lock
   // that reorders on every pull is a lock nobody can review in a diff.
+  // Codepoint order, NOT `localeCompare`: the default locale comes from the
+  // host, so the same corpus would produce different lock BYTES on two
+  // machines and every `--frozen` check would depend on where it ran.
   const rows = [...args.cases]
     .sort((left, right) =>
-      left.entry.scenarioKey.localeCompare(right.entry.scenarioKey)
+      left.entry.scenarioKey < right.entry.scenarioKey
+        ? -1
+        : left.entry.scenarioKey > right.entry.scenarioKey
+          ? 1
+          : 0
     )
     .map(({ entry, source }) => ({
       scenarioKey: entry.scenarioKey,
@@ -586,6 +627,10 @@ export function buildCorpusLock(args: {
     ...(args.project !== undefined ? { project: args.project } : {}),
     suite: args.suite,
     fetchedAt: args.fetchedAt,
+    ...(args.suiteChecks ? { suiteChecks: args.suiteChecks } : {}),
+    ...(args.suiteMatchOptions
+      ? { suiteMatchOptions: args.suiteMatchOptions }
+      : {}),
     // Same computation `EvalSuite` performs at upload, so the lock and the run
     // agree by construction rather than by coincidence.
     evaluationConfigHash: aggregateEvaluationConfigHash(
@@ -642,10 +687,12 @@ export function verifyCorpusLock(
       });
     }
   }
+  const compare = (left: string, right: string): number =>
+    left < right ? -1 : left > right ? 1 : 0;
   return drift.sort(
     (left, right) =>
-      left.scenarioKey.localeCompare(right.scenarioKey) ||
-      left.kind.localeCompare(right.kind)
+      compare(left.scenarioKey, right.scenarioKey) ||
+      compare(left.kind, right.kind)
   );
 }
 
@@ -664,6 +711,11 @@ export function loadCorpusFromLock(
     ...(lock.project !== undefined ? { project: lock.project } : {}),
     suite: lock.suite,
     cases: lock.cases.map((row) => row.normalizedContent),
+    // Replayed, not defaulted — see the field docs on CorpusLock.
+    ...(lock.suiteChecks ? { suiteChecks: lock.suiteChecks } : {}),
+    ...(lock.suiteMatchOptions
+      ? { suiteMatchOptions: lock.suiteMatchOptions }
+      : {}),
     ...(options.unsupported ? { unsupported: options.unsupported } : {}),
     fetchedAt: lock.fetchedAt,
   });

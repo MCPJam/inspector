@@ -357,6 +357,17 @@ export class EvalTest {
     }
     assertValidMatchOptions(config.matchOptions ?? {});
     assertLocallyEvaluablePredicates(config.predicates);
+    // A negative case asserts "no tool was called", so `evaluateToolCalls`
+    // returns before it ever reads `expected`. Declaring expectations here is
+    // therefore a config that grades NOTHING — caught at construction rather
+    // than left to look like it is being enforced.
+    if (config.isNegativeTest && (config.expectedToolCalls?.length ?? 0) > 0) {
+      throw new Error(
+        `Test "${config.name}" is a negative test (passes only when NO tool ` +
+          `is called) but also declares expectedToolCalls, which the matcher ` +
+          `never reads. Drop one of the two.`
+      );
+    }
     this.config = config;
   }
 

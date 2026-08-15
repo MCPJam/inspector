@@ -297,6 +297,33 @@ export { buildRunCompareReport } from "./run-compare.js";
 // compare command computes latency the SAME way rather than growing a second
 // percentile implementation next to it.
 export { calculateLatencyStats, calculatePercentile } from "./percentiles.js";
+
+// Hosted corpus: materialize eval cases into local EvalTests, and lock what was
+// materialized. Pure — the file I/O half lives in @mcpjam/cli.
+export {
+  CORPUS_LOCK_VERSION,
+  HostedOnlyCaseError,
+  buildCorpus,
+  buildCorpusLock,
+  evalTestFromPlatformCase,
+  loadCorpusFromLock,
+  resolveCaseNames,
+  resolveEffectiveChecks,
+  scenarioContentHash,
+  sdkMatchOptionsFromPublic,
+  verifyCorpusLock,
+} from "./corpus.js";
+export type {
+  BuildCorpusInput,
+  CorpusCase,
+  CorpusDrift,
+  CorpusLock,
+  CorpusSkip,
+  EvalTestFromCaseOptions,
+  LoadedCorpus,
+  PublicCheckOverride,
+  PublicMatchOptions,
+} from "./corpus.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,

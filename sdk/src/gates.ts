@@ -422,7 +422,14 @@ export function evaluateGates(
     // disabled" — the same semantics `noGatingScoreErrors` already has. Note
     // this deliberately does NOT skip falsy in general:
     // `maximumP95LatencyIncreaseMs: 0` is a real, strict threshold.
-    if (value === undefined || value === false) continue;
+    if (
+      value === undefined ||
+      // `false` disables the BOOLEAN gate only. `false` on a numeric or object
+      // field is a malformed policy, not an opt-out, and must stay loud.
+      (field === "noDeterministicRegressions" && value === false)
+    ) {
+      continue;
+    }
     verdicts.push({
       gate: field,
       status: "usage_error",

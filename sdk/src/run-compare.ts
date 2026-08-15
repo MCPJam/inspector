@@ -107,7 +107,16 @@ function gateCase(gateReport: GateReport): StructuredCaseResult {
     title: `gate: ${gateReport.outcome}`,
     category: "gate",
     passed,
-    classification: passed ? "non_breaking" : "breaking",
+    // Only a real FAILED gate is breaking. `incomplete` and `usage_error`
+    // still fail the row (nothing was established), but reporting them under
+    // `byClassification.breaking` would claim a product regression that the
+    // comparison never observed.
+    classification:
+      gateReport.outcome === "failed"
+        ? "breaking"
+        : passed
+          ? "non_breaking"
+          : "informational",
     ...(passed ? {} : { error: formatGateReport(gateReport) }),
     details: {
       outcome: gateReport.outcome,

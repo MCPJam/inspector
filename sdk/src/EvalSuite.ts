@@ -244,10 +244,13 @@ export class EvalSuite {
       string,
       import("./matchers.js").EvalMatchOptions | undefined
     > = {};
+    // Null prototype: a test named `__proto__` would otherwise mutate the
+    // record's prototype instead of storing an entry, silently dropping that
+    // case's identity and grading metadata from the upload.
     const caseIdentityByTest: Record<
       string,
       import("./eval-result-mapping.js").EvalCaseIdentity | undefined
-    > = {};
+    > = Object.create(null);
     for (const [name, test] of this.tests) {
       const expected = test.getConfig().expectedToolCalls;
       if (expected) {
