@@ -33,7 +33,7 @@ import {
   readPendingAuthorization,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
-import { getRuntimeWorkosClientId } from "@/lib/runtime-config";
+import { useAuth } from "@workos-inc/authkit-react";
 
 const API = "/api/web/server-connections";
 
@@ -62,46 +62,28 @@ interface HandoffState {
  *
  * The backend refuses an account-owned handoff link to anyone but its owner,
  * and it can only tell who is asking from a verified bearer token. This page
- * is deliberately mounted WITHOUT `AuthKitProvider` so a signed-out visitor or
- * a guest can use it, so it has no token to send — which meant the ownership
- * check compared "nobody" against an owner and refused EVERY account-owned
- * link. The flow was unusable for signed-in users: create a request from the
- * CLI, open the link in the very same account, get "This authorization link
- * belongs to a different account."
+ * used to send none, so the ownership check compared "nobody" against an owner
+ * and refused EVERY account-owned link: create a request from the CLI, open
+ * the link in the very same account, get "This authorization link belongs to a
+ * different account."
  *
- * The session cookie is already sent on every call here, but it seals a
- * REFRESH token, not an identity — redeeming it server-side would rotate the
- * browser's session as a side effect of a claim. So the exchange goes through
- * the same proxy the app itself uses, which re-seals the rotated token
- * correctly.
+ * `getAccessToken` comes from `AuthKitProvider`, which `main.tsx` now mounts
+ * around this page. Deliberately the SDK and not a fetch at a known URL: the
+ * `/user_management` proxy is mounted only when `!HOSTED_MODE`, so a
+ * hand-rolled call to it 404s in hosted and silently reproduces the same
+ * refusal. Only the SDK knows which AuthKit origin this deployment uses.
  *
- * BEST EFFORT, ALWAYS. No session, no client id, a network failure, a 400 for
- * a signed-out visitor: all resolve to `null`, the claim proceeds without a
- * header, and possession of the single-use token remains the capability for
- * guest-owned requests exactly as before.
+ * BEST EFFORT, ALWAYS. A signed-out visitor, a guest, an expired session or a
+ * refresh that throws all resolve to `null`, the claim proceeds without a
+ * header, and possession of the single-use token remains the capability for a
+ * guest-owned request exactly as before.
  */
-async function bestEffortAccessToken(): Promise<string | null> {
-  const clientId =
-    getRuntimeWorkosClientId() ??
-    (import.meta.env.VITE_WORKOS_CLIENT_ID as string | undefined);
-  if (!clientId) return null;
+async function bestEffortAccessToken(
+  getAccessToken: () => Promise<string | undefined>
+): Promise<string | null> {
   try {
-    const response = await fetch("/user_management/authenticate", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        client_id: clientId,
-      }),
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json().catch(() => null)) as {
-      access_token?: unknown;
-    } | null;
-    return typeof payload?.access_token === "string"
-      ? payload.access_token
-      : null;
+    const token = await getAccessToken();
+    return typeof token === "string" && token ? token : null;
   } catch {
     return null;
   }
@@ -158,6 +140,7 @@ function Spinner() {
 }
 
 export function ServerConnectionHandoff() {
+  const { getAccessToken } = useAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -188,7 +171,7 @@ export function ServerConnectionHandoff() {
             { handoffToken: route.handoffToken },
             // Only the claim carries identity. Every later step authenticates
             // with the continuation cookie, which is scoped to this request.
-            await bestEffortAccessToken()
+            await bestEffortAccessToken(getAccessToken)
           );
           // `replaceState`, not push: the token URL must not be somewhere the
           // back button can return to, and it is single-use anyway.
