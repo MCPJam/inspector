@@ -180,6 +180,189 @@ function TrendDeltaBadge({ delta }: { delta: TrendDelta }) {
   );
 }
 
+type JudgeTrendPoint = {
+  runId: string;
+  runIdDisplay: string;
+  label: string;
+  judgeScore: number;
+  judgeOffConfig: boolean;
+};
+
+/**
+ * Advisory judge score across runs — the LLM's opinion, kept in its OWN card
+ * rather than overlaid on the deterministic pass-rate chart, so a 0.6 judge
+ * score and a failed check never read as the same kind of fact.
+ *
+ * Unjudged runs are dropped, not zeroed. Runs graded under a per-run judge
+ * override wear the documented off-config glyph (⚙) so divergence from the
+ * suite's judge calibration is visible, not silent.
+ *
+ * Renders nothing when no run in the window carries a judge verdict.
+ */
+function JudgeScoreCard({
+  points,
+  onRunClick,
+}: {
+  points: JudgeTrendPoint[];
+  onRunClick?: (runId: string) => void;
+}) {
+  const latest = points.at(-1);
+  const delta = useMemo(
+    () =>
+      computeTrendDelta(points.map((p) => ({ passRate: p.judgeScore }))),
+    [points],
+  );
+  if (!latest) return null;
+
+  return (
+    <div className={evalSurfaceCardClass} data-testid="suite-judge-trend">
+      <div className={cn(evalSurfaceHeaderClass, "rounded-t-2xl px-3 py-1.5")}>
+        <div className="text-xs font-semibold tracking-tight text-foreground">
+          Judge score
+          <span className="ml-1.5 font-normal text-muted-foreground">
+            advisory
+          </span>
+        </div>
+      </div>
+      <div className="px-3 pb-3 pt-2">
+        <div className="flex items-center gap-4 sm:gap-6">
+          <div className="flex shrink-0 flex-col">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums leading-none tracking-tight text-foreground">
+                {latest.judgeScore}%
+              </span>
+              <TrendDeltaBadge delta={delta} />
+            </div>
+            <span className="mt-1 text-xs tabular-nums text-muted-foreground">
+              {latest.judgeOffConfig ? "⚙ judge override · " : ""}
+              latest judged run
+            </span>
+          </div>
+
+          {points.length > 1 ? (
+            <div className="flex min-w-0 flex-1 flex-col justify-end">
+              <span className="mb-1 text-[10px] text-muted-foreground">
+                Last {points.length} judged runs
+              </span>
+              <ChartContainer
+                config={{
+                  judgeScore: {
+                    label: "Judge score",
+                    color: "var(--chart-2)",
+                  },
+                }}
+                className="aspect-auto h-16 w-full"
+              >
+                <AreaChart
+                  data={points}
+                  margin={{ top: 20, right: 6, left: 6, bottom: 2 }}
+                  onClick={
+                    onRunClick
+                      ? (chartData: {
+                          activePayload?: Array<{
+                            payload?: { runId?: string };
+                          }>;
+                        }) => {
+                          const runId =
+                            chartData?.activePayload?.[0]?.payload?.runId;
+                          if (runId) onRunClick(runId);
+                        }
+                      : undefined
+                  }
+                >
+                  <XAxis
+                    dataKey="runIdDisplay"
+                    hide
+                    padding={{ left: 8, right: 8 }}
+                  />
+                  <YAxis
+                    hide
+                    domain={[
+                      (min: number) => Math.max(0, min - 12),
+                      (max: number) => Math.min(100, max + 12),
+                    ]}
+                  />
+                  <ChartTooltip
+                    cursor={false}
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(_, payload) => {
+                          const point = payload?.[0]?.payload as
+                            | JudgeTrendPoint
+                            | undefined;
+                          const base =
+                            point?.label ?? point?.runIdDisplay ?? "Run";
+                          return point?.judgeOffConfig
+                            ? `${base} · ⚙ judge override`
+                            : base;
+                        }}
+                      />
+                    }
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="judgeScore"
+                    stroke="var(--color-judgeScore)"
+                    fill="var(--color-judgeScore)"
+                    fillOpacity={0.12}
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                    dot={<JudgeDot pointCount={points.length} />}
+                    activeDot={
+                      onRunClick
+                        ? { cursor: "pointer", r: 5, strokeWidth: 2 }
+                        : { r: 5, strokeWidth: 2 }
+                    }
+                  />
+                </AreaChart>
+              </ChartContainer>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Judge-trend dot: off-config runs render the ⚙ glyph above the point so an
+ * off-calibration grade can't hide in the line.
+ */
+function JudgeDot(
+  props: DotProps & {
+    index?: number;
+    pointCount?: number;
+    payload?: { judgeOffConfig?: boolean };
+  },
+): ReactElement<SVGElement> {
+  const { cx, cy, index, pointCount, payload } = props;
+  if (cx == null || cy == null) return <g />;
+  const isLatest = index === (pointCount ?? 0) - 1;
+  return (
+    <g>
+      <circle
+        cx={cx}
+        cy={cy}
+        r={isLatest ? 4 : 3}
+        fill="var(--color-judgeScore)"
+        stroke="hsl(var(--background))"
+        strokeWidth={2}
+      />
+      {payload?.judgeOffConfig ? (
+        <text
+          x={cx}
+          y={cy - 8}
+          textAnchor="middle"
+          fontSize={9}
+          fill="hsl(var(--muted-foreground))"
+        >
+          ⚙
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
 const PLACEHOLDER_TREND_DATA = [42, 55, 60, 71, 78, 85, 91].map(
   (passRate, index) => ({
     runId: `placeholder-${index + 1}`,
@@ -259,6 +442,14 @@ export interface SuiteRunsChartGridProps {
     passed?: number;
     total?: number;
     label: string;
+    /**
+     * Run-level advisory judge score (0-100 mean of per-case goal-completion
+     * scores), or null/absent when the run was never judged. Null points are
+     * DROPPED from the judge trend, never plotted as zero.
+     */
+    judgeScore?: number | null;
+    /** Ran under a per-run judge override — marked with the off-config glyph. */
+    judgeOffConfig?: boolean;
   }>;
   modelStats: Array<{
     model: string;
@@ -281,6 +472,25 @@ export function SuiteRunsChartGrid({
   const isSdk = suiteSource === "sdk";
   const metricLabel = isSdk ? "Pass rate" : "Accuracy";
   const showModelChart = modelStats.length > 1;
+  // Unjudged runs are dropped, not zeroed — same honesty rule as the swarm
+  // overview's daily trend.
+  const judgePoints = useMemo(
+    () =>
+      runTrendData.flatMap((point) =>
+        typeof point.judgeScore === "number"
+          ? [
+              {
+                runId: point.runId,
+                runIdDisplay: point.runIdDisplay,
+                label: point.label,
+                judgeScore: point.judgeScore,
+                judgeOffConfig: point.judgeOffConfig === true,
+              },
+            ]
+          : [],
+      ),
+    [runTrendData],
+  );
 
   const latest = runTrendData.at(-1);
   const delta = useMemo(() => computeTrendDelta(runTrendData), [runTrendData]);
@@ -299,7 +509,12 @@ export function SuiteRunsChartGrid({
   );
 
   return (
-    <div className={cn("grid gap-4", showModelChart && "lg:grid-cols-2")}>
+    <div
+      className={cn(
+        "grid gap-4",
+        (showModelChart || judgePoints.length > 0) && "lg:grid-cols-2",
+      )}
+    >
       <div className={evalSurfaceCardClass}>
         <div
           className={cn(
@@ -425,6 +640,10 @@ export function SuiteRunsChartGrid({
           )}
         </div>
       </div>
+
+      {judgePoints.length > 0 ? (
+        <JudgeScoreCard points={judgePoints} onRunClick={onRunClick} />
+      ) : null}
 
       {showModelChart ? (
         <div className={evalSurfaceCardClass}>

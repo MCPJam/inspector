@@ -25,6 +25,9 @@ export interface OAuthProxyRequest {
   redirect?: "follow" | "manual";
   /** Bound DNS, connection setup, redirects, and the response-body read. */
   timeoutMs?: number;
+  /** Caller-owned cancellation, composed with the timeout: whichever aborts
+   * first ends the request, socket included. */
+  signal?: AbortSignal;
 }
 
 export interface OAuthProxyResponse {
@@ -99,12 +102,17 @@ export async function validateUrl(
 
 function requestTimeoutSignal(
   timeoutMs: number | undefined,
+  external?: AbortSignal,
 ): AbortSignal | undefined {
-  if (timeoutMs === undefined) return undefined;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new OAuthProxyError(400, "timeoutMs must be a positive number");
+  if (timeoutMs !== undefined) {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new OAuthProxyError(400, "timeoutMs must be a positive number");
+    }
   }
-  return AbortSignal.timeout(timeoutMs);
+  const timeout =
+    timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
+  if (timeout && external) return AbortSignal.any([timeout, external]);
+  return timeout ?? external;
 }
 
 function buildRequestHeaders(
@@ -495,7 +503,7 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
   const allowLoopbackFlow =
     !req.httpsOnly && isLoopbackOAuthUrl(initialUrl.toString());
   const redirectMode = req.httpsOnly ? "manual" : req.redirect ?? "follow";
-  const signal = requestTimeoutSignal(req.timeoutMs);
+  const signal = requestTimeoutSignal(req.timeoutMs, req.signal);
   let currentUrl = initialUrl;
   let requestInit = prepareOAuthRequest(req);
 
@@ -548,6 +556,11 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
     }
   } catch (error) {
     if (signal?.aborted) {
+      // The CALLER's abort is a cancellation, not an outage: surface it as the
+      // AbortError they triggered so it is never classified as retryable.
+      if (req.signal?.aborted) {
+        throw new DOMException("This operation was aborted", "AbortError");
+      }
       throw new OAuthProxyError(
         400,
         `OAuth proxy request timeout after ${req.timeoutMs}ms`
@@ -736,6 +749,11 @@ export async function executeOAuthProxy(
     };
   } catch (error) {
     if (signal?.aborted) {
+      // The CALLER's abort is a cancellation, not an outage: surface it as the
+      // AbortError they triggered so it is never classified as retryable.
+      if (req.signal?.aborted) {
+        throw new DOMException("This operation was aborted", "AbortError");
+      }
       throw new OAuthProxyError(
         400,
         `OAuth proxy request timeout after ${req.timeoutMs}ms`
@@ -774,6 +792,11 @@ export async function executeDebugOAuthProxy(
     }
   } catch (error) {
     if (signal?.aborted) {
+      // The CALLER's abort is a cancellation, not an outage: surface it as the
+      // AbortError they triggered so it is never classified as retryable.
+      if (req.signal?.aborted) {
+        throw new DOMException("This operation was aborted", "AbortError");
+      }
       throw new OAuthProxyError(
         400,
         `OAuth proxy request timeout after ${req.timeoutMs}ms`

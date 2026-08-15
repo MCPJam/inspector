@@ -54,6 +54,10 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => mockConvexAuthState,
+  // `useChatboxTurnRating` runs unconditionally (hooks rule) even when the
+  // scenario has per-turn ratings off, so the double has to answer both.
+  useMutation: () => vi.fn().mockResolvedValue({ status: "ok" }),
+  useQuery: () => undefined,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({

@@ -446,6 +446,11 @@ describe("UserTestingTab — agent bridge handlers", () => {
         environmentName: "Checkout flow",
       },
     ];
+    // Published from a saved environment: the backend keeps it, and says so.
+    deleteChatboxMock.mockResolvedValue({
+      deleted: true,
+      retirement: { environmentArchived: false, hostDeleted: false },
+    });
     renderUserTesting();
 
     const response = await dispatch({
@@ -459,6 +464,72 @@ describe("UserTestingTab — agent bridge handlers", () => {
       result: { status: "chatbox_deleted", scenarioId: "cb-env", environmentId: "env-1" },
     });
     expect((response as any).result.note).toMatch(/environment.*unchanged/i);
+  });
+
+  // The copy is driven by the mutation's report, not a fixed sentence: a
+  // scenario created by the User Testing flow retires its private setup and
+  // client with it, and reporting "the environment is unchanged" there would
+  // tell the user less damage was done than actually was.
+  it("deleteChatbox reports the retired backing when the scenario owned it", async () => {
+    listRows = [
+      ...listRows,
+      {
+        ...chatboxList[0],
+        chatboxId: "cb-env",
+        name: "Checkout flow",
+        namedHostId: "host-1",
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      },
+    ];
+    deleteChatboxMock.mockResolvedValue({
+      deleted: true,
+      retirement: { environmentArchived: true, hostDeleted: true },
+    });
+    renderUserTesting();
+
+    const response = await dispatch({
+      type: "deleteChatbox",
+      payload: { scenario: "Checkout flow" },
+    });
+
+    expect((response as any).result.note).toMatch(
+      /setup and the private client .* removed/i,
+    );
+    expect((response as any).result.note).not.toMatch(/unchanged/i);
+  });
+
+  // Partial retirement is a real outcome (a suite still references the client,
+  // or it is the project's last one). Saying only "removed" would be wrong.
+  it("deleteChatbox reports a kept client with its reason", async () => {
+    listRows = [
+      ...listRows,
+      {
+        ...chatboxList[0],
+        chatboxId: "cb-env",
+        name: "Checkout flow",
+        namedHostId: "host-1",
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      },
+    ];
+    deleteChatboxMock.mockResolvedValue({
+      deleted: true,
+      retirement: {
+        environmentArchived: true,
+        hostDeleted: false,
+        keptReason: '2 eval suite reference(s) still point at it.',
+      },
+    });
+    renderUserTesting();
+
+    const response = await dispatch({
+      type: "deleteChatbox",
+      payload: { scenario: "Checkout flow" },
+    });
+
+    expect((response as any).result.note).toMatch(/client behind it was kept/i);
+    expect((response as any).result.note).toContain('eval suite');
   });
 
   it("deleteChatbox can only reach rows the list actually advertises", async () => {
