@@ -179,7 +179,11 @@ describe("translateConvexReadError", () => {
       (loggedError as Error).message,
       (context as { message: string }).message,
     ]) {
-      expect(seen).toContain("Bearer [redacted]");
+      // A bearer behind a header NAME is redacted by the key=value rule, which
+      // swallows the `Bearer ` prefix so the two rules cannot both fire and
+      // leave `authorization=[redacted] [redacted]`. A standalone `Bearer x`
+      // still reads `Bearer [redacted]` — see redact-log-message.test.ts.
+      expect(seen).toContain("Authorization=[redacted]");
       expect(seen).toContain("sk_[redacted]");
       expect(seen).not.toContain("abc.def.ghi");
       expect(seen).not.toContain("sk_live_1234");
