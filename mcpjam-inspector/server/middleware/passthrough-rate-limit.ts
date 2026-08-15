@@ -168,18 +168,29 @@ export async function passthroughRateLimitMiddleware(
     ? authorization.slice(7).trim()
     : null;
 
-  // The per-IP backstop runs FIRST and unconditionally. A caller with no
-  // parseable bearer would otherwise skip metering entirely by simply not
-  // sending one — and this branch is reached precisely by requests whose
-  // credential nothing here has checked.
-  const ip = getClientIp(c);
-  if (ip) {
-    const refusedMs = ipWindows.charge(`ip:${ip}`);
+  // ORDER IS LOAD-BEARING: the token bucket is charged FIRST, and a refusal
+  // there returns before the shared IP window is touched.
+  //
+  // Charging the IP first turns this limiter into a weapon. One caller
+  // exhausts its own token budget, and every subsequent REJECTED request still
+  // spends from the IP window it shares with everyone behind the same NAT,
+  // office or carrier — so a client that is already being refused can go on to
+  // deny service to unrelated people at no cost to itself.
+  //
+  // The rotating-token case still converges on the IP, which was the reason
+  // for having two keys at all: each fresh token passes its own empty bucket
+  // and is then charged to the IP.
+  if (token) {
+    const refusedMs = tokenWindows.charge(bearerKey(token));
     if (refusedMs !== null) return tooMany(c, refusedMs);
   }
 
-  if (token) {
-    const refusedMs = tokenWindows.charge(bearerKey(token));
+  // The per-IP backstop, charged for EVERY request that got past the token
+  // bucket — including one with no parseable bearer, which would otherwise
+  // skip metering entirely by simply not sending a credential.
+  const ip = getClientIp(c);
+  if (ip) {
+    const refusedMs = ipWindows.charge(`ip:${ip}`);
     if (refusedMs !== null) return tooMany(c, refusedMs);
   }
 

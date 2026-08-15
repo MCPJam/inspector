@@ -124,6 +124,39 @@ describe("the per-IP backstop", () => {
     expect(refused).toBeGreaterThan(0);
   });
 
+  it("IS NOT SPENT BY A REQUEST THE TOKEN BUCKET ALREADY REFUSED", async () => {
+    // The order of the two charges is a security property, not a style choice.
+    //
+    // Charge the IP first and the limiter becomes a weapon: a caller that has
+    // exhausted its own token budget goes on spending the SHARED IP window with
+    // every rejected request, at no cost to itself, until everyone else behind
+    // that NAT, office or carrier is refused too. Denial of service delivered
+    // by the thing meant to prevent it.
+    //
+    // So: drain one token's budget, then send far more than the IP window holds
+    // — every one of them refused at the token bucket — and prove an innocent
+    // caller on the same address is still served afterwards.
+    const a = app();
+    const shared = "198.51.100.42";
+
+    for (let i = 0; i < PASSTHROUGH_TOKEN_LIMIT; i++) {
+      expect((await a.request("/x", req("tok-greedy", shared))).status).toBe(
+        200
+      );
+    }
+
+    for (let i = 0; i < PASSTHROUGH_IP_LIMIT + 50; i++) {
+      expect((await a.request("/x", req("tok-greedy", shared))).status).toBe(
+        429
+      );
+    }
+
+    // The neighbour: a different token, the same address.
+    expect((await a.request("/x", req("tok-neighbour", shared))).status).toBe(
+      200
+    );
+  }, 30_000);
+
   it("is looser than the per-token budget, because an IP is not a caller", async () => {
     // Offices, VPNs and mobile carriers put many real users behind one
     // address. Sized at the token limit it would refuse a floor of ordinary
@@ -173,6 +206,35 @@ describe("bounded, and fails closed when full", () => {
     // …while the address already in the map keeps being served.
     expect(
       (await a.request("/x", req("tok-established", established))).status
+    ).toBe(200);
+  }, 30_000);
+
+  it("applies the same ceiling to the TOKEN map", async () => {
+    // The map a churner can grow FASTEST, because minting a bearer costs
+    // nothing at all — where an IP at least costs a host to send from. Both
+    // maps are bounded for the same reason and both refuse rather than evict;
+    // this pins the second one so the guard cannot be lost on one side.
+    //
+    // The fill comes from ONE address so the IP map stays at a single entry
+    // and cannot be what refuses at the end. Those requests start being
+    // refused by the IP window after its limit, which does not matter: the
+    // token is charged first, so its entry is already in the map.
+    const a = app();
+    const filler = "198.51.100.60";
+    for (let i = 0; i < PASSTHROUGH_MAX_ENTRIES; i++) {
+      await a.request("/x", req(`churn-${i}`, filler));
+    }
+
+    // A brand-new token from an address with a fresh budget: only the full
+    // token map can refuse this.
+    expect(
+      (await a.request("/x", req("tok-brand-new", "198.51.100.61"))).status
+    ).toBe(429);
+
+    // A token already in the map is still served — the ceiling bounds growth,
+    // it does not stop the callers already being metered.
+    expect(
+      (await a.request("/x", req("churn-0", "198.51.100.62"))).status
     ).toBe(200);
   }, 30_000);
 });

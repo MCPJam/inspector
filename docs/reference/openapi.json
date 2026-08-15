@@ -5581,6 +5581,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
           },
@@ -6057,6 +6060,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
           },
@@ -6237,6 +6243,69 @@
             "$ref": "#/components/responses/InternalError"
           }
         }
+      },
+      "post": {
+        "operationId": "createJourney",
+        "tags": [
+          "Swarms"
+        ],
+        "summary": "Create a journey",
+        "description": "Creates one journey: a persona pursuing a `goal` against one or more environments. To draft several with a model first, use `POST /projects/{projectId}/journeys/generate` \u2014 that route persists nothing.\n\n`personaId` and `swarmId` must belong to THIS project. Naming one from another project is a `404`, not a silent cross-project reference.\n\nCreating a journey does not run it. Launch it with `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe create key. Replaying the SAME key with the SAME body returns the original resource instead of creating a second one; reusing it with a DIFFERENT body is a 409.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The journey to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created journey.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Journey"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
       }
     },
     "/projects/{projectId}/journeys/{journeyId}/runs": {
@@ -6340,6 +6409,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -8261,7 +8333,6 @@
           "id",
           "environment",
           "hosts",
-          "environmentIds",
           "settings",
           "schedule"
         ],

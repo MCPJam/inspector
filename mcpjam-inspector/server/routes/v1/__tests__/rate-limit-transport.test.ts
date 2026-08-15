@@ -73,6 +73,30 @@ describe("translateConvexWriteError — rate_limited (the burst brake)", () => {
     expect(error.status).toBe(429);
     expect(error.headers).toBeUndefined();
   });
+
+  it("refuses to turn junk retry metadata into a header", () => {
+    // `undefined` is the honest absence tested above. These are the OTHER
+    // absences — a field that arrived but says nothing usable. Each one
+    // reaches `Number.isFinite` as something that is not a finite number, and
+    // the answer has to be the same as for a missing field: still a 429,
+    // still no header. A `Retry-After: NaN` on the wire is worse than none,
+    // because a client that parses it gets a number it will happily wait on.
+    for (const retryAfterMs of [
+      null,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      "soon",
+      {},
+    ]) {
+      const error = translateConvexWriteError(
+        convexError({ code: "rate_limited", retryAfterMs }),
+        { resource: "Journey run" }
+      );
+
+      expect(error.status).toBe(429);
+      expect(error.headers).toBeUndefined();
+    }
+  });
 });
 
 describe("translateConvexWriteError — billing_limit_reached (the daily cap)", () => {

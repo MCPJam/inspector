@@ -205,6 +205,12 @@ Retry-After: 7
 Honor `Retry-After`, add jittered exponential backoff, and expect these limits
 to be tuned during the preview.
 
+Other `429`s — the per-minute brakes and daily budgets described with the
+endpoints below — carry `Retry-After` whenever the refusal knows when it
+lifts, which is the ordinary case. Treat it as a hint that is usually there
+rather than a guarantee: a refusal that reaches you without one still needs
+your backoff, so **never** block waiting for a header that may not come.
+
 ## Endpoints
 
 Each endpoint is fully documented — request and response schemas, examples,
@@ -295,6 +301,21 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | `GET .../chatboxes` | List the project's published chatboxes: name, access mode, attached servers, share link |
 | `GET .../chatboxes/{chatboxId}` | One chatbox's settings: model, system prompt, tool-approval policy, resolved servers |
 
+<Note>
+  **Swarms and User Testing are enabled per organization.** Everything in the
+  four sections below is behind that gate, enforced server-side. If it is not
+  on for your organization, the reads generally return empty and every **write**
+  — creating a persona or journey, launching a run, publishing a scenario,
+  requesting insights — answers `403` with a message naming the feature, not a
+  `404` and not a validation error.
+
+  Two operations are deliberately outside the gate, because both *reduce*
+  exposure and spend: cancelling a journey run, and unpublishing a scenario. An
+  organization that loses access can still stop what is already running.
+
+  Ask us on [Discord](https://discord.gg/JEnDtz8X6z) if you want it turned on.
+</Note>
+
 **Swarms — authoring** (`/projects/{projectId}/personas...`, `.../journeys...`,
 `.../swarms...`) — the definitions a swarm run executes. A **persona** is a
 reusable synthetic character; a **journey** is the task you point one at; a
@@ -309,6 +330,8 @@ under it. Nothing here starts anything — launching is
 | `GET .../personas/{personaId}` | One persona |
 | `PATCH .../personas/{personaId}` | Update a persona. Journeys reference it by id, so renaming is safe |
 | `DELETE .../personas/{personaId}` | Delete a persona. **409** while journeys still reference it |
+| `GET .../journeys` | List the project's journeys |
+| `POST .../journeys` | Create a journey (accepts `Idempotency-Key`). `personaId` and `swarmId` must be in this project |
 | `GET .../journeys/{journeyId}` | One journey |
 | `PATCH .../journeys/{journeyId}` | Update a journey. `null` CLEARS `environmentIds`; `sessionsPerTarget` and `maxTurns` must be sent together |
 | `DELETE .../journeys/{journeyId}` | **Archive** a journey — existing runs keep pointing at the definition they executed |
@@ -333,8 +356,9 @@ drafts are stable across retries when they are not.
   The generation routes **spend** — they run models on your organization's
   account. They are metered two ways, and the two mean different waits: a
   per-minute burst brake (`429`, retry in seconds) and your plan's daily
-  budget (`429`, resets at UTC midnight). Both send `Retry-After`; honor it
-  rather than guessing.
+  budget (`429`, resets at UTC midnight). Both normally carry `Retry-After` —
+  honor it rather than guessing, and fall back to your own backoff on the
+  refusal that arrives without one.
 </Warning>
 
 **Swarms — runs** (`/projects/{projectId}/journeys/{journeyId}/runs`,
@@ -342,7 +366,6 @@ drafts are stable across retries when they are not.
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET .../journeys` | List the project's journeys |
 | `GET .../journeys/{journeyId}/runs` | That journey's runs, newest first |
 | `POST .../journeys/{journeyId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key` |
 | `GET .../journey-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
@@ -368,7 +391,7 @@ Three things worth knowing before you write the client:
   Launching **spends**: a run fans out into `targets × sessionsPerTarget`
   sessions. Two different `429`s can come back — the per-minute burst brake
   (retry in seconds) and your plan's daily launch cap (resets at UTC midnight).
-  Both send `Retry-After`.
+  Both normally carry `Retry-After`; back off on your own when one does not.
 </Warning>
 
 **Swarms — insights** — what a run revealed. Read these in order of cost: the
@@ -408,8 +431,8 @@ and dismissed, and hiding one never claims it stopped happening.
 
   Three refusals, three different meanings: a short `429` is the per-minute
   brake (wait seconds), a `429` naming `insightsPerDay` is the daily ledger
-  (`Retry-After` counts to UTC midnight), and a `403` means the feature is not
-  available to your organization — waiting will never help.
+  (its `Retry-After`, when present, counts to UTC midnight), and a `403` means
+  the feature is not available to your organization — waiting will never help.
 </Warning>
 
 The same surface is available as an [OpenAPI

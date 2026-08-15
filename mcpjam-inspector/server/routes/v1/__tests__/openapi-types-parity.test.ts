@@ -184,6 +184,34 @@ type SdkInterface = {
   heritage: string[];
 };
 
+/**
+ * Strip the wrappers that do not change the type being described: parentheses,
+ * and the `readonly` operator.
+ *
+ * A checker that skips this does not fail — it silently stops measuring.
+ * `readonly Foo[]` reads as neither an array nor a ref, and `(Foo | null)`
+ * reads as an opaque node rather than a nullable union, so both fields compare
+ * clean against anything the spec says. Neither spelling is in `types.ts`
+ * today; both are one ordinary edit away.
+ */
+function unwrapTypeNode(node: ts.TypeNode): ts.TypeNode {
+  let current = node;
+  for (;;) {
+    if (ts.isParenthesizedTypeNode(current)) {
+      current = current.type;
+      continue;
+    }
+    if (
+      ts.isTypeOperatorNode(current) &&
+      current.operator === ts.SyntaxKind.ReadonlyKeyword
+    ) {
+      current = current.type;
+      continue;
+    }
+    return current;
+  }
+}
+
 function parseSdkInterfaces(): Map<string, SdkInterface> {
   const source = ts.createSourceFile(
     TYPES_PATH,
@@ -198,10 +226,11 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
     node: ts.TypeNode
   ): Omit<SdkField, "name" | "optional"> => {
     let nullable = false;
-    let members: ts.TypeNode[] = [node];
+    const root = unwrapTypeNode(node);
+    let members: ts.TypeNode[] = [root];
 
-    if (ts.isUnionTypeNode(node)) {
-      members = node.types.filter((t) => {
+    if (ts.isUnionTypeNode(root)) {
+      members = root.types.map(unwrapTypeNode).filter((t) => {
         // `| null` and `| undefined` are nullability, not variants.
         if (t.kind === ts.SyntaxKind.NullKeyword) {
           nullable = true;
@@ -233,16 +262,19 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
     let isArray = false;
     let refName: string | null = null;
     for (const member of members) {
-      let target = member;
+      let target = unwrapTypeNode(member);
       if (ts.isArrayTypeNode(target)) {
         isArray = true;
-        target = target.elementType;
+        target = unwrapTypeNode(target.elementType);
       }
       if (ts.isTypeReferenceNode(target)) {
         const name = target.typeName.getText();
-        if (name === "Array" && target.typeArguments?.length === 1) {
+        if (
+          (name === "Array" || name === "ReadonlyArray") &&
+          target.typeArguments?.length === 1
+        ) {
           isArray = true;
-          const inner = target.typeArguments[0]!;
+          const inner = unwrapTypeNode(target.typeArguments[0]!);
           if (ts.isTypeReferenceNode(inner)) refName = inner.typeName.getText();
         } else {
           refName = name;
@@ -282,23 +314,40 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
   // A child's own declaration WINS over an inherited one: that is what
   // `interface X extends Y { field: Narrower }` means, and reading it the other
   // way would compare against the type the child deliberately replaced.
-  const flatten = (name: string, seen = new Set<string>()): SdkInterface => {
+  //
+  // The result is MEMOIZED, and the cycle guard is a separate per-path set.
+  // Those have to be two things. A single shared `seen` set doubles as both,
+  // and then a diamond — `A extends B, C`, both extending `D` — resolves `D`
+  // fully down the first branch and returns it UNFLATTENED down the second,
+  // because the guard cannot tell "already finished" from "currently on the
+  // stack". Everything `D` inherited then vanishes from `A`, and the ratchet
+  // reports the loss as spec drift.
+  const cache = new Map<string, SdkInterface>();
+
+  const flatten = (name: string, onStack: Set<string>): SdkInterface => {
+    const cached = cache.get(name);
+    if (cached) return cached;
     const iface = out.get(name)!;
-    if (seen.has(name)) return iface;
-    seen.add(name);
+    // A heritage cycle is not legal TypeScript; refuse to hang on one anyway,
+    // and do not cache the truncated answer.
+    if (onStack.has(name)) return iface;
+    onStack.add(name);
     const merged = new Map<string, SdkField>();
     for (const parent of iface.heritage) {
       if (!out.has(parent)) continue;
-      for (const [field, value] of flatten(parent, seen).fields) {
+      for (const [field, value] of flatten(parent, onStack).fields) {
         merged.set(field, value);
       }
     }
     for (const [field, value] of iface.fields) merged.set(field, value);
-    return { ...iface, fields: merged };
+    onStack.delete(name);
+    const result = { ...iface, fields: merged };
+    cache.set(name, result);
+    return result;
   };
 
   const flattened = new Map<string, SdkInterface>();
-  for (const name of out.keys()) flattened.set(name, flatten(name));
+  for (const name of out.keys()) flattened.set(name, flatten(name, new Set()));
   return flattened;
 }
 
@@ -339,16 +388,30 @@ function schemaRefName(schema: Schema): string | null {
   return null;
 }
 
+/**
+ * Both readers below fall through to the composed branches for the same reason
+ * `schemaRefName` does: a nullable array and a nullable enum cannot be written
+ * with a sibling `type` either, so they arrive as
+ * `oneOf: [{type:"array",...}, {type:"null"}]`. Reading only the top level
+ * would call those "not an array" and "not an enum" and quietly stop comparing
+ * the one property the check exists to compare.
+ */
 function schemaIsArray(schema: Schema): boolean {
   const type = schema.type;
-  return Array.isArray(type) ? type.includes("array") : type === "array";
+  if (Array.isArray(type)) return type.includes("array");
+  if (type === "array") return true;
+  return (branches(schema) ?? []).some((b) => schemaIsArray(b));
 }
 
 /** Enum values minus the `null` that only restates nullability. */
 function schemaEnum(schema: Schema): string[] | null {
   const source = schema.enum ?? schema.items?.enum;
-  if (!source) return null;
-  return source.filter((v): v is string => typeof v === "string");
+  if (source) return source.filter((v): v is string => typeof v === "string");
+  for (const branch of branches(schema) ?? []) {
+    const nested = schemaEnum(branch);
+    if (nested && nested.length > 0) return nested;
+  }
+  return null;
 }
 
 // ── the checks ──────────────────────────────────────────────────────────────

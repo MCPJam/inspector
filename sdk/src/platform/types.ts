@@ -290,7 +290,7 @@ export interface PlatformEvalSuiteDetail {
    * suite environment-based: its runs resolve one of these instead of the
    * legacy selection above. Absent on older API deployments.
    */
-  environmentIds: string[];
+  environmentIds?: string[];
   /** Suite-level execution config; null when none is pinned. */
   executionConfig: {
     model: string;

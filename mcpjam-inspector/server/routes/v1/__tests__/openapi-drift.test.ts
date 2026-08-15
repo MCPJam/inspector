@@ -75,18 +75,14 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /agent-ops",
   // Flag-gated beta (`sandboxes-enabled`); document at GA. The public docs are
   // the one surface a flag CANNOT gate — a Mintlify page is visible to
-  // everyone regardless of who the flag is on for — so a beta surface that is
-  // enforced server-side per organization must stay out of the spec until the
-  // flag comes off. Reads are ungated at the API (an empty list leaks
-  // nothing); the WRITES these support are enforced in
-  // `mcpjam-backend/convex/lib/sandboxesGate.ts`.
-  // Authoring — personas, journeys, swarm containers — and the generation that
-  // drafts them. Same flag, same reason: these are the WRITES the gate exists
-  // for, so they cannot be advertised in a document the flag cannot reach.
-  "post /projects/{projectId}/journeys",
-  // The insights layer. Reads are ungated at the API like every other swarm
-  // read, but they describe a beta product and belong with it in the spec.
-  // Same flag, same reason (`sandboxes-enabled` gates both products).
+  // everyone regardless of who the flag is on for.
+  //
+  // The SWARMS half of this beta is now documented, with the gate's behaviour
+  // (403 `FEATURE_UNAVAILABLE` for an unflagged organization) stated on the
+  // page instead of the routes being hidden — a caller who cannot use a route
+  // yet is better served by a documented refusal than by an endpoint that
+  // appears not to exist. What is left below is USER TESTING, which is the
+  // same flag but has not had that treatment yet.
   "put /projects/{projectId}/environments/{environmentId}/scenario",
   "delete /projects/{projectId}/environments/{environmentId}/scenario",
   // The rest of user testing: what a published scenario produced, and who may

@@ -172,6 +172,33 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
+  it("survives a finite timestamp no calendar can render", () => {
+    // `Number.isFinite` is NOT the whole guard. `Number.MAX_VALUE` passes it
+    // and then `new Date(...)` is Invalid Date, which makes
+    // `Intl.DateTimeFormat.format` THROW — turning a limit message into an
+    // exception on the render path that was supposed to explain the limit.
+    // Every daily cap goes through the same helper, so check them together.
+    for (const limit of [
+      "insightsPerDay",
+      "journeyRunsPerDay",
+      "computerStartsPerDay",
+      "maxEvalIterationsPerMonth",
+    ] as const) {
+      for (const resetsAt of [
+        Number.MAX_VALUE,
+        -Number.MAX_VALUE,
+        8.64e15 + 1,
+      ]) {
+        const message = formatBillingLimitReachedMessage(limit, 25, true, {
+          resetsAt,
+        });
+
+        expect(message).toContain("(25)");
+        expect(message).not.toContain("Resets");
+      }
+    }
+  });
+
   it("falls back to the upgrade line when no reset was sent", () => {
     // A mixed-version backend that has the cap but not the field.
     expect(formatBillingLimitReachedMessage("insightsPerDay", 25, true)).toBe(
