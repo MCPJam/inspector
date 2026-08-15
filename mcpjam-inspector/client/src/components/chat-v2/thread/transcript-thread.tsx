@@ -259,6 +259,7 @@ export function TranscriptThread({
   transcriptRef,
   contentClassName,
   isLoading = false,
+  renderAssistantTurnFooter,
   lastRenderableMessageId = null,
   getMessageWrapperProps,
   renderUserMessageActions,
@@ -577,6 +578,14 @@ export function TranscriptThread({
               claudeFooterMode={claudeFooterMode}
               mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}
+              // Per-turn ratings (inherited from MessageView's props), minus
+              // the message that is actively streaming: rating a half-written
+              // answer rates something the tester has not read yet.
+              renderAssistantTurnFooter={
+                isLatestAssistantMessage && isLoading
+                  ? undefined
+                  : renderAssistantTurnFooter
+              }
               onEditUserMessage={onEditUserMessage}
               editDisabled={editDisabled}
               senderAvatar={senderAvatar}

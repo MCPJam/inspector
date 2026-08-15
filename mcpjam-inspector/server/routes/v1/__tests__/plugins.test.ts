@@ -87,7 +87,13 @@ const VERSION_ROW = {
   bundleHash: "hash-abc",
   manifestHash: "hash-manifest",
   status: "ready" as const,
-  componentCounts: { skills: 1, servers: 1, apps: 0, assets: 0, unsupported: 0 },
+  componentCounts: {
+    skills: 1,
+    servers: 1,
+    apps: 0,
+    assets: 0,
+    unsupported: 0,
+  },
   createdAt: 1,
   readyAt: 2,
   servers: [
