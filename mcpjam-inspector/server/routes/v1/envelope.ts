@@ -29,12 +29,41 @@ export function v1Error(
   message: string,
   details?: Record<string, unknown>
 ) {
+  // Backstop for the RETURNED path. `v1OnError` stashes richer meta (with
+  // origin and slug) for anything that throws, but a route that returns
+  // `v1Error(...)` directly never reaches it — `eval-ingest`'s TIMEOUT is a
+  // 504 taking exactly that path — and those rows still logged as the bare
+  // `internal_error` fallback with no message.
+  //
+  // Only when nothing has stashed yet, so this can never overwrite
+  // `v1OnError`'s attribution: that handler sets meta and THEN calls this
+  // function, and a blind write here would erase the origin one line later.
+  if (typeof c?.set === "function" && !readWebErrorMeta(c)) {
+    c.set("webErrorMeta", {
+      // Same v1 status `v1OnError` uses, for the same reason: the middleware
+      // only trusts meta whose status matches the response it observed.
+      status: V1_ERROR_STATUS[code],
+      code,
+      message,
+    });
+  }
   // Cast the dynamic numeric status to satisfy Hono's literal StatusCode union
   // (the web routes sidestep this by typing `c` as `any` in `webError`).
   return c.json(
     v1ErrorBody(code, message, details),
     V1_ERROR_STATUS[code] as any
   );
+}
+
+/** Tolerates the non-Hono context doubles several route tests pass in. */
+function readWebErrorMeta(c: Context): unknown {
+  try {
+    return typeof c?.get === "function"
+      ? (c as { get: (k: string) => unknown }).get("webErrorMeta")
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Single-resource success: the resource object returned directly. */
