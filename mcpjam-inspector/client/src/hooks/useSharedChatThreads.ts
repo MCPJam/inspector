@@ -50,6 +50,15 @@ export interface SharedChatThread {
     worstComment?: string;
     latestRating: number;
     latestAt: number;
+    /**
+     * Thumb tallies, when the session was rated with the thumbs widget. Both
+     * are absent on star-only sessions AND on any summary written before
+     * thumbs existed, and the backend emits each only when non-zero — so
+     * `count - up - down` is how many star rows the session has, and a
+     * non-zero remainder is what makes a session "mixed".
+     */
+    thumbUpCount?: number;
+    thumbDownCount?: number;
   } | null;
   toolCallCount?: number;
   /** OAuth or permission flow interrupted the session. */

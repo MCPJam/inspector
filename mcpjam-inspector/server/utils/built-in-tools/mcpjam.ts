@@ -223,6 +223,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Visitor conversations; the User Testing tab is where you read them, with the consent context around them.",
   get_user_testing_session:
     "A real person's conversation with your product. Available on REST/CLI/MCP where the caller asked for it explicitly.",
+  get_user_testing_scenario:
+    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it falls under the same privacy rule as the session reads above, not the aggregate rule that admits metrics and findings. The User Testing tab renders the same findings with the consent context around them.",
   // Exposure controls. Each of these decides who can reach a live scenario or
   // what it may spend; the tab shows the link, the mode and the current caps
   // next to the control, which a chat tool cannot.

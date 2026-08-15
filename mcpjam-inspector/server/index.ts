@@ -169,6 +169,10 @@ import {
   type GithubChecksWorkerHandle,
 } from "./services/github-checks-worker";
 import {
+  startProductionChecksWorker,
+  type ProductionChecksWorkerHandle,
+} from "./services/production-checks-worker";
+import {
   SERVER_PORT,
   CORS_ORIGINS,
   HOSTED_MODE,
@@ -840,6 +844,14 @@ if (isGithubChecksWorkerEnabled()) {
   githubChecksWorker = startGithubChecksWorker();
 }
 
+// Production scoring: claim-and-grade polling loop for real User Testing
+// sessions. Started unconditionally and deliberately flagless — it self-gates
+// on the service-token env (a non-peer deployment gets an inert handle), and
+// the feature's single switch is the backend's PRODUCTION_CHECKS_ENABLED,
+// which 404s the claim route and parks this loop on a slow poll when off.
+const productionChecksWorker: ProductionChecksWorkerHandle =
+  startProductionChecksWorker();
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -896,6 +908,7 @@ async function shutdown() {
     // shutdown rather than skipping straight to the force-exit deadline.
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
+    await productionChecksWorker.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.

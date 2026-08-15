@@ -24,6 +24,7 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   PlatformApiError,
+  resolveProject,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -40,7 +41,27 @@ import {
   extractIterationVideoUrl,
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
-import { operationalError, usageError, writeResult } from "../lib/output.js";
+import {
+  operationalError,
+  setProcessExitCode,
+  usageError,
+  writeResult,
+} from "../lib/output.js";
+import { formatGateReport, type GateReport } from "@mcpjam/sdk";
+import type { PlatformEvalIteration } from "@mcpjam/sdk/platform";
+import {
+  EVAL_GATE_INCOMPLETE_EXIT_CODE,
+  EVAL_GATE_USAGE_EXIT_CODE,
+  TERMINAL_RUN_STATUSES,
+  evalGateExitCode,
+  isNonVerdictRunStatus,
+} from "../lib/eval-gate-exit-code.js";
+import {
+  policyFromOptions,
+  policyNeedsIterations,
+  reportForRun,
+  type EvalGateOptions,
+} from "../lib/eval-gate.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
   buildPlatformClient,
@@ -420,6 +441,195 @@ function resolveScreenshotPath(
   return out;
 }
 
+/** Commander collector for a repeatable `--flag value` option. */
+function collectRepeatable(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+/**
+ * Fetch every iteration page for a run.
+ *
+ * `complete` is the load-bearing half of the return. A gate evaluated against
+ * page one of a paginated run would report a confident verdict about a sample,
+ * so an aborted walk yields `complete: false` and every score-derived gate
+ * degrades to non-gateable (exit 3) instead of passing on partial evidence.
+ */
+async function fetchAllIterations(
+  client: ReturnType<typeof buildPlatformClient>["client"],
+  signal: AbortSignal,
+  projectId: string,
+  runId: string
+): Promise<{ items: PlatformEvalIteration[]; complete: boolean }> {
+  const items: PlatformEvalIteration[] = [];
+  let cursor: string | undefined;
+  // Bound the walk so a runaway cursor cannot spin forever; hitting the bound
+  // reports `complete: false` rather than pretending the sample is the run.
+  for (let page = 0; page < 100; page += 1) {
+    const result = await client.listEvalRunIterations(
+      { projectId, runId, ...(cursor ? { cursor } : {}), limit: 200 },
+      { signal }
+    );
+    items.push(...result.items);
+    if (!result.nextCursor) return { items, complete: true };
+    cursor = result.nextCursor;
+  }
+  return { items, complete: false };
+}
+
+const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
+
+async function runEvalGate(
+  options: PlatformOptions &
+    EvalGateOptions & {
+      project: string;
+      run: string;
+      wait?: boolean;
+      waitTimeout?: string;
+      /**
+       * Commander models `--no-gating-score-errors` as the NEGATION of an
+       * implicit `--gating-score-errors`, so the field is `gatingScoreErrors`
+       * and it is `false` exactly when the user passed the flag. Reading it any
+       * other way silently enables the gate on every invocation.
+       */
+      gatingScoreErrors?: boolean;
+    },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const policy = policyFromOptions({
+    ...options,
+    noGatingScoreErrors: options.gatingScoreErrors === false,
+  });
+  const waitTimeoutMs =
+    options.waitTimeout !== undefined
+      ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
+      : DEFAULT_GATE_WAIT_TIMEOUT_MS;
+
+  let report: GateReport;
+  try {
+    report = await runPlatformCommand(
+      options,
+      Math.max(globalOptions.timeout, options.wait ? waitTimeoutMs : 0),
+      async ({ client, signal }) => {
+        const projects = await client.listProjects({}, { signal });
+        const resolution = resolveProject(projects.items, options.project);
+        if (!resolution.ok) {
+          throw usageError(resolution.message);
+        }
+        const project = resolution.project;
+        const deadline = Date.now() + waitTimeoutMs;
+        let run = await client.getEvalRun(
+          { projectId: project.id, runId: options.run },
+          { signal }
+        );
+
+        while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+          if (!options.wait) {
+            // Without --wait, a still-running run would otherwise be gated on
+            // its PARTIAL summary — a confident verdict about an unfinished
+            // run. Undecidable, not failed.
+            return {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "run",
+                  status: "non_gateable" as const,
+                  message: `run is ${run.status}; pass --wait, or gate it once it finishes`,
+                },
+              ],
+            };
+          }
+          if (Date.now() >= deadline) {
+            // A wait timeout is INFRASTRUCTURE, not a verdict: the run may yet
+            // pass. Reported as incomplete so it can never read as a
+            // regression.
+            return {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "wait",
+                  status: "non_gateable" as const,
+                  message: `run still ${run.status} after ${waitTimeoutMs}ms`,
+                },
+              ],
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          run = await client.getEvalRun(
+            { projectId: project.id, runId: options.run },
+            { signal }
+          );
+        }
+
+        if (isNonVerdictRunStatus(run.status)) {
+          // Cancelled / timed out: the run has not told us the server
+          // regressed, it has told us nothing.
+          return {
+            outcome: "incomplete" as const,
+            scoreIntegrity: "unknown" as const,
+            verdicts: [
+              {
+                gate: "run",
+                status: "non_gateable" as const,
+                message: `run is ${run.status}; no verdict was established`,
+              },
+            ],
+          };
+        }
+
+        const iterations = policyNeedsIterations(policy)
+          ? await fetchAllIterations(client, signal, project.id, options.run)
+          : undefined;
+        return reportForRun(run, iterations, policy);
+      }
+    );
+  } catch (error) {
+    // A USAGE error (bad project selector, malformed flag) is the author's
+    // mistake and keeps its own exit code — mapping it to 3 would tell a CI
+    // operator to go looking for an outage that never happened.
+    if (
+      error instanceof Error &&
+      (error as { exitCode?: number }).exitCode === EVAL_GATE_USAGE_EXIT_CODE
+    ) {
+      throw error;
+    }
+    // Everything else — network, auth, timeout — is infrastructure. NEVER exit
+    // 1: a CI job that fails a release on a flaked request, and calls it a
+    // regression, teaches people to ignore the gate.
+    const detail = error instanceof Error ? error.message : String(error);
+    writeResult(
+      {
+        gate: {
+          outcome: "incomplete",
+          scoreIntegrity: "unknown",
+          verdicts: [
+            {
+              gate: "fetch",
+              status: "non_gateable",
+              message: `could not read the run: ${detail}`,
+            },
+          ],
+        },
+        exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE,
+      },
+      globalOptions.format
+    );
+    setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
+    return;
+  }
+
+  const exitCode = evalGateExitCode(report);
+  writeResult({ gate: report, exitCode }, globalOptions.format);
+  if (globalOptions.format === "human") {
+    process.stderr.write(`${formatGateReport(report)}\n`);
+  }
+  if (exitCode !== 0) {
+    setProcessExitCode(exitCode);
+  }
+}
+
 export function registerEvalCommands(program: Command): void {
   const evals = program
     .command("eval")
@@ -666,6 +876,57 @@ export function registerEvalCommands(program: Command): void {
         ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}),
       });
       await executeOp(listEvalRunIterationsOperation, input, options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("gate")
+      .description(
+        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option(
+        "--min-pass-rate-percent <0-100>",
+        "Minimum share of iterations that must pass, as a percentage"
+      )
+      .option(
+        "--no-gating-score-errors",
+        "Fail if any gating scorer errored during the run"
+      )
+      .option(
+        "--min-scorer-pass-rate <scorerId=percent>",
+        "Minimum pass rate for one scorer (repeatable)",
+        collectRepeatable,
+        [] as string[]
+      )
+      .option(
+        "--min-mean-score <scorerId=0..1>",
+        "Minimum mean score for one scorer (repeatable)",
+        collectRepeatable,
+        [] as string[]
+      )
+      .option("--wait", "Poll until the run reaches a terminal status")
+      .option(
+        "--wait-timeout <ms>",
+        "Give up waiting after this many milliseconds (default 600000)"
+      )
+  ).action(
+    async (
+      options: PlatformOptions &
+        EvalGateOptions & {
+          project: string;
+          run: string;
+          wait?: boolean;
+          waitTimeout?: string;
+        },
+      command
+    ) => {
+      await runEvalGate(options, command);
     }
   );
 
