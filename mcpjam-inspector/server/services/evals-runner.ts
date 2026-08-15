@@ -2919,6 +2919,11 @@ const runLocalIteration = async ({
       evaluation,
       usage: usageFinal,
       messages: acc.conversationMessages,
+      // Same gate as the `model` field above: a model-free case reaches this
+      // runner with a DISPLAY-ONLY sentinel (`executeTestCase` hands it a
+      // `pinned-only` definition and never resolves a real id), and attributing
+      // the session to that sentinel would label it with a model that never ran.
+      ...(caseNeedsModel ? { modelId: test.model } : {}),
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
@@ -3086,6 +3091,11 @@ const runLocalIteration = async ({
         totalTokens: acc.accumulatedUsage.totalTokens,
       },
       messages: failMessages,
+      // Gated exactly as on the success path: a model-free case carries a
+      // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be
+      // attributed to a model it never called just because it failed rather
+      // than finished.
+      ...(caseNeedsModel ? { modelId: test.model } : {}),
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
@@ -3716,6 +3726,11 @@ const runHostedIterationWithBrowser = async (
     evaluation,
     usage: accumulatedUsage,
     messages: messageHistory,
+    // The RESOLVED id, not `test.model`: `modelId` is what `executeTestCase`
+    // canonicalized and what the hosted `/stream` call actually billed, so
+    // attribution here agrees with the provider request. (This runner is never
+    // reached by a model-free case — those dispatch to the local runner.)
+    modelId,
     ...(backendEnhancedSystemPromptForPersist
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),

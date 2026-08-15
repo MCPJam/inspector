@@ -14,6 +14,7 @@ import type {
   StepAssertion,
 } from "@/shared/scripted-steps";
 import { MAX_SCRIPTED_STEPS } from "@/shared/scripted-steps";
+import { WIDGET_ASSERTION_LABELS } from "@/shared/steps";
 
 /**
  * Authoring UI for "Widget interaction checks" — the model-free scripted steps
@@ -35,13 +36,17 @@ const STEP_KIND_LABELS: Record<ScriptedStep["kind"], string> = {
   assert: "Assert",
 };
 
-const ASSERTION_LABELS: Record<StepAssertion["type"], string> = {
-  textVisible: "Text visible",
-  elementVisible: "Element visible",
-  elementHidden: "Element hidden",
-  inputValue: "Input value equals",
-  widgetToolCalled: "Widget called tool",
-};
+/**
+ * The shared widget-assertion names, re-exposed under this file's local type.
+ *
+ * `StepAssertion` (keyed on `type`) and `WidgetAssertion` (keyed on `kind`) are
+ * separate unions over the SAME five kind names, so one label map serves both.
+ * This file used to keep its own copy, and it had already drifted —
+ * `widgetToolCalled` read "Widget called tool" here and "View called tool" in
+ * the step-list editor, two names for one assertion on two screens.
+ */
+const ASSERTION_LABELS: Record<StepAssertion["type"], string> =
+  WIDGET_ASSERTION_LABELS;
 
 function locatorBy(loc: ElementLocator): LocatorBy {
   if (loc.testId !== undefined) return "testId";
