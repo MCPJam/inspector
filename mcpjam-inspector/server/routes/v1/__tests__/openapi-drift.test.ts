@@ -46,25 +46,27 @@ const BODYLESS_WRITES = new Set([
   // here could only be a place to pass the next secret in, which is exactly
   // what a rotation must not accept.
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  // Scenario-side dismissal, same shape as the swarm-side pair above.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
 //
 // This started as a backlog — fifteen eval-suite/case and eval-ingest routes
-// that the hand-authored spec had simply not caught up with. Those are now
-// documented, and what remains is the real thing this list is for: endpoints
-// that exist but are not part of the public contract, each with the reason
-// written down. An entry without a reason is a backlog item wearing a
-// decision's clothes.
+// the hand-authored spec had not caught up with, then the whole swarms and
+// user-testing surface behind the `sandboxes-enabled` beta. All of those are
+// documented now, with the gate's behaviour stated on the page rather than the
+// routes hidden: a caller who cannot use a route yet is better served by a
+// documented refusal than by an endpoint that appears not to exist.
+//
+// What remains is the real thing this list is for: endpoints that exist but
+// are not part of the public contract, each with the reason written down. An
+// entry without a reason is a backlog item wearing a decision's clothes.
 //
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
-  // Insights envelope surfaces (actionable-insights program, pre-GA): the
-  // scenario detail + eval-run insights retry ship behind the staged rollout
-  // and get documented at GA together with the envelope schema.
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}",
-  "post /projects/{projectId}/eval-runs/{runId}/insights",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
@@ -78,36 +80,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
-  // Flag-gated beta (`sandboxes-enabled`); document at GA. The public docs are
-  // the one surface a flag CANNOT gate — a Mintlify page is visible to
-  // everyone regardless of who the flag is on for.
-  //
-  // Both halves of this beta — SWARMS and USER TESTING — are now documented,
-  // with the gate's behaviour (403 `FEATURE_UNAVAILABLE` for an unflagged
-  // organization) stated on the page instead of the routes being hidden. A
-  // caller who cannot use a route yet is better served by a documented refusal
-  // than by an endpoint that appears not to exist.
-  //
-  // What is left below is the INSIGHTS layer of user testing, which is a
-  // different gate (the pre-GA actionable-insights program at the top of this
-  // list), not this one.
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
-  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
-
-  // A PLANNING read, not a product surface: it reports the caller's own role,
-  // the beta gate's state and their plan limits so an agent on a static
-  // surface can check before it acts. Undocumented for now because half of
-  // what it describes is the beta above — documenting the shape would
-  // advertise the flag-gated capability names to everyone. Moves into the spec
-  // with the rest of this surface at GA.
-  "get /projects/{projectId}/capabilities",
 ]);
 
 /**

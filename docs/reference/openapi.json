@@ -7071,6 +7071,41 @@
             "$ref": "#/components/responses/InternalError"
           }
         }
+      },
+      "get": {
+        "operationId": "getUserTestingScenario",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Get a scenario",
+        "description": "The scenario, plus the insights envelope over its latest analyzed window when the caller may have it.\n\nProject members only. This route is deliberately outside the guest allowlist, and the envelope additionally needs workspace membership \u2014 share-link visitors can never read other visitors' evidence.",
+        "responses": {
+          "200": {
+            "description": "The scenario.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTestingScenarioDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
       }
     },
     "/projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions": {
@@ -7420,6 +7455,557 @@
           },
           "400": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "get": {
+        "operationId": "getUserTestingMetrics",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Session metrics",
+        "description": "Volumes, completion and feedback rates over the scenario's sessions.\n\n`404` when the scenario has produced no sessions yet \u2014 an empty scenario has no metrics, which is different from metrics that are all zero.",
+        "parameters": [
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to `real` visitors or `synthetic` (swarm-driven) sessions. Omit for both. Any other value is a `400`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "real",
+                "synthetic"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The metrics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioMetrics"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/usage": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "get": {
+        "operationId": "getUserTestingUsage",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Usage breakdown",
+        "description": "Which models, tools and servers the scenario's sessions used.\n\n**Check `scan.truncated` before quoting a rate.** `404` when there is no usage data yet.",
+        "responses": {
+          "200": {
+            "description": "The breakdown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioUsage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/signals": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "get": {
+        "operationId": "getUserTestingSignals",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Current window signals",
+        "description": "What the miner extracted from the current window \u2014 and where you get the window id the insights read takes.\n\n`404` when no window has been analyzed yet.",
+        "responses": {
+          "200": {
+            "description": "The signals.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioSignals"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "get": {
+        "operationId": "listUserTestingFindings",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "List scenario findings",
+        "description": "Every finding raised over this scenario's windows, dismissed ones included \u2014 dismissal is a state on the finding, not a deletion.",
+        "responses": {
+          "200": {
+            "description": "The findings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioFindingPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        },
+        {
+          "$ref": "#/components/parameters/windowId"
+        }
+      ],
+      "get": {
+        "operationId": "getUserTestingWindowInsights",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Read a window's insights",
+        "description": "Poll this after requesting a generation.\n\n`404` means NOBODY ASKED \u2014 deliberately distinct from a `pending` status, so a caller looping on this cannot mistake \"never requested\" for \"requested and still working\".",
+        "responses": {
+          "200": {
+            "description": "The window's insights.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioWindowInsights"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/insights": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "post": {
+        "operationId": "requestUserTestingInsights",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Request insights for the current window",
+        "description": "**Spends.** Runs a model over the scenario's current window and draws on the organization's `insightsPerDay` ledger, which is SHARED with eval-run and swarm wave insights \u2014 spending it here takes it from there.\n\n`202`: scheduled, not done. Poll `GET .../windows/{windowId}/insights` with the returned `windowId` rather than re-requesting.\n\n`409` when the current window has not been mined yet: the request was well formed and retrying it verbatim will not help until sessions have been processed.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioInsightsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Scheduled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioInsightsRequested"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelUserTestingInsights",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Cancel a window's generation",
+        "description": "Releases a generation that is stuck `pending`. Idempotent against an already-finished one.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioInsightsCancelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canceled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioInsightsCanceled"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        },
+        {
+          "$ref": "#/components/parameters/findingId"
+        }
+      ],
+      "post": {
+        "operationId": "dismissUserTestingFinding",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Dismiss a finding",
+        "description": "Keyed on the finding's stable remediation id, so the same problem stays dismissed when insights regenerate. Bodyless: the path names the finding.",
+        "responses": {
+          "200": {
+            "description": "The finding's new state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioFindingDismissed"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        },
+        {
+          "$ref": "#/components/parameters/findingId"
+        }
+      ],
+      "post": {
+        "operationId": "undismissUserTestingFinding",
+        "tags": [
+          "User testing"
+        ],
+        "summary": "Restore a dismissed finding",
+        "description": "Undoes a dismissal. Bodyless: the path names the finding.",
+        "responses": {
+          "200": {
+            "description": "The finding's new state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioFindingDismissed"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/insights": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/scenarioId"
+        }
+      ],
+      "post": {
+        "operationId": "requestEvalRunInsights",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "Request insights for an eval run",
+        "description": "**Spends.** Runs a model over the finished run and draws on the same shared `insightsPerDay` ledger as swarm and user-testing insights.\n\n`202`: scheduled, not done. Poll the run detail's `insights` envelope rather than re-requesting \u2014 the envelope's `status` distinguishes `pending` from `not_requested`, which a second POST would not.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRunInsightsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Scheduled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunInsightsRequested"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/capabilities": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "getProjectCapabilities",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "What the caller may do here",
+        "description": "Role, gate state, plan limits and a set of derived booleans \u2014 so an agent on a static surface can check before it acts instead of attempting a write and reading the failure.\n\nDescriptive, never authoritative: see the schema.",
+        "responses": {
+          "200": {
+            "description": "The caller's capabilities in this project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectCapabilities"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -9267,6 +9853,14 @@
                 "type": "null"
               }
             ]
+          },
+          "insights": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InsightsEnvelope"
+              }
+            ],
+            "description": "The common actionable-insights envelope. Present on the DETAIL response only \u2014 lists stay compact \u2014 and absent when the caller may not have it or the deployment cannot produce one. Treat absence exactly like `status: \"not_available\"`."
           }
         }
       },
@@ -13350,6 +13944,14 @@
           "lastHeartbeatAt": {
             "type": "number",
             "description": "Epoch milliseconds of the runner's last check-in. A long-stale heartbeat on a `running` run is what the watchdog acts on."
+          },
+          "insights": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InsightsEnvelope"
+              }
+            ],
+            "description": "The common actionable-insights envelope. Present on the DETAIL response only \u2014 lists stay compact \u2014 and absent when the caller may not have it or the deployment cannot produce one. Treat absence exactly like `status: \"not_available\"`."
           }
         }
       },
@@ -14658,6 +15260,887 @@
           "environmentId": {
             "type": "string",
             "description": "The environment to point this scenario at. Must belong to the SAME project."
+          }
+        }
+      },
+      "ActionableFindingEvidence": {
+        "type": "object",
+        "required": [
+          "kind",
+          "excerpt"
+        ],
+        "description": "One citation behind a finding. Evidence is what makes a finding checkable rather than an assertion.",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "iterationId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tool_error",
+              "transcript",
+              "feedback",
+              "judge",
+              "contrast"
+            ]
+          },
+          "excerpt": {
+            "type": "string",
+            "description": "Scrubbed and clipped at the producer. Never a full transcript."
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          }
+        }
+      },
+      "ActionableFinding": {
+        "type": "object",
+        "required": [
+          "id",
+          "signalFingerprint",
+          "title",
+          "category",
+          "attribution",
+          "actionTarget",
+          "actionability",
+          "severity",
+          "confidence",
+          "observed",
+          "recommendation",
+          "acceptanceCriteria",
+          "affected",
+          "evidence"
+        ],
+        "description": "One actionable finding. The fields are ordered from cheapest to trust to most: `observed` is deterministic, `recommendation` is the model's, and `evidence` lets you check both.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable remediation id (`rf_<16 hex>`). Survives dynamic error values, so the same problem keeps the same id across runs \u2014 dismiss it once and it stays dismissed."
+          },
+          "signalFingerprint": {
+            "type": "string",
+            "description": "The registry signal this derives from. Several findings can share one."
+          },
+          "title": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "tool_contract",
+              "tool_runtime",
+              "capability_gap",
+              "workflow",
+              "agent_behavior",
+              "test_design",
+              "environment"
+            ]
+          },
+          "attribution": {
+            "type": "string",
+            "description": "WHOSE problem this is. `server_*` points at the MCP server; `agent_or_prompt` and `test_design` point back at the caller.",
+            "enum": [
+              "unknown",
+              "server_contract",
+              "server_runtime",
+              "server_capability",
+              "agent_or_prompt",
+              "test_design",
+              "environment"
+            ]
+          },
+          "actionTarget": {
+            "type": "string",
+            "description": "What you would change to fix it.",
+            "enum": [
+              "investigate",
+              "mcp_server",
+              "agent_configuration",
+              "eval_case",
+              "environment"
+            ]
+          },
+          "actionability": {
+            "type": "string",
+            "description": "`ready` means the finding names a specific target and change. `investigate` means it does not yet. `informational` means there is nothing to do.",
+            "enum": [
+              "informational",
+              "investigate",
+              "ready"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "observed": {
+            "type": "string",
+            "description": "DETERMINISTIC observation \u2014 counts and identities, never model prose. This is the part you can verify yourself."
+          },
+          "rootCause": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "description": "How you would know the fix worked.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "affected": {
+            "type": "object",
+            "required": [
+              "count",
+              "total",
+              "unit"
+            ],
+            "description": "How much of the analyzed population hit this. Read it as a ratio \u2014 `1/40` and `38/40` are different problems.",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "iterations",
+                  "sessions"
+                ]
+              }
+            }
+          },
+          "patternSlug": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "required": [
+              "serverId",
+              "surface",
+              "snapshotHash"
+            ],
+            "description": "Present only when a server (and, for tool surfaces, a tool) resolved against the pinned snapshot. Required for `mcp_server` / `ready`.",
+            "properties": {
+              "serverId": {
+                "type": "string"
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "surface": {
+                "type": "string",
+                "enum": [
+                  "description",
+                  "input_schema",
+                  "output_schema",
+                  "handler",
+                  "server_instructions",
+                  "capability"
+                ]
+              },
+              "fieldPath": {
+                "type": "string"
+              },
+              "snapshotHash": {
+                "type": "string",
+                "description": "The pinned snapshot the target resolved against, so a finding cannot silently re-point at a definition that changed after it was written."
+              },
+              "currentDefinition": {
+                "type": "object",
+                "required": [
+                  "truncated"
+                ],
+                "properties": {
+                  "description": {
+                    "type": "string"
+                  },
+                  "inputSchemaJson": {
+                    "type": "string"
+                  },
+                  "outputSchemaJson": {
+                    "type": "string"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionableFindingEvidence"
+            }
+          }
+        }
+      },
+      "InsightScope": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "description": "What this envelope is about. The extra fields depend on `kind`.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "eval_run",
+              "swarm_wave",
+              "user_testing_window"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string",
+            "description": "`swarm_wave` only."
+          },
+          "scenarioId": {
+            "type": "string",
+            "description": "`user_testing_window` only."
+          },
+          "windowStartAt": {
+            "type": "integer",
+            "description": "`user_testing_window` only."
+          },
+          "windowEndAt": {
+            "type": "integer",
+            "description": "`user_testing_window` only."
+          }
+        }
+      },
+      "InsightsEnvelope": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "scope",
+          "status",
+          "reasonCode",
+          "retryable",
+          "error",
+          "generatedAt",
+          "updatedAt",
+          "summary",
+          "coverage",
+          "findings",
+          "truncation"
+        ],
+        "description": "The common insights envelope, shared by eval runs, swarm waves and user-testing windows.\n\nOne shape for three producers, so a caller writes the reading code once. An ABSENT envelope and `status: \"not_available\"` mean the same thing and both are normal: the field is an enrichment, and a caller who may not have it gets the resource without it rather than an error.",
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/InsightScope"
+          },
+          "status": {
+            "type": "string",
+            "description": "`not_available` means this deployment cannot produce insights at all \u2014 treat an ABSENT envelope the same way. `not_requested` means nobody has asked. `pending` means one is running: poll, do not re-request.",
+            "enum": [
+              "not_available",
+              "not_requested",
+              "pending",
+              "completed",
+              "failed"
+            ]
+          },
+          "reasonCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether asking again could produce a different answer. False on a `failed` envelope means the input, not the attempt, was the problem."
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "coverage": {
+            "type": "object",
+            "required": [
+              "unit",
+              "analyzed",
+              "total",
+              "truncated",
+              "lowConfidence"
+            ],
+            "description": "READ THIS BEFORE QUOTING ANY FINDING. `truncated` and `lowConfidence` are the difference between \"this happens\" and \"this happened in the part we looked at\".",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "iterations",
+                  "sessions"
+                ]
+              },
+              "analyzed": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              },
+              "gradedCount": {
+                "type": "integer"
+              },
+              "feedbackCount": {
+                "type": "integer"
+              },
+              "truncated": {
+                "type": "boolean",
+                "description": "The analysis saw `analyzed` of `total`, not all of it."
+              },
+              "lowConfidence": {
+                "type": "boolean",
+                "description": "Too little was analyzed to generalize. Findings still stand as observations of what WAS seen."
+              }
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionableFinding"
+            }
+          },
+          "runHealth": {
+            "type": "object",
+            "required": [
+              "targets"
+            ],
+            "description": "Swarm only. Launch outcomes never appear as findings \u2014 a run that could not start is an operational fact, not something the server under test did.",
+            "properties": {
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "subjectKind",
+                    "subjectId",
+                    "subjectLabel",
+                    "attempted",
+                    "succeeded",
+                    "failed",
+                    "rateLimited"
+                  ],
+                  "properties": {
+                    "subjectKind": {
+                      "type": "string",
+                      "enum": [
+                        "environment",
+                        "host"
+                      ]
+                    },
+                    "subjectId": {
+                      "type": "string"
+                    },
+                    "subjectLabel": {
+                      "type": "string"
+                    },
+                    "attempted": {
+                      "type": "integer"
+                    },
+                    "succeeded": {
+                      "type": "integer"
+                    },
+                    "failed": {
+                      "type": "integer"
+                    },
+                    "rateLimited": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "truncation": {
+            "type": "object",
+            "required": [
+              "truncated",
+              "omittedFindings",
+              "omittedEvidence",
+              "contractTruncated"
+            ],
+            "description": "What this RESPONSE dropped to stay a sane size, as distinct from what the ANALYSIS did not look at (`coverage`).",
+            "properties": {
+              "truncated": {
+                "type": "boolean"
+              },
+              "omittedFindings": {
+                "type": "integer"
+              },
+              "omittedEvidence": {
+                "type": "integer"
+              },
+              "contractTruncated": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "UserTestingScenarioDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "description",
+          "mode",
+          "environmentId"
+        ],
+        "description": "A published scenario, enriched with findings over its latest analyzed window. NO `accessVersion`: the settings envelope this is read from does not carry it \u2014 the publish and rebind responses do.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "insights": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InsightsEnvelope"
+              }
+            ],
+            "description": "Present when the caller may have it. The envelope needs workspace MEMBERSHIP while the scenario itself is visible more widely, so a lower-privilege viewer gets the scenario without this field rather than a 403."
+          }
+        }
+      },
+      "ScenarioMetrics": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Session metrics for the scenario: volumes, completion and feedback rates, cohort splits.\n\nDeliberately UNPINNED. The upstream projection grows with the product and the SDK types it as an open record for the same reason \u2014 pinning a field list here would turn every added metric into a spec violation. Read what you recognize and ignore the rest.",
+        "properties": {}
+      },
+      "ScenarioUsage": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Usage breakdown: models, tools and servers the scenario's sessions actually used.\n\n**Read `scan.truncated` before quoting any rate from this.** True means the rates were computed over the most recent N sessions rather than all of them, and dropping the flag turns a conditional statistic into an unconditional claim.\n\nUnpinned for the same reason as `ScenarioMetrics`.",
+        "properties": {}
+      },
+      "ScenarioSignals": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "What the miner extracted from the scenario's current window \u2014 and how you learn the current window id, which the window-insights read takes. There is no separate \"list windows\" route because the only window anyone asks about is the live one.\n\nUnpinned; see `ScenarioMetrics`.",
+        "properties": {}
+      },
+      "ScenarioWindowInsights": {
+        "type": "object",
+        "required": [
+          "windowId"
+        ],
+        "additionalProperties": true,
+        "description": "One window's generated insights, plus the `windowId` they belong to. The generated part is unpinned; see `ScenarioMetrics`.",
+        "properties": {
+          "windowId": {
+            "type": "string"
+          }
+        }
+      },
+      "ScenarioFinding": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "One finding over a scenario window. Unpinned; see `ScenarioMetrics`. The stable fields are the document id (used by dismiss/undismiss) and the dismissal state.",
+        "properties": {}
+      },
+      "ScenarioFindingPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioFinding"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "ScenarioInsightsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional. A bodyless POST is the ordinary case.",
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Regenerate even when a completed generation already exists. SPENDS A SECOND TIME \u2014 that is the whole point of the flag, so it is never inferred."
+          }
+        }
+      },
+      "ScenarioInsightsRequested": {
+        "type": "object",
+        "required": [
+          "scenarioId",
+          "projectId",
+          "windowId",
+          "status"
+        ],
+        "properties": {
+          "scenarioId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "windowId": {
+            "type": "string",
+            "description": "The window this generation covers. Poll `GET .../windows/{windowId}/insights` with it."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
+          }
+        }
+      },
+      "ScenarioInsightsCancelRequest": {
+        "type": "object",
+        "required": [
+          "windowId"
+        ],
+        "additionalProperties": false,
+        "description": "Which generation to cancel. In the body rather than the path because the recovery case this exists for \u2014 a window stuck `pending` \u2014 is precisely when you have the id and nothing else works.",
+        "properties": {
+          "windowId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "ScenarioInsightsCanceled": {
+        "type": "object",
+        "required": [
+          "scenarioId",
+          "projectId",
+          "windowId",
+          "canceled"
+        ],
+        "properties": {
+          "scenarioId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "windowId": {
+            "type": "string"
+          },
+          "canceled": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "ScenarioFindingDismissed": {
+        "type": "object",
+        "required": [
+          "id",
+          "scenarioId",
+          "projectId",
+          "dismissed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scenarioId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "dismissed": {
+            "type": "boolean",
+            "description": "True from `/dismiss`, false from `/undismiss`. Dismissal is keyed on the finding's stable remediation id, so the same problem stays dismissed across regenerations."
+          }
+        }
+      },
+      "EvalRunInsightsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional. A bodyless POST is the ordinary case.",
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Regenerate even when insights already exist. SPENDS AGAIN. Must be a real boolean \u2014 `\"false\"` is rejected rather than read as consent."
+          }
+        }
+      },
+      "EvalRunInsightsRequested": {
+        "type": "object",
+        "required": [
+          "runId",
+          "projectId",
+          "status"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
+          }
+        }
+      },
+      "ProjectCapabilities": {
+        "type": "object",
+        "required": [
+          "projectId",
+          "organizationId",
+          "role",
+          "projectRole",
+          "surface",
+          "features",
+          "plan",
+          "can"
+        ],
+        "description": "What the caller may do in this project, asked BEFORE they try it.\n\n**A planning aid, not a gate.** Every enforcement point is unchanged: the write path checks roles and the beta flag inside the platform regardless of what this returned a second earlier. A caller that reads a `true` here and races a flag flip gets the same clean `403` it would have got without asking. Nothing may consult this INSTEAD of its own check.\n\nIt exists because every agent surface MCPJam ships is static \u2014 one MCP tool catalog built with no organization in hand, a CLI command tree fixed at install \u2014 so an agent planning a task otherwise has to attempt the write and read the failure. By then it has usually already told a human what it was about to do.",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "description": "The caller's ORGANIZATION role: `guest`, `member`, `admin` or `owner`. This is what the platform's role checks rank; a project grant does not raise it."
+          },
+          "projectRole": {
+            "type": "string",
+            "description": "`admin` or `editor`, when the caller holds a project grant."
+          },
+          "surface": {
+            "type": "string",
+            "description": "Which channel we resolved this request to arrive on. Echoed so an agent can confirm it is labelled the way it expects \u2014 a CLI showing up as `rest` means its user agent is not reaching us."
+          },
+          "features": {
+            "type": "object",
+            "required": [
+              "sandboxes"
+            ],
+            "properties": {
+              "sandboxes": {
+                "type": "object",
+                "required": [
+                  "enabled",
+                  "mode",
+                  "enforced"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "description": "`off` | `dark` | `enforce`. Only `enforce` turns a disabled flag into a refusal; in `dark` the platform logs what it would have blocked and lets the write through.",
+                    "enum": [
+                      "off",
+                      "dark",
+                      "enforce"
+                    ]
+                  },
+                  "enforced": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "name",
+                  "limits",
+                  "features"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "limits": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "features": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can": {
+            "type": "object",
+            "required": [
+              "readSwarms",
+              "readUserTesting",
+              "writeSwarms",
+              "launchJourneyRun",
+              "cancelJourneyRun",
+              "publishUserTestingScenario",
+              "unpublishUserTestingScenario",
+              "changeUserTestingExposure",
+              "manageUserTestingGuestExecution",
+              "requestInsights"
+            ],
+            "description": "The booleans to branch on, derived server-side rather than left for each caller to re-derive from `role` plus flag state.",
+            "properties": {
+              "readSwarms": {
+                "type": "boolean"
+              },
+              "readUserTesting": {
+                "type": "boolean"
+              },
+              "writeSwarms": {
+                "type": "boolean",
+                "description": "Authoring personas, journeys and swarms."
+              },
+              "launchJourneyRun": {
+                "type": "boolean"
+              },
+              "cancelJourneyRun": {
+                "type": "boolean",
+                "description": "Stays TRUE for an organization that has lost the beta. Losing the feature is exactly when stopping a run matters most."
+              },
+              "publishUserTestingScenario": {
+                "type": "boolean",
+                "description": "Project admin, and behind the beta gate."
+              },
+              "unpublishUserTestingScenario": {
+                "type": "boolean",
+                "description": "Project admin, NOT gated \u2014 same reasoning as cancelling a run."
+              },
+              "changeUserTestingExposure": {
+                "type": "boolean",
+                "description": "Mode changes, member invites and removals, link rotation, renames \u2014 the controls an ordinary MEMBER can use, none of them gated. Guest execution is not covered here; it needs admin and has its own key."
+              },
+              "manageUserTestingGuestExecution": {
+                "type": "boolean",
+                "description": "The guest-execution spend caps. Project admin, ungated."
+              },
+              "requestInsights": {
+                "type": "boolean"
+              }
+            }
           }
         }
       }

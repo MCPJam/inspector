@@ -148,10 +148,31 @@ const PAIRS: Readonly<Record<string, string>> = {
   Scenario: "PlatformScenario",
   ScenarioDeleted: "PlatformScenarioDeleted",
   UserTestingScenario: "PlatformUserTestingScenario",
+  UserTestingScenarioDetail: "PlatformUserTestingScenarioDetail",
   UserTestingSession: "PlatformUserTestingSession",
   UserTestingSessionDetail: "PlatformUserTestingSessionDetail",
   TranscriptMessage: "PlatformTranscriptMessage",
   GuestExecution: "PlatformGuestExecution",
+
+  // ── A5: the insights layer, and the planning read ─────────────────────
+  //
+  // The five user-testing ANALYTICS schemas (`ScenarioMetrics`,
+  // `ScenarioUsage`, `ScenarioSignals`, `ScenarioWindowInsights`,
+  // `ScenarioFinding`) are deliberately unpaired: the SDK types them as open
+  // records because the upstream projections grow with the product, so a
+  // field-by-field comparison against a type that says "anything" would report
+  // every documented property as missing. Same reasoning as `GenerationDrafts`.
+  //
+  // `InsightScope` is unpaired for a different reason: its SDK twin is a
+  // discriminated UNION of three object types, not an interface, and this
+  // parser reads interfaces. Pairing it would need a second extraction path
+  // for one schema.
+  InsightsEnvelope: "PlatformInsightsEnvelope",
+  ActionableFinding: "PlatformActionableFinding",
+  ActionableFindingEvidence: "PlatformActionableFindingEvidence",
+  ScenarioInsightsRequested: "PlatformUserTestingInsightsRequested",
+  EvalRunInsightsRequested: "PlatformEvalRunInsightsRequested",
+  ProjectCapabilities: "PlatformCapabilities",
 };
 
 /**
@@ -160,23 +181,12 @@ const PAIRS: Readonly<Record<string, string>> = {
  * Keep this SMALL. Every entry is a place a caller can be surprised, and the
  * cost of an exemption is that the one axis it silences is the one nothing
  * will ever check again.
+ *
+ * EMPTY, and worth keeping that way. It held `EvalRun.insights` and
+ * `JourneyRun.insights` while the envelope was undocumented; both came off in
+ * the same change that documented it, which is what the note there promised.
  */
-const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {
-  // The common actionable-insights envelope. The SDK types it because a caller
-  // on a current deployment really does receive it; the spec does not document
-  // it because the two routes that carry the envelope are themselves in
-  // `KNOWN_UNDOCUMENTED` pending GA (see `openapi-drift.test.ts`). Documenting
-  // the field before the routes would advertise a pre-GA shape on a page no
-  // feature flag can gate.
-  //
-  // This exemption comes OFF with those routes, in the same PR.
-  EvalRun: ["insights"],
-  // Same envelope, same reason, on the swarm side. The run itself is
-  // documented; the envelope it can carry is not, because the routes that
-  // produce and retry it are still pre-GA.
-  JourneyRun: ["insights"],
-};
-
+const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {};
 // ── SDK type extraction ─────────────────────────────────────────────────────
 
 type SdkField = {

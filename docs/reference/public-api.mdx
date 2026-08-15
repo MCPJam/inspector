@@ -473,6 +473,51 @@ exists.
   rotate responses do not carry it.
 </Warning>
 
+**User testing — what visitors did** — the analytics reads, and the model pass
+over them. Read these in cost order: metrics, usage and signals are
+deterministic and free; the insights request runs a model.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../user-testing/scenarios/{scenarioId}` | The scenario, plus its insights envelope when you may have it |
+| `GET .../user-testing/scenarios/{scenarioId}/metrics` | Volumes, completion and feedback rates. `?population=real\|synthetic` splits real visitors from swarm runs |
+| `GET .../user-testing/scenarios/{scenarioId}/usage` | Which models, tools and servers the sessions used. **Check `scan.truncated`** before quoting a rate |
+| `GET .../user-testing/scenarios/{scenarioId}/signals` | What the miner found in the current window — and where you get the `windowId` |
+| `GET .../user-testing/scenarios/{scenarioId}/findings` | Every finding raised over this scenario, dismissed ones included |
+| `GET .../user-testing/scenarios/{scenarioId}/windows/{windowId}/insights` | One window's insights. **`404` means nobody asked**, which is not the same as `pending` |
+| `POST .../user-testing/scenarios/{scenarioId}/insights` | **Spends.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
+| `DELETE .../user-testing/scenarios/{scenarioId}/insights` | Release a generation stuck `pending`. Takes `windowId` in the body |
+| `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss` | Dismiss a finding. Keyed on its stable id, so it stays dismissed when insights regenerate |
+| `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss` | Undo that |
+
+The five analytics shapes above are documented as **open objects** on purpose.
+Their upstream projections grow with the product and the SDK types them the
+same way, so pinning a field list would turn every new metric into a spec
+violation. Read what you recognize; ignore the rest.
+
+<Warning>
+  Requesting insights **spends**, and draws on the same `insightsPerDay` ledger
+  as eval-run and swarm wave insights — one budget, three producers. Poll the
+  window read rather than re-requesting; `force: true` deliberately spends a
+  second time, which is why it is never inferred from anything else.
+</Warning>
+
+**Planning** — one read that answers "may I?" before you try:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, and the booleans to branch on |
+
+<Note>
+  `capabilities` is a **planning aid, not a gate**. Every write still enforces
+  independently, so a `true` here that races a flag flip costs you a clean
+  `403` rather than an incorrect success — and nothing should consult it
+  *instead of* trying. It exists because agent surfaces are static: an MCP tool
+  catalog is built with no organization in hand, so the alternative is
+  attempting the write and reading the failure, by which point the agent has
+  usually already told someone what it was about to do.
+</Note>
+
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.
