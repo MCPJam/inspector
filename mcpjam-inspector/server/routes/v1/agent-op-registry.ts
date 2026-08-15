@@ -1105,6 +1105,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   get_chatbox: "Published chatboxes are a human sharing surface.",
   list_chat_sessions:
     "Other people's conversations are not the agent's to read.",
+  // Same doctrine, and search does not soften it: a query that returns titles
+  // and transcript previews across every surface reads MORE of other people's
+  // conversations than the listing does, not less. The in-app chat surface has
+  // its own narrowed copy (WORKSPACE_OPERATIONS, minus chatbox rows via the
+  // input clamp); this registry has no input-transform seam, so the only
+  // honest options here are all-or-nothing.
+  search_sessions:
+    "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(

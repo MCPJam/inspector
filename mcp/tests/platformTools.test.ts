@@ -139,6 +139,7 @@ const PLAIN_TOOLS = [
   "get_eval_run_steps",
   "cancel_eval_run",
   "list_chat_sessions",
+  "search_sessions",
   // Swarms + user testing. No widget views yet: these are agent-oriented
   // payloads, and a half-designed panel is worse than the structured JSON.
   "get_capabilities",
@@ -316,6 +317,7 @@ describe("platform tool registration", () => {
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
+      "search_sessions",
       "get_capabilities",
       "list_personas",
       "get_persona",

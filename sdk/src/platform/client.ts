@@ -68,6 +68,7 @@ import type {
   PlatformServerConnection,
   PlatformServerConnectionCreateBody,
   PlatformProjectServer,
+  PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
 } from "./types.js";
@@ -374,6 +375,54 @@ export class PlatformApiClient {
           status: params.status,
           limit: params.limit,
           before: params.before,
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * The unified, cross-surface sessions feed for one project.
+   *
+   * `q` is optional HERE (omitted = the recency feed) even though the
+   * `search_sessions` operation requires it: a client method is the general
+   * transport, and list-mode is a legitimate use of the endpoint. The
+   * operation narrows that on purpose — an agent asking for "the sessions"
+   * unfiltered is almost never what its user meant.
+   *
+   * `sourceTypes` is CSV-joined because the endpoint takes a repeated-value
+   * `sourceType` param as one comma-separated string; an empty array is sent
+   * as nothing at all rather than as `sourceType=`, which the backend would
+   * reject.
+   *
+   * `cursor` passes through unrenamed — it is an opaque Convex cursor, so echo
+   * back exactly what the previous page returned and never construct one.
+   */
+  listSessions(
+    params: {
+      projectId: string;
+      q?: string;
+      scope?: "titles" | "transcripts";
+      sourceTypes?: string[];
+      status?: string;
+      limit?: number;
+      cursor?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformSessionsPage> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/sessions`,
+      {
+        query: {
+          q: params.q,
+          scope: params.scope,
+          sourceType: params.sourceTypes?.length
+            ? params.sourceTypes.join(",")
+            : undefined,
+          status: params.status,
+          limit: params.limit,
+          cursor: params.cursor,
         },
       },
       options,

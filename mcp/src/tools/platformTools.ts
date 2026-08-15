@@ -38,6 +38,7 @@ import {
   isPlatformApiError,
   listChatboxesOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
@@ -196,6 +197,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //

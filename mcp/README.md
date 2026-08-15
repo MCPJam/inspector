@@ -74,6 +74,7 @@ so results respect the caller's project access.
 | `list_chatboxes` | List the chatboxes published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
 | `get_chatbox` | Get one chatbox's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
+| `search_sessions` | Search a project's sessions across every surface (Playground, user testing, evals, swarms), ranked by relevance. `scope=titles` searches titles and opening messages; `scope=transcripts` searches what was said. Every result carries a link. | — |
 | `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
 | `list_personas` | List the project's reusable synthetic characters — the cast Swarms journeys run as. | — |
 | `get_persona` | Get one persona in full, including its behavioural notes. | — |

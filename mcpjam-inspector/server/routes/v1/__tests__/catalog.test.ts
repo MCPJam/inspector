@@ -80,6 +80,12 @@ describe("v1 catalog read proxies", () => {
       "/api/v1/projects/p1/chatboxes",
       "https://convex-http.example.com/v1/chatboxes?projectId=p1",
     ],
+    [
+      // Project-NESTED, and every search param forwarded verbatim — `cursor`
+      // is NOT renamed here, unlike `/chat-sessions` above.
+      "/api/v1/projects/p1/sessions?q=refund&scope=transcripts&sourceType=direct,eval&status=archived&limit=10&cursor=abc",
+      "https://convex-http.example.com/v1/sessions?projectId=p1&sourceType=direct%2Ceval&status=archived&q=refund&scope=transcripts&limit=10&cursor=abc",
+    ],
   ])(
     "maps %s onto the Convex read surface",
     async (inspectorPath, convexUrl) => {
@@ -107,6 +113,20 @@ describe("v1 catalog read proxies", () => {
     expect(String(target)).toBe(
       "https://convex-http.example.com/v1/chat-sessions?limit=2&before=999"
     );
+  });
+
+  it("passes the upstream `scope` echo through to the caller", async () => {
+    // The SDK fails closed on a missing marker, so the proxy dropping or
+    // rewriting it would break transcript search across every surface.
+    fetchMock.mockResolvedValue(
+      jsonResponse({ items: [], scope: "transcripts" })
+    );
+    const res = await request(
+      makeApp(),
+      "/api/v1/projects/p1/sessions?q=refund&scope=transcripts"
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ items: [], scope: "transcripts" });
   });
 
   it("does not forward a bearer to the public models catalog", async () => {

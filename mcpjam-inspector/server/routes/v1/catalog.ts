@@ -20,6 +20,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { captureServerEvent } from "../../utils/analytics.js";
 
 const catalog = new Hono();
 
@@ -165,6 +166,62 @@ catalog.get("/projects/:projectId/eval-suites", (c) =>
     target.searchParams.set("projectId", c.req.param("projectId"))
   )
 );
+
+// GET /v1/projects/:projectId/sessions?q=&scope=&sourceType=&status=&limit=&cursor=
+//
+// The unified, cross-surface sessions feed — Playground, user testing, evals,
+// and swarms in one project-scoped list. PROJECT-NESTED, unlike
+// `/chat-sessions` below: `projectId` is REQUIRED upstream and owns the scope,
+// so it belongs in the path rather than as an optional filter.
+//
+// `cursor` passes through unrenamed (the upstream's own parameter is `cursor`
+// here, not `before`), and no parameter is rewritten — the upstream owns
+// validation, and re-deriving it here would be a second place to get the
+// scope/q interaction wrong.
+catalog.get("/projects/:projectId/sessions", async (c) => {
+  const response = await proxyConvexV1Read(c, "/v1/sessions", (target) => {
+    target.searchParams.set("projectId", c.req.param("projectId"));
+    forwardQueryParams(c, target, [
+      "sourceType",
+      "status",
+      "q",
+      "scope",
+      "limit",
+      "cursor",
+    ]);
+  });
+
+  // Instrumentation rides on the RESPONSE, so a rejected or unauthorized
+  // search is not counted as a search that happened. Best-effort and
+  // non-blocking: a parse failure here must never change what the caller gets.
+  try {
+    if (response.status === 200) {
+      const body = (await response.clone().json()) as {
+        items?: unknown[];
+        nextCursor?: string;
+        scope?: string;
+      };
+      const sourceType = c.req.query("sourceType");
+      captureServerEvent(c, "api_sessions_search", {
+        // The honored scope, not the requested one — the upstream is the
+        // authority on which search actually ran.
+        scope: body.scope ?? null,
+        hasQuery: typeof c.req.query("q") === "string",
+        itemCount: Array.isArray(body.items) ? body.items.length : 0,
+        hasNextCursor: typeof body.nextCursor === "string",
+        // The FILTER, never the query. A sourceType list is a fixed
+        // vocabulary; a search term is user content.
+        sourceTypes: sourceType ? sourceType.split(",") : null,
+        status: c.req.query("status") ?? null,
+      });
+    }
+  } catch {
+    // A malformed upstream body is the upstream's problem to report, not a
+    // reason to fail the request on the way out.
+  }
+
+  return response;
+});
 
 // GET /v1/chat-sessions?projectId=&status=&limit=&before=
 // Chat sessions visible to the caller. Top-level (not project-nested)

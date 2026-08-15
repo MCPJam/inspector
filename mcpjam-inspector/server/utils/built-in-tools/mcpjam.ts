@@ -42,6 +42,7 @@ import {
   getServerPromptOperation,
   listChatboxesOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
@@ -123,6 +124,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+  // Advertised with its reach NARROWED rather than excluded: see
+  // `WORKSPACE_INPUT_CLAMPS` — chatbox (visitor) sessions stay unsearchable
+  // here, matching the line the user-testing exclusions below already draw.
+  searchSessionsOperation,
 
   // ── Swarms ──────────────────────────────────────────────────────────────
   //
@@ -378,6 +383,85 @@ const APPROVAL_REQUIRED_IDS = new Set([
 const AMBIENT_PROJECT_NOTE =
   " When no project is given, the current chat's project is used.";
 
+/**
+ * Per-operation input NARROWING for the in-app chat surface.
+ *
+ * The exclusion list above is all-or-nothing: an operation is advertised in
+ * chat or it is not. Some belong here with a smaller reach instead — the whole
+ * operation is not the problem, one argument value is. This is the seam for
+ * that, and it stays deliberately small: a clamp is a claim that the operation
+ * is safe once narrowed, which is a stronger claim than excluding it outright.
+ *
+ * `transform` returns either the narrowed input or `{ error }`. The two are
+ * different answers on purpose. Silently dropping a caller's explicit argument
+ * would answer a question they did not ask — the same failure the API's
+ * unknown-`sourceType` 400 exists to prevent — so an explicitly forbidden
+ * value REFUSES, while an absent one gets a default.
+ *
+ * `descriptionNote` is appended after `AMBIENT_PROJECT_NOTE` so the model reads
+ * the narrowing rather than discovering it by being refused.
+ *
+ * Enforced by `__tests__/mcpjam-built-in-tools.test.ts`: every key here must be
+ * an operation this surface actually advertises, or the clamp is dead code
+ * guarding nothing.
+ */
+type WorkspaceInputClamp = {
+  descriptionNote: string;
+  transform: (
+    input: Record<string, unknown>
+  ) => Record<string, unknown> | { error: string };
+};
+
+/** The sourceTypes in-app chat may search. `chatbox` is the omission. */
+const WORKSPACE_SEARCHABLE_SOURCE_TYPES = ["direct", "eval", "swarm"] as const;
+
+export const WORKSPACE_INPUT_CLAMPS: Readonly<
+  Record<string, WorkspaceInputClamp>
+> = {
+  /**
+   * Keep user-testing (`chatbox`) transcripts out of in-app chat search.
+   *
+   * Those are real visitors' conversations with the product, and this surface
+   * already draws that line for the listings (`list_user_testing_sessions` and
+   * `get_user_testing_session` are both in `EXCLUDED_FROM_WORKSPACE` for
+   * visitor privacy). Search would walk straight around it: one query would
+   * return visitor titles and transcript previews in a chat turn — MORE of
+   * those conversations than the excluded listings expose, not less.
+   *
+   * The rest of `search_sessions` is genuinely useful in chat ("which session
+   * hit that error?"), so the operation is advertised with its reach narrowed
+   * rather than removed.
+   */
+  search_sessions: {
+    descriptionNote:
+      " In this chat, user-testing (chatbox) sessions are not searchable — those are real visitors' conversations. Searches direct, eval, and swarm sessions.",
+    transform: (input) => {
+      const requested = input.sourceTypes;
+      if (
+        Array.isArray(requested) &&
+        requested.some((value) => value === "chatbox")
+      ) {
+        return {
+          error:
+            "User-testing (chatbox) sessions cannot be searched from chat — those are real visitors' conversations. Search direct, eval, or swarm sessions instead, or use the User Testing tab.",
+        };
+      }
+      // Injected when ABSENT and when EMPTY. `[]` is the dangerous spelling:
+      // the zod schema's `.min(1)` rejects it, but `execute()` can be called
+      // raw with no schema in the way, and an empty array serializes to no
+      // filter at all — which would widen the search to every source,
+      // chatbox included. Treating `[]` exactly like omission closes that.
+      if (!Array.isArray(requested) || requested.length === 0) {
+        return {
+          ...input,
+          sourceTypes: [...WORKSPACE_SEARCHABLE_SOURCE_TYPES],
+        };
+      }
+      return input;
+    },
+  },
+};
+
 export interface McpjamToolOptions {
   /**
    * Platform API client bound to the caller's bearer. In the web chat this
@@ -440,8 +524,12 @@ export function buildMcpjamTool(
   const needsApproval =
     APPROVAL_REQUIRED_IDS.has(id) && opts.requireToolApproval === true;
 
+  const clamp = WORKSPACE_INPUT_CLAMPS[id];
+
   return tool({
-    description: `${operation.description}${AMBIENT_PROJECT_NOTE}`,
+    description: `${operation.description}${AMBIENT_PROJECT_NOTE}${
+      clamp?.descriptionNote ?? ""
+    }`,
     inputSchema: operation.inputSchema,
     needsApproval,
     execute: async (input: Record<string, unknown>, { abortSignal }) => {
@@ -455,11 +543,26 @@ export function buildMcpjamTool(
       const trimmedProject =
         typeof input.project === "string" ? input.project.trim() : "";
       const project = trimmedProject || opts.projectId;
+
+      // AFTER the project default, so a clamp always sees the input the
+      // operation will actually run with.
+      let clamped: Record<string, unknown> = { ...input, project };
+      if (clamp) {
+        const result = clamp.transform(clamped);
+        // A refusal is a typed result, not a throw: the model should read why
+        // it was narrowed and pick another argument, which a thrown error
+        // would render as a tool failure instead.
+        if ("error" in result && typeof result.error === "string") {
+          return { error: result.error };
+        }
+        clamped = result as Record<string, unknown>;
+      }
+
       try {
-        const result = await operation.execute(
-          { ...input, project },
-          { client: opts.client, signal: abortSignal }
-        );
+        const result = await operation.execute(clamped, {
+          client: opts.client,
+          signal: abortSignal,
+        });
         return capForModel(result);
       } catch (error) {
         if (abortSignal?.aborted) {
