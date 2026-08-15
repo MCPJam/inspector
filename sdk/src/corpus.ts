@@ -337,6 +337,20 @@ export function evalTestFromPlatformCase(
         // `deriveExpectedToolCalls` does. `minCount` and per-assert matching
         // are dropped IDENTICALLY on both sides — this is parity, not loss.
         if (predicate.type === "toolCalledWith") {
+          // A negative case passes only when NO tool was called, so ANY
+          // `toolCalledWith` contradicts it. Checked here rather than on the
+          // derived `expectedToolCalls`, because a non-plain assertion stays a
+          // predicate below and would otherwise slip past: the matcher would
+          // demand no calls while the predicate demanded one, failing every
+          // iteration for a reason the author never wrote.
+          if (evalCase.isNegative) {
+            throw new Error(
+              `Eval case "${evalCase.title}" (${evalCase.id}) is a negative ` +
+                `case (passes only when NO tool is called) but asserts ` +
+                `toolCalledWith at step ${index}. Those cannot both hold. ` +
+                `Fix the case in the dashboard, or run it hosted.`
+            );
+          }
           // Convert to an EXPECTATION only when the assertion carries nothing
           // the expectation cannot express. `expectedToolCalls` has no
           // `minCount` and no per-call `argumentMatching`, so converting an
@@ -398,15 +412,14 @@ export function evalTestFromPlatformCase(
       evalCase.matchOptions as PublicMatchOptions | undefined
     ) ?? sdkMatchOptionsFromPublic(options.suiteMatchOptions);
 
-  // Hosted allows both; the matcher cannot honour both. Refused HERE, naming
-  // the case, rather than at EvalTest construction where the message would not
-  // say which corpus case is wrong.
+  // Backstop. The per-step check above catches every route that can populate
+  // `expectedToolCalls` today; this stays so a future route cannot reopen the
+  // contradiction silently.
   if (evalCase.isNegative && expectedToolCalls.length > 0) {
     throw new Error(
       `Eval case "${evalCase.title}" (${evalCase.id}) is a negative case ` +
-        `(passes only when NO tool is called) but also asserts ` +
-        `toolCalledWith, which the matcher never reads. Fix the case in the ` +
-        `dashboard, or run it hosted.`
+        `(passes only when NO tool is called) but declares expected tool ` +
+        `calls. Fix the case in the dashboard, or run it hosted.`
     );
   }
 

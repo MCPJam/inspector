@@ -514,7 +514,7 @@ describe("guards the reviewers found", () => {
           ],
         })
       )
-    ).toThrow(/negative case.*toolCalledWith/s);
+    ).toThrow(/negative case.*toolCalledWith at step 1/s);
   });
 
   it("`skip` skips ONLY hosted-only cases, never malformed data", () => {
@@ -608,7 +608,10 @@ describe("toolCalledWith conversion preserves what it cannot express", () => {
       // so converting would grade more loosely than the dashboard — a local
       // pass where hosted fails. The predicate engine handles both natively.
       expect(config.expectedToolCalls ?? []).toEqual([]);
-      expect(config.predicates?.map((p) => p.type)).toEqual(["toolCalledWith"]);
+      // The whole ASSERTION survives, not merely its type: checking the type
+      // alone would still pass if a future conversion dropped the very
+      // constraints this branch exists to preserve.
+      expect(config.predicates).toEqual([assertion]);
     }
   );
 
@@ -619,6 +622,48 @@ describe("toolCalledWith conversion preserves what it cannot express", () => {
       args: { args: {}, argumentMatching: "partial" },
       minCount: 1,
     });
-    expect(config.expectedToolCalls).toHaveLength(1);
+    expect(config.expectedToolCalls).toEqual([{ toolName: "t", arguments: {} }]);
+    // Converted, so it must NOT also linger as a predicate — that would grade
+    // the same assertion twice.
+    expect(config.predicates ?? []).toEqual([]);
+  });
+});
+
+describe("a negative case cannot assert a tool call, however it is expressed", () => {
+  const CONTRADICTIONS: Array<{ label: string; assertion: Record<string, unknown> }> = [
+    {
+      label: "a plain assertion (would convert to an expectation)",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "t",
+        args: { args: {} },
+      },
+    },
+    {
+      label: "a non-plain assertion (would stay a predicate)",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "t",
+        args: { args: {} },
+        minCount: 2,
+      },
+    },
+  ];
+
+  it.each(CONTRADICTIONS)("refuses $label", ({ assertion }) => {
+    // Both routes must be refused. Guarding only the converted one leaves the
+    // predicate route to demand a tool call while the negative matcher demands
+    // none — every iteration fails, for a reason the author never wrote.
+    expect(() =>
+      evalTestFromPlatformCase(
+        evalCase({
+          isNegative: true,
+          steps: [
+            { id: "s1", kind: "prompt", prompt: "go" },
+            { id: "s2", kind: "assert", assertion },
+          ],
+        })
+      )
+    ).toThrow(/negative case.*toolCalledWith at step 1/s);
   });
 });
