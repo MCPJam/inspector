@@ -55,7 +55,9 @@ function tableRows(): Array<{
 describe("README tool table", () => {
   const rows = tableRows();
   const documented = rows.map((row) => row.name);
-  const catalog = PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name);
+  const catalog = PLATFORM_CATALOG_OPERATIONS.map(
+    (operation) => operation.name
+  );
 
   it("parses rows at all — a broken regex would pass everything else", () => {
     expect(rows.length).toBeGreaterThan(10);
@@ -108,8 +110,9 @@ describe("README tool table", () => {
     const empty = rows
       .filter((row) => row.description.length < 10)
       .map((row) => row.name);
-    expect(empty, `Rows with no real description:\n  ${empty.join("\n  ")}`).toEqual(
-      []
-    );
+    expect(
+      empty,
+      `Rows with no real description:\n  ${empty.join("\n  ")}`
+    ).toEqual([]);
   });
 });

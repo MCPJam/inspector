@@ -111,6 +111,12 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Despite the `sdk/` namespace, this one is a misconfiguration: "you
   // enabled the stateless protocol toggle on a stdio server".
   "sdk/stateless_requires_http": "user_config",
+  // Same shape, and the reason this slug exists at all: the failure is a
+  // version PIN meeting a server that doesn't offer it, and the pin is a
+  // setting the user (or the host profile they picked) owns. Classifying it
+  // `ambiguous` would be defensible from the wire alone — but the wire is not
+  // all we have here, because MCPJam chose the pin, so the boundary is known.
+  "sdk/protocol_version_pin_unsupported": "user_config",
 
   // --- Ours ----------------------------------------------------------------
   "sdk/not_yet_supported_in_stateless": "mcpjam",
@@ -587,6 +593,20 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Disable the stateless toggle for stdio servers.",
     ],
     "stateless-requires-http",
+  ),
+  "sdk/protocol_version_pin_unsupported": entry(
+    "sdk/protocol_version_pin_unsupported",
+    "Server doesn't support the pinned protocol version",
+    "This connection is pinned to one MCP protocol version, and the server does not offer it.",
+    [
+      "The client profile you're emulating pins a protocol version this server hasn't adopted — a host set to the latest revision against a server that still speaks a 2025 one.",
+      "A per-server protocol override left pinned to a version the server dropped or never shipped.",
+    ],
+    [
+      "Set the protocol version to Automatic to negotiate whatever the server does support.",
+      "Or pick the version the server advertises — `server/discover` (modern) or the `initialize` response (legacy) lists them.",
+    ],
+    "protocol-version-pin-unsupported",
   ),
   "sdk/paginated_tool_header_discovery_unsupported": entry(
     "sdk/paginated_tool_header_discovery_unsupported",
