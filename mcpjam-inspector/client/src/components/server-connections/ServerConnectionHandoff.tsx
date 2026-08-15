@@ -33,6 +33,7 @@ import {
   readPendingAuthorization,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import { useAuth } from "@workos-inc/authkit-react";
 
 const API = "/api/web/server-connections";
 
@@ -56,7 +57,43 @@ interface HandoffState {
   projects: Array<{ id: string; name: string }>;
 }
 
-async function call<T>(path: string, body?: unknown): Promise<T> {
+/**
+ * Who the visitor is, when they are signed in — for the CLAIM and nothing else.
+ *
+ * The backend refuses an account-owned handoff link to anyone but its owner,
+ * and it can only tell who is asking from a verified bearer token. This page
+ * used to send none, so the ownership check compared "nobody" against an owner
+ * and refused EVERY account-owned link: create a request from the CLI, open
+ * the link in the very same account, get "This authorization link belongs to a
+ * different account."
+ *
+ * `getAccessToken` comes from `AuthKitProvider`, which `main.tsx` now mounts
+ * around this page. Deliberately the SDK and not a fetch at a known URL: the
+ * `/user_management` proxy is mounted only when `!HOSTED_MODE`, so a
+ * hand-rolled call to it 404s in hosted and silently reproduces the same
+ * refusal. Only the SDK knows which AuthKit origin this deployment uses.
+ *
+ * BEST EFFORT, ALWAYS. A signed-out visitor, a guest, an expired session or a
+ * refresh that throws all resolve to `null`, the claim proceeds without a
+ * header, and possession of the single-use token remains the capability for a
+ * guest-owned request exactly as before.
+ */
+async function bestEffortAccessToken(
+  getAccessToken: () => Promise<string | undefined>
+): Promise<string | null> {
+  try {
+    const token = await getAccessToken();
+    return typeof token === "string" && token ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+async function call<T>(
+  path: string,
+  body?: unknown,
+  accessToken?: string | null
+): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     method: body === undefined ? "GET" : "POST",
     // Same-origin is the default, but stating it makes the cookie requirement
@@ -65,7 +102,10 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     ...(body === undefined
       ? {}
       : {
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+          },
           body: JSON.stringify(body),
         }),
   });
@@ -100,6 +140,7 @@ function Spinner() {
 }
 
 export function ServerConnectionHandoff() {
+  const { getAccessToken } = useAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -125,9 +166,13 @@ export function ServerConnectionHandoff() {
 
       try {
         if (route?.kind === "claim") {
-          const result = await call<{ requestId: string }>("/claim", {
-            handoffToken: route.handoffToken,
-          });
+          const result = await call<{ requestId: string }>(
+            "/claim",
+            { handoffToken: route.handoffToken },
+            // Only the claim carries identity. Every later step authenticates
+            // with the continuation cookie, which is scoped to this request.
+            await bestEffortAccessToken(getAccessToken)
+          );
           // `replaceState`, not push: the token URL must not be somewhere the
           // back button can return to, and it is single-use anyway.
           window.history.replaceState(

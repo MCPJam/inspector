@@ -121,6 +121,14 @@ export interface BuiltInToolContext {
    */
   isChatboxSession?: boolean;
   /**
+   * The chatbox this turn runs in, when it is a chatbox turn. Unlike
+   * {@link isChatboxSession} — which decides what to ADVERTISE — this is
+   * forwarded to Convex so a spend can be billed to the chatbox OWNER rather
+   * than the visitor, who has no wallet to charge. Web search needs it for the
+   * same reason the model turn and voice transcription already do.
+   */
+  chatboxId?: string;
+  /**
    * True when this turn belongs to a Journey (swarm) simulated session.
    * Computer-backed tools are suppressed for those UNLESS the turn holds a
    * {@link sandboxBinding} — see the `bash` gate below.
@@ -244,6 +252,11 @@ export function resolveHostTools(
         authHeader,
         projectId: ctx.projectId,
         ...(ctx.chatSessionId ? { chatSessionId: ctx.chatSessionId } : {}),
+        // Lets Convex bill the chatbox owner. Unlike `bash` and the
+        // `mcpjam_*` tools below, web search stays ADVERTISED in a chatbox
+        // session — so without this it is offered to the model and then
+        // fails at execution for every link visitor.
+        ...(ctx.chatboxId ? { chatboxId: ctx.chatboxId } : {}),
       });
       continue;
     }
