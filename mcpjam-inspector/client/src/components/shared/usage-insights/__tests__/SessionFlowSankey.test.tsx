@@ -221,8 +221,8 @@ describe("SessionFlowSankey", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Outcome and sentiment disagree"),
-    ).toBeInTheDocument();
+      screen.queryByText("Outcome and sentiment disagree"),
+    ).not.toBeInTheDocument();
   });
 
   it("leaves a concordant ribbon unflagged", () => {

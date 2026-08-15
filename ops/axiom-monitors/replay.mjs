@@ -64,7 +64,7 @@ ${SHARED_FILTERS}
 ${FP}
 | summarize recent = countif(_time > datetime(${from})), baseline = countif(_time <= datetime(${from})), orgs = dcountif(orgId, _time > datetime(${from})), maxStatus = maxif(toint(statusCode), _time > datetime(${from})) by fp
 | extend baseHourly = baseline / 335.0
-| where (maxStatus >= 500 and recent > 100) or (recent >= 20 and orgs >= 3 and recent > 20 * baseHourly)
+| where recent > 1000 or (maxStatus >= 500 and recent > 100) or (recent >= 20 and orgs >= 3 and recent > 20 * baseHourly)
 | project fp, recent, baseHourly, orgs, maxStatus
 | sort by recent desc`;
 }
@@ -239,6 +239,81 @@ for (const c of CASES) {
       `      recent=${r.recent}${extra}  ${String(r.fp).slice(0, 58)}`,
     );
   }
+}
+
+// The status-agnostic 1,000/hr rule exists because reclassifying a class from
+// 5xx to 4xx must not make it invisible — which is exactly what happened when
+// PR #3948 moved upstream auth rejections from 500 to 403 and left the 08-06
+// incident undetectable by the two status/radius-gated rules.
+//
+// This asserts the bar still sits clear of ORGANIC 4xx traffic. If real 4xx
+// ever approaches 1,000/hr the bar must be raised BEFORE it starts paging, and
+// learning that here rather than from a false page at 3am is the point.
+//
+// It has to measure the MAX, not a percentile. Rule 1 fires on any single
+// class-hour above the bar, so the only quantity that validates headroom is the
+// largest one. A percentile is robust to incidents but blind to exactly the
+// event that matters — one organic hour crossing 1,000 is 1-in-~1,000 and moves
+// p99 not at all. (An earlier revision used p99 for incident-robustness and was
+// wrong for this reason.)
+//
+// Incidents are excluded by explicit enumeration rather than by trying to
+// classify them statistically. Separating "organic spike" from "incident spike"
+// automatically requires precisely the judgement the monitor exists to make, so
+// this file does what it already does for history: names them.
+//
+// A NEW hour above the bar SHOULD fail here. That is not a false alarm — it is
+// the guard demanding a human decide which case it is:
+//   - incident  → add its window below, exactly like adding a fixture
+//   - organic   → raise the bar in the monitor BEFORE it starts false-paging
+//
+// Rolling window, unlike the pinned fixtures above, is deliberate: this asks
+// "is traffic growing toward the bar", which is meaningless against a fixed
+// instant. Do not "fix" it into a fixture — that silently stops the trend check.
+// Hour bins, because the exclusion is applied AFTER aggregation. APL will not
+// filter `_time` by a negated or disjoint range (`not(_time between …)` and
+// `_time < a or _time >= b` are both query errors — its time-range optimizer
+// requires a single contiguous interval). Filtering the projected bin column
+// sidesteps that, and is bin-precise rather than approximate.
+const KNOWN_4XX_INCIDENT_HOURS = [
+  // The 2026-08-06 render-loop incident (3,525 events in this hour, one org).
+  // Only visible to a 4xx filter once PR #3948 deploys and that class moves
+  // 500 -> 403; harmless to list before then.
+  "2026-08-06T01:00:00Z",
+];
+
+const incidentExclusion = KNOWN_4XX_INCIDENT_HOURS.map(
+  (h) => `| where hour != datetime(${h})`,
+).join("\n");
+
+const busiest4xx = await run(
+  `['inspector-logs']
+${SHARED_FILTERS}
+| where toint(statusCode) < 500
+${FP}
+| summarize n = count() by fp, hour = bin(_time, 1h)
+${incidentExclusion}
+| summarize Busiest = max(n), Sample = count()`,
+  new Date().toISOString(),
+);
+const organic4xx = busiest4xx[0]?.Busiest ?? 0;
+const sample = busiest4xx[0]?.Sample ?? 0;
+const headroomOk = organic4xx < 1000;
+if (!headroomOk) failures++;
+console.log(
+  `${headroomOk ? "PASS" : "FAIL"}  organic 4xx stays clear of the 1,000/hr absolute rule`,
+);
+console.log(
+  `      busiest of ${sample} organic 4xx class-hours: ${organic4xx} (must be < 1000)`,
+);
+if (!headroomOk) {
+  console.log(
+    "      → decide which this is: an INCIDENT (add its window to",
+  );
+  console.log(
+    "        KNOWN_4XX_INCIDENTS) or ORGANIC GROWTH (raise the monitor's bar",
+  );
+  console.log("        before it starts false-paging).");
 }
 
 console.log(

@@ -75,6 +75,10 @@ import {
   selectDeliverableServerIds,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
+import {
+  createSystemStreamFailureReporter,
+  oncePerTurn,
+} from "../stream-failure-reporter.js";
 import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
@@ -417,6 +421,7 @@ export async function runHarnessTurn(
     onToolResult,
     onStepFinish,
     onEngineError,
+    failureReporter: failureReporterOption,
     onLiveTextDelta,
     requireToolApproval,
     chatSessionId,
@@ -435,6 +440,11 @@ export async function runHarnessTurn(
     effectiveCapabilities,
     createHarnessScopeStepUpContinuation,
   } = options;
+  // One typed route.operation.failed per turn; the system fallback covers
+  // callers with no request context (evals/swarms).
+  const failureReporter = oncePerTurn(
+    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn"),
+  );
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
   // toNativeModel (Codex only maps the `openai/gpt-5*` form), credential
@@ -2284,7 +2294,18 @@ export async function runHarnessTurn(
         return;
       }
       const errorText = err instanceof Error ? err.message : String(err);
-      logger.error("[harness] turn failed", err);
+      // Reporter, not a bare logger.error: the old call captured to Sentry
+      // unconditionally and left no typed record (the response is a 200
+      // stream the HTTP failure events never see). Classify first, page only
+      // on origin=mcpjam, emit route.operation.failed.
+      failureReporter({
+        message: "[harness] turn failed",
+        error: err,
+        source: "chat.harness-turn",
+        hop: "user_server_hop",
+        transport: "http_stream",
+        context: { promptIndex },
+      });
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
       if (textId !== undefined) emitTextEnd(writer, textId);
