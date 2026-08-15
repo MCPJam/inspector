@@ -445,9 +445,31 @@ export interface SwarmWaveSignalCandidate {
   severityScore: number;
 }
 
+/**
+ * Launch outcomes for one execution target of the wave — REPORTING, not a
+ * finding.
+ *
+ * A target that refused connections or throttled the wave has no session to
+ * open and says nothing about the MCP server's tool contract, so it travels
+ * beside the candidates rather than among them. `failed` and `rateLimited`
+ * stay separate: a throttled wave is not a broken server.
+ */
+export interface SwarmWaveTargetHealth {
+  subjectKind: "environment" | "host";
+  subjectId: string;
+  subjectLabel: string;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  rateLimited: number;
+}
+
 /** Result of `swarmWaveInsights:getWaveSignals` (null ⇒ unknown wave id). */
 export interface SwarmWaveSignals {
   candidates: SwarmWaveSignalCandidate[];
+  /** Per-target launch outcomes, worst-first. Optional: a server deployed
+   * before the field existed omits it. */
+  targetHealth?: SwarmWaveTargetHealth[];
   sessionCount: number;
   /** Sessions with no usable readiness analysis (pending/failed/absent). */
   unanalyzedSessionCount: number;
