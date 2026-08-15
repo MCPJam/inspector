@@ -5,6 +5,25 @@ import type {
   HostFocusTabId,
 } from "../types";
 
+export type HostDraftValidationOptions = {
+  /**
+   * The model the host has PERSISTED, used to tell "this host never had a
+   * model" from "this edit removed it". Only the second is blocking.
+   *
+   * ABSENT means the saved baseline is UNKNOWN, and an unknown baseline is
+   * treated as "not pinned" — a warning, never a blocking error. That is
+   * deliberate for the two ways it occurs today: the host row is still
+   * loading (a blocking error that appears and then vanishes is worse than a
+   * late one), and a legacy row genuinely has no model.
+   *
+   * It also means this hook alone does NOT hold a brand-new host to the
+   * forward-client invariant; a create surface that adopts it needs its own
+   * gate. The v1 `POST/PATCH /hosts` routes enforce the invariant server-side
+   * regardless of which client is asking.
+   */
+  savedModelId?: string;
+};
+
 /**
  * Walk the draft and surface user-visible issues. Each issue carries the
  * tab it belongs to so the focus overlay can deep-link to the offending
@@ -14,6 +33,7 @@ import type {
 export function collectHostAttentionIssues(
   draft: HostConfigInputV2,
   hostDisplayName?: string,
+  options?: HostDraftValidationOptions,
 ): ReadonlyArray<HostAttentionIssue> {
   const issues: HostAttentionIssue[] = [];
 
@@ -33,12 +53,33 @@ export function collectHostAttentionIssues(
   }
 
   if (draft.modelId.trim() === "") {
-    issues.push({
-      level: "warning",
-      tab: "behavior",
-      field: "modelId",
-      message: "Pick a model before chatting",
-    });
+    // FORWARD-CLIENT INVARIANT. A host's model is what every environment that
+    // selects it inherits (`modelSource: "host"`), so a host with no model
+    // cannot back a headless environment at all — the launch is refused with
+    // `ENV_MODEL_REQUIRED`. Saving an edit that CLEARS the model is therefore
+    // blocked outright, not merely flagged.
+    //
+    // A host that was ALREADY modelless stays a warning. Those legacy rows
+    // predate the invariant, are deliberately not auto-backfilled, and turning
+    // this into an error for them would strand every unrelated edit (renaming
+    // a host, toggling a capability) behind a model choice the user did not
+    // come here to make.
+    const wasPinned = (options?.savedModelId ?? "").trim() !== "";
+    issues.push(
+      wasPinned
+        ? {
+            level: "error",
+            tab: "behavior",
+            field: "modelId",
+            message: "Pick a model — a client can't be saved without one",
+          }
+        : {
+            level: "warning",
+            tab: "behavior",
+            field: "modelId",
+            message: "Pick a model before chatting",
+          },
+    );
   }
   if (draft.systemPrompt.trim() === "") {
     issues.push({
@@ -183,11 +224,14 @@ export function hasBlockingErrors(
  *
  * Motivation: a *silently* greyed Save button reads as an arbitrary rule.
  * A Discord report chased a phantom "you must pick a model first" gate when
- * the real reason was simply "nothing has changed yet" — model id is only a
- * non-blocking warning and never gates Save. Surfacing the actual reason
- * (no changes, or the specific blocking validation errors) on hover keeps
- * the disabled state honest. Priority mirrors the `canSave` gate order:
+ * the real reason was simply "nothing has changed yet". Surfacing the actual
+ * reason (no changes, or the specific blocking validation errors) on hover
+ * keeps the disabled state honest. Priority mirrors the `canSave` gate order:
  * saving → blocking errors → not dirty.
+ *
+ * Note that clearing a model IS now a blocking error, so "pick a model" can
+ * legitimately appear here — but only for a host that had one, and the message
+ * says so.
  */
 export function saveDisabledReason(args: {
   isDirty: boolean;
@@ -209,10 +253,12 @@ export function saveDisabledReason(args: {
 export function useHostDraftValidation(
   draft: HostConfigInputV2,
   hostDisplayName?: string,
+  options?: HostDraftValidationOptions,
 ) {
+  const savedModelId = options?.savedModelId;
   return useMemo(
-    () => collectHostAttentionIssues(draft, hostDisplayName),
-    [draft, hostDisplayName],
+    () => collectHostAttentionIssues(draft, hostDisplayName, { savedModelId }),
+    [draft, hostDisplayName, savedModelId],
   );
 }
 

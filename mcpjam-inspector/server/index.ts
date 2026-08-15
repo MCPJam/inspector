@@ -145,6 +145,7 @@ import {
   mountHostedOpenRoutes,
 } from "./middleware/hosted-partition";
 import webRoutes from "./routes/web/index";
+import internalServerConnections from "./routes/internal/server-connections.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";
@@ -167,6 +168,10 @@ import {
   startGithubChecksWorker,
   type GithubChecksWorkerHandle,
 } from "./services/github-checks-worker";
+import {
+  startProductionChecksWorker,
+  type ProductionChecksWorkerHandle,
+} from "./services/production-checks-worker";
 import {
   SERVER_PORT,
   CORS_ORIGINS,
@@ -458,6 +463,12 @@ if (!HOSTED_MODE) {
 // Construct after loadInspectorEnv() so hosted confidential CIMD observes
 // Inspector dotenv configuration and malformed configured keys fail startup.
 app.route("/api/web/xaa", createXaaWebRouter());
+// Backend → inspector doorbell for connection-request work. Gated by its own
+// service-token middleware, carries no user identity, and needs none — the
+// request id in the body is a selector, not authorization. Mounted ahead of
+// /api/web so it never inherits that family's bearer middleware.
+// Mirror of the mount in server/app.ts.
+app.route("/api/internal/server-connections", internalServerConnections);
 app.route("/api/web", webRoutes);
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;
@@ -833,6 +844,14 @@ if (isGithubChecksWorkerEnabled()) {
   githubChecksWorker = startGithubChecksWorker();
 }
 
+// Production scoring: claim-and-grade polling loop for real User Testing
+// sessions. Started unconditionally and deliberately flagless — it self-gates
+// on the service-token env (a non-peer deployment gets an inert handle), and
+// the feature's single switch is the backend's PRODUCTION_CHECKS_ENABLED,
+// which 404s the claim route and parks this loop on a slow poll when off.
+const productionChecksWorker: ProductionChecksWorkerHandle =
+  startProductionChecksWorker();
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -889,6 +908,7 @@ async function shutdown() {
     // shutdown rather than skipping straight to the force-exit deadline.
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
+    await productionChecksWorker.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.

@@ -8,6 +8,10 @@
  * being absent.
  */
 import type { ServerDoctorResult } from "../server-doctor-core.js";
+import type {
+  EvaluationConfigSnapshot,
+  ScoreResult,
+} from "../contract/types.js";
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -24,6 +28,28 @@ export interface PlatformMe {
   plan: string | null;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * An organization the caller belongs to — the ids `list_projects` and
+ * `create_project` take as `organizationId`.
+ *
+ * Deliberately thin. The backing query is the browser app shell's, so it
+ * carries billing and Stripe fields this transport DTO drops: an organization
+ * on the machine surfaces is a SCOPE (an id, a name, and enough context to
+ * pick between two of them), not an account-management object.
+ */
+export interface PlatformOrganization {
+  id: string;
+  name: string;
+  /** Billing plan slug (`free` / `team` / `enterprise`) when resolved. */
+  plan: string | null;
+  /** Caller's role in the organization (`owner` / `admin` / `member`). */
+  myRole: string | null;
+  /** Whether the caller created the organization. */
+  isCreator: boolean;
+  logoUrl: string | null;
+  createdAt: number | null;
 }
 
 /** A hosted model catalog entry. Unknown additive fields are tolerated. */
@@ -124,8 +150,24 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /**
+   * Whether the run's score evidence verified at ingest.
+   *
+   * TRI-STATE, and the third state matters: `"valid"` means the backend
+   * checked and the definitions and results agree; `"invalid"` means they did
+   * not; `null`/absent means NO VERDICT WAS PRODUCED — an API deployment that
+   * predates integrity checking. A score gate must treat `null` exactly like
+   * `"invalid"`: absent evidence is not valid evidence.
+   */
+  scoreIntegrity?: "valid" | "invalid" | null;
   createdAt: number;
   completedAt: number | null;
+  /**
+   * The common actionable-insights envelope. Present on the DETAIL response
+   * only (lists stay compact) and absent on servers deployed before the
+   * envelope existed — treat absence as `not_available`.
+   */
+  insights?: PlatformInsightsEnvelope;
 }
 
 /**
@@ -172,7 +214,7 @@ export interface PlatformEvalRunCreated {
 export interface PlatformEvalSuiteCreated {
   suiteId: string;
   /** Suite name as persisted; echoes the request name. */
-  name: string | null;
+  name: string;
   /** The HTTP servers the suite was configured against. */
   servers?: Array<{ id: string; name?: string }>;
   /** Per-case create outcomes, mirroring eval-run caseUpsert. */
@@ -383,6 +425,14 @@ export interface PlatformEnvironment {
   hostId: string;
   /** Set only when the environment pins a standalone server group. */
   serverAttachmentId?: string;
+  /**
+   * The environment's model OVERRIDE, if it sets one.
+   *
+   * ABSENT means the environment INHERITS the model pinned by its host — not
+   * that it has no model. To learn what will actually run, resolve the
+   * environment and read `effectiveModelId`.
+   */
+  modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
   /**
    * Pinned plugin VERSIONS. Narrow by design: a version is pinnable only when
@@ -411,6 +461,8 @@ export interface PlatformEnvironmentCreateBody {
   description?: string;
   hostId: string;
   serverAttachmentId?: string;
+  /** Model to run instead of the host's; omit to inherit the host's. */
+  modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
   pluginVersionIds?: string[];
   /** Project-shared `PlatformImage` id to pin; omit for the default image. */
@@ -430,10 +482,32 @@ export interface PlatformEnvironmentUpdateBody {
   description?: string;
   hostId?: string;
   serverAttachmentId?: string | null;
+  /**
+   * New model override, or `null` to CLEAR it and fall back to the host's
+   * model. Omit to leave unchanged. An empty string is rejected — it is not a
+   * way to clear.
+   */
+  modelId?: string | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
   pluginVersionIds?: string[] | null;
   /** New sandbox-image pin, or null to clear it. Omit to leave unchanged. */
   sandboxImageId?: string | null;
+}
+
+/**
+ * What this deployment's environment surface supports.
+ *
+ * FOR VERSION SKEW, not feature flagging. The SDK ships independently of the
+ * backend, so a client that would send `modelId` must first confirm the
+ * deployment accepts it — an unknown field is a hard validator error there, not
+ * a silently ignored one. A deployment too old to answer reports `false` for
+ * everything.
+ */
+export interface PlatformEnvironmentCapabilities {
+  /** `modelId` is accepted on create and update. */
+  modelOverrides: boolean;
+  /** Environment cells may vary by model on one host (the compare grid). */
+  modelMatrix: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
@@ -453,6 +527,20 @@ export interface PlatformEnvironmentResolved {
   hostName: string;
   /** The host's config at resolve time — hosts rotate configs live. */
   hostConfigId: string;
+  /** The environment's stored override, when it sets one. */
+  modelId?: string;
+  /**
+   * The model this environment WILL RUN — the override if it has one, else the
+   * host config's. Always present on a successful resolve: an environment with
+   * no model anywhere cannot be resolved for launch at all, and fails with a
+   * 409 carrying `details.reason: "environment_model_required"`.
+   *
+   * Optional in the type only for deploy skew, where the backend predates the
+   * field.
+   */
+  effectiveModelId?: string;
+  /** Which of the two supplied {@link effectiveModelId}. */
+  modelSource?: "environment" | "host";
   serverAttachmentId?: string;
   /** The closed NON-plugin server set. */
   selectedServerIds: string[];
@@ -642,6 +730,22 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * Per-scorer verdicts for this iteration, in the evaluation contract's
+   * shape. `null` when the run predates scoring, or when the stored payload
+   * failed validation at the boundary — a public caller never receives
+   * partially-trusted score data.
+   */
+  scores?: ScoreResult[] | null;
+  /**
+   * The definitions those scores were produced under, plus their hash.
+   *
+   * Ships with `scores` or not at all: `role` and the error policies live here,
+   * so results without it cannot be told apart as gating or advisory.
+   */
+  evaluationConfig?: EvaluationConfigSnapshot | null;
+  /** Set when the backend downgraded this iteration's verdict at ingest. */
+  scoreIntegrity?: "score_integrity_invalid" | null;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -746,9 +850,9 @@ export type PlatformDoctorReport = ServerDoctorResult<unknown>;
  */
 export interface PlatformTunnelGrant {
   serverId: string;
-  name?: string;
+  name: string;
   /** True when a server record with this name already existed. */
-  existed?: boolean;
+  existed: boolean;
   /** Previous URL, present when the existing record's URL was replaced. */
   previousUrl?: string;
   /** Previous transport, present when the record existed (e.g. "stdio"). */
@@ -861,6 +965,9 @@ export interface PlatformJourneyRun {
   }>;
   createdAt: number;
   lastHeartbeatAt?: number;
+  /** Common insights envelope (detail response only; lists stay compact).
+   * Absent on servers deployed before the envelope existed. */
+  insights?: PlatformInsightsEnvelope;
 }
 
 export interface PlatformJourneyRunSession {
@@ -880,7 +987,18 @@ export interface PlatformJourneyRunSession {
   journeyId?: string;
   personaId?: string;
   personaLabel?: string;
+  /**
+   * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
+   * forever unless archived, so this says nothing about how it went. Read
+   * `outcome` for the verdict.
+   */
   status: string | null;
+  /**
+   * How this session's run attempt ended: `succeeded` | `failed` |
+   * `rate_limited` | `running` | `pending`, or null when the attempt cannot
+   * be matched (historical runs). Absent on servers that predate the field.
+   */
+  outcome?: string | null;
   readiness: unknown;
   goalScore: unknown;
   messageCount: number;
@@ -917,6 +1035,19 @@ export interface PlatformScenario {
   link: string | null;
   /** False when the environment was already published and this returned it. */
   created?: boolean;
+  /**
+   * True when `publishScenario`'s create-time overrides (`name`,
+   * `description`, `mode`) were NOT applied because the environment was
+   * already published. Paired with `created: false`.
+   *
+   * Declared here rather than as an intersection at the two call sites that
+   * return it. Both did — `Promise<PlatformScenario & { overridesIgnored?:
+   * boolean }>` — which typed the field for a caller who read it off the
+   * return value and left it invisible to anything holding a
+   * `PlatformScenario`, including the spec↔types parity check. A field the
+   * wire really carries belongs on the interface that describes the wire.
+   */
+  overridesIgnored?: boolean;
 }
 
 export interface PlatformScenarioDeleted {
@@ -956,4 +1087,648 @@ export interface PlatformJourneyRunCanceled {
   alreadyCanceled: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
+}
+
+// ── Swarms authoring + insights ─────────────────────────────────────────────
+
+/** A reusable synthetic character. The GOAL lives on the journey, not here. */
+export interface PlatformPersona {
+  /** Durable id — what journeys reference and every route here addresses. */
+  id: string;
+  projectId: string;
+  /**
+   * Stable slug key, shared with exported session data. Useful for correlating
+   * transcripts; NOT an address for this API.
+   */
+  slug: string;
+  name: string;
+  role: string;
+  notes: string | null;
+  /** manual | generated | cluster — how the persona came to exist. */
+  source: string;
+  seedKeywords?: string[];
+  avatar: { shape: number | null; palette: number | null };
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Result of deleting a persona. The delete is SOFT: history still resolves it. */
+export interface PlatformPersonaDeleted {
+  id: string;
+  projectId: string;
+  deleted: true;
+}
+
+/** Result of archiving a journey. Its runs and transcripts stay readable. */
+export interface PlatformJourneyArchived {
+  id: string;
+  projectId: string;
+  archived: true;
+}
+
+/** A swarm CONTAINER: shared execution config for the journeys authored in it. */
+export interface PlatformSwarm {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  /** Default fan-out for journeys authored under this container. */
+  environmentIds: string[];
+  sessionsPerTarget: number | null;
+  maxTurns: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformSwarmArchived {
+  id: string;
+  projectId: string;
+  archived: true;
+}
+
+/** One rubric criterion's tally over a run. The four counts are NOT mergeable. */
+export interface PlatformScorecardCriterion {
+  id: string;
+  label: string | null;
+  kind: string;
+  passCount: number;
+  failCount: number;
+  /** Claimed for grading and unfinished — includes crashed runners. */
+  pendingCount: number;
+  /**
+   * Sessions whose GRADING broke. Distinct from `failCount` on purpose:
+   * folding them together makes a crashed judge look like a regression.
+   */
+  failedGradingCount: number;
+}
+
+/** Deterministic rubric result for one run. No model involved. */
+export interface PlatformRunScorecard {
+  runId: string;
+  /**
+   * Every criterion the run's rubric declared, in snapshot order — including
+   * ones nothing was graded against. An absent row would be indistinguishable
+   * from a criterion that was never configured.
+   */
+  criteria: PlatformScorecardCriterion[];
+  sessionsTotal: number;
+  sessionsGraded: number;
+}
+
+export interface PlatformSwarmOverviewFinding {
+  criterionId: string;
+  label: string | null;
+  kind: string | null;
+  failCount: number;
+  pendingCount: number;
+  failedGradingCount: number;
+  /**
+   * The DENOMINATOR for any rate you compute. Never divide by the session
+   * total — 3 failures of 4 graded sessions out of 40 attempted is not 7.5%.
+   */
+  sessionsGraded: number;
+  /** Consecutive runs of this journey where the criterion failed. */
+  runStreak: number;
+}
+
+export interface PlatformSwarmOverviewRun {
+  runId: string;
+  journeyId: string;
+  journeyName: string;
+  journeyArchived: boolean;
+  personaName: string;
+  status: string;
+  waveId?: string;
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  goalCompletion: {
+    gradedCount: number;
+    passedCount: number;
+    avgScore: number | null;
+    pendingCount: number | null;
+    failedCount: number | null;
+  } | null;
+  findings: PlatformSwarmOverviewFinding[];
+  targets: Array<{
+    hostName: string;
+    modelId: string;
+    environmentName?: string;
+  }>;
+  createdAt: number;
+}
+
+/** Project-wide roll-up across recent runs. */
+export interface PlatformSwarmOverview {
+  runs: PlatformSwarmOverviewRun[];
+  runsConsidered: number;
+  goalCompletion: {
+    gradedCount: number;
+    passedCount: number;
+    /** `null` when nothing is graded yet — never 0, which would read as "all failed". */
+    passRate: number | null;
+    runsWithGrades: number;
+    trend: Array<{
+      dayStartMs: number;
+      gradedCount: number;
+      passedCount: number;
+      passRate: number;
+    }>;
+  };
+}
+
+/** A criterion that keeps failing, tracked across waves. */
+export interface PlatformSwarmFinding {
+  id: string;
+  /** Stable identity across waves — what makes a streak a streak. */
+  fingerprint: string;
+  dimension: string;
+  subject: { kind: string; id: string; label: string };
+  /** new | recurring | regressed | resolved. */
+  status: string;
+  occurrenceCount: number;
+  lastSeenWaveId: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  resolvedAt: number | null;
+  dismissedAt: number | null;
+  updatedAt: number;
+}
+
+export interface PlatformFindingDismissed {
+  id: string;
+  projectId: string;
+  dismissed: boolean;
+}
+
+/**
+ * The common actionable-insights envelope — one shape across Eval runs,
+ * Swarm waves, and User Testing windows. Hand-mirrored from the backend's
+ * `lib/insightsEnvelope.ts` (two-repo type discipline).
+ *
+ * Reading rules for consumers (including agents):
+ * - Findings are AGGREGATED per run/wave/window; `evidence` points at
+ *   exemplar sessions or iterations, not one finding per session.
+ * - Only `actionTarget: "mcp_server"` with `actionability: "ready"`
+ *   authorizes proposing a change to the MCP server. Every other action
+ *   target names different work (agent config, eval case, environment,
+ *   investigation) and must NOT be "fixed" in server code.
+ * - `findings` is empty unless `status === "completed"`. An empty completed
+ *   list is a real "nothing to act on" answer.
+ * - Reads never trigger generation; `status` is observational.
+ */
+export type PlatformInsightsStatus =
+  | "not_available"
+  | "not_requested"
+  | "pending"
+  | "completed"
+  | "failed";
+
+export type PlatformInsightScope =
+  | { kind: "eval_run"; id: string }
+  | { kind: "swarm_wave"; id: string; runId: string }
+  | {
+      kind: "user_testing_window";
+      id: string;
+      scenarioId: string;
+      windowStartAt: number;
+      windowEndAt: number;
+    };
+
+export type PlatformInsightAttribution =
+  | "unknown"
+  | "server_contract"
+  | "server_runtime"
+  | "server_capability"
+  | "agent_or_prompt"
+  | "test_design"
+  | "environment";
+
+export type PlatformInsightActionTarget =
+  | "investigate"
+  | "mcp_server"
+  | "agent_configuration"
+  | "eval_case"
+  | "environment";
+
+export type PlatformInsightActionability =
+  | "informational"
+  | "investigate"
+  | "ready";
+
+export interface PlatformActionableFindingEvidence {
+  sessionId?: string;
+  iterationId?: string;
+  kind: "tool_error" | "transcript" | "feedback" | "judge" | "contrast";
+  /** Scrubbed and clipped at the producer. */
+  excerpt: string;
+  toolName?: string;
+  errorCode?: string;
+}
+
+export interface PlatformActionableFinding {
+  /** Stable remediation id (`rf_<16 hex>`) — survives dynamic error values. */
+  id: string;
+  /** The registry signal this derives from; several findings may share one. */
+  signalFingerprint: string;
+  title: string;
+  category:
+    | "unknown"
+    | "tool_contract"
+    | "tool_runtime"
+    | "capability_gap"
+    | "workflow"
+    | "agent_behavior"
+    | "test_design"
+    | "environment";
+  attribution: PlatformInsightAttribution;
+  actionTarget: PlatformInsightActionTarget;
+  actionability: PlatformInsightActionability;
+  severity: "info" | "low" | "medium" | "high";
+  confidence: "low" | "medium" | "high";
+  /** Deterministic observation — counts and identities, never model prose. */
+  observed: string;
+  rootCause?: string;
+  recommendation: string;
+  acceptanceCriteria: string[];
+  affected: {
+    count: number;
+    total: number;
+    unit: "iterations" | "sessions";
+  };
+  patternSlug?: string;
+  /** Present only when a server (and, for tool surfaces, tool) resolved
+   * against the pinned snapshot. Required for `mcp_server`/`ready`. */
+  target?: {
+    serverId: string;
+    toolName?: string;
+    surface:
+      | "description"
+      | "input_schema"
+      | "output_schema"
+      | "handler"
+      | "server_instructions"
+      | "capability";
+    fieldPath?: string;
+    snapshotHash: string;
+    currentDefinition?: {
+      description?: string;
+      inputSchemaJson?: string;
+      outputSchemaJson?: string;
+      truncated: boolean;
+    };
+  };
+  evidence: PlatformActionableFindingEvidence[];
+}
+
+export interface PlatformInsightsEnvelope {
+  schemaVersion: 1;
+  scope: PlatformInsightScope;
+  status: PlatformInsightsStatus;
+  reasonCode: string | null;
+  retryable: boolean;
+  error: { code: string; message: string } | null;
+  generatedAt: number | null;
+  updatedAt: number | null;
+  summary: string | null;
+  coverage: {
+    unit: "iterations" | "sessions";
+    analyzed: number;
+    total: number;
+    gradedCount?: number;
+    feedbackCount?: number;
+    truncated: boolean;
+    lowConfidence: boolean;
+  };
+  findings: PlatformActionableFinding[];
+  /** Swarm only. Launch outcomes never appear as findings. */
+  runHealth?: {
+    targets: Array<{
+      subjectKind: "environment" | "host";
+      subjectId: string;
+      subjectLabel: string;
+      attempted: number;
+      succeeded: number;
+      failed: number;
+      rateLimited: number;
+    }>;
+  };
+  truncation: {
+    truncated: boolean;
+    omittedFindings: number;
+    omittedEvidence: number;
+    contractTruncated: boolean;
+  };
+}
+
+/** Receipt for an eval-run insights (serverQuality) request. 202. */
+export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
+/** LLM analysis over a whole wave. Requested explicitly; produced async. */
+export interface PlatformWaveInsights {
+  waveId: string;
+  /** pending | completed | failed. Poll rather than re-requesting. */
+  status: "pending" | "completed" | "failed";
+  /** Directed lane. Null until generation completes. */
+  insights: unknown | null;
+  /**
+   * Discovery lane — what the model noticed unprompted. Null while only the
+   * directed lane has finished, which is a normal intermediate state.
+   */
+  discovery: unknown | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: number;
+}
+
+/** Receipt for a wave-insights request. 202: scheduled, not done. */
+export interface PlatformWaveInsightsRequested {
+  waveId: string;
+  projectId: string;
+  status: "pending";
+}
+
+export interface PlatformWaveInsightsCanceled {
+  waveId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/**
+ * What the caller may do in a project, so an agent on a static surface can
+ * check before it plans rather than discovering a 403 mid-task.
+ *
+ * DESCRIPTIVE. Every enforcement point still runs on the write path; a stale
+ * answer here produces the same clean denial it always would.
+ */
+export interface PlatformCapabilities {
+  projectId: string;
+  organizationId: string | null;
+  /** Organization role: guest | member | admin | owner. */
+  role: string;
+  projectRole: string;
+  /** Which channel the server resolved this request to. */
+  surface: string;
+  features: {
+    sandboxes: {
+      enabled: boolean;
+      /** off | dark | enforce. Only `enforce` turns a disabled flag into a refusal. */
+      mode: string;
+      enforced: boolean;
+      reason?: string;
+    };
+  };
+  plan: {
+    name: string;
+    limits: Record<string, unknown>;
+    features: Record<string, unknown>;
+  } | null;
+  /**
+   * The booleans to branch on. Note that the exposure-REDUCING ones
+   * (`cancelJourneyRun`, `unpublishUserTestingScenario`) stay true for an org
+   * that has lost the beta — losing the feature is exactly when stopping it
+   * matters most.
+   */
+  can: {
+    readSwarms: boolean;
+    readUserTesting: boolean;
+    writeSwarms: boolean;
+    launchJourneyRun: boolean;
+    cancelJourneyRun: boolean;
+    publishUserTestingScenario: boolean;
+    unpublishUserTestingScenario: boolean;
+    /**
+     * Mode changes, member invites/removals, link rotation, renames — the
+     * scenario controls an ordinary MEMBER can use. Guest execution is not
+     * covered here; it is the one exposure control that needs admin, and it
+     * has its own key below.
+     */
+    changeUserTestingExposure: boolean;
+    /** The guest-execution spend caps. Genuinely project-admin upstream. */
+    manageUserTestingGuestExecution: boolean;
+    requestInsights: boolean;
+  };
+}
+
+/** A generated persona draft. Nothing is persisted until you create it. */
+export interface PlatformPersonaDraft {
+  name: string;
+  role: string;
+  notes?: string;
+  [field: string]: unknown;
+}
+
+/** Draft output from the generation endpoints. Shape varies by request. */
+export interface PlatformGenerationDrafts {
+  [field: string]: unknown;
+}
+
+// ── User testing ────────────────────────────────────────────────────────────
+
+/** One session a visitor had with a published scenario. SUMMARY, not transcript. */
+export interface PlatformUserTestingSession {
+  /** The address for the transcript route. */
+  id: string;
+  chatSessionId: string;
+  messageCount: number;
+  /** First message only. The transcript is a separate, explicit read. */
+  preview: string;
+  modelId?: string;
+  toolCallCount?: number;
+  /** The visitor abandoned mid-flow because a server demanded auth. */
+  authInterrupted?: boolean;
+  visitor: {
+    displayName?: string;
+    segment?: string;
+    authType?: "signedIn" | "guest";
+    recency?: "new" | "returning";
+    deviceKind?: string;
+    language?: string;
+  };
+  feedback: {
+    rating: number | null;
+    comment: string | null;
+    count: number;
+  };
+  theme?: { id: string; label: string | null; keywords: string[] };
+  startedAt: number;
+  lastActivityAt: number;
+}
+
+/** One projected transcript message. Tool payloads and blobs are dropped. */
+export interface PlatformTranscriptMessage {
+  role: string;
+  text: string;
+  toolName?: string;
+  createdAt?: number;
+}
+
+/**
+ * A session's transcript, paged.
+ *
+ * The stored blob URL is never returned: it is a direct handle with no further
+ * authorization, so handing it out would turn one authorized read into an
+ * unbounded, unrevocable one.
+ */
+export interface PlatformUserTestingSessionDetail {
+  id: string;
+  scenarioId: string;
+  chatSessionId: string | null;
+  modelId: string | null;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+  /**
+   * `null` — never 0 — when the transcript could not be read, which is why
+   * this is nullable and the list DTO's is not. Zero would be a claim the
+   * visitor said nothing, the opposite of what an unreadable blob means, and a
+   * caller that only checked `messageCount` would act on it.
+   */
+  messageCount: number | null;
+  /**
+   * True when the stored conversation could not be read. Distinct from an
+   * empty `messages`, which means the visitor genuinely said nothing.
+   */
+  transcriptUnavailable?: boolean;
+  messages: PlatformTranscriptMessage[];
+  nextCursor?: string;
+}
+
+/**
+ * Scenario metadata after an update.
+ *
+ * NO `accessVersion`, deliberately: a mode change bumps it upstream, but the
+ * envelope the route re-reads does not carry the new value, so the field was
+ * null on every response while documenting itself as the revocation signal.
+ * The publish response (`PlatformScenario`) carries the real one.
+ */
+export interface PlatformUserTestingScenario {
+  id: string;
+  projectId: string;
+  name: string | null;
+  description: string | null;
+  mode: string | null;
+}
+
+/**
+ * Scenario detail — the read shape, widened with the environment link and
+ * the insights envelope.
+ */
+export interface PlatformUserTestingScenarioDetail
+  extends PlatformUserTestingScenario {
+  environmentId: string | null;
+  /**
+   * Present when the caller may have it. The envelope is gated on workspace
+   * MEMBERSHIP while the scenario itself is visible more widely, so a
+   * lower-privilege viewer gets the scenario without this field rather than
+   * an error — same degradation as an older server that cannot produce one.
+   */
+  insights?: PlatformInsightsEnvelope;
+}
+
+/** Guest execution caps — the spend dial for anonymous visitors. */
+export interface PlatformGuestExecution {
+  enabled: boolean;
+  computerEnabled: boolean;
+  sharedSkillsEnabled: boolean;
+  dailyCreditCap: number;
+  dailyComputerStartCap: number;
+  maxConcurrentComputers: number;
+  harnessEnabled?: boolean;
+  dailyHarnessSpendCapMicros?: number;
+  dailyHarnessCallCap?: number;
+  maxConcurrentHarnessRuns?: number;
+}
+
+export interface PlatformUserTestingInsightsRequested {
+  scenarioId: string;
+  projectId: string;
+  windowId: string;
+  status: "pending";
+}
+
+// ---------------------------------------------------------------------------
+// Server connections
+// ---------------------------------------------------------------------------
+
+/**
+ * One saved server a URL could refer to, offered when it matches more than one.
+ *
+ * Present only on an `AMBIGUOUS_SERVER` error. Without it that refusal is a
+ * dead end on every surface that is not a browser: the caller is told to
+ * re-send with a `serverId` and has no way to discover which ids exist.
+ */
+export interface PlatformServerConnectionCandidate {
+  id: string;
+  name: string;
+  /** Redacted — query values are replaced, because a keyed-endpoint URL's
+   * query can be the credential itself. */
+  url: string;
+}
+
+export interface PlatformServerConnectionError {
+  code: string;
+  message: string;
+  /** Whether retrying THIS request could succeed. False for a denied consent
+   * or an unsupported auth method, where only a different action helps. */
+  retryable: boolean;
+  candidates?: PlatformServerConnectionCandidate[];
+}
+
+/**
+ * The state of one "connect this MCP server" request.
+ *
+ * Returned by every server-connection route, so a caller polls the same shape
+ * it created. `handoffUrl` is the exception that proves the rule: it appears
+ * only in the CREATE response, because the raw handoff token exists exactly
+ * once and nothing stores it.
+ */
+export interface PlatformServerConnection {
+  connectionRequestId: string;
+  status:
+    | "discovering"
+    | "awaiting_project"
+    | "awaiting_authorization"
+    | "authorizing"
+    | "validating"
+    | "ready"
+    | "failed"
+    | "expired"
+    | "cancelled";
+  /**
+   * Where the user finishes in a browser. Present for BOTH
+   * `awaiting_project` and `awaiting_authorization` — choosing a project needs
+   * a page just as much as granting consent does.
+   *
+   * TREAT THIS AS PRIVATE. It is a capability for one person: never post it to
+   * a shared channel, and never let a model echo it into prose.
+   */
+  handoffUrl?: string;
+  expiresAt: string;
+  projectId?: string;
+  serverId?: string;
+  server?: {
+    id: string;
+    name: string;
+    url: string;
+    enabled: boolean;
+  };
+  error?: PlatformServerConnectionError;
+}
+
+/** Body for `POST /server-connections`. */
+export interface PlatformServerConnectionCreateBody {
+  url: string;
+  projectId?: string;
+  /** Disambiguates when a project has several saved servers on one URL. */
+  serverId?: string;
+  /** Used only when a server row is created; ignored on reuse. */
+  name?: string;
+  reauthorize?: boolean;
 }

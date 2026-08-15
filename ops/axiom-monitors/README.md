@@ -71,22 +71,23 @@ Ownership is claimed by a marker appended to the monitor description:
 - `--delete` requires the exact key and only ever removes a managed monitor.
 - Re-running with no definition change is a no-op.
 
-## Open decision before first apply: PAGE vs WARN notifiers
+## PAGE vs WARN notifiers (decided 2026-08-13)
 
 The plan requires PAGE and WARN to be **mechanically** different — if both land
 in `#mcpjam-alerts` with identical treatment, the tiers are names, not tiers.
 
-Today the org has exactly two notifiers: `#mcpjam-alerts`
-(`jnWZGoVFRcvyTdUjBe`) and `MCPJam LLM Safety` (`ox9MvFUsrwZtx9HfxM`). There is
-no separate WARN destination, so `mcpjam-alerts-warn` currently has nowhere
-correct to point. Resolve one of these before applying:
+Resolution: a second Slack notifier `#mcpjam-alerts (warn)`
+(`Q3BO52GfVxE82N9tWH`) was created against the same channel webhook, and
+`AXIOM_NOTIFIER_MCPJAM_ALERTS_WARN` points at it. This separates the tier
+*identity* now — every WARN monitor is wired to its own notifier object — so
+upgrading either tier later (a mention-carrying webhook for PAGE, a quieter
+channel for WARN) is a notifier-config/env-var change with zero monitor edits.
 
-1. Create a second Slack notifier that posts without an on-call mention, and
-   point `AXIOM_NOTIFIER_MCPJAM_ALERTS_WARN` at it. (Needs Slack admin.)
-2. Point both keys at `#mcpjam-alerts` and accept that the tier distinction is
-   only visible in the message text.
-
-Option 1 is what the plan assumes.
+Deliberately deferred, not forgotten: the message *treatment* is still
+identical, because the PAGE notifier (`jnWZGoVFRcvyTdUjBe`, plain webhook, no
+mention) never had page semantics either. Giving PAGE an on-call mention needs
+a Slack-side webhook or workflow with the mention baked in; when that exists,
+point `AXIOM_NOTIFIER_MCPJAM_ALERTS_PAGE` at it and re-apply.
 
 ## Verifying delivery
 
@@ -99,6 +100,18 @@ real notifier, confirm one trigger and one resolution, then
 includes grouped/projected columns, because the per-class monitors (M3/M4/M6)
 depend on knowing the answer: all 55 pre-existing monitors collapse to a bare
 scalar in Slack, so their drill-down queries may have to carry the diagnosis.
+
+**Run on 2026-08-14 against `#mcpjam-alerts (warn)`:** disposable grouped
+Threshold monitor (`summarize Count = count() by grp`, `notifyByGroup: true`,
+15m range / 1m interval) over a disposable `monitor-delivery-test` dataset.
+One trigger at 03:07:22Z, one resolution at 03:22:24Z when the rows aged out
+of the window — `resolvable: true` produced exactly one open and one close,
+no repeats. Monitor and dataset were deleted afterward. Whether the Slack
+message body rendered the `grp` group value could not be captured
+programmatically (webhooks are write-only); check the 03:07Z/03:22Z posts in
+the channel before relying on grouped columns in any alert payload — until
+someone records that observation here, assume the pre-existing behavior
+(bare scalar) and keep the drill-down queries in the descriptions.
 
 ## Fields this Axiom deployment may ignore
 

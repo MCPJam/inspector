@@ -88,6 +88,12 @@ interface ThreadProps {
    */
   renderUserMessageActions?: TranscriptThreadProps["renderUserMessageActions"];
   /**
+   * Optional slot under each assistant message. ChatTabV2 wires the per-turn
+   * rating widget here for hosted User Testing sessions; the transcript
+   * suppresses it on the message that is still streaming.
+   */
+  renderAssistantTurnFooter?: TranscriptThreadProps["renderAssistantTurnFooter"];
+  /**
    * Enables the per-user-message edit affordance. Saving rewinds the thread to
    * that message and re-runs the turn from the edited text.
    */
@@ -172,6 +178,7 @@ export function Thread({
   contentClassName,
   getMessageWrapperProps,
   renderUserMessageActions,
+  renderAssistantTurnFooter,
   onEditUserMessage,
   editDisabled,
   showSenderAvatars,
@@ -385,6 +392,7 @@ export function Thread({
           }
           getMessageWrapperProps={getMessageWrapperProps}
           renderUserMessageActions={renderUserMessageActions}
+          renderAssistantTurnFooter={renderAssistantTurnFooter}
           onEditUserMessage={onEditUserMessage}
           editDisabled={editDisabled}
           showSenderAvatars={showSenderAvatars}
