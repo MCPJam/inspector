@@ -8,7 +8,7 @@
  * to UNAUTHORIZED, defeating the v1 closed-union contract.
  */
 import { describe, it, expect } from "vitest";
-import { mapErrorToV1 } from "../envelope.js";
+import { mapErrorToV1, v1Error } from "../envelope.js";
 import { V1_ERROR_STATUS } from "../contract.js";
 import { ErrorCode, WebRouteError } from "../../web/errors.js";
 
@@ -163,5 +163,105 @@ describe("mapErrorToV1 — passthrough", () => {
     const err = new WebRouteError(404, ErrorCode.NOT_FOUND, "no such thing");
     const result = mapErrorToV1(err);
     expect(result.code).toBe("NOT_FOUND");
+  });
+});
+
+/**
+ * The `/api/v1/*` surface returned its errors without ever telling
+ * `requestLogContextMiddleware` what they were, so every v1 failure logged as
+ * a bare `internal_error` with no message, no slug, and no origin — and was
+ * therefore unreachable by the MCPJam-fault monitor no matter how badly it
+ * failed. Measured 2026-08-15: 44 opaque 500s on eval-ingest in 72h.
+ */
+describe("v1Error — telemetry envelope", () => {
+  function fakeContext() {
+    const meta: Record<string, unknown> = {};
+    return {
+      set: (key: string, value: unknown) => {
+        meta[key] = value;
+      },
+      get: (key: string) => meta[key],
+      json: (body: unknown, status: number) => ({ body, status }),
+      meta,
+    };
+  }
+
+  it("stashes webErrorMeta so the middleware stops logging a bare internal_error", () => {
+    const c = fakeContext();
+
+    v1Error(c as never, "NOT_FOUND", "no such thing");
+
+    expect(c.meta.webErrorMeta).toMatchObject({
+      status: V1_ERROR_STATUS.NOT_FOUND,
+      code: "NOT_FOUND",
+      message: "no such thing",
+    });
+  });
+
+  it("never clobbers the richer meta v1OnError already stashed", () => {
+    // The ordering that makes this load-bearing: `v1OnError` stashes meta WITH
+    // origin and slug, then calls `v1Error`. A blind write here would erase the
+    // attribution one line after it was resolved — reintroducing the exact
+    // blind spot this backstop exists to close.
+    const c = fakeContext();
+    c.meta.webErrorMeta = {
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "classified",
+      origin: "mcpjam",
+      slug: "internal/unknown",
+    };
+
+    v1Error(c as never, "INTERNAL_ERROR", "classified");
+
+    expect(c.meta.webErrorMeta).toMatchObject({
+      origin: "mcpjam",
+      slug: "internal/unknown",
+    });
+  });
+
+  it("omits origin/slug rather than writing empty ones", () => {
+    // An absent origin must stay absent: `isempty(origin)` is how the coverage
+    // query finds unattributed rows, and an empty string would hide them. The
+    // returned path has no classification to report — only a real code and
+    // message, which still beat the middleware's `internal_error` fallback.
+    const c = fakeContext();
+
+    v1Error(c as never, "VALIDATION_ERROR", "bad input");
+
+    expect(c.meta.webErrorMeta).not.toHaveProperty("origin");
+    expect(c.meta.webErrorMeta).not.toHaveProperty("slug");
+  });
+
+  it("does not throw when the context cannot set (non-Hono callers)", () => {
+    expect(() =>
+      v1Error({ json: () => ({}) } as never, "NOT_FOUND", "x"),
+    ).not.toThrow();
+  });
+});
+
+describe("mapErrorToV1 — attribution", () => {
+  it("returns the effective origin and slug for a mapped runtime error", () => {
+    const result = mapErrorToV1(new Error("connect ECONNREFUSED 127.0.0.1:1"));
+
+    expect(result.origin).toBeDefined();
+    expect(result.slug).toBeDefined();
+  });
+
+  it("does not attribute a user's refused connection to MCPJam", () => {
+    // The whole point of the origin axis: this must never page us.
+    const result = mapErrorToV1(new Error("connect ECONNREFUSED 127.0.0.1:1"));
+
+    expect(result.origin).not.toBe("mcpjam");
+  });
+
+  it("preserves an origin the throwing site already promoted", () => {
+    // A route that declared an internal hop resolved `mcpjam` and Sentry was
+    // paged on it. Recomputing here would report `ambiguous` for a failure we
+    // already own — the drift that kept `origin=mcpjam` out of Axiom.
+    const err = new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, "boom");
+    err.origin = "mcpjam";
+
+    expect(mapErrorToV1(err).origin).toBe("mcpjam");
   });
 });
