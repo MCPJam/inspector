@@ -1037,6 +1037,47 @@ describe("PlaygroundMain — multi-host render path", () => {
     ]);
   });
 
+  it("chooses a fallback lead after a user changes only the compare lineup mid-seed", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
+    mockCreateHost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate.push(resolve as (host: { hostId: string }) => void);
+        })
+    );
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+    await waitFor(() => {
+      expect(releaseCreate).toHaveLength(3);
+    });
+
+    // The user changes only the compare lineup. With no previewed host yet,
+    // the fallback is deferred until the seed finishes so this choice is not
+    // overwritten by the seed itself.
+    saveSelectedHostIds("default", ["h-chatgpt"]);
+    multiHostFixture.selectedHostIds = ["h-chatgpt"];
+    multiHostFixture.hostList = [
+      { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-cursor", name: "Cursor" },
+    ];
+    rerender(<PlaygroundMain {...defaultProps} />);
+    expect(readPreviewedHostId()).toBeNull();
+
+    await act(async () => {
+      releaseCreate[0]({ hostId: "h-claude" });
+      releaseCreate[1]({ hostId: "h-chatgpt" });
+      releaseCreate[2]({ hostId: "h-cursor" });
+    });
+
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-chatgpt");
+    });
+    expect(loadSelectedHostIds("default")).toEqual(["h-chatgpt"]);
+  });
+
   it("keeps Claude as lead when ChatGPT reaches the host list first", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
@@ -1061,7 +1102,16 @@ describe("PlaygroundMain — multi-host render path", () => {
     });
     multiHostFixture.hostList = [{ hostId: "h-chatgpt", name: "ChatGPT" }];
     rerender(<PlaygroundMain {...defaultProps} />);
-    expect(readPreviewedHostId()).toBeNull();
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBeNull();
+    });
+
+    multiHostFixture.hostList = [
+      { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-cursor", name: "Cursor" },
+    ];
+    rerender(<PlaygroundMain {...defaultProps} />);
 
     await act(async () => {
       releaseCreate[0]({ hostId: "h-claude" });

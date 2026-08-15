@@ -1322,6 +1322,10 @@ export function PlaygroundMain({
   const seedRetryCountsRef = useRef(new Map<string, number>());
   const seedRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const [seedRetryTick, setSeedRetryTick] = useState(0);
+  // A seed completion only mutates a ref. This tick lets the missing-preview
+  // fallback run again when a user changed the compare lineup mid-seed and
+  // the seed correctly declined to overwrite that choice.
+  const [seedCompletionTick, setSeedCompletionTick] = useState(0);
   useEffect(() => {
     const timers = seedRetryTimersRef.current;
     return () => {
@@ -1566,6 +1570,7 @@ export function PlaygroundMain({
       }
     }).finally(() => {
       playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
+      setSeedCompletionTick((tick) => tick + 1);
     });
   }, [
     isConvexAuthenticated,
@@ -1609,6 +1614,7 @@ export function PlaygroundMain({
     previewedHostId,
     resolveFallbackHostId,
     setPreviewedHostId,
+    seedCompletionTick,
   ]);
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
