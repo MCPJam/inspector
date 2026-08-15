@@ -67,7 +67,7 @@ function translateReadError(error: unknown): WebRouteError {
  */
 function translatePreflightReadError(
   error: unknown,
-  notFoundMessage: string
+  notFoundMessage: string,
 ): WebRouteError {
   return translateConvexReadError(error, {
     scope: "v1.user-testing",
@@ -199,13 +199,13 @@ function toSessionSummaryDto(row: SessionThreadRow) {
 async function requireScenarioInProject(
   client: ConvexHttpClient,
   projectId: string,
-  scenarioId: string
+  scenarioId: string,
 ): Promise<ChatboxRow> {
   let row: ChatboxRow | null;
   try {
     row = (await client.query(
       "chatboxes:getChatbox" as never,
-      { chatboxId: scenarioId } as never
+      { chatboxId: scenarioId } as never,
     )) as ChatboxRow | null;
   } catch (error) {
     throw translatePreflightReadError(error, "Scenario not found");
@@ -218,7 +218,7 @@ async function requireScenarioInProject(
 
 async function parseBody<T>(
   c: { req: { json: () => Promise<unknown> } },
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -227,7 +227,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
   const parsed = schema.safeParse(raw);
@@ -235,7 +235,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
   return parsed.data;
@@ -253,12 +253,12 @@ async function scopedScenario(c: {
   const projectId = c.req.param("projectId");
   const scenarioId = c.req.param("scenarioId");
   const client = createConvexClient(
-    await getConvexBearerForRequest(c as never)
+    await getConvexBearerForRequest(c as never),
   );
   const scenario = await requireScenarioInProject(
     client,
     projectId,
-    scenarioId
+    scenarioId,
   );
   return { client, projectId, scenarioId, scenario };
 }
@@ -296,7 +296,7 @@ const updateScenarioSchema = z
     {
       message:
         "Send `mode` on its own: identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.",
-    }
+    },
   );
 
 // GET /v1/projects/:p/user-testing/scenarios/:id
@@ -320,8 +320,8 @@ userTesting.get(BASE, async (c) => {
   const insights = await loadInsightsEnvelope("v1.user-testing", () =>
     client.query(
       "chatboxWindowInsights:getScenarioInsightsEnvelope" as never,
-      { chatboxId: scenarioId } as never
-    )
+      { chatboxId: scenarioId } as never,
+    ),
   );
 
   return v1Resource(c, {
@@ -349,7 +349,7 @@ userTesting.patch(BASE, async (c) => {
     if (body.mode !== undefined) {
       await client.mutation(
         "chatboxes:setChatboxMode" as never,
-        { chatboxId: scenarioId, mode: body.mode } as never
+        { chatboxId: scenarioId, mode: body.mode } as never,
       );
     } else {
       await client.mutation(
@@ -360,7 +360,7 @@ userTesting.patch(BASE, async (c) => {
           ...(body.description !== undefined
             ? { description: body.description }
             : {}),
-        } as never
+        } as never,
       );
     }
   } catch (error) {
@@ -401,7 +401,7 @@ userTesting.get(`${BASE}/sessions`, async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "cursor must be a value returned as nextCursor by this endpoint"
+      "cursor must be a value returned as nextCursor by this endpoint",
     );
   }
 
@@ -413,7 +413,7 @@ userTesting.get(`${BASE}/sessions`, async (c) => {
         chatboxId: scenarioId,
         limit,
         ...(before !== undefined ? { before } : {}),
-      } as never
+      } as never,
     )) ?? []) as SessionThreadRow[];
   } catch (error) {
     throw translateReadError(error);
@@ -462,7 +462,7 @@ const TRANSCRIPT_MAX_BLOB_BYTES = 8 * 1024 * 1024;
  */
 async function readCapped(
   response: Response,
-  maxBytes: number
+  maxBytes: number,
 ): Promise<string | null> {
   const body = response.body;
   if (!body) return null;
@@ -558,7 +558,7 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "cursor must be a value returned as nextCursor by this endpoint"
+        "cursor must be a value returned as nextCursor by this endpoint",
       );
     }
     offset = parsedCursor;
@@ -568,7 +568,7 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
   try {
     session = (await client.query(
       "chatSessions:getSession" as never,
-      { sessionId } as never
+      { sessionId } as never,
     )) as typeof session;
   } catch (error) {
     // Preflight semantics: `getSession` refuses with a plain
@@ -679,7 +679,7 @@ userTesting.get(`${BASE}/metrics`, async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      'population must be "real" or "synthetic"'
+      'population must be "real" or "synthetic"',
     );
   }
   let metrics: unknown;
@@ -689,7 +689,7 @@ userTesting.get(`${BASE}/metrics`, async (c) => {
       {
         chatboxId: scenarioId,
         ...(population ? { population } : {}),
-      } as never
+      } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -698,7 +698,7 @@ userTesting.get(`${BASE}/metrics`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "This scenario has no session metrics yet"
+      "This scenario has no session metrics yet",
     );
   }
   return v1Resource(c, metrics);
@@ -716,7 +716,7 @@ userTesting.get(`${BASE}/usage`, async (c) => {
   try {
     usage = await client.query(
       "chatSessions:getUsageBreakdown" as never,
-      { chatboxId: scenarioId } as never
+      { chatboxId: scenarioId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -725,7 +725,7 @@ userTesting.get(`${BASE}/usage`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "This scenario has no usage data yet"
+      "This scenario has no usage data yet",
     );
   }
   return v1Resource(c, usage);
@@ -740,7 +740,7 @@ userTesting.get(`${BASE}/findings`, async (c) => {
   try {
     rows = ((await client.query(
       "chatboxWindowInsights:listChatboxFindings" as never,
-      { chatboxId: scenarioId } as never
+      { chatboxId: scenarioId } as never,
     )) ?? []) as unknown[];
   } catch (error) {
     throw translateReadError(error);
@@ -759,7 +759,7 @@ userTesting.get(`${BASE}/signals`, async (c) => {
   try {
     signals = await client.query(
       "chatboxWindowInsights:getWindowSignals" as never,
-      { chatboxId: scenarioId } as never
+      { chatboxId: scenarioId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -768,7 +768,7 @@ userTesting.get(`${BASE}/signals`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "This scenario has no analyzed window yet"
+      "This scenario has no analyzed window yet",
     );
   }
   return v1Resource(c, signals);
@@ -782,7 +782,7 @@ userTesting.get(`${BASE}/windows/:windowId/insights`, async (c) => {
   try {
     insights = await client.query(
       "chatboxWindowInsights:getWindowInsights" as never,
-      { chatboxId: scenarioId, windowGroupId: windowId } as never
+      { chatboxId: scenarioId, windowGroupId: windowId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -793,7 +793,7 @@ userTesting.get(`${BASE}/windows/:windowId/insights`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "No insights have been requested for this window"
+      "No insights have been requested for this window",
     );
   }
   return v1Resource(c, { windowId, ...(insights as object) });
@@ -818,7 +818,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Request body must be JSON"
+        "Request body must be JSON",
       );
     }
     const parsed = requestInsightsSchema.safeParse(parsedJson);
@@ -826,7 +826,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        parsed.error.issues[0]?.message ?? "Invalid request body"
+        parsed.error.issues[0]?.message ?? "Invalid request body",
       );
     }
     body = parsed.data;
@@ -840,7 +840,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       {
         chatboxId: scenarioId,
         ...(body?.force ? { force: true } : {}),
-      } as never
+      } as never,
     )) as { windowGroupId: string };
   } catch (error) {
     // `window_not_analyzed` is a 409 with real copy rather than a bare
@@ -851,7 +851,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       throw new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        "This scenario's current window has not been analyzed yet, so there is nothing to generate insights over. Wait for sessions to be processed and try again."
+        "This scenario's current window has not been analyzed yet, so there is nothing to generate insights over. Wait for sessions to be processed and try again.",
       );
     }
     throw translateWriteError(error);
@@ -865,7 +865,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       windowId: result.windowGroupId,
       status: "pending",
     },
-    202
+    202,
   );
 });
 
@@ -884,7 +884,7 @@ userTesting.delete(`${BASE}/insights`, async (c) => {
   try {
     await client.mutation(
       "chatboxWindowInsights:cancelWindowInsights" as never,
-      { chatboxId: scenarioId, windowGroupId: body.windowId } as never
+      { chatboxId: scenarioId, windowGroupId: body.windowId } as never,
     );
   } catch (error) {
     throw translateWriteError(error);
@@ -915,7 +915,7 @@ for (const action of ["dismiss", "undismiss"] as const) {
     try {
       findings = ((await client.query(
         "chatboxWindowInsights:listChatboxFindings" as never,
-        { chatboxId: scenarioId } as never
+        { chatboxId: scenarioId } as never,
       )) ?? []) as Array<{ _id?: string }>;
     } catch (error) {
       throw translateReadError(error);
@@ -927,7 +927,7 @@ for (const action of ["dismiss", "undismiss"] as const) {
     try {
       await client.mutation(
         `swarmWaveInsights:${action}Finding` as never,
-        { findingId } as never
+        { findingId } as never,
       );
     } catch (error) {
       throw translateWriteError(error);
@@ -978,7 +978,7 @@ userTesting.put(`${BASE}/guest-execution`, async (c) => {
   try {
     await client.mutation(
       "chatboxes:setChatboxGuestExecution" as never,
-      { chatboxId: scenarioId, guestExecution: body } as never
+      { chatboxId: scenarioId, guestExecution: body } as never,
     );
   } catch (error) {
     throw translateWriteError(error);
@@ -1003,7 +1003,7 @@ userTesting.post(`${BASE}/rotate-link`, async (c) => {
   try {
     result = (await client.mutation(
       "chatboxes:rotateChatboxLink" as never,
-      { chatboxId: scenarioId } as never
+      { chatboxId: scenarioId } as never,
     )) as { link?: unknown } | null;
   } catch (error) {
     throw translateWriteError(error);
@@ -1047,7 +1047,7 @@ userTesting.put(`${BASE}/members`, async (c) => {
         // must be an explicit `false` — omitting the field here silently
         // inverts the contract on an exposure-granting write.
         sendInviteEmail: body.sendInviteEmail ?? false,
-      } as never
+      } as never,
     )) as { memberId?: string; invited?: boolean } | null;
   } catch (error) {
     throw translateWriteError(error);
@@ -1071,7 +1071,7 @@ userTesting.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
   try {
     await client.mutation(
       "chatboxes:removeChatboxMember" as never,
-      { chatboxId: scenarioId, memberIdOrEmail } as never
+      { chatboxId: scenarioId, memberIdOrEmail } as never,
     );
   } catch (error) {
     throw translateWriteError(error);
@@ -1101,7 +1101,7 @@ userTesting.post(`${BASE}/rebind`, async (c) => {
   try {
     environment = await client.query(
       "projectEnvironments:getEnvironment" as never,
-      { projectId, environmentId: body.environmentId } as never
+      { projectId, environmentId: body.environmentId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -1114,7 +1114,7 @@ userTesting.post(`${BASE}/rebind`, async (c) => {
   try {
     result = (await client.mutation(
       "chatboxes:rebindEnvironmentChatbox" as never,
-      { chatboxId: scenarioId, environmentId: body.environmentId } as never
+      { chatboxId: scenarioId, environmentId: body.environmentId } as never,
     )) as { accessVersion?: number } | null;
   } catch (error) {
     throw translateWriteError(error);

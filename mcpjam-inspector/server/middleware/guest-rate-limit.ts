@@ -34,7 +34,7 @@ export function resetGuestRateLimitForTests(): void {
 
 export async function guestRateLimitMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   const guestId = c.get("guestId");
   if (!guestId) {
