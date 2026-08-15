@@ -28,6 +28,7 @@ import App, {
   ScoreRunnerRoute,
   ServersRedirectRoute,
   ServersRoute,
+  SessionsRoute,
   SettingsRoute,
   SkillsRoute,
   SupportRoute,
@@ -144,6 +145,10 @@ const ROUTE_ELEMENTS: Record<
   // enforces the `project-environments-enabled` flag itself (redirects when
   // off), so registration here does not expose the dark feature.
   environments: { element: <EnvironmentsRoute /> },
+  // `/sessions` — cross-surface project session feed. The route component
+  // enforces the `unified-sessions-enabled` flag itself (redirects when off),
+  // so registration here does not expose the dark feature.
+  sessions: { element: <SessionsRoute /> },
   playground: { element: <PlaygroundRoute /> },
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },

@@ -65,13 +65,13 @@ export function RunScorecardSection({
           <table className="w-full text-left text-[11px]">
             <thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="py-1 pr-2 font-medium">Criterion</th>
+                <th className="py-1 pr-2 font-medium">Check</th>
                 <th className="py-1 px-2 text-right font-medium">Passed</th>
                 <th className="py-1 px-2 text-right font-medium">Failed</th>
                 <th className="py-1 px-2 text-right font-medium">Pending</th>
                 <th
                   className="py-1 pl-2 text-right font-medium"
-                  title="Grading itself broke — not the same as failing the criterion"
+                  title="Grading itself broke — not the same as failing the check"
                 >
                   Not graded
                 </th>
