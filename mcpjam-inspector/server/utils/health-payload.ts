@@ -1,23 +1,4 @@
-import { resolveEnvironment } from "./log-events.js";
-
-/**
- * Baked into the bundle by `server/tsup.config.ts` (`define`).
- *
- * MUST stay a literal `process.env.X` member expression — esbuild's `define`
- * is a syntactic substitution and cannot see through a dynamic
- * `process.env[name]` lookup, which would leave the shipped server reporting
- * no version at all. Under `tsx` in dev the define is absent and this reads
- * the real environment, where npm provides `npm_package_version`.
- *
- * Same mechanism `server/sentry.ts` uses for the release tag.
- */
-const BAKED_VERSION = process.env.MCPJAM_INSPECTOR_VERSION;
-
-function blankToUndefined(value: string | undefined): string | undefined {
-  // Container platforms materialize a declared-but-unset variable as `""`,
-  // which `??` does not catch.
-  return value === undefined || value.trim() === "" ? undefined : value;
-}
+import { resolveAppVersion, resolveEnvironment } from "./log-events.js";
 
 /**
  * Fields every `/health` response carries.
@@ -38,10 +19,7 @@ export function buildHealthMeta(): {
   environment: string;
 } {
   return {
-    version:
-      blankToUndefined(BAKED_VERSION) ??
-      blankToUndefined(process.env.npm_package_version) ??
-      null,
+    version: resolveAppVersion(),
     environment: resolveEnvironment(),
   };
 }

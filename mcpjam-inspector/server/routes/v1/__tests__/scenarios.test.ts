@@ -53,10 +53,18 @@ function makeApp() {
   return app;
 }
 
-function call(method: "PUT" | "DELETE") {
+function call(method: "PUT" | "DELETE", body?: unknown) {
   return makeApp().request(
     `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario`,
-    { method }
+    {
+      method,
+      ...(body !== undefined
+        ? {
+            body: JSON.stringify(body),
+            headers: { "content-type": "application/json" },
+          }
+        : {}),
+    }
   );
 }
 
@@ -164,6 +172,67 @@ describe("PUT .../scenario", () => {
     });
   });
 
+  it("forwards create-time overrides to the mutation IN THE SAME CALL", async () => {
+    // One mutation, overrides included — never publish-then-adjust, which
+    // would leave the scenario briefly live in the default mode.
+    mutationMock.mockResolvedValue(
+      published({ name: "Beta run", mode: "invited_only" })
+    );
+
+    const res = await call("PUT", {
+      name: "Beta run",
+      description: "Invited testers only",
+      mode: "invited_only",
+    });
+    expect(res.status).toBe(201);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "chatboxes:publishEnvironmentChatbox",
+      {
+        environmentId: ENV,
+        name: "Beta run",
+        description: "Invited testers only",
+        mode: "invited_only",
+      }
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.mode).toBe("invited_only");
+    expect(body).not.toHaveProperty("overridesIgnored");
+  });
+
+  it("reports overridesIgnored on a republish that discarded them", async () => {
+    // The overrides are create-time only upstream. The caller asked for
+    // `invited_only`; the response's mode is the real one, and staying silent
+    // about the discarded intent is how someone concludes a link is
+    // restricted when it is not.
+    mutationMock.mockResolvedValue(published({ created: false }));
+
+    const res = await call("PUT", { mode: "invited_only" });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      created: false,
+      mode: "anyone_with_link",
+      overridesIgnored: true,
+    });
+  });
+
+  it("omits overridesIgnored on a bodyless republish", async () => {
+    // Nothing was asked for, so nothing was ignored — the flag would be noise
+    // on every routine idempotent publish.
+    mutationMock.mockResolvedValue(published({ created: false }));
+
+    const res = await call("PUT");
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Record<string, unknown>).not.toHaveProperty(
+      "overridesIgnored"
+    );
+  });
+
+  it("400s a mode outside the enum, without calling the mutation", async () => {
+    const res = await call("PUT", { mode: "everyone" });
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("404s an environment in ANOTHER project, without calling the mutation", async () => {
     // Convex scopes `getEnvironment` by projectId, so a cross-project id reads
     // as null — indistinguishable from missing, which is the point.
@@ -175,10 +244,13 @@ describe("PUT .../scenario", () => {
     // `projectId` would still get null from this mock and still 404 here,
     // while in production it would resolve an environment from any project the
     // caller can reach — the exact bug this preflight exists to prevent.
-    expect(queryMock).toHaveBeenCalledWith("projectEnvironments:getEnvironment", {
-      projectId: PROJECT,
-      environmentId: ENV,
-    });
+    expect(queryMock).toHaveBeenCalledWith(
+      "projectEnvironments:getEnvironment",
+      {
+        projectId: PROJECT,
+        environmentId: ENV,
+      }
+    );
   });
 
   it("404s — and does not publish — when the preflight THROWS", async () => {
@@ -257,9 +329,12 @@ describe("DELETE .../scenario", () => {
     queryMock.mockResolvedValue(null);
     expect((await call("DELETE")).status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
-    expect(queryMock).toHaveBeenCalledWith("projectEnvironments:getEnvironment", {
-      projectId: PROJECT,
-      environmentId: ENV,
-    });
+    expect(queryMock).toHaveBeenCalledWith(
+      "projectEnvironments:getEnvironment",
+      {
+        projectId: PROJECT,
+        environmentId: ENV,
+      }
+    );
   });
 });

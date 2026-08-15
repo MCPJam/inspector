@@ -202,6 +202,9 @@ export async function runPredicatesOnChatSession(
     "chatSessionChecks:startCheckRun" as any,
     {
       chatSessionId,
+      // Deterministic predicate evaluation, never a judge — the per-session
+      // Checks panel keys on this to decide which rows it owns.
+      runKind: "checks",
       definitionSnapshot,
       ...(triggeredBy !== undefined ? { triggeredBy } : {}),
     },
@@ -219,10 +222,12 @@ export async function runPredicatesOnChatSession(
     //    envelope field today; eval derives it the same way per turn.
     const toolCalls = extractToolCallsFromEnvelopeMessages(envelope.messages);
 
-    // 4. Build the SDK iteration transcript. Usage isn't on the envelope
-    //    for on-demand runs (no live token accounting), so leave undefined;
-    //    `tokenUsageBelow` predicates against this transcript will short-
-    //    circuit deterministically via the SDK's undefined-usage branch.
+    // 4. Build the SDK iteration transcript. Token usage IS materialized on
+    //    the session row (`chatSessions.cumulativeInputTokens/OutputTokens`)
+    //    but this loader doesn't return it yet, so leave undefined; token
+    //    predicates against this transcript fail closed via the SDK's
+    //    undefined-usage branch. The swarm path already threads it through
+    //    the claim response — mirror that here when this path gets a caller.
     const transcript = buildIterationTranscript({
       trace: {
         messages: envelope.messages,
