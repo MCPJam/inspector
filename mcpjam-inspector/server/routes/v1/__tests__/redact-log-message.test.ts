@@ -21,15 +21,16 @@ describe("redactForLog — credential shapes", () => {
   });
 
   it("redacts a bearer token behind an Authorization header name, exactly once", () => {
-    // The header-name rule and the standalone-Bearer rule both match this
-    // string. If both fire the result is a double-redacted
-    // `authorization=[redacted] [redacted]` — safe, but noise; the key rule
-    // swallows the `Bearer ` prefix so only one fires.
+    // Two rules could claim this string. Alternation is first-match at each
+    // position, so the key=value branch consumes the whole
+    // `Authorization: Bearer <token>` before the standalone-Bearer branch is
+    // tried — and because it is ONE pass, the replacement is never re-scanned.
+    // The multi-pass version produced `Authorization=[redacted] [redacted]`.
     const out = redactForLog(
       new Error("sent Authorization: Bearer abc.def-123")
     );
     expect(out).not.toContain("abc.def-123");
-    // The key keeps the casing it arrived with — `$1` is the matched name.
+    // The key keeps the casing it arrived with — it is the matched name.
     expect(out).toBe("sent Authorization=[redacted]");
   });
 
@@ -65,6 +66,33 @@ describe("redactForLog — credential shapes", () => {
     const out = redactForLog(new Error(`Convex rejected: ${input}`));
     expect(out).not.toContain(secret);
     expect(out).toContain("[redacted]");
+  });
+
+  it.each([
+    // Each of these leaked under the earlier multi-pass implementation.
+    ['token="hunter two words"', "hunter two words"],
+    ['{"api_key": "hunter2"}', "hunter2"],
+    ["'secret': 'hunter2'", "hunter2"],
+    ["authorization: Basic dXNlcjpwYXNzd29yZA", "dXNlcjpwYXNzd29yZA"],
+    ["Authorization: Token hunter2", "hunter2"],
+  ])("redacts the whole value in %s", (input, secret) => {
+    const out = redactForLog(new Error(`Convex rejected: ${input}`));
+    expect(out).not.toContain(secret);
+  });
+
+  it("redacts a standalone Basic credential", () => {
+    const out = redactForLog(new Error("sent Basic dXNlcjpwYXNzd29yZA"));
+    expect(out).not.toContain("dXNlcjpwYXNzd29yZA");
+    expect(out).toContain("Basic [redacted]");
+  });
+
+  it("does not corrupt its own output by re-scanning it", () => {
+    // The multi-pass version produced `api_[redacted]=[redacted]` here: the
+    // key rule wrote `api_key=[redacted]`, then the bare-prefix rule matched
+    // the NAME inside that result. A single pass never revisits a replacement.
+    expect(redactForLog(new Error("api_key=hunter2"))).toBe(
+      "api_key=[redacted]"
+    );
   });
 
   it("stops the value at a delimiter rather than eating the rest of the line", () => {
@@ -128,12 +156,15 @@ describe("redactForLog — hostile and empty inputs", () => {
 });
 
 describe("redactedErrorForCapture", () => {
+  // Assembled at runtime rather than written literally: a live-key-shaped
+  // string in the tree trips secret scanners, and a scanner alert nobody can
+  // action is how the real ones start getting ignored.
+  const FAKE_KEY = ["sk", "live", "SECRETVALUE"].join("_");
+
   it("carries the redacted message, not the original", () => {
-    const error = redactedErrorForCapture(
-      new Error("rejected sk_live_SECRETVALUE")
-    );
+    const error = redactedErrorForCapture(new Error(`rejected ${FAKE_KEY}`));
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).not.toContain("SECRETVALUE");
+    expect(error.message).not.toContain(FAKE_KEY);
     expect(error.message).toContain("sk_[redacted]");
   });
 
@@ -141,16 +172,16 @@ describe("redactedErrorForCapture", () => {
     // A JS stack string BEGINS with `Error: <message>`. Transplanting the
     // original stack onto a redacted error would restore the secret one field
     // over — the same leak, and the one Sentry actually displays.
-    const original = new Error("rejected sk_live_SECRETVALUE");
+    const original = new Error(`rejected ${FAKE_KEY}`);
     original.stack = [
-      "Error: rejected sk_live_SECRETVALUE",
+      `Error: rejected ${FAKE_KEY}`,
       "    at doThing (/app/thing.js:1:1)",
       "    at other (/app/other.js:2:2)",
     ].join("\n");
 
     const redacted = redactedErrorForCapture(original);
 
-    expect(redacted.stack).not.toContain("SECRETVALUE");
+    expect(redacted.stack).not.toContain(FAKE_KEY);
     expect(redacted.stack?.split("\n")[0]).toBe(`Error: ${redacted.message}`);
     // The frames are the reason to keep a stack at all.
     expect(redacted.stack).toContain("at doThing (/app/thing.js:1:1)");
@@ -168,6 +199,8 @@ describe("redactedErrorForCapture", () => {
   it.each([
     ["null", null],
     ["undefined", undefined],
+    ["empty string", ""],
+    ["an Error with an empty message", new Error("")],
     ["a plain string", "just a string"],
   ])("returns an Error for %s", (_label, input) => {
     expect(redactedErrorForCapture(input)).toBeInstanceOf(Error);

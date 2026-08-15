@@ -40,29 +40,65 @@ function safeErrorText(error: unknown): string {
   }
 }
 
-export function redactForLog(error: unknown): string {
-  const scrubbed = safeErrorText(error)
-    // KEY=VALUE forms FIRST, and the ordering is the whole point of this
-    // sequence. The bare-prefix rule below matches the NAME `api_key`, so on
-    // its own it rewrites `api_key=hunter2` to `api_[redacted]=hunter2` —
-    // redacting the label and publishing the secret.
-    //
-    // The optional `Bearer ` inside the value is what stops the standalone
-    // Bearer rule from firing afterwards and leaving a double-redacted
-    // `authorization=[redacted] [redacted]`. Everything up to whitespace, a
-    // quote, an ampersand or a closing bracket is the value, so surrounding
-    // non-secret context (`&projectId=proj_123`) survives — that context is
-    // what makes the log line worth keeping.
-    .replace(
-      /\b(api[-_]?key|secret|token|password|passwd|authorization)\s*[=:]\s*(?:Bearer\s+)?["']?[^\s"'`&,)\]}]+/gi,
-      "$1=[redacted]"
-    )
-    // A standalone `Bearer <token>` with no key name in front of it.
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+/** Where a value ends when it is not quoted: whitespace or a structural char. */
+const BARE_VALUE = String.raw`[^\s"'\`&,)\]}]+`;
+
+/**
+ * ONE alternation, applied in ONE pass — not a chain of `.replace()` calls.
+ *
+ * The chain version was wrong twice over, and both bugs came from the same
+ * property: each pass re-scans the OUTPUT of the previous one. `api_key=x`
+ * became `api_key=[redacted]` and then the bare-prefix rule matched the NAME
+ * inside that result and produced `api_[redacted]=[redacted]`; the standalone
+ * Bearer rule did the same to an already-redacted authorization value. A
+ * single pass never revisits what it has already replaced, so the rules cannot
+ * corrupt each other and their order expresses precedence only.
+ *
+ * Order within the alternation IS precedence: JS alternation is first-match at
+ * each position, so the key=value form gets the chance to consume a whole
+ * `api_key: "…"` pair before the bare-prefix rule can nibble the key name.
+ *
+ * The value branches, in order, are what the earlier version got wrong:
+ *   - a fully quoted string, so `token="two words"` does not leak its tail at
+ *     the first space;
+ *   - a scheme-prefixed credential, so `authorization: Basic dXNlcj…` does not
+ *     leak the part after `Basic`;
+ *   - a bare run, which stops at `&` or `,` so surrounding non-secret context
+ *     (`&projectId=proj_123`) survives — that context is what makes the line
+ *     worth logging at all.
+ *
+ * The key may itself be quoted, so JSON (`{"api_key": "hunter2"}`) matches;
+ * without that the whole pair was skipped and the secret shipped verbatim.
+ */
+const CREDENTIAL_PATTERN = new RegExp(
+  [
+    // key = value / "key": "value"
+    String.raw`["']?\b(api[-_]?key|secret|token|password|passwd|authorization)\b["']?\s*[=:]\s*` +
+      String.raw`(?:"[^"]*"|'[^']*'|(?:Bearer|Basic|Token)\s+${BARE_VALUE}|${BARE_VALUE})`,
+    // A standalone scheme + credential with no key name in front of it.
+    String.raw`\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*`,
     // Bare credentials recognizable by their own prefix.
-    .replace(/\b(sk|slk|dsc|api)_[A-Za-z0-9._-]+/g, "$1_[redacted]")
+    String.raw`\b(?:sk|slk|dsc|api)_[A-Za-z0-9._-]+`,
     // Anything JWT-shaped.
-    .replace(/\beyJ[A-Za-z0-9._-]{10,}/g, "[redacted-jwt]");
+    String.raw`\beyJ[A-Za-z0-9._-]{10,}`,
+  ].join("|"),
+  "gi"
+);
+
+export function redactForLog(error: unknown): string {
+  const scrubbed = safeErrorText(error).replace(
+    CREDENTIAL_PATTERN,
+    (match, keyName?: string) => {
+      // Keep the key so the line still says WHICH credential was rejected —
+      // that is the diagnostic value; the secret is not.
+      if (keyName) return `${keyName}=[redacted]`;
+      const scheme = /^(Bearer|Basic)\b/i.exec(match);
+      if (scheme) return `${scheme[1]} [redacted]`;
+      const prefix = /^(sk|slk|dsc|api)_/.exec(match);
+      if (prefix) return `${prefix[1]}_[redacted]`;
+      return "[redacted-jwt]";
+    }
+  );
   return scrubbed.length > LOG_MESSAGE_MAX
     ? `${scrubbed.slice(0, LOG_MESSAGE_MAX)}… [truncated]`
     : scrubbed;

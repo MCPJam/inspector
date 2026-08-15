@@ -290,13 +290,16 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
   it("redacts credentials out of what it does log", () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
-    translateConvexWriteError(
-      new Error("rejected token sk_live_abcdef123456 on write"),
-      { resource: "Server" }
-    );
+    // Assembled at runtime: a literal live-key-shaped string in the tree
+    // trips secret scanners, and a scanner alert nobody can action is how
+    // real ones start getting ignored.
+    const token = ["sk", "live", "abcdef123456"].join("_");
+    translateConvexWriteError(new Error(`rejected token ${token} on write`), {
+      resource: "Server",
+    });
 
     const logged = JSON.stringify(warn.mock.calls[0]);
-    expect(logged).not.toContain("sk_live_abcdef123456");
+    expect(logged).not.toContain(token);
     expect(logged).toContain("sk_[redacted]");
   });
 
@@ -343,11 +346,58 @@ describe("translateConvexWriteError — the unrecognized failure", () => {
     expect(error).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["null", null],
+    ["empty string", ""],
+    ["whitespace only", "   "],
+  ])(
+    "does not read %s data as a prose refusal — it is unrecognized",
+    (_label, data) => {
+      // The boundary of the string-data branch. Empty or blank data is not a
+      // sentence anyone wrote for the caller, so treating it as one would
+      // answer 400 with a BLANK message — the least useful response the API
+      // can produce, and it would also hide a broken write path from the 5xx
+      // monitor. These fall through to the unrecognized 500 instead.
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      const convexError = Object.assign(
+        new Error("Uncaught ConvexError: unrecognized"),
+        { data }
+      );
+
+      const result = translateConvexWriteError(convexError, {
+        resource: "Journey",
+        fallbackMessage: "Journey write rejected",
+      });
+
+      expect(result.status).toBe(500);
+      expect(result.code).toBe(ErrorCode.INTERNAL_ERROR);
+      expect(result.message).toBe("Journey write rejected");
+      expect(warn).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("uses the default fallback copy when the caller supplied none", () => {
+    // The 500 never forwards Convex's text, so the default is the only thing
+    // an unconfigured caller shows — it must not leak and must not be blank.
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const result = translateConvexWriteError(
+      new Error("Uncaught ConvexError: journeys.js:412 [Request ID: abc123]"),
+      { resource: "Journey" }
+    );
+
+    expect(result.message).toBe("Journey write rejected by the platform");
+    expect(result.message).not.toContain("journeys.js");
+    expect(result.message).not.toContain("Request ID");
+  });
+
   it("does not let string data bypass the coded prose mappings", () => {
     // A string that happens to say "already exists" must keep its 409 — the
     // prose branches run first, and this pins that ordering.
     const convexError = Object.assign(
-      new Error("Uncaught ConvexError: a persona with that name already exists"),
+      new Error(
+        "Uncaught ConvexError: a persona with that name already exists"
+      ),
       { data: "a persona with that name already exists" }
     );
     expect(
