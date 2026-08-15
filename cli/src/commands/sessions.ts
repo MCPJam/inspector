@@ -15,14 +15,21 @@
  */
 import type { Command } from "commander";
 import { searchSessionsOperation } from "@mcpjam/sdk/platform";
+import { usageError } from "../lib/output.js";
 import {
-  addPlatformOptions,
   addProjectOption,
   bindOperation,
   parseIntegerOption,
+  type PlatformOptions,
 } from "../lib/platform-command.js";
 
-type SearchOptions = {
+/**
+ * Extends `PlatformOptions` because `bindOperation` declares the credential
+ * flags on the LEAF command and hands its action the merged options — the same
+ * arrangement `organizations.ts` documents. Declaring them on the group instead
+ * would put `--api-key` somewhere Commander never passes to this action.
+ */
+type SearchOptions = PlatformOptions & {
   project?: string;
   query?: string;
   scope?: string;
@@ -34,17 +41,35 @@ type SearchOptions = {
 
 /**
  * `--source` is comma-separated on the command line and an array on the wire.
- * Undefined (not `[]`) when absent: an empty array would be a request to
- * search nothing, and the operation schema rejects it — correctly, because the
- * two must never be confused.
+ *
+ * Three distinct inputs, three distinct answers: absent means "every surface",
+ * a list of names means those names, and a value that parses to NOTHING
+ * (`--source ,` or `--source " "`) is a mistake. Collapsing that last case into
+ * `undefined` would silently widen a deliberately narrowed search to every
+ * surface — the exact failure the API's unknown-`sourceType` 400 exists to
+ * prevent, arriving through the CLI instead.
  */
+/** A search with no terms is not a search. See the call site. */
+function requireQuery(value: string | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length === 0) {
+    throw usageError("--query needs search terms.");
+  }
+  return trimmed;
+}
+
 function parseSources(value: string | undefined): string[] | undefined {
-  if (!value) return undefined;
+  if (value === undefined) return undefined;
   const parsed = value
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
-  return parsed.length > 0 ? parsed : undefined;
+  if (parsed.length === 0) {
+    throw usageError(
+      "--source was given but names no surfaces. Pass a comma-separated list (direct, chatbox, eval, swarm), or omit the flag to search all of them."
+    );
+  }
+  return parsed;
 }
 
 export function registerSessionsCommands(program: Command): void {
@@ -79,7 +104,11 @@ export function registerSessionsCommands(program: Command): void {
     ),
     searchSessionsOperation,
     (options: SearchOptions) => ({
-      query: options.query ?? "",
+      // `.requiredOption` guarantees the flag is PRESENT, not that it says
+      // anything — `--query ""` satisfies Commander. The operation rejects a
+      // blank query too (it is search-only), but failing here names the flag
+      // the user typed instead of reporting a validation error about `q`.
+      query: requireQuery(options.query),
       project: options.project,
       // Passed through unvalidated: the operation's schema owns the vocabulary
       // for these, and re-listing the allowed values here would be a second
@@ -96,7 +125,4 @@ export function registerSessionsCommands(program: Command): void {
       cursor: options.cursor,
     })
   );
-
-  // Keep the group itself runnable-with-help rather than erroring bare.
-  addPlatformOptions(sessions);
 }

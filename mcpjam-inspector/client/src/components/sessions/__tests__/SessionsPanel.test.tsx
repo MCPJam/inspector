@@ -239,11 +239,13 @@ describe("SessionsPanel — rows and detail", () => {
     expect(mocks.detailThreadIds).not.toContain("cs_abc");
   });
 
-  test("puts the selection in the URL, preserving ?project=", () => {
+  test("puts the selection in the URL, stamped with the panel's project", () => {
     // Selection lives in the URL because `/sessions?session=` is the backend's
     // universal permalink fallback: every `/v1/sessions` item carries a link
     // pointing here, so arriving at one must open that session.
-    window.history.replaceState({}, "", "/sessions?project=p1");
+    // Starts at a BARE /sessions: the panel must stamp its own projectId
+    // rather than copying the absent param forward.
+    window.history.replaceState({}, "", "/sessions");
     setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
     render(<SessionsPanel projectId="p1" />);
 
@@ -255,6 +257,23 @@ describe("SessionsPanel — rows and detail", () => {
     // Dropping `project` would silently move the page to whatever project the
     // viewer's picker was parked on.
     expect(url.searchParams.get("project")).toBe("p1");
+  });
+
+  test("drops a selection that belongs to the project just left", () => {
+    // Selection lives in the URL now, so it outlives a project switch that
+    // component state would have discarded — leaving the detail pane on a
+    // thread the reader cannot see in the list beside it.
+    window.history.replaceState({}, "", "/sessions?session=doc_abc&project=p1");
+    setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
+    const view = render(<SessionsPanel projectId="p1" />);
+    expect(screen.getByTestId("thread-detail-stub")).toBeInTheDocument();
+
+    view.rerender(<SessionsPanel projectId="p2" />);
+
+    const url = new URL(window.location.href);
+    expect(url.searchParams.get("session")).toBeNull();
+    expect(url.searchParams.get("project")).toBe("p2");
+    expect(screen.queryByTestId("thread-detail-stub")).not.toBeInTheDocument();
   });
 
   test("opens the session named by ?session= on first render", () => {

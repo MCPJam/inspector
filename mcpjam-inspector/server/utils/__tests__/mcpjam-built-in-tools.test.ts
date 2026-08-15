@@ -329,6 +329,18 @@ describe("workspace input clamps", () => {
     expect(sourceTypeParam(sessionsCall.path)).toBe("direct,eval,swarm");
   });
 
+  it("treats a null sourceTypes exactly like omission", async () => {
+    // `transform` reads anything non-array as "no filter given". A raw
+    // execute() caller passing null must land on the narrowed default, not on
+    // every source.
+    const { builtTool, calls } = searchTool();
+
+    await execTool(builtTool, { query: "refund", sourceTypes: null });
+
+    const sessionsCall = calls.find((c) => c.path.includes("/sessions"))!;
+    expect(sourceTypeParam(sessionsCall.path)).toBe("direct,eval,swarm");
+  });
+
   it("passes an explicit allowed subset through untouched", async () => {
     const { builtTool, calls } = searchTool();
 

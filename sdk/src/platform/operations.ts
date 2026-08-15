@@ -3040,6 +3040,18 @@ export const searchSessionsOperation: PlatformOperation<
   readOnly: true,
   inputSchema: searchSessionsInput,
   async execute(input, { client, signal }) {
+    // Re-checked here, not just in the schema: `execute()` is called directly
+    // by surfaces that never parse the schema (the CLI binding, raw callers).
+    // The endpoint treats a blank `q` as an EMPTY SEARCH — so a blank query
+    // reaching it would return the project's recency feed, which this
+    // operation promises never to do.
+    const query = input.query?.trim() ?? "";
+    if (query.length === 0) {
+      throw operationInputError(
+        "query is required — search_sessions searches, it does not list.",
+      );
+    }
+
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -3049,7 +3061,7 @@ export const searchSessionsOperation: PlatformOperation<
     const page = await client.listSessions(
       {
         projectId: project.id,
-        q: input.query,
+        q: query,
         scope: requestedScope,
         sourceTypes: input.sourceTypes,
         status: input.status,

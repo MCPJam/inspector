@@ -15,7 +15,7 @@
  * other members' private Playground sessions never reach this client, so the
  * panel renders whatever the page contains without re-deriving policy.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { MessageSquare, Search } from "lucide-react";
@@ -80,7 +80,6 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   // across a reload, and gives Back/Forward the meaning a reader expects.
   const navigate = useAppNavigate();
   const selectedThreadId = useCurrentSearchParam("session");
-  const projectParam = useCurrentSearchParam("project");
 
   useEffect(() => {
     const handle = window.setTimeout(
@@ -137,26 +136,45 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   );
 
   /**
-   * Move the selection into the URL, preserving `?project=` so a click never
-   * silently drops the project the page is scoped to (`useCurrentProject`
-   * reads it globally). Not `replace`: each session a reader opens is a place
-   * they can go Back from.
+   * Move the selection into the URL, stamping the panel's own `projectId`.
+   *
+   * NOT the URL's `?project=`: arriving at a bare `/sessions` leaves that
+   * param absent, and copying the absence forward would produce a link that
+   * resolves against whatever project the reader happens to be parked on. The
+   * panel knows which project these rows came from, so it says so — that is
+   * the same reason the shareable link below uses `projectId` too.
+   *
+   * Not `replace`: each session a reader opens is a place they can go Back from.
    */
   const handleSelect = useCallback(
     (threadId: string) => {
-      navigate(
-        buildSessionsPath({
-          session: threadId,
-          project: projectParam ?? undefined,
-        })
-      );
+      navigate(buildSessionsPath({ session: threadId, project: projectId }));
     },
-    [navigate, projectParam]
+    [navigate, projectId]
   );
 
-  // The shareable form of the same link. `project` is the panel's own
-  // `projectId` rather than the URL's — a recipient parked on another project
-  // must land on this one, and the param is what carries that.
+  /**
+   * Drop a selection that belongs to the project we just left.
+   *
+   * Selection lives in the URL now, so it outlives a project switch that the
+   * old component state would simply have discarded — leaving the detail pane
+   * loading a thread from the previous project, which the reader cannot see in
+   * the list next to it. `replace`, because the stale URL is not a place
+   * anyone should be able to navigate Back into.
+   *
+   * Keyed on a CHANGE, not on first render: a `?session=` deep-link must
+   * survive mount, which is the entire point of putting it in the URL.
+   */
+  const previousProjectId = useRef(projectId);
+  useEffect(() => {
+    if (previousProjectId.current === projectId) return;
+    previousProjectId.current = projectId;
+    if (selectedThreadId) {
+      navigate(buildSessionsPath({ project: projectId }), { replace: true });
+    }
+  }, [navigate, projectId, selectedThreadId]);
+
+  // The shareable form of the same link.
   const sessionLink = selectedThreadId
     ? `${getShareableAppOrigin()}${buildSessionsPath({
         session: selectedThreadId,

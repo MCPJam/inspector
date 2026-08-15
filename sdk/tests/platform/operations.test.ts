@@ -1539,6 +1539,33 @@ describe("searchSessionsOperation", () => {
     ).toBe(false);
   });
 
+  it("rejects a blank query inside execute(), not only in the schema", async () => {
+    // The CLI binding and other raw callers reach `execute` without parsing
+    // the schema, and the endpoint reads a blank `q` as an EMPTY SEARCH — so
+    // an unguarded blank would return the project's recency feed from an
+    // operation that promises never to list.
+    const { client, fetchMock } = makeClient();
+
+    await expect(
+      searchSessionsOperation.execute({ query: "   " }, { client })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(callsTo(fetchMock, "/sessions")).toHaveLength(0);
+  });
+
+  it("omits nextCursor entirely on the last page", async () => {
+    // Absent, not `undefined`: callers that test with `in` or serialize the
+    // result can tell the difference.
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES, scope: "titles" },
+    });
+
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+    expect("nextCursor" in result).toBe(false);
+  });
+
   it("rejects an unknown scope", async () => {
     expect(
       searchSessionsOperation.inputSchema.safeParse({

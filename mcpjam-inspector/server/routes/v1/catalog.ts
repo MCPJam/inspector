@@ -202,11 +202,30 @@ catalog.get("/projects/:projectId/sessions", async (c) => {
         scope?: string;
       };
       const sourceType = c.req.query("sourceType");
+      // API-key callers never pass the Convex authorize exchange that fills
+      // `userExternalId`, so without this the event has no distinct_id and
+      // `captureServerEvent` drops it — leaving the metric describing guests
+      // only, which is the opposite of the population it exists to measure.
+      // Same fill-in the v1 agent surface does (`agent.ts::captureTurnEvent`).
+      const logContext = c.var.requestLogContext as
+        | { userExternalId?: string | null }
+        | undefined;
+      const workosUserId = c.get("workosUserId");
+      if (logContext && !logContext.userExternalId && workosUserId) {
+        c.set("requestLogContext", {
+          ...logContext,
+          userExternalId: workosUserId,
+        });
+      }
       captureServerEvent(c, "api_sessions_search", {
         // The honored scope, not the requested one — the upstream is the
         // authority on which search actually ran.
         scope: body.scope ?? null,
-        hasQuery: typeof c.req.query("q") === "string",
+        // NON-EMPTY, matching what was forwarded: `forwardQueryParams` drops
+        // `q=`, so the upstream ran a list. Counting that as a search would
+        // inflate the metric with the requests it is meant to be compared
+        // against.
+        hasQuery: (c.req.query("q") ?? "").length > 0,
         itemCount: Array.isArray(body.items) ? body.items.length : 0,
         hasNextCursor: typeof body.nextCursor === "string",
         // The FILTER, never the query. A sourceType list is a fixed
