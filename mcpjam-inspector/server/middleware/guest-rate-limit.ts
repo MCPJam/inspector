@@ -60,6 +60,19 @@ export async function guestRateLimitMiddleware(
               "Guest rate limit exceeded. Try again later or sign in for higher limits.",
           },
           429,
+          // This is a FIXED window, so the wait is exactly the remainder of it
+          // — the one 429 in the product that can state its reset precisely.
+          // It shipped without the header while the published spec promised
+          // `Retry-After` on every rate-limited response, which made the
+          // promise false on the guest path specifically.
+          {
+            "Retry-After": String(
+              Math.max(
+                1,
+                Math.ceil((entry.windowStart + GUEST_WINDOW_MS - now) / 1000)
+              )
+            ),
+          }
         );
       }
       entry.count++;

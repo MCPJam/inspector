@@ -8,6 +8,10 @@
  * being absent.
  */
 import type { ServerDoctorResult } from "../server-doctor-core.js";
+import type {
+  EvaluationConfigSnapshot,
+  ScoreResult,
+} from "../contract/types.js";
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -146,6 +150,16 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /**
+   * Whether the run's score evidence verified at ingest.
+   *
+   * TRI-STATE, and the third state matters: `"valid"` means the backend
+   * checked and the definitions and results agree; `"invalid"` means they did
+   * not; `null`/absent means NO VERDICT WAS PRODUCED — an API deployment that
+   * predates integrity checking. A score gate must treat `null` exactly like
+   * `"invalid"`: absent evidence is not valid evidence.
+   */
+  scoreIntegrity?: "valid" | "invalid" | null;
   createdAt: number;
   completedAt: number | null;
   /**
@@ -200,7 +214,7 @@ export interface PlatformEvalRunCreated {
 export interface PlatformEvalSuiteCreated {
   suiteId: string;
   /** Suite name as persisted; echoes the request name. */
-  name: string | null;
+  name: string;
   /** The HTTP servers the suite was configured against. */
   servers?: Array<{ id: string; name?: string }>;
   /** Per-case create outcomes, mirroring eval-run caseUpsert. */
@@ -716,6 +730,22 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * Per-scorer verdicts for this iteration, in the evaluation contract's
+   * shape. `null` when the run predates scoring, or when the stored payload
+   * failed validation at the boundary — a public caller never receives
+   * partially-trusted score data.
+   */
+  scores?: ScoreResult[] | null;
+  /**
+   * The definitions those scores were produced under, plus their hash.
+   *
+   * Ships with `scores` or not at all: `role` and the error policies live here,
+   * so results without it cannot be told apart as gating or advisory.
+   */
+  evaluationConfig?: EvaluationConfigSnapshot | null;
+  /** Set when the backend downgraded this iteration's verdict at ingest. */
+  scoreIntegrity?: "score_integrity_invalid" | null;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -820,9 +850,9 @@ export type PlatformDoctorReport = ServerDoctorResult<unknown>;
  */
 export interface PlatformTunnelGrant {
   serverId: string;
-  name?: string;
+  name: string;
   /** True when a server record with this name already existed. */
-  existed?: boolean;
+  existed: boolean;
   /** Previous URL, present when the existing record's URL was replaced. */
   previousUrl?: string;
   /** Previous transport, present when the record existed (e.g. "stdio"). */
@@ -1005,6 +1035,19 @@ export interface PlatformScenario {
   link: string | null;
   /** False when the environment was already published and this returned it. */
   created?: boolean;
+  /**
+   * True when `publishScenario`'s create-time overrides (`name`,
+   * `description`, `mode`) were NOT applied because the environment was
+   * already published. Paired with `created: false`.
+   *
+   * Declared here rather than as an intersection at the two call sites that
+   * return it. Both did — `Promise<PlatformScenario & { overridesIgnored?:
+   * boolean }>` — which typed the field for a caller who read it off the
+   * return value and left it invisible to anything holding a
+   * `PlatformScenario`, including the spec↔types parity check. A field the
+   * wire really carries belongs on the interface that describes the wire.
+   */
+  overridesIgnored?: boolean;
 }
 
 export interface PlatformScenarioDeleted {

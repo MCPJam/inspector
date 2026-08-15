@@ -419,12 +419,19 @@ export async function launchJourneyRun(
         429: ErrorCode.RATE_LIMITED,
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
-      throw new WebRouteError(
+      const routeError = new WebRouteError(
         err.status,
         code,
         launchFailureMessage(err),
         launchFailureDetails(err)
       );
+      // The wave fan-out and every generic client read `Retry-After` to decide
+      // WHEN to come back; the 429 alone only says "not now". The backend's
+      // daily launch cap sends the UTC roll and its burst brake sends the
+      // bucket refill, so this is the one number nobody downstream can derive.
+      throw err.retryAfter
+        ? routeError.withHeaders({ "Retry-After": err.retryAfter })
+        : routeError;
     }
     throw err;
   }

@@ -21,6 +21,12 @@ export type BillingLimitName =
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
   | "insightsPerDay"
+  // Journey runs launched per UTC day per organization. Hand-mirrored from the
+  // backend's `LIMIT_NAMES`, which `buildBillingCatalog` serializes wholesale
+  // onto the UNAUTHENTICATED billing catalog — so a new backend limit becomes
+  // visible here whether or not this file knows about it. Adding it is what
+  // gives it a name and a message instead of a silent generic failure.
+  | "journeyRunsPerDay"
   | "computerStartsPerDay";
 
 /** Mirrors backend premiumness gate keys exactly. */
@@ -35,7 +41,12 @@ export type PremiumnessGateKey =
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
-  | "insightsPerDay";
+  | "insightsPerDay"
+  // Paired with the backend's gate of the same name. A gate key with no entry
+  // here still ARRIVES — `GateDecision.gateKey` is whatever the backend sent —
+  // and falls through `formatPremiumnessGateKey` to be rendered verbatim, so
+  // the user reads "journeyRunsPerDay is not included in the Free plan".
+  | "journeyRunsPerDay";
 
 export type BillingEnforcementState =
   | "active"

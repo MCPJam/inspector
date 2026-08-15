@@ -12,8 +12,12 @@
  *   and its access mode is left alone. Both `access` and `name` apply at
  *   creation only, in the same mutation as the publish.
  * - **Delete is destructive and SCENARIO-anchored.** `ui_delete_chatbox`
- *   removes a scenario, its share link and its tester-session history — never
- *   the environment behind it.
+ *   removes a scenario, its share link and its tester-session history. What
+ *   happens to the setup behind it depends on the scenario, and the mutation
+ *   reports which: a scenario created by the User Testing flow also retires
+ *   the private environment and client that back it (they exist only for it,
+ *   and leaving them behind strands an undeletable ghost client), while one
+ *   published from a saved environment leaves that environment alone.
  *
  * Both address things by the name the human sees on screen (Chrome's "semantic
  * values, not internal identifiers"), with ids accepted for disambiguation.
@@ -106,7 +110,7 @@ export function buildChatboxesUiTools(): UiToolDefinition[] {
     {
       name: "ui_delete_chatbox",
       description:
-        "Permanently delete a User Testing scenario — its share link stops working and its saved tester-session history is cleared. Irreversible; be sure the user wants this exact scenario gone. Addressed by scenario name or id, exactly as the scenario list shows it. The environment behind the scenario is left untouched.",
+        "Permanently delete a User Testing scenario — its share link stops working and its saved tester-session history is cleared. Irreversible; be sure the user wants this exact scenario gone. Addressed by scenario name or id, exactly as the scenario list shows it. What happens to the setup behind it varies by scenario: report what the result's note says rather than assuming.",
       inputSchema: {
         type: "object",
         properties: {
