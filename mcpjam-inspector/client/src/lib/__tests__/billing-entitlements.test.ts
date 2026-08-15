@@ -120,6 +120,103 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
+  it("names the daily journey launch cap instead of failing generically", () => {
+    // This file HAND-MIRRORS the backend's `LIMIT_NAMES`, which
+    // `buildBillingCatalog` serializes wholesale onto the unauthenticated
+    // billing catalog. A backend limit this file does not know about does not
+    // crash — the chain below falls through to `null` — it just produces the
+    // caller's generic fallback for a refusal we could have explained. That is
+    // also why the cross-repo deploy order is free either way.
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "journeyRunsPerDay",
+          allowedValue: 100,
+        })
+      ),
+      "fallback"
+    );
+
+    expect(message).toBe(
+      "This organization has reached its daily journey launch limit (100). Upgrade to launch more."
+    );
+  });
+
+  it("leads a DAILY cap with its reset, not with an upgrade", () => {
+    // The limit lifts by itself at the UTC roll. Sending someone to a pricing
+    // page for a wait is the same mistake as reporting a 429 as a 402.
+    const message = formatBillingLimitReachedMessage(
+      "journeyRunsPerDay",
+      100,
+      true,
+      { resetsAt: Date.UTC(2026, 7, 16) }
+    );
+
+    expect(message).toMatch(
+      /^This organization has reached its daily journey launch limit \(100\)\. Resets /
+    );
+    expect(message).not.toContain("Upgrade");
+  });
+
+  it("does the same for the daily insights cap", () => {
+    const message = formatBillingLimitReachedMessage(
+      "insightsPerDay",
+      25,
+      true,
+      { resetsAt: Date.UTC(2026, 7, 16) }
+    );
+
+    expect(message).toMatch(
+      /^This organization has reached its daily insights limit \(25\)\. Resets /
+    );
+  });
+
+  it("survives a finite timestamp no calendar can render", () => {
+    // `Number.isFinite` is NOT the whole guard. `Number.MAX_VALUE` passes it
+    // and then `new Date(...)` is Invalid Date, which makes
+    // `Intl.DateTimeFormat.format` THROW — turning a limit message into an
+    // exception on the render path that was supposed to explain the limit.
+    // Every daily cap goes through the same helper, so check them together.
+    for (const limit of [
+      "insightsPerDay",
+      "journeyRunsPerDay",
+      "computerStartsPerDay",
+      "maxEvalIterationsPerMonth",
+    ] as const) {
+      for (const resetsAt of [
+        Number.MAX_VALUE,
+        -Number.MAX_VALUE,
+        8.64e15 + 1,
+      ]) {
+        const message = formatBillingLimitReachedMessage(limit, 25, true, {
+          resetsAt,
+        });
+
+        expect(message).toContain("(25)");
+        expect(message).not.toContain("Resets");
+      }
+    }
+  });
+
+  it("falls back to the upgrade line when no reset was sent", () => {
+    // A mixed-version backend that has the cap but not the field. Three ways to
+    // say "no reset" — omitted, explicitly null, and not a number — and all
+    // three have to land on the same sentence rather than a half-written one.
+    expect(formatBillingLimitReachedMessage("insightsPerDay", 25, true)).toBe(
+      "This organization has reached its daily insights limit (25). Upgrade to continue."
+    );
+    for (const resetsAt of [null, undefined, Number.NaN]) {
+      expect(
+        formatBillingLimitReachedMessage("insightsPerDay", 25, true, {
+          resetsAt: resetsAt as number | undefined,
+        })
+      ).toBe(
+        "This organization has reached its daily insights limit (25). Upgrade to continue."
+      );
+    }
+  });
+
   it("formats backend limit payloads for project chatboxes", () => {
     const message = getBillingErrorMessage(
       new Error(

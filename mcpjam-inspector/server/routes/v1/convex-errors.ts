@@ -110,10 +110,62 @@ function billingDetails(
     "upgradePlan",
     "currentValue",
     "allowedValue",
+    // WHEN the cap lifts — epoch ms of the UTC midnight a daily limit rolls
+    // at. Documented on `BILLING_LIMIT_REACHED` in `web/errors.ts` since that
+    // code existed, and dropped here the whole time, which left "Plan limit
+    // reached" as advice a caller could act on only by guessing. It is also
+    // the input the 429 below turns into `Retry-After`, so dropping it cost
+    // the header as well as the field.
+    "resetsAt",
   ]) {
     if (data[key] !== undefined) details[key] = data[key];
   }
   return Object.keys(details).length > 0 ? details : undefined;
+}
+
+/**
+ * Ceiling on an advertised wait, in seconds — one day.
+ *
+ * `Number.isFinite` is not enough on its own. `Number.MAX_VALUE` is finite,
+ * and `String(Math.ceil(Number.MAX_VALUE / 1000))` is `1.797...e+305`, which
+ * `Headers` accepts and every client parses as `NaN`. That is the failure the
+ * junk-metadata guard was written to prevent, arriving through the one input
+ * shape it does not reject — so the magnitude is clamped as well as the type.
+ *
+ * A day is the longest wait worth advertising: past that a `Retry-After` reads
+ * as "this endpoint is gone" rather than "come back later", and the caps this
+ * serves all roll at UTC midnight anyway.
+ */
+const MAX_RETRY_AFTER_SECONDS = 86_400;
+
+/** Whole seconds, floored at 1 and capped at a day. Always an integer string. */
+function formatRetryAfterSeconds(deltaMs: number): string {
+  const seconds = Math.ceil(deltaMs / 1000);
+  if (!Number.isFinite(seconds)) return String(MAX_RETRY_AFTER_SECONDS);
+  return String(Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(1, seconds)));
+}
+
+/** Seconds-until, floored at 1 — the `Retry-After` value from an instant. */
+function retryAfterFromResetsAt(
+  resetsAt: unknown,
+  now: number = Date.now()
+): string | undefined {
+  if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) {
+    return undefined;
+  }
+  // A reset already in the past means the window rolled between the backend
+  // raising this and us serializing it. Advertise the floor rather than
+  // omitting the header: the caller's next attempt will succeed, and "1" says
+  // so more usefully than silence.
+  return formatRetryAfterSeconds(resetsAt - now);
+}
+
+/** Same, from a duration a token bucket measured directly. */
+function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
+  if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs)) {
+    return undefined;
+  }
+  return formatRetryAfterSeconds(retryAfterMs);
 }
 
 export function translateConvexWriteError(
@@ -182,16 +234,55 @@ export function translateConvexWriteError(
   // a customer who hit today's insight cap to a sales page for a plan they
   // already have — the shared `insightsPerDay` ledger makes that reachable on
   // an ordinary Tuesday, from either the swarms or the user-testing surface.
+  // A BURST BRAKE, distinct from the daily cap below. The backend's
+  // per-category token buckets (`lib/expensiveWriteRateLimit.ts`) refuse with
+  // this code and a measured `retryAfterMs`; without this branch it falls all
+  // the way to the terminal 500 — a refusal we deliberately raised, reported
+  // as our own bug and paged for. The wait it carries is seconds, not hours:
+  // the only correct client response is to retry, which is exactly what the
+  // header tells a generic one to do.
+  if (code === "rate_limited") {
+    const rawRetryAfterMs = (data as Record<string, unknown> | null)
+      ?.retryAfterMs;
+    const retryAfter = retryAfterFromMs(rawRetryAfterMs);
+    // Published only when it is a number we would also put in the header.
+    // Copying the raw value through would put `"soon"` or `NaN` on a public
+    // 429 while the header correctly omitted it — a caller reading the body
+    // for the same answer deserves the same guard.
+    const retryAfterMs =
+      typeof rawRetryAfterMs === "number" && Number.isFinite(rawRetryAfterMs)
+        ? rawRetryAfterMs
+        : undefined;
+    const error = new WebRouteError(
+      429,
+      ErrorCode.RATE_LIMITED,
+      structuredMessage ?? "Too many requests. Slow down and retry.",
+      retryAfterMs !== undefined ? { retryAfterMs } : undefined
+    );
+    return retryAfter
+      ? error.withHeaders({ "Retry-After": retryAfter })
+      : error;
+  }
+
   if (code === "billing_limit_reached") {
-    return new WebRouteError(
+    const details = billingDetails(data as Record<string, unknown> | null);
+    const error = new WebRouteError(
       429,
       ErrorCode.RATE_LIMITED,
       structuredMessage ?? "Plan limit reached.",
       // The backend's payload names the cap, the plan and the upgrade target.
       // Dropping it leaves a caller with "Plan limit reached" and no way to
       // say WHICH limit or what to do about it.
-      billingDetails(data as Record<string, unknown> | null)
+      details
     );
+    // A daily cap knows the INSTANT it lifts (UTC midnight), not a duration —
+    // so the header is computed here rather than read off the payload. Absent
+    // when the backend sent no `resetsAt`, which is the honest answer: a cap
+    // with no known reset should not invite a timed retry.
+    const retryAfter = retryAfterFromResetsAt(details?.resetsAt);
+    return retryAfter
+      ? error.withHeaders({ "Retry-After": retryAfter })
+      : error;
   }
   if (code === "billing_feature_not_included") {
     return new WebRouteError(

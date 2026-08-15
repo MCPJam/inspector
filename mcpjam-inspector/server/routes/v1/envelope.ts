@@ -27,7 +27,18 @@ export function v1Error(
   c: Context,
   code: V1ErrorCode,
   message: string,
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
+  /**
+   * Wire headers the FAILURE owns — `Retry-After` on a 429, today's only user.
+   *
+   * The published spec `$ref`s `RateLimited` (which documents `Retry-After`)
+   * from 87 of its 88 operations, and until this parameter existed only one
+   * code path in the whole product could honor it: the `sk_` branch of the
+   * bearer middleware, which returns its own `c.json` and never touches this
+   * envelope. Every 429 raised inside a v1 handler promised a header it had no
+   * way to send.
+   */
+  headers?: Record<string, string>
 ) {
   // Backstop for the RETURNED path. `v1OnError` stashes richer meta (with
   // origin and slug) for anything that throws, but a route that returns
@@ -49,9 +60,15 @@ export function v1Error(
   }
   // Cast the dynamic numeric status to satisfy Hono's literal StatusCode union
   // (the web routes sidestep this by typing `c` as `any` in `webError`).
+  //
+  // The third argument stays `undefined` when there are no headers rather than
+  // an empty object: several route tests pass a context double whose `json`
+  // only accepts two arguments, and handing them `{}` would change behavior on
+  // every error path to plumb a header almost none of them carry.
   return c.json(
     v1ErrorBody(code, message, details),
-    V1_ERROR_STATUS[code] as any
+    V1_ERROR_STATUS[code] as any,
+    headers && Object.keys(headers).length > 0 ? headers : undefined
   );
 }
 
@@ -82,6 +99,8 @@ export interface V1ErrorMapping {
   code: V1ErrorCode;
   message: string;
   details?: Record<string, unknown>;
+  /** Wire headers off the underlying `WebRouteError` — see `v1Error`. */
+  headers?: Record<string, string>;
   /**
    * The EFFECTIVE origin the capture decision produced, including any
    * `mcpjam_internal` promotion — not the declared catalog value, which would
@@ -159,6 +178,7 @@ export function mapErrorToV1(
       code: "OAUTH_REQUIRED",
       message: routeError.message,
       details: routeError.details,
+      headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
     };
@@ -185,6 +205,7 @@ export function mapErrorToV1(
       code: "FORBIDDEN",
       message: routeError.message,
       details: routeError.details,
+      headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
     };
@@ -193,6 +214,7 @@ export function mapErrorToV1(
     code: mapInternalCode(routeError.code),
     message: routeError.message,
     details: routeError.details,
+    headers: routeError.headers,
     origin: routeError.origin,
     slug: routeError.normalized?.slug,
   };
@@ -247,9 +269,10 @@ function isMcpMethodNotFound(error: unknown): boolean {
  * and `webError` already fixed for their surfaces.
  */
 export function v1OnError(error: unknown, c: Context) {
-  const { code, message, details, origin, slug } = mapErrorToV1(error, {
-    boundary: "mcpjam_internal",
-  });
+  const { code, message, details, headers, origin, slug } = mapErrorToV1(
+    error,
+    { boundary: "mcpjam_internal" }
+  );
   const status = V1_ERROR_STATUS[code];
   // The middleware only trusts meta whose status matches the response it
   // observed, so this has to be the v1 status — which is not always the
@@ -262,5 +285,5 @@ export function v1OnError(error: unknown, c: Context) {
     ...(origin ? { origin } : {}),
     ...(slug ? { slug } : {}),
   });
-  return v1Error(c, code, message, details);
+  return v1Error(c, code, message, details, headers);
 }

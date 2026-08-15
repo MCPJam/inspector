@@ -1973,7 +1973,7 @@ export class PlatformApiClient {
       mode?: "project_members" | "invited_only" | "anyone_with_link";
     },
     options?: RequestOptions,
-  ): Promise<PlatformScenario & { overridesIgnored?: boolean }> {
+  ): Promise<PlatformScenario> {
     const { projectId, environmentId } = params;
     // Explicit picks, not a rest spread: TypeScript's structural typing lets a
     // wider object through, and the route's schema is strict — an unknown key
@@ -2044,7 +2044,7 @@ export class PlatformApiClient {
       mode?: "project_members" | "invited_only" | "anyone_with_link";
     },
     options?: RequestOptions,
-  ): Promise<PlatformScenario & { overridesIgnored?: boolean }> {
+  ): Promise<PlatformScenario> {
     const { projectId, environmentId, ...body } = params;
     return this.request(
       "PUT",

@@ -35,25 +35,38 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/tunnels/{serverId}/close",
   // Cancel is addressed entirely by the path runId; the body is empty.
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
+  // Same shape on the swarm side, for the same reason.
+  "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  // Dismissal is addressed entirely by the path findingId — there is nothing
+  // to say about it beyond which finding.
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  // Rotating a share link takes no options: the path scenarioId names what to
+  // rotate, and the new secret is minted server-side by definition. A body
+  // here could only be a place to pass the next secret in, which is exactly
+  // what a rotation must not accept.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  // Scenario-side dismissal, same shape as the swarm-side pair above.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
 //
 // This started as a backlog — fifteen eval-suite/case and eval-ingest routes
-// that the hand-authored spec had simply not caught up with. Those are now
-// documented, and what remains is the real thing this list is for: endpoints
-// that exist but are not part of the public contract, each with the reason
-// written down. An entry without a reason is a backlog item wearing a
-// decision's clothes.
+// the hand-authored spec had not caught up with, then the whole swarms and
+// user-testing surface behind the `sandboxes-enabled` beta. All of those are
+// documented now, with the gate's behaviour stated on the page rather than the
+// routes hidden: a caller who cannot use a route yet is better served by a
+// documented refusal than by an endpoint that appears not to exist.
+//
+// What remains is the real thing this list is for: endpoints that exist but
+// are not part of the public contract, each with the reason written down. An
+// entry without a reason is a backlog item wearing a decision's clothes.
 //
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
-  // Insights envelope surfaces (actionable-insights program, pre-GA): the
-  // scenario detail + eval-run insights retry ship behind the staged rollout
-  // and get documented at GA together with the envelope schema.
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}",
-  "post /projects/{projectId}/eval-runs/{runId}/insights",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
@@ -67,79 +80,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
-  // Flag-gated beta (`sandboxes-enabled`); document at GA. The public docs are
-  // the one surface a flag CANNOT gate — a Mintlify page is visible to
-  // everyone regardless of who the flag is on for — so a beta surface that is
-  // enforced server-side per organization must stay out of the spec until the
-  // flag comes off. Reads are ungated at the API (an empty list leaks
-  // nothing); the WRITES these support are enforced in
-  // `mcpjam-backend/convex/lib/sandboxesGate.ts`.
-  "get /projects/{projectId}/journeys",
-  "get /projects/{projectId}/journeys/{journeyId}/runs",
-  "get /projects/{projectId}/journey-runs/{runId}",
-  "get /projects/{projectId}/journey-runs/{runId}/sessions",
-  "post /projects/{projectId}/journeys/{journeyId}/runs",
-  "post /projects/{projectId}/journey-runs/{runId}/cancel",
-  // Authoring — personas, journeys, swarm containers — and the generation that
-  // drafts them. Same flag, same reason: these are the WRITES the gate exists
-  // for, so they cannot be advertised in a document the flag cannot reach.
-  "get /projects/{projectId}/personas",
-  "post /projects/{projectId}/personas",
-  "get /projects/{projectId}/personas/{personaId}",
-  "patch /projects/{projectId}/personas/{personaId}",
-  "delete /projects/{projectId}/personas/{personaId}",
-  "post /projects/{projectId}/personas/generate",
-  "get /projects/{projectId}/journeys/{journeyId}",
-  "post /projects/{projectId}/journeys",
-  "patch /projects/{projectId}/journeys/{journeyId}",
-  "delete /projects/{projectId}/journeys/{journeyId}",
-  "post /projects/{projectId}/journeys/generate",
-  "get /projects/{projectId}/swarms",
-  "post /projects/{projectId}/swarms",
-  "get /projects/{projectId}/swarms/{swarmId}",
-  "patch /projects/{projectId}/swarms/{swarmId}",
-  "delete /projects/{projectId}/swarms/{swarmId}",
-  // The insights layer. Reads are ungated at the API like every other swarm
-  // read, but they describe a beta product and belong with it in the spec.
-  "get /projects/{projectId}/journeys-overview",
-  "get /projects/{projectId}/journey-runs/{runId}/scorecard",
-  "get /projects/{projectId}/journey-findings",
-  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
-  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
-  "get /projects/{projectId}/waves/{waveId}/insights",
-  "post /projects/{projectId}/waves/{waveId}/insights",
-  "delete /projects/{projectId}/waves/{waveId}/insights",
-  // Same flag, same reason (`sandboxes-enabled` gates both products).
-  "put /projects/{projectId}/environments/{environmentId}/scenario",
-  "delete /projects/{projectId}/environments/{environmentId}/scenario",
-  // The rest of user testing: what a published scenario produced, and who may
-  // reach it. Same beta, and the exposure controls want their own security
-  // review in the docs before they are advertised publicly.
-  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
-  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
-  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
-  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
-  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
-
-  // A PLANNING read, not a product surface: it reports the caller's own role,
-  // the beta gate's state and their plan limits so an agent on a static
-  // surface can check before it acts. Undocumented for now because half of
-  // what it describes is the beta above — documenting the shape would
-  // advertise the flag-gated capability names to everyone. Moves into the spec
-  // with the rest of this surface at GA.
-  "get /projects/{projectId}/capabilities",
 ]);
 
 /**

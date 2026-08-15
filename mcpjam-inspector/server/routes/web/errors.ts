@@ -128,6 +128,23 @@ export class WebRouteError extends Error {
    */
   origin?: ErrorOrigin;
 
+  /**
+   * Response headers this error must carry to the wire.
+   *
+   * The body is not always enough. `Retry-After` is the case that forced this:
+   * the published spec promises it on every `RateLimited` response, and the v1
+   * error path had no channel for it at all — `mapErrorToV1` returned
+   * `{code,message,details}` and `v1Error` called the two-argument `c.json`, so
+   * a 429 that knew exactly when to come back could only say so in a details
+   * field no HTTP client reads. A generic client retries on the header or not
+   * at all.
+   *
+   * Deliberately narrow: this is for protocol headers that belong to the
+   * FAILURE, not a general response-header bag. Anything a successful response
+   * would also carry belongs in middleware.
+   */
+  headers?: Record<string, string>;
+
   constructor(
     status: number,
     code: ErrorCode,
@@ -140,6 +157,20 @@ export class WebRouteError extends Error {
     this.code = code;
     this.details = details;
     this.normalized = normalized;
+  }
+
+  /**
+   * Attach wire headers, chainable so a throw site stays one expression:
+   * `throw new WebRouteError(429, …).withHeaders({ "Retry-After": "30" })`.
+   *
+   * Added as a method rather than a sixth constructor parameter because
+   * `normalized` already occupies the fifth slot and the overwhelming majority
+   * of the ~200 throw sites pass three arguments — a positional header bag
+   * behind two optionals nobody sets is a parameter no one would find.
+   */
+  withHeaders(headers: Record<string, string>): this {
+    this.headers = { ...(this.headers ?? {}), ...headers };
+    return this;
   }
 }
 
@@ -154,11 +185,15 @@ export function webError(
   // `extras` is permissive (rpc-log collectors, etc.). If it carries a
   // `normalized` key, hoist it to the top-level response body — clients
   // pluck the rich block off the JSON envelope without re-classifying.
-  const { normalized, effectiveOrigin, ...restExtras } = (extras ??
-    {}) as Record<string, unknown> & {
-    normalized?: NormalizedError;
-    effectiveOrigin?: ErrorOrigin;
-  };
+  const { normalized, effectiveOrigin, responseHeaders, ...restExtras } =
+    (extras ?? {}) as Record<string, unknown> & {
+      normalized?: NormalizedError;
+      effectiveOrigin?: ErrorOrigin;
+      // Destructured OUT of the body spread on purpose: everything left in
+      // `restExtras` is spread into the JSON, so a header bag left in there
+      // would ship as a response FIELD instead of as headers.
+      responseHeaders?: Record<string, string>;
+    };
   // Prefer the effective origin (post internal-boundary promotion) over the
   // declared catalog value. `originOf(normalized)` alone reports `ambiguous`
   // for failures Sentry was just paged for as `mcpjam`, which made
@@ -202,7 +237,18 @@ export function webError(
     // page us for a user's own MCP server. `/api/web/chat-v2` is the primary
     // hosted chat path, so putting this on `webError` rather than on one
     // route covers every `/api/web/*` envelope at once.
-    reportedOrigin ? { "x-mcpjam-error-origin": reportedOrigin } : undefined
+    //
+    // `responseHeaders` rides in alongside it — `Retry-After` on a 429 is the
+    // only user today, and it is the same argument one level up: a generic
+    // HTTP client retries on the header or not at all.
+    reportedOrigin || responseHeaders
+      ? {
+          ...(responseHeaders ?? {}),
+          ...(reportedOrigin
+            ? { "x-mcpjam-error-origin": reportedOrigin }
+            : {}),
+        }
+      : undefined
   );
 }
 
@@ -236,6 +282,7 @@ export function webErrorFromRoute(
       // Forward the effective origin. Without this the promotion survives all
       // the way to the serializer and is then thrown away at the last step.
       ...(routeError.origin ? { effectiveOrigin: routeError.origin } : {}),
+      ...(routeError.headers ? { responseHeaders: routeError.headers } : {}),
     }
   );
 }

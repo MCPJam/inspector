@@ -84,7 +84,7 @@ function createIpFixedWindowLimiter(options: {
         message: options.message,
       },
       429,
-      { "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) }
+      { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) }
     );
 
   const middleware = async (
