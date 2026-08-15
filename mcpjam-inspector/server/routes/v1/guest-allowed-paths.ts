@@ -32,6 +32,21 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // defense-in-depth for guests if the mount order ever changes; GET-only.
   { pattern: /^\/host-catalog$/, methods: ["GET"] },
   { pattern: /^\/chat-sessions$/ },
+  // Server connections. Guest-allowed on purpose: the whole point of the flow
+  // is that someone with no account can connect a server, authorize it in a
+  // browser, and have the credential stored against their materialized guest
+  // user. These are WRITES, unlike most guest-allowed rules — the backend does
+  // the ownership check on every one, a guest can only ever reach their own
+  // requests, and creation is braked by both a per-user and a tighter
+  // per-guest-IP budget (a guest identity is free to mint, so the per-user cap
+  // alone would cap nothing).
+  { pattern: /^\/server-connections$/, methods: ["POST"] },
+  { pattern: /^\/server-connections\/[^/]+$/, methods: ["GET"] },
+  { pattern: /^\/server-connections\/[^/]+\/cancel$/, methods: ["POST"] },
+  {
+    pattern: /^\/server-connections\/[^/]+\/retry-validation$/,
+    methods: ["POST"],
+  },
   { pattern: /^\/projects$/, methods: ["GET"] },
   { pattern: /^\/models$/, methods: ["GET"] },
   { pattern: /^\/projects\/[^/]+\/servers$/, methods: ["GET"] },

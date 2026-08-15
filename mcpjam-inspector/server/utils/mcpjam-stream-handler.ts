@@ -28,9 +28,14 @@ import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import {
   describeAsSlug,
   describeError,
+  isNormalizedError,
   type NormalizedError,
 } from "@mcpjam/sdk";
-import { maybeCaptureOriginError } from "./error-origin-capture.js";
+import {
+  createSystemStreamFailureReporter,
+  oncePerTurn,
+  type StreamFailureReporter,
+} from "./stream-failure-reporter.js";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
@@ -429,14 +434,21 @@ export interface MCPJamEngineErrorEvent {
  * chat turn produced a raw string and no attribution, which is exactly the
  * failure a user cannot tell apart from their own server dying.
  *
- * Status drives the verdict:
+ * The body's guardrail `code` outranks the status, because it is the only
+ * direct evidence of ownership on the wire. The backend answers a failure of
+ * MCPJam's OWN managed provider credential with the upstream provider's
+ * status — `categorizeError` in `convex/stream/routes.ts` returns
+ * `{code:"mcpjam_api_error", statusCode:401}` for a revoked Gateway/OpenRouter
+ * key and `{code:"mcpjam_rate_limit", statusCode:429}` for MCPJam's quota —
+ * so status alone reads a total hosted outage as the user's expired key. See
+ * {@link isMcpjamOwnedFailureCode}.
  *
- * - 401/403 and 429 are the provider walls. They keep the catalog's default
- *   `user_config` origin because the common case is a BYO key that expired or
- *   ran out of credit. A managed-key failure IS ours, but the key's owner is
- *   not plumbed to this layer yet; defaulting to the non-paging reading is the
- *   safe direction to be wrong in, and the fix is to pass `credentialOwner`
- *   once that context exists.
+ * Otherwise status drives the verdict:
+ *
+ * - 401/403 and 429 are the provider walls. With no MCPJam-owned code on the
+ *   body they keep the catalog's default `user_config` origin: `/stream`
+ *   answers its own auth gate with 401 `auth_required` (sign in) and the spend
+ *   precheck with 429 `user_rate_limit`, both genuinely user-owned.
  * - Any other 5xx is OUR backend answering badly, and the origin is set
  *   explicitly rather than taken from the slug. `internal/unknown` is
  *   `ambiguous` by design — it is where unrecognized failures from arbitrary
@@ -448,19 +460,70 @@ export interface MCPJamEngineErrorEvent {
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
+  code?: string,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
 
+  // Before the status branches: a body that names MCPJam settles ownership no
+  // matter which upstream status was mirrored onto it. The slug still comes
+  // from the status so the user-facing copy stays accurate ("the provider
+  // rejected the key" IS what happened — it was just our key).
+  if (isMcpjamOwnedFailureCode(code)) {
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  if (status !== undefined && status >= 500) {
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  return backendFailureSlug(status, detail);
+}
+
+/**
+ * Classify a mid-stream `{type:"error"}` chunk from MCPJam's own `/stream`
+ * backend — the failure delivered as a stream PART, after the headers already
+ * said 200.
+ *
+ * Same code rule as {@link describeBackendStreamFailure}, and deliberately
+ * NOT the same status rule. There the status is our own backend's response
+ * status, so a 5xx is our outage. Here it is the field the backend copied off
+ * the UPSTREAM provider's error (`categorizeError`'s `statusCode`), so an
+ * Anthropic 503 arrives as `statusCode: 503` — reading that as "our backend
+ * answered 5xx" would page us for someone else's overloaded model. Identical
+ * number, opposite meaning; only the delivery path distinguishes them.
+ *
+ * So the code is the ONLY thing that can assert MCPJam ownership here. Without
+ * one the catalog's own verdict stands — which for an unrecognized provider
+ * failure is `ambiguous`: visible, measured, never paging.
+ */
+export function describeStreamErrorChunkFailure(
+  status: number | undefined,
+  rawText: string,
+  code?: string,
+): NormalizedError {
+  const detail = new Error(
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+  );
+
+  if (isMcpjamOwnedFailureCode(code)) {
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  return backendFailureSlug(status, detail);
+}
+
+/** Status → slug, carrying the catalog's own origin. Shared by both paths. */
+function backendFailureSlug(
+  status: number | undefined,
+  detail: Error,
+): NormalizedError {
   if (status === 401 || status === 403) {
     return describeAsSlug("provider/auth_error", detail);
   }
   if (status === 429) {
     return describeAsSlug("provider/quota", detail);
-  }
-  if (status !== undefined && status >= 500) {
-    return { ...describeAsSlug("internal/unknown", detail), origin: "mcpjam" };
   }
   return describeAsSlug("internal/unknown", detail);
 }
@@ -683,6 +746,14 @@ export interface MCPJamHandlerOptions {
    */
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
   /**
+   * Typed-telemetry seam for mid-stream failures (route.operation.failed).
+   * Routes with a Hono context pass `createRequestStreamFailureReporter(c)`
+   * so the event carries the full request envelope; when absent the engine
+   * falls back to the system reporter, so no caller can silently lose
+   * events. See stream-failure-reporter.ts.
+   */
+  failureReporter?: StreamFailureReporter;
+  /**
    * Browser-rendered MCP App eval PR 2 — optional per-step hook that narrows
    * the *advertised* tool set the model sees this step. Called inside
    * `processOneStep` after the active tool subset is resolved, with
@@ -804,6 +875,9 @@ interface StepContext {
   // processOneStep, processStream/tool-execution catch, outer
   // agentic-loop catch). Optional.
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
+  // Typed mid-stream failure telemetry; threaded from runChatEngineLoop
+  // (already oncePerTurn-wrapped and fallback-resolved there).
+  failureReporter: StreamFailureReporter;
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
@@ -1240,6 +1314,103 @@ export function isUserOwnedDenialCode(code: string | undefined): boolean {
 }
 
 /**
+ * The mirror of {@link USER_OWNED_DENIAL_CODES}: backend denial codes that name
+ * MCPJAM as the responsible party.
+ *
+ * Relevant at every status, not just 200 — and that is the whole point. The
+ * backend's `categorizeError` mirrors the UPSTREAM provider's status onto its
+ * own response, so a revoked MCPJam Gateway/OpenRouter key comes back as HTTP
+ * 401 and MCPJam's own provider quota as HTTP 429. Read by status alone those
+ * are `provider/auth_error` / `provider/quota`, whose catalog origin is
+ * `user_config` — and `mcpjam_internal` deliberately promotes only `ambiguous`,
+ * never evidence-bearing origins. So a total hosted-chat outage was filed as
+ * the user's expired key: no capture, no page, and nothing for M2 to fire on.
+ *
+ * Kept as an explicit allowlist rather than a `startsWith("mcpjam_")` rule so
+ * a new backend code has to be read and classified rather than inheriting a
+ * page from its name. Source of truth is the `MCPJamErrorCode` union in the
+ * backend's `convex/stream/routes.ts`; its own comments mark these three
+ * "(not user's fault)".
+ */
+const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
+  "mcpjam_rate_limit",
+  "mcpjam_api_error",
+  "mcpjam_config_error",
+]);
+
+/** See {@link MCPJAM_OWNED_FAILURE_CODES}. */
+export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
+  return MCPJAM_OWNED_FAILURE_CODES.has(code ?? "");
+}
+
+/**
+ * Parse the `errorText` of a mid-stream `{type:"error"}` chunk.
+ *
+ * SEPARATE from {@link parseEngineErrorBody} because the two shapes differ.
+ * The backend's non-OK path returns `{ok, code, error, details}` (parsed
+ * there); its mid-stream path is `toUIMessageStreamResponse({onError})`, which
+ * serializes `{code, message, statusCode, isRetryable, details}` — `message`,
+ * not `error`, and it carries the UPSTREAM `statusCode` that never reaches our
+ * own HTTP response. Feeding this shape to the other parser yields the raw JSON
+ * as the display text and drops the status.
+ *
+ * Non-JSON text (any other producer's error chunk) falls back to the text
+ * itself, which is what the client used to be handed verbatim.
+ */
+export function parseStreamErrorChunkText(errorText: string): {
+  message: string;
+  code?: string;
+  statusCode?: number;
+  details?: string;
+} {
+  try {
+    const body = JSON.parse(errorText) as {
+      code?: unknown;
+      message?: unknown;
+      statusCode?: unknown;
+      details?: unknown;
+    };
+    if (body && typeof body === "object") {
+      const message =
+        typeof body.message === "string" && body.message.trim().length > 0
+          ? body.message
+          : errorText;
+      return {
+        message,
+        ...(typeof body.code === "string" ? { code: body.code } : {}),
+        ...(typeof body.statusCode === "number"
+          ? { statusCode: body.statusCode }
+          : {}),
+        ...(typeof body.details === "string" ? { details: body.details } : {}),
+      };
+    }
+  } catch {
+    // Not JSON — fall through to the raw text.
+  }
+  return { message: errorText };
+}
+
+/**
+ * An error carrying a classification its thrower already made.
+ *
+ * Generalizes the convention `WebRouteError` already uses, so the engine's
+ * outer catch can prefer a verdict reached with the structured body in hand
+ * over `describeError`, which would only see the message string.
+ */
+function attachedNormalized(error: unknown): NormalizedError | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const candidate = (error as { normalized?: unknown }).normalized;
+  return isNormalizedError(candidate) ? candidate : undefined;
+}
+
+/** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
+function attachedFailureCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { failureCode?: unknown }).failureCode;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
  * PR 5b-followup-2: parse a Convex `/stream` non-OK response body as
  * the standard guardrail JSON shape `{ code?, error, details? }`.
  * Falls back to a generic `<status> <text>` message when the body
@@ -1570,6 +1741,48 @@ async function processStream(
           finishChunk = chunk;
           // Don't write finish yet - wait until we know we're done
           break;
+
+        case "error": {
+          // The backend's OTHER failure delivery path, and the one HTTP status
+          // can never see. `toUIMessageStreamResponse({onError})` categorizes
+          // the failure and serializes it into an error PART on a stream whose
+          // headers already said 200 — including `mcpjam_api_error` /
+          // `mcpjam_rate_limit`, i.e. OUR outage.
+          //
+          // This used to fall into `default:` and be forwarded verbatim.
+          // processStream then returned NORMALLY, processOneStep ran its
+          // success epilogue, and the outer loop set `runSucceeded = true`:
+          // the user saw an error while telemetry recorded a completed turn,
+          // and the turn was persisted as a good conversation. Exactly the
+          // bug already fixed for parser failures a few lines above — same
+          // remedy, same reason.
+          //
+          // Throw so it lands in `runChatEngineLoop`'s outer catch (site 3),
+          // which owns the whole failure ritual: error chunk, trace events,
+          // `onEngineError`, and the reporter. Deliberately NOT forwarded
+          // here — site 3's `emitError` writes the single error chunk, so the
+          // wire still carries exactly one.
+          const errorText =
+            typeof (chunk as { errorText?: unknown }).errorText === "string"
+              ? ((chunk as { errorText: string }).errorText)
+              : String((chunk as { errorText?: unknown }).errorText ?? "");
+          const parsed = parseStreamErrorChunkText(errorText);
+          // Classified HERE, where the structured body still exists. By the
+          // time site 3 sees this it is an Error whose message is a sentence;
+          // `describeError` could not recover the guardrail code, and the
+          // ownership verdict depends on it. NOT the non-OK classifier: this
+          // `statusCode` is the upstream provider's, not our backend's — see
+          // {@link describeStreamErrorChunkFailure}.
+          const normalized = describeStreamErrorChunkFailure(
+            parsed.statusCode,
+            errorText,
+            parsed.code,
+          );
+          throw Object.assign(new Error(parsed.message), {
+            normalized,
+            ...(parsed.code ? { failureCode: parsed.code } : {}),
+          });
+        }
 
         default:
           // Forward other chunks (step-start, etc.)
@@ -2111,6 +2324,7 @@ async function processOneStep(
     onToolResult,
     // PR 5b-followup-2 structured-error callback.
     onEngineError,
+    failureReporter,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
   } = ctx;
@@ -2362,8 +2576,16 @@ async function processOneStep(
     const parsed = parseEngineErrorBody(res.status, errorText);
     // Site (1): no Error object exists here, so classify from the response
     // itself. A 5xx from our own backend is the hosted-502 class — capture it,
-    // because nothing downstream of this point ever will.
-    const normalized = describeBackendStreamFailure(res.status, errorText);
+    // because nothing downstream of this point ever will. `parsed.code` is
+    // passed because the status can be the UPSTREAM provider's, mirrored onto
+    // our response: only the code distinguishes MCPJam's own revoked key
+    // (401 `mcpjam_api_error`) from the caller's missing session (401
+    // `auth_required`).
+    const normalized = describeBackendStreamFailure(
+      res.status,
+      errorText,
+      parsed.code,
+    );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
     // is not enough either. The backend's error-code union includes
@@ -2374,30 +2596,45 @@ async function processOneStep(
     // working correctly, so only they skip the boundary.
     const isRecognizedDenial =
       isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
-    maybeCaptureOriginError(new Error(parsed.message), normalized, {
-      source: "route:mcp.chat-v2.backend-stream",
-      // The boundary is declared for a genuine TRANSPORT failure only, and
-      // NOT for `isJsonDenial`. A denial is an HTTP 200 carrying a structured
-      // refusal (`{ok:false, code:"user_rate_limit"}`) — the backend working
-      // correctly, and a routine, user-owned outcome. Promoting it would page
-      // the team on every ordinary spend-limit rejection, which is precisely
-      // the noise class this work removes.
-      //
-      // On a real failure the declaration earns its place twice: it tags the
-      // event with the boundary the rest of the codebase triages on, and it
-      // escalates an unrecognized status from our own backend, which
-      // `describeBackendStreamFailure` leaves `ambiguous` because it
-      // classifies the response alone and cannot know whose backend answered.
-      ...(isRecognizedDenial
-        ? {}
-        : { boundary: "mcpjam_internal" as const }),
-      extra: {
-        httpStatus: res.status,
-        code: parsed.code,
-        isJsonDenial,
-        isRecognizedDenial,
-      },
-    });
+    // Through the reporter, not a bare capture call: reportRouteFailure runs
+    // the same maybeCaptureOriginError decision (source becomes the identical
+    // `route:mcp.chat-v2.backend-stream` Sentry tag), then a free-form Axiom
+    // row, then the typed route.operation.failed event — the only record of
+    // this failure that monitors can key on, since the response is a 200
+    // stream the HTTP events never see.
+    //
+    // The hop is `mcpjam_internal` for a genuine TRANSPORT failure only, and
+    // NOT for `isRecognizedDenial`. A denial is an HTTP 200 carrying a
+    // structured refusal (`{ok:false, code:"user_rate_limit"}`) — the backend
+    // working correctly, and a routine, user-owned outcome. Promoting it
+    // would page the team on every ordinary spend-limit rejection, which is
+    // precisely the noise class this work removes. On a real failure the
+    // internal hop earns its place twice: it tags the event with the boundary
+    // the rest of the codebase triages on, and it escalates an unrecognized
+    // status from our own backend, which `describeBackendStreamFailure`
+    // leaves `ambiguous` because it classifies the response alone and cannot
+    // know whose backend answered.
+    // Silent-cancel invariant: a fired abort can race this site (res.text()
+    // rejecting into the generic fallback, or the failure landing while the
+    // client is already gone). An aborted turn must not inflate the
+    // operation-failure rate.
+    if (!abortSignal?.aborted) {
+      failureReporter({
+        message: "[mcpjam-stream-handler] backend stream failed",
+        error: new Error(parsed.message),
+        source: "mcp.chat-v2.backend-stream",
+        hop: isRecognizedDenial ? "user_server_hop" : "mcpjam_internal",
+        transport: "http_stream",
+        normalized,
+        ...(parsed.code ? { errorCode: parsed.code } : {}),
+        context: {
+          httpStatus: res.status,
+          code: parsed.code,
+          isJsonDenial,
+          isRecognizedDenial,
+        },
+      });
+    }
     safelyEmitEngineError(onEngineError, {
       message: parsed.message,
       ...(parsed.code ? { code: parsed.code } : {}),
@@ -2865,6 +3102,32 @@ async function processOneStep(
         errorText,
       });
     emitError(writer, errorText);
+      // Site (2) holds a real error. An earlier comment deferred capture to
+      // "the chat route's stream onError" — but runChatEngineLoop's
+      // createUIMessageStream passes only `execute`, so no such onError
+      // exists on this path and the failure was never classified or
+      // recorded. The reporter closes that hole: capture decision, free-form
+      // row, and the typed route.operation.failed event (the response is a
+      // 200 stream, so the HTTP failure events never see this).
+      const stepNormalized = describeError(error);
+      // Same silent-cancel guard as the outer loop's catch (which checks
+      // `isAbortError(error) || abortSignal?.aborted`): a non-AbortError that
+      // lands after the signal fired belongs to a turn the client already
+      // cancelled.
+      if (!abortSignal?.aborted) {
+        failureReporter({
+          message: "[mcpjam-stream-handler] engine step failed",
+          error,
+          source: "mcp.chat-v2.engine-step",
+          hop: "user_server_hop",
+          transport: "http_stream",
+          normalized: stepNormalized,
+          context: {
+            promptIndex: traceTurn.promptIndex,
+            stepIndex,
+          },
+        });
+      }
       // PR 5b-followup-2: surface the error to `streamSink: "none"`
       // consumers (eval backend stream runner). The processStream /
       // tool-execution catch path doesn't have a structured body, so
@@ -2875,9 +3138,7 @@ async function processOneStep(
         rawText: errorText,
         promptIndex: traceTurn.promptIndex,
         stepIndex,
-        // Site (2) holds a real error — no capture here, the chat route's
-        // stream `onError` owns that decision for this path.
-        normalized: describeError(error),
+        normalized: stepNormalized,
       });
       return { shouldContinue: false, didEmitFinish: false };
     }
@@ -3006,6 +3267,7 @@ export async function runChatEngineLoop(
     onStepFinish,
     // PR 5b-followup-2 callback.
     onEngineError,
+    failureReporter: failureReporterOption,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
     abortSignal,
@@ -3014,6 +3276,13 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
+  // One typed route.operation.failed per turn, whatever combination of the
+  // three failure sites fires; the system fallback covers eval/swarm runs
+  // that have no request context. Later failures in the same turn still get
+  // classified (capture-deduped) and keep their free-form rows.
+  const failureReporter = oncePerTurn(
+    failureReporterOption ?? createSystemStreamFailureReporter("chat-engine"),
+  );
   const resolvedEndpointPath = endpointPath ?? "/stream";
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -3358,6 +3627,7 @@ export async function runChatEngineLoop(
           // the two `processOneStep` error sites (non-OK Convex
           // response + processStream/tool catch).
           onEngineError,
+          failureReporter,
           // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
           prepareAdvertisedTools,
           abortSignal,
@@ -3439,10 +3709,30 @@ export async function runChatEngineLoop(
       if (isAbortError(error) || abortSignal?.aborted) {
         aborted = true;
       } else {
-        logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
         const failAbs = Date.now();
         const errorText =
           error instanceof Error ? error.message : String(error);
+        // A thrower that classified with the structured body in hand wins:
+        // a mid-stream error chunk reaches here as an Error whose message is
+        // a sentence, and re-describing it would throw away the guardrail
+        // code that settles ownership.
+        const loopFailureCode = attachedFailureCode(error);
+        const loopNormalized = attachedNormalized(error) ?? describeError(error);
+        // Reporter, not a bare logger.error: the old call captured to Sentry
+        // unconditionally — paging on user-fault failures — and left no typed
+        // record a monitor could read (the response is a 200 stream). The
+        // reporter classifies first, pages only on origin=mcpjam, keeps the
+        // free-form row, and emits route.operation.failed.
+        failureReporter({
+          message: "[mcpjam-stream-handler] Error in agentic loop",
+          error,
+          source: "mcp.chat-v2.agentic-loop",
+          hop: "user_server_hop",
+          transport: "http_stream",
+          normalized: loopNormalized,
+          ...(loopFailureCode ? { errorCode: loopFailureCode } : {}),
+          context: { promptIndex: traceTurn.promptIndex },
+        });
         pushAiSdkTrailingErrorSpan(
           traceTurn.turnSpans,
           traceTurn.turnStartedAt,
@@ -3469,9 +3759,10 @@ export async function runChatEngineLoop(
         // no stepIndex.
         safelyEmitEngineError(onEngineError, {
           message: errorText,
+          ...(loopFailureCode ? { code: loopFailureCode } : {}),
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
-          normalized: describeError(error),
+          normalized: loopNormalized,
         });
       }
     } finally {
