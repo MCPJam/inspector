@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { webError, mapRuntimeError } from "./errors.js";
+import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
@@ -22,6 +22,7 @@ import oauthWeb from "./oauth.js";
 import serverSecretsWeb from "./server-secrets.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
+import serverConnectionsWeb from "./server-connections.js";
 import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
@@ -121,6 +122,12 @@ web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
 web.route("/server", serverSecretsWeb);
 web.route("/guest-session", guestSession);
+// The handoff page's back end. Deliberately NOT behind bearerAuthMiddleware:
+// after the claim, every step authenticates with the HttpOnly continuation
+// cookie, and the claim itself is reachable by a signed-out guest who is about
+// to authorize a server. The signed-in user's id is read opportunistically when
+// the session middleware already resolved one.
+web.route("/server-connections", serverConnectionsWeb);
 // Service-token-gated guest minting for the platform MCP worker (anonymous
 // /mcp sessions). Gated inside the router by `x-inspector-service-token`;
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely.
@@ -169,15 +176,13 @@ web.get("/guest-jwks", async (c) => {
 });
 
 web.onError((error, c) => {
+  // `webErrorFromRoute`, not a hand-rolled `webError` call: the mapped error
+  // carries the EFFECTIVE origin (post internal-boundary promotion), and
+  // passing only `normalized` here discarded it at the very last step — for
+  // every handler on /api/web/* that throws rather than returns. That drop
+  // was the single largest reason `origin=mcpjam` never appeared in Axiom.
   const routeError = mapRuntimeError(error);
-  return webError(
-    c,
-    routeError.status,
-    routeError.code,
-    routeError.message,
-    routeError.details,
-    routeError.normalized ? { normalized: routeError.normalized } : undefined
-  );
+  return webErrorFromRoute(c, routeError);
 });
 
 export default web;
