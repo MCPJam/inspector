@@ -39,3 +39,12 @@ an unfinished run compares against a partial population.
 
 Also exported: `calculateLatencyStats` / `calculatePercentile` from the main
 entry, already used internally by the gate engine.
+
+Also adds the hosted-corpus core: `buildCorpus` / `loadCorpusFromLock`
+materialize hosted eval cases into local `EvalTest`s and record them in a
+lock whose content hash is a versioned semantic allowlist. A case a local run
+cannot execute (a widget step, a direct tool call) raises
+`HostedOnlyCaseError` naming the case and step rather than being dropped.
+`EvalTestConfig` gains `externalCaseId`, `isNegativeTest` and
+`expectedOutput`, so a materialized case keeps hosted grading semantics and
+joins the hosted case's history on the run page.
