@@ -21,7 +21,7 @@ This builds the React widget and starts the server at `http://localhost:8787/mcp
 
 ## Connecting to ChatGPT
 
-1. In MCPJam Inspector, click **Create ngrok tunnel** with your server connected
+1. In MCPJam Inspector, click **Create Tunnel** on the server card with your server connected
 2. Use the tunnel URL as your connector endpoint in ChatGPT
 
 ## Learn More

@@ -1,7 +1,11 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
-import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  getConvexBearerForRequest,
+  getDelegatedOrganizationId,
+} from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
@@ -71,6 +75,39 @@ async function readProject(token: string, projectId: string) {
   };
 }
 
+/**
+ * Refuse to touch a project outside a delegated caller's organization.
+ *
+ * DEFENSE-IN-DEPTH, not the only barrier. The backend enforces the delegated
+ * token's org claim inside membership resolution itself
+ * (`delegatedScopeAllowsOrganization` in mcpjam-backend
+ * `convex/lib/authorization.ts`, applied by `getOrgMembership` and therefore
+ * by `resolveProjectAccess`/`requireProjectRole`), so a cross-org mutation
+ * already fails there. What the chokepoint does NOT cover is
+ * `projects:getMyProjects`, which enumerates the user's memberships directly
+ * — `readProject` resolves ids across ALL the user's orgs, and this guard is
+ * what keeps that resolver from widening the gateway's answer. It also pins
+ * the status: a clean 404 here, instead of whatever the backend's rejection
+ * translates to.
+ *
+ * 404, not 403: the existing miss for an unknown id is already 404, and
+ * answering 403 here would confirm that a project the key may not see exists.
+ *
+ * Session-JWT callers skip this — they are confined to nothing.
+ */
+async function assertProjectWritableByCaller(
+  c: Context,
+  token: string,
+  projectId: string
+): Promise<void> {
+  const delegatedOrganizationId = getDelegatedOrganizationId(c);
+  if (!delegatedOrganizationId) return;
+  const project = await readProject(token, projectId);
+  if (project.organizationId !== delegatedOrganizationId) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found");
+  }
+}
+
 // POST /v1/projects — create a project for the caller's organization.
 projects.post("/projects", async (c) => {
   let raw: unknown;
@@ -84,6 +121,37 @@ projects.post("/projects", async (c) => {
     );
   }
   const body = parseWithSchema(createProjectSchema, raw);
+
+  // Org clamp for delegated (`sk_` / service) callers.
+  //
+  // Two cases, and the SECOND is the load-bearing one. An explicit mismatch
+  // is rejected with a clean 403 — the backend's own org chokepoint
+  // (`delegatedScopeAllowsOrganization` inside membership resolution) would
+  // refuse it anyway, but as a translated backend error rather than this
+  // deliberate copy. An ABSENT organizationId is filled in with the key's
+  // org: left alone, the backend falls back to the acting user's DEFAULT
+  // org, which need not be the key's — and since the chokepoint then rejects
+  // the mismatch, `create_project` with just a name (the likely agent call)
+  // would ERROR instead of landing in the key's org. The fill-in is what
+  // makes the bare call work.
+  //
+  // Session-JWT callers are untouched: they are confined to nothing and may
+  // still create in any org they belong to.
+  const delegatedOrganizationId = getDelegatedOrganizationId(c);
+  if (delegatedOrganizationId) {
+    if (
+      body.organizationId &&
+      body.organizationId !== delegatedOrganizationId
+    ) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "API key is not scoped to this organization"
+      );
+    }
+    body.organizationId = delegatedOrganizationId;
+  }
+
   const token = await getConvexBearerForRequest(c);
   try {
     const id = String(
@@ -112,6 +180,11 @@ projects.patch("/projects/:projectId", async (c) => {
   const body = parseWithSchema(updateProjectSchema, raw);
   const token = await getConvexBearerForRequest(c);
   try {
+    // INSIDE the try: the scope preflight is itself an upstream read, and a
+    // network failure of it must answer like every other upstream failure on
+    // this route rather than escaping raw. The guard's own 404 is unaffected —
+    // `translateConvexWriteError` returns a `WebRouteError` untouched.
+    await assertProjectWritableByCaller(c, token, projectId);
     await convexClient(token).mutation("projects:updateProject" as any, {
       projectId,
       ...body,
@@ -136,6 +209,8 @@ projects.delete("/projects/:projectId", async (c) => {
   }
   const token = await getConvexBearerForRequest(c);
   try {
+    // Inside the try for the same reason as the PATCH above.
+    await assertProjectWritableByCaller(c, token, projectId);
     await convexClient(token).mutation("projects:deleteProject" as any, {
       projectId,
     });
