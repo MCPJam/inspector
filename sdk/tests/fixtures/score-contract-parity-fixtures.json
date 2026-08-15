@@ -1,0 +1,841 @@
+{
+  "__readme": "Shared parity fixtures for the versioned evaluation contract. Loaded by sdk/tests/score-contract-parity.test.ts in mcpjam-inspector (Zod: scoreResultSchema / resolvedScoreDefinitionSchema / evaluationConfigSnapshotSchema in sdk/src/contract/schemas.ts) AND, VERBATIM, by tests/convex/scoreContractParity.test.ts in mcpjam-backend (the hand-mirrored v.* validators in convex/lib/scoreContract.ts, exercised through the real ingest mutation boundary). The backend cannot import @mcpjam/sdk into convex/ default-runtime code, so this file is the only common ground truth — copy it byte for byte, do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why, __kind) and both validators reject unknown fields. DISPATCH: '__kind' selects which validator a row is for — 'result', 'definition', or 'snapshot'. The __digests block pins LITERAL hash constants produced by the SDK implementation; the backend asserts its own canonical-JSON + SHA-256 twin reproduces them exactly, rather than recomputing an expectation on both sides (which would prove only that each side agrees with itself). If a digest assertion fails, the two canonicalizations have drifted — STOP, do not edit the constants. When the contract shape changes, edit BOTH validator files AND this fixture in the same PR.",
+
+  "accept": [
+    {
+      "__kind": "definition",
+      "__label": "definition — gating predicate, fully resolved",
+      "scorerId": "refund-mentioned",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-refund-predicate-v1",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "gating",
+      "onError": "fail",
+      "onSkipped": "fail"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — advisory judge with model and label",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "label": "tone",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "advisory",
+      "onError": "ignore",
+      "onSkipped": "ignore",
+      "model": "anthropic/claude-sonnet-4-6"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — generated id with a per-turn scope",
+      "__why": "Generated ids are positional and unstable; the contract records that fact rather than hiding it, so a gate can refuse to select one.",
+      "scorerId": "predicate:responseContains#0",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "impl-generated-v1",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "gating",
+      "onError": "fail",
+      "onSkipped": "fail",
+      "scope": { "kind": "turn", "promptIndex": 2 }
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — gating scorer that explicitly tolerates its own errors",
+      "__why": "Fail-closed is the DEFAULT, not a law: an explicit override is part of the contract.",
+      "scorerId": "flaky-judge",
+      "idSource": "explicit",
+      "scorerVersion": "2",
+      "implementationHash": "impl-flaky-v2",
+      "deterministic": false,
+      "passThreshold": 0.5,
+      "role": "gating",
+      "onError": "ignore",
+      "onSkipped": "fail"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — passThreshold 0 (every score passes)",
+      "scorerId": "always-passes",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-always-v1",
+      "deterministic": true,
+      "passThreshold": 0,
+      "role": "advisory",
+      "onError": "ignore",
+      "onSkipped": "ignore"
+    },
+
+    {
+      "__kind": "result",
+      "__label": "result — scored and passing at threshold 1",
+      "scorerId": "refund-mentioned",
+      "scorerVersion": "1",
+      "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818",
+      "status": "scored",
+      "value": 1,
+      "passThreshold": 1,
+      "passed": true,
+      "rationale": "final assistant message contains \"refund issued\"",
+      "deterministic": true
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored and failing",
+      "scorerId": "refund-mentioned",
+      "scorerVersion": "1",
+      "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818",
+      "status": "scored",
+      "value": 0,
+      "passThreshold": 1,
+      "passed": false,
+      "rationale": "final assistant message does not contain \"refund issued\"",
+      "deterministic": true
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored exactly AT the threshold passes",
+      "__why": "The rule is `value >= passThreshold`, not `>`. Pinning the boundary keeps a float-comparison refactor honest.",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 0.7,
+      "passThreshold": 0.7,
+      "passed": true,
+      "rationale": "polite throughout",
+      "deterministic": false,
+      "model": "anthropic/claude-sonnet-4-6",
+      "promptHash": "3f9a1c"
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored just BELOW the threshold fails",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 0.69,
+      "passThreshold": 0.7,
+      "passed": false,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored 0 against threshold 0 passes",
+      "scorerId": "always-passes",
+      "scorerVersion": "1",
+      "definitionHash": "d0c9d2b0c0d1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b",
+      "status": "scored",
+      "value": 0,
+      "passThreshold": 0,
+      "passed": true,
+      "deterministic": true
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored with evidence and a per-turn scope",
+      "__why": "definitionHash on an accept ROW is an opaque join key — these rows are validated against a snapshot the loader builds for them, not against __digests. It is deliberately NOT one of the pinned constants, so nobody mistakes it for the digest of a definition that appears in this file.",
+      "scorerId": "rubric-refund",
+      "scorerVersion": "1",
+      "definitionHash": "00000000000000000000000000000000000000000000000000000000rubric1",
+      "status": "scored",
+      "value": 1,
+      "passThreshold": 1,
+      "passed": true,
+      "rationale": "criterion met",
+      "evidence": ["acknowledged the refund", "quoted the order id"],
+      "deterministic": true,
+      "scope": { "kind": "turn", "promptIndex": 1 }
+    },
+    {
+      "__kind": "result",
+      "__label": "result — error carries no value and no passed",
+      "__why": "A crashed judge must never read as a low score. `error` is a distinct status, not a 0.",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "error",
+      "passThreshold": 0.7,
+      "error": "judge request timed out after 60000ms",
+      "deterministic": false,
+      "model": "anthropic/claude-sonnet-4-6"
+    },
+    {
+      "__kind": "result",
+      "__label": "result — skipped (expected work that did not happen)",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "skipped",
+      "passThreshold": 0.7,
+      "rationale": "iteration errored before scoring",
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — not_applicable (scorer out of scope for this iteration)",
+      "__why": "Distinct from skipped: never gates, and never enters an aggregation denominator.",
+      "scorerId": "tool-match",
+      "scorerVersion": "1",
+      "definitionHash": "b1c2d3e4f5061728394a5b6c7d8e9f00112233445566778899aabbccddeeff00",
+      "status": "not_applicable",
+      "passThreshold": 1,
+      "rationale": "no expected tool calls were configured",
+      "deterministic": true
+    },
+
+    {
+      "__kind": "snapshot",
+      "__label": "snapshot — empty definition set",
+      "__why": "A run with no scorers is legal; it simply has nothing to gate on.",
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "definitions": []
+    },
+    {
+      "__kind": "snapshot",
+      "__label": "snapshot — one gating predicate plus one advisory judge",
+      "hash": "8648c33b805bec995363b72c1f1201e034faee70957dbd67950c122a7d7f33de",
+      "definitions": [
+        {
+          "scorerId": "refund-mentioned",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-refund-predicate-v1",
+          "deterministic": true,
+          "passThreshold": 1,
+          "role": "gating",
+          "onError": "fail",
+          "onSkipped": "fail"
+        },
+        {
+          "scorerId": "tone-judge",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-tone-prompt-v1",
+          "deterministic": false,
+          "passThreshold": 0.7,
+          "role": "advisory",
+          "onError": "ignore",
+          "onSkipped": "ignore",
+          "model": "anthropic/claude-sonnet-4-6"
+        }
+      ]
+    }
+  ],
+
+  "reject": [
+    {
+      "__kind": "result",
+      "__label": "result — passed CONTRADICTS value >= passThreshold (claims a pass)",
+      "__why": "THE load-bearing reject. `passed` is derived, never asserted. This exact row — a low score claiming a pass — is what a tampered or malformed score set looks like, and on the `resultSource === \"reported\"` path it would turn a failing run into a passing one.",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 0.2,
+      "passThreshold": 0.7,
+      "passed": true,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — passed CONTRADICTS derivation the other way (claims a fail)",
+      "__why": "The check is equality with the derivation, not 'reject optimistic rows'.",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 0.9,
+      "passThreshold": 0.7,
+      "passed": false,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored without a value",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "passThreshold": 0.7,
+      "passed": true,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored without passed",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 0.9,
+      "passThreshold": 0.7,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — error status with no error string",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "error",
+      "passThreshold": 0.7,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — error status carrying a value",
+      "__why": "This is the 'crashed judge scored 0' failure mode, spelled out.",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "error",
+      "value": 0,
+      "passThreshold": 0.7,
+      "error": "judge crashed",
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — skipped carrying a value",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "skipped",
+      "value": 0.4,
+      "passThreshold": 0.7,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — not_applicable carrying passed",
+      "scorerId": "tool-match",
+      "scorerVersion": "1",
+      "definitionHash": "b1c2d3e4f5061728394a5b6c7d8e9f00112233445566778899aabbccddeeff00",
+      "status": "not_applicable",
+      "passThreshold": 1,
+      "passed": true,
+      "deterministic": true
+    },
+    {
+      "__kind": "result",
+      "__label": "result — scored carrying an error string",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 0.9,
+      "passThreshold": 0.7,
+      "passed": true,
+      "error": "partially failed",
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — value above 1",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 1.5,
+      "passThreshold": 0.7,
+      "passed": true,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — negative value",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": -0.1,
+      "passThreshold": 0.7,
+      "passed": false,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — passThreshold above 1",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "scored",
+      "value": 1,
+      "passThreshold": 2,
+      "passed": false,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — unknown status",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "inconclusive",
+      "passThreshold": 0.7,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — missing deterministic flag",
+      "__why": "The retry-exhausted path branches on it; an absent flag has no safe default.",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "skipped",
+      "passThreshold": 0.7
+    },
+    {
+      "__kind": "result",
+      "__label": "result — missing definitionHash (unjoinable to any definition)",
+      "__why": "Without the join there is no way to know whether the row gates.",
+      "scorerId": "tone-judge",
+      "scorerVersion": "1",
+      "status": "skipped",
+      "passThreshold": 0.7,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — empty scorerId",
+      "scorerId": "",
+      "scorerVersion": "1",
+      "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be",
+      "status": "skipped",
+      "passThreshold": 0.7,
+      "deterministic": false
+    },
+    {
+      "__kind": "result",
+      "__label": "result — malformed scope",
+      "scorerId": "refund-mentioned",
+      "scorerVersion": "1",
+      "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818",
+      "status": "skipped",
+      "passThreshold": 1,
+      "deterministic": true,
+      "scope": { "kind": "turn", "promptIndex": -1 }
+    },
+
+    {
+      "__kind": "definition",
+      "__label": "definition — missing implementationHash",
+      "__why": "Required precisely so two judges with different prompts cannot hash identically when an author forgets to bump scorerVersion.",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "advisory",
+      "onError": "ignore",
+      "onSkipped": "ignore"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — unresolved: onError absent",
+      "__why": "The RESOLVED form is the hash and wire form. An unresolved definition on the wire would let an omitted default and an explicit default digest differently.",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "advisory",
+      "onSkipped": "ignore"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — unresolved: onSkipped absent",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "advisory",
+      "onError": "ignore"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — unknown role",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "blocking",
+      "onError": "ignore",
+      "onSkipped": "ignore"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — unknown idSource",
+      "scorerId": "tone-judge",
+      "idSource": "inferred",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "advisory",
+      "onError": "ignore",
+      "onSkipped": "ignore"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — unknown onError policy",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "gating",
+      "onError": "retry",
+      "onSkipped": "fail"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — passThreshold above 1",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "deterministic": false,
+      "passThreshold": 1.2,
+      "role": "advisory",
+      "onError": "ignore",
+      "onSkipped": "ignore"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — empty scorerId",
+      "scorerId": "",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "deterministic": false,
+      "passThreshold": 0.7,
+      "role": "advisory",
+      "onError": "ignore",
+      "onSkipped": "ignore"
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — missing deterministic",
+      "scorerId": "tone-judge",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-tone-prompt-v1",
+      "passThreshold": 0.7,
+      "role": "advisory",
+      "onError": "ignore",
+      "onSkipped": "ignore"
+    },
+
+    {
+      "__kind": "snapshot",
+      "__label": "snapshot — duplicate scorerIds",
+      "__why": "A duplicate id makes the results→definitions join ambiguous, and an ambiguous join is one where a gating policy can silently resolve to the advisory twin.",
+      "hash": "8648c33b805bec995363b72c1f1201e034faee70957dbd67950c122a7d7f33de",
+      "definitions": [
+        {
+          "scorerId": "tone-judge",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-tone-prompt-v1",
+          "deterministic": false,
+          "passThreshold": 0.7,
+          "role": "advisory",
+          "onError": "ignore",
+          "onSkipped": "ignore"
+        },
+        {
+          "scorerId": "tone-judge",
+          "idSource": "explicit",
+          "scorerVersion": "2",
+          "implementationHash": "impl-tone-prompt-v2",
+          "deterministic": false,
+          "passThreshold": 0.7,
+          "role": "gating",
+          "onError": "fail",
+          "onSkipped": "fail"
+        }
+      ]
+    },
+    {
+      "__kind": "snapshot",
+      "__label": "snapshot — missing hash",
+      "hash": "",
+      "definitions": []
+    },
+    {
+      "__kind": "snapshot",
+      "__label": "snapshot — carries an unresolved definition",
+      "hash": "8648c33b805bec995363b72c1f1201e034faee70957dbd67950c122a7d7f33de",
+      "definitions": [
+        {
+          "scorerId": "tone-judge",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-tone-prompt-v1",
+          "deterministic": false,
+          "passThreshold": 0.7,
+          "role": "advisory"
+        }
+      ]
+    }
+  ],
+
+  "__digests": {
+    "__readme": "PINNED CROSS-RUNTIME HASH CONSTANTS. Each `definitions` row holds an AUTHORED ScoreDefinition (onError/onSkipped may be absent) and the definitionHash it must produce AFTER resolution — that is what proves an omitted default and an explicit default hash identically. Each `configs` row holds authored definitions and the evaluationConfigHash of the resolved set. Both sides compute; neither side recomputes the expectation.",
+
+    "definitions": [
+      {
+        "__label": "D1 — defaults OMITTED",
+        "definition": {
+          "scorerId": "refund-mentioned",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-refund-predicate-v1",
+          "deterministic": true,
+          "passThreshold": 1,
+          "role": "gating"
+        },
+        "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818"
+      },
+      {
+        "__label": "D2 — defaults EXPLICIT (must equal D1)",
+        "__why": "Defaults-equivalence. Hashing an unresolved definition would make spelling out a default read as an evaluation-config change and flag every case as configChanged.",
+        "definition": {
+          "scorerId": "refund-mentioned",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-refund-predicate-v1",
+          "deterministic": true,
+          "passThreshold": 1,
+          "role": "gating",
+          "onError": "fail",
+          "onSkipped": "fail"
+        },
+        "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818"
+      },
+      {
+        "__label": "D3 — D1 with permuted KEY ORDER (must equal D1)",
+        "__why": "Key order is an accident of construction. Canonicalization sorts keys, so a cosmetic refactor cannot fork the hash.",
+        "definition": {
+          "role": "gating",
+          "passThreshold": 1,
+          "deterministic": true,
+          "implementationHash": "impl-refund-predicate-v1",
+          "scorerVersion": "1",
+          "idSource": "explicit",
+          "scorerId": "refund-mentioned"
+        },
+        "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818"
+      },
+      {
+        "__label": "D4 — D1 plus a label (must equal D1)",
+        "__why": "`label` is presentation-only and deliberately EXCLUDED from the hash; fixing a dashboard typo must not mark every case configChanged. The mirror must exclude it too.",
+        "definition": {
+          "scorerId": "refund-mentioned",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-refund-predicate-v1",
+          "label": "refund is mentioned",
+          "deterministic": true,
+          "passThreshold": 1,
+          "role": "gating"
+        },
+        "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818"
+      },
+      {
+        "__label": "D5 — D1 with a DIFFERENT implementationHash (must differ from D1)",
+        "__why": "The whole point of the required implementationHash: a changed predicate or judge prompt always reaches the config hash, even when scorerId, version and threshold are untouched.",
+        "definition": {
+          "scorerId": "refund-mentioned",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-refund-predicate-v2",
+          "deterministic": true,
+          "passThreshold": 1,
+          "role": "gating"
+        },
+        "definitionHash": "554d8e2b5b8eab0724108663907a15ea364d82ec1b7a4e0f0a883d514f6fe4d2"
+      },
+      {
+        "__label": "D6 — advisory judge, defaults OMITTED",
+        "definition": {
+          "scorerId": "tone-judge",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-tone-prompt-v1",
+          "deterministic": false,
+          "passThreshold": 0.7,
+          "role": "advisory",
+          "model": "anthropic/claude-sonnet-4-6"
+        },
+        "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be"
+      },
+      {
+        "__label": "D7 — D6 with advisory defaults EXPLICIT (must equal D6)",
+        "__why": "Advisory resolves to ignore/ignore, so the equivalence holds on the other branch of the default too.",
+        "definition": {
+          "scorerId": "tone-judge",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-tone-prompt-v1",
+          "deterministic": false,
+          "passThreshold": 0.7,
+          "role": "advisory",
+          "onError": "ignore",
+          "onSkipped": "ignore",
+          "model": "anthropic/claude-sonnet-4-6"
+        },
+        "definitionHash": "f7559da804da71b23550cfb756e73bf0e76d870b3c3dc76f0db7919ab6a874be"
+      },
+      {
+        "__label": "D8 — D6 promoted to gating (must differ from D6)",
+        "__why": "Role and policies ARE hashed: flipping a judge from advisory to gating changes what the run means.",
+        "definition": {
+          "scorerId": "tone-judge",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-tone-prompt-v1",
+          "deterministic": false,
+          "passThreshold": 0.7,
+          "role": "gating",
+          "onError": "fail",
+          "onSkipped": "fail",
+          "model": "anthropic/claude-sonnet-4-6"
+        },
+        "definitionHash": "489405115c57c84fbd1daf7cba30dd30ea14da5889aa2f424f0d4f50d63e5be8"
+      },
+      {
+        "__label": "D9 — generated id with a per-turn scope",
+        "__why": "Nested objects and the idSource discriminant both participate in the digest.",
+        "definition": {
+          "scorerId": "predicate:responseContains#0",
+          "idSource": "generated",
+          "scorerVersion": "1",
+          "implementationHash": "impl-generated-v1",
+          "deterministic": true,
+          "passThreshold": 1,
+          "role": "gating",
+          "scope": { "kind": "turn", "promptIndex": 2 }
+        },
+        "definitionHash": "1727fc2953bec6c1b5b5618f3fa4244b76d662bae8f26d3f13ca7acc964d8580"
+      }
+    ],
+
+    "configs": [
+      {
+        "__label": "C1 — [D1, D6]",
+        "definitions": [
+          {
+            "scorerId": "refund-mentioned",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "impl-refund-predicate-v1",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "tone-judge",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "impl-tone-prompt-v1",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory",
+            "model": "anthropic/claude-sonnet-4-6"
+          }
+        ],
+        "evaluationConfigHash": "8648c33b805bec995363b72c1f1201e034faee70957dbd67950c122a7d7f33de"
+      },
+      {
+        "__label": "C2 — [D6, D1], the same set in a different ARRAY ORDER (must equal C1)",
+        "__why": "Authored order is presentation. The hash sorts internally so moving a scorer up the list is not a config change.",
+        "definitions": [
+          {
+            "scorerId": "tone-judge",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "impl-tone-prompt-v1",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory",
+            "model": "anthropic/claude-sonnet-4-6"
+          },
+          {
+            "scorerId": "refund-mentioned",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "impl-refund-predicate-v1",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "evaluationConfigHash": "8648c33b805bec995363b72c1f1201e034faee70957dbd67950c122a7d7f33de"
+      },
+      {
+        "__label": "C3 — [D1, D8]: same scorers, judge promoted to gating (must differ from C1)",
+        "definitions": [
+          {
+            "scorerId": "refund-mentioned",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "impl-refund-predicate-v1",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "tone-judge",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "impl-tone-prompt-v1",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail",
+            "model": "anthropic/claude-sonnet-4-6"
+          }
+        ],
+        "evaluationConfigHash": "d655f6d983d53e2a36d29e88274eb3a8b575816951fda2654fbe86d0454aada9"
+      },
+      {
+        "__label": "C4 — the empty definition set",
+        "definitions": [],
+        "evaluationConfigHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "__label": "C5 — a single definition",
+        "definitions": [
+          {
+            "scorerId": "refund-mentioned",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "impl-refund-predicate-v1",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "evaluationConfigHash": "2d1343d843f8e5a0f9282f87563cca9244727dfaf0a13091a380a5126d5fef23"
+      }
+    ]
+  }
+}

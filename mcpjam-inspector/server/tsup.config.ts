@@ -89,12 +89,14 @@ export default defineConfig({
     "@mcpjam/sdk/model-factory",
     "@mcpjam/sdk/matchers",
     "@mcpjam/sdk/predicates",
+    "@mcpjam/sdk/contract",
     "@mcpjam/sdk/host-config/internal",
     "@mcpjam/sdk/host-config/templates",
     "@mcpjam/sdk/platform",
     "@mcpjam/sdk/public-api",
     "@mcpjam/sdk/host-compat",
     "@mcpjam/sdk/plugin-bundle",
+    "@mcpjam/sdk/oauth/node",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -104,11 +106,22 @@ export default defineConfig({
       // Specific subpaths BEFORE the bare alias — shared/xaa.ts re-exports XAA
       // primitives from the browser entry, so the server bundle must resolve it.
       "@mcpjam/sdk/browser": join(rootDir, "../sdk/dist/browser.js"),
+      // Node-only SSRF guard + DNS-pinned transport, used by the connection
+      // flow's discovery and validation steps.
+      //
+      // MUST be listed before the bare alias, like every subpath here: the bare
+      // entry is a PREFIX replacement, so without its own line this specifier
+      // rewrites to `sdk/dist/index.js/oauth/node` and fails to resolve. The
+      // failure only appears once something actually IMPORTS the module —
+      // esbuild never resolves an unreferenced file, so this stayed invisible
+      // while the discovery preflight was dead code.
+      "@mcpjam/sdk/oauth/node": join(rootDir, "../sdk/dist/oauth/node.js"),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
       "@mcpjam/sdk/model-factory": join(rootDir, "../sdk/dist/model-factory.js"),
       "@mcpjam/sdk/matchers": join(rootDir, "../sdk/dist/matchers.js"),
       "@mcpjam/sdk/predicates": join(rootDir, "../sdk/dist/predicates/index.js"),
+      "@mcpjam/sdk/contract": join(rootDir, "../sdk/dist/contract/index.js"),
       "@mcpjam/sdk/host-config/internal": join(
         rootDir,
         "../sdk/dist/host-config/internal.js",

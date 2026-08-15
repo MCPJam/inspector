@@ -692,9 +692,7 @@ function JourneyGradingEditor({
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
-              ? `${criteriaCount} ${
-                  criteriaCount === 1 ? "criterion" : "criteria"
-                }`
+              ? `${criteriaCount} ${criteriaCount === 1 ? "check" : "checks"}`
               : "Grading"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
