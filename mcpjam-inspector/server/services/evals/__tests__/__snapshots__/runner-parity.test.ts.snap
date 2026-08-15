@@ -6,7 +6,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -53,7 +53,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -203,7 +203,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -243,7 +243,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -342,7 +342,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -427,7 +427,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -575,7 +575,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -703,7 +703,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -750,7 +750,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -951,7 +951,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "anthropic/claude-haiku-4.5",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1105,7 +1105,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1230,7 +1230,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1502,7 +1502,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1542,7 +1542,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1640,7 +1640,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1723,7 +1723,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1806,7 +1806,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -1955,7 +1955,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2053,7 +2053,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2151,7 +2151,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2234,7 +2234,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2336,7 +2336,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2383,7 +2383,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2541,7 +2541,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2581,7 +2581,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2730,7 +2730,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {
@@ -2829,7 +2829,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
     "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
-      "modelId": "eval/unknown",
+      "modelId": "gpt-4-turbo",
       "modelSource": "mcpjam",
       "startedAt": "<scrubbed>",
       "turn": {

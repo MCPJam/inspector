@@ -29,6 +29,7 @@ import {
   SlackBackendUnavailable,
 } from "../services/slack-backend.js";
 import { logger } from "../utils/logger.js";
+import { setRequestLogContext } from "../utils/request-logger.js";
 import {
   composeAllowedPaths,
   SLACK_ALLOWED_PATH_DELTAS,
@@ -325,6 +326,11 @@ export async function handleSlackServiceAuth(
   c.set("workosUserId", link.workosUserId);
   c.set("mcpjamUserId", link.userId);
   c.set("mcpjamOrganizationId", link.organizationId);
+  // Onto the log context too — see the note at the same call in
+  // `bearer-auth.ts`. Every branch that resolves an org sets it, so `orgId` is
+  // a field an operator can rely on rather than one that happens to be present
+  // depending on which credential the caller used.
+  setRequestLogContext(c, { orgId: link.organizationId });
   // The CANONICAL surface trio, and nothing Slack-named beside it. Routes
   // read only these three, so a second wrapper (Discord) is a new auth branch
   // that sets the same three names and nothing downstream changes. Context

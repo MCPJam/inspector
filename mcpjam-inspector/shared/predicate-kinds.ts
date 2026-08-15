@@ -29,6 +29,17 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   turnCountUnder: "Fewer than N user turns",
 };
 
+/**
+ * The TURN-SCOPED variant of {@link PREDICATE_KIND_LABELS} — not a fork of it.
+ *
+ * Only the kinds whose meaning actually narrows when they are evaluated at a
+ * point in the flow rather than over the finished transcript appear here: "no
+ * tool errors" over the whole run and "no tool errors *so far*" are different
+ * claims, and a step-scoped row that borrowed the whole-run wording would
+ * overstate what it checked. Every other kind falls through to the canonical
+ * label via {@link labelForInlineAssert}, so adding a predicate kind needs no
+ * entry here unless it has that same scope-sensitivity.
+ */
 export const INLINE_ASSERT_LABELS: Partial<Record<PredicateKind, string>> = {
   noToolErrors: "No tool errors so far",
   widgetNoConsoleErrors: "No view console errors so far",
@@ -109,11 +120,11 @@ export type GlobalGateCatalogEntry = {
 };
 
 export const GLOBAL_GATES_SECTION_HELP = {
-  title: "Global gates",
+  title: "Whole-run checks",
   paragraphs: [
     "Whole-run rules evaluated after the scenario finishes, using the full transcript.",
     "Step checks run inline at a specific point in the flow — use those for conversation and view assertions.",
-    "Case gates extend suite defaults. Add here only for policies that must hold across the entire run.",
+    "Case checks extend suite defaults. Add here only for policies that must hold across the entire run.",
   ],
 } as const;
 
@@ -140,6 +151,21 @@ export const GLOBAL_GATE_CATALOG: GlobalGateCatalogEntry[] = [
       "Passes when no rendered view logged console errors. Fails when the run recorded no view renders. Optionally limit to one view tool.",
   },
 ];
+
+/**
+ * True iff `kind` is a predicate kind THIS BUILD knows, checked as an own
+ * property rather than with `in` or a truthiness test on the lookup.
+ *
+ * Both of the lazier forms walk the prototype chain, so a persisted
+ * discriminator of `"__proto__"` or `"constructor"` — reachable, because
+ * `parseIterationPredicates` validates only that `type` is a string — resolves
+ * to an inherited object. That object is truthy, survives `??`, and then
+ * throws when React tries to render it as a text child. An unknown kind must
+ * degrade to its raw string, never to whatever `Object.prototype` has.
+ */
+export function isKnownPredicateKind(kind: string): kind is PredicateKind {
+  return Object.prototype.hasOwnProperty.call(PREDICATE_KIND_LABELS, kind);
+}
 
 export function isGlobalPolicyKind(kind: PredicateKind): boolean {
   return (GLOBAL_POLICY_MENU_KINDS as readonly string[]).includes(kind);

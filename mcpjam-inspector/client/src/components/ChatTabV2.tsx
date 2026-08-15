@@ -50,6 +50,8 @@ import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/rea
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { track } from "@/lib/analytics";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
@@ -71,6 +73,7 @@ import {
   cloneUiMessages,
   extractUserMessageText,
   UPSTREAM_ERROR_PAGE_CODE,
+  PROTOCOL_VERSION_PIN_CODE,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
@@ -124,6 +127,7 @@ import {
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -162,6 +166,24 @@ interface ChatTabProps {
   onEnableChatboxOptionalServer?: (serverId: string) => void;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /**
+   * Slot under each assistant message — the per-turn rating widget on the
+   * hosted User Testing page.
+   *
+   * The host gets the turn's identity resolved for it. `turnId` is minted
+   * SERVER-side (`generateLiveTraceTurnId`) and reaches the client through
+   * `turn_start` trace events (live) or the persisted `turnTraces` (rehydrated
+   * sessions), so it is the same id the backend recorded — which is what lets
+   * `sessionScores:submitScore` validate the anchor instead of trusting an
+   * ordinal. It is `null` until that event lands; the host renders nothing in
+   * that window rather than offering a rating that cannot be saved.
+   */
+  renderAssistantTurnActions?: (ctx: {
+    message: UIMessage;
+    chatSessionId: string;
+    promptIndex: number;
+    turnId: string | null;
+  }) => React.ReactNode;
 }
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
@@ -193,6 +215,7 @@ export function ChatTabV2({
   onEnableChatboxOptionalServer,
   evalChatHandoff,
   onEvalChatHandoffConsumed,
+  renderAssistantTurnActions,
 }: ChatTabProps) {
   const { signUp } = useAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -323,6 +346,7 @@ export function ChatTabV2({
       ? sortedOrganizations.find((org) => org._id === organizationId)
       : null
   );
+  const navigate = useAppNavigate();
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
@@ -552,6 +576,25 @@ export function ChatTabV2({
     }
     return map;
   }, [messages]);
+
+  // The same ordinal addressed from the ASSISTANT side — see
+  // `buildAssistantPromptIndex` for why the counting rule is the server's, not
+  // the renderer's.
+  const assistantPromptIndexById = useMemo(
+    () => buildAssistantPromptIndex(messages),
+    [messages]
+  );
+
+  // promptIndex → server-minted turnId. Live turns arrive via `turn_start`
+  // trace events; rehydrated sessions get theirs from the persisted
+  // `turnTraces`. Either way the id is the backend's, never the client's.
+  const turnIdByPromptIndex = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const turn of liveTraceEnvelope?.turns ?? []) {
+      map.set(turn.promptIndex, turn.turnId);
+    }
+    return map;
+  }, [liveTraceEnvelope]);
 
   const hasUnsavedDraft =
     !!input.trim() ||
@@ -1949,6 +1992,25 @@ export function ChatTabV2({
     ? handleRetryLastMessage
     : undefined;
 
+  // A pinned protocol version the server doesn't offer is the opposite of the
+  // case above: nothing about resending changes the outcome, and the fix is one
+  // dropdown away. Send the user there instead of leaving them to find it.
+  //
+  // The host id comes from the turn's own hosted context, so the link lands on
+  // the client that actually holds the pin. It is absent on chatbox and
+  // environment surfaces, where `buildHostFocusTabPath` degrades to the clients
+  // list rather than building a path the `:hostId` route would reject.
+  const changeProtocolVersionHandler =
+    errorMessage?.code === PROTOCOL_VERSION_PIN_CODE
+      ? () => {
+          track("change_protocol_version_clicked", {
+            location: "chat_tab",
+            has_host_id: Boolean(hostedContext?.hostId),
+          });
+          navigate(buildHostFocusTabPath(hostedContext?.hostId, "protocol"));
+        }
+      : undefined;
+
   useCreditTopupReturnFlow({ chatSessionId, sendMessage });
 
   const traceViewerTrace = liveTraceEnvelope ?? {
@@ -2411,6 +2473,7 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={changeProtocolVersionHandler}
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2677,6 +2740,7 @@ export function ChatTabV2({
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
                               onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={changeProtocolVersionHandler}
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2755,6 +2819,23 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          renderAssistantTurnFooter={
+                            renderAssistantTurnActions && chatSessionId
+                              ? (message) => {
+                                  const promptIndex =
+                                    assistantPromptIndexById.get(message.id);
+                                  if (promptIndex === undefined) return null;
+                                  return renderAssistantTurnActions({
+                                    message,
+                                    chatSessionId,
+                                    promptIndex,
+                                    turnId:
+                                      turnIdByPromptIndex.get(promptIndex) ??
+                                      null,
+                                  });
+                                }
+                              : undefined
+                          }
                           // Also gated on `showHistoryRail`, not just compare
                           // mode. `ChatTabV2` is the published chatbox runtime
                           // too (`ChatboxChatPage` renders it with `minimalMode`
@@ -2804,6 +2885,7 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={changeProtocolVersionHandler}
                             onResetChat={baseResetChat}
                           />
                         </div>

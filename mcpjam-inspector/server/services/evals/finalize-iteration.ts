@@ -55,6 +55,8 @@ export function buildIterationFinishParams(args: {
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
   usage: UsageTotals;
   messages: ModelMessage[];
+  /** The model selected for this iteration, used for session attribution. */
+  modelId?: string;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
   prompts?: PromptTraceSummary[];
@@ -87,6 +89,7 @@ export function buildIterationFinishParams(args: {
     evaluation,
     usage,
     messages,
+    modelId,
     systemPrompt,
     spans,
     prompts,
@@ -111,6 +114,7 @@ export function buildIterationFinishParams(args: {
     toolsCalled: evaluation.toolsCalled,
     usage,
     messages,
+    ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(spans?.length ? { spans } : {}),
     ...(prompts?.length ? { prompts } : {}),
@@ -149,6 +153,8 @@ export type FinalizeEvalIterationParams = {
   toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
   usage: UsageTotals;
   messages: ModelMessage[];
+  /** Effective model used by the iteration; persisted on the eval session. */
+  modelId?: string;
   spans?: EvalTraceSpan[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
@@ -229,6 +235,7 @@ export async function finalizeEvalIteration(
     toolsCalled,
     usage,
     messages,
+    modelId,
     spans,
     prompts,
     widgetSnapshots,
@@ -354,6 +361,7 @@ export async function finalizeEvalIteration(
     iterationId,
     iterationStartedAt: startedAt,
     messages,
+    ...(modelId ? { modelId } : {}),
     spans,
     prompts,
     widgetSnapshots,
