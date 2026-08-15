@@ -112,6 +112,74 @@ function isMissingFileError(error: unknown): boolean {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The first structural defect in a lock, or `undefined` when it is sound.
+ *
+ * Returns a DESCRIPTION rather than a boolean, and names the offending row, so
+ * the error tells a human which line of a hand-edited lock to look at instead
+ * of just declaring the file bad.
+ *
+ * Scope is deliberate: the fields `verifyCorpusLock` joins on and the summary
+ * prints. `normalizedContent` is checked only for being an object — its
+ * contents are the server's wire shape, which `buildCorpus` re-validates far
+ * more thoroughly than a duplicate schema here ever would.
+ */
+function describeLockDefect(lock: CorpusLock): string | undefined {
+  if (!isRecord(lock.suite) || typeof lock.suite.id !== "string") {
+    return `"suite.id" is missing or not a string`;
+  }
+  if (typeof lock.evaluationConfigHash !== "string") {
+    return `"evaluationConfigHash" is missing or not a string`;
+  }
+  if (typeof lock.fetchedAt !== "string") {
+    return `"fetchedAt" is missing or not a string`;
+  }
+
+  const REQUIRED_STRINGS = [
+    "scenarioKey",
+    "caseId",
+    "title",
+    "scenarioContentHash",
+    "evaluationConfigHash",
+  ] as const;
+
+  for (const [index, row] of lock.cases.entries()) {
+    if (!isRecord(row)) {
+      return `case ${index} is not an object`;
+    }
+    for (const field of REQUIRED_STRINGS) {
+      if (typeof row[field] !== "string") {
+        return `case ${index} is missing "${field}"`;
+      }
+    }
+    if (typeof row.iterations !== "number") {
+      return `case ${index} ("${String(row.scenarioKey)}") is missing "iterations"`;
+    }
+    if (!isRecord(row.normalizedContent)) {
+      return `case ${index} ("${String(
+        row.scenarioKey
+      )}") is missing "normalizedContent"`;
+    }
+  }
+
+  // Two rows under one key make the drift join lossy: `new Map` keeps the last
+  // and the earlier one silently vanishes from the comparison.
+  const keys = new Set<string>();
+  for (const row of lock.cases) {
+    const key = (row as { scenarioKey: string }).scenarioKey;
+    if (keys.has(key)) {
+      return `"${key}" appears twice`;
+    }
+    keys.add(key);
+  }
+
+  return undefined;
+}
+
 /**
  * Parse a lock file, or fail with a message that says what to run.
  *
@@ -167,6 +235,24 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     throw incomplete(
       "CORPUS_LOCK_MALFORMED",
       `The corpus lock at "${lockPath}" is missing "lockVersion" or "cases". ` +
+        `Re-create it with \`mcpjam eval pull\`.`
+    );
+  }
+
+  // Validate the fields `verifyCorpusLock` actually joins on, and validate
+  // them HERE.
+  //
+  // Not defensive noise: a `null` or half-written row makes `verifyCorpusLock`
+  // throw a bare TypeError reading `.scenarioKey`, which escapes as
+  // INTERNAL_ERROR and normalizes to exit 1 — a malformed lock reported as
+  // "your corpus drifted". Every structural problem must land on exit 3, and
+  // the only way to guarantee that is to reject the shape before the pure code
+  // ever sees it.
+  const structural = describeLockDefect(lock as CorpusLock);
+  if (structural) {
+    throw incomplete(
+      "CORPUS_LOCK_MALFORMED",
+      `The corpus lock at "${lockPath}" is malformed: ${structural}. ` +
         `Re-create it with \`mcpjam eval pull\`.`
     );
   }
