@@ -37,6 +37,8 @@ import {
 } from "@/lib/embedded-preview";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/chatbox-server-optional";
 import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
+import { useChatboxTurnRating } from "@/hooks/useChatboxTurnRating";
+import { HostedTurnRating } from "@/components/hosted/hosted-turn-rating";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
@@ -162,8 +164,8 @@ async function readRouteError(response: Response): Promise<ChatboxRouteError> {
       typeof domainCode === "string" && domainCode
         ? domainCode
         : typeof body?.code === "string"
-          ? body.code
-          : undefined;
+        ? body.code
+        : undefined;
     message =
       body?.message ||
       body?.error ||
@@ -942,11 +944,32 @@ export function ChatboxChatPage({
   const chatUiOverride = session?.payload.chatUiOverride;
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode, chatUiOverride);
   const clientLabel = getChatboxHostLabel(hostStyle, chatUiOverride);
-  const clientLogoSrc = getChatboxHostLogo(hostStyle, chatUiOverride, themeMode);
+  const clientLogoSrc = getChatboxHostLogo(
+    hostStyle,
+    chatUiOverride,
+    themeMode
+  );
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
     (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
     !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
+
+  // Per-turn ratings. OFF unless the scenario explicitly enabled them — the
+  // backend default is `false`, so this whole surface is inert on every
+  // existing chatbox until a PM flips the editor toggle.
+  const perTurnFeedback = session?.payload.chatUi?.surfaces?.perTurnFeedback;
+  const perTurnFeedbackEnabled = perTurnFeedback?.enabled === true;
+  const turnRating = useChatboxTurnRating({
+    enabled: perTurnFeedbackEnabled,
+    chatboxId: session?.chatboxId,
+    accessVersion: session?.accessVersion,
+    // The style picks the score key. Derived here rather than inside the hook
+    // so the widget's `variant` and the key its clicks write both come from
+    // one read of the config.
+    scoreKey:
+      perTurnFeedback?.style === "thumbs" ? "user_thumb" : "user_rating",
+    onStaleHostedAccess: requestRefreshAccessVersion,
+  });
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
     // The probed descriptors, not the raw bootstrap rows: the gate asks "does
@@ -1059,6 +1082,18 @@ export function ChatboxChatPage({
           chatboxComposerBlockedReason="Get started or authorize to send messages…"
           chatboxOptionalInventory={chatboxOptionalInventory}
           onEnableChatboxOptionalServer={handleEnableChatboxOptionalServer}
+          renderAssistantTurnActions={
+            perTurnFeedbackEnabled && perTurnFeedback
+              ? ({ chatSessionId, turnId }) => (
+                  <HostedTurnRating
+                    chatSessionId={chatSessionId}
+                    turnId={turnId}
+                    config={perTurnFeedback}
+                    rating={turnRating}
+                  />
+                )
+              : undefined
+          }
         />
         <ChatboxHostOnboardingOverlays
           showWelcome={introGate.showWelcome}

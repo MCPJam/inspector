@@ -18,6 +18,10 @@ export default defineConfig({
     "src/model-factory.ts",
     "src/matchers.ts",
     "src/predicates/index.ts",
+    // Versioned evaluation contract (score definitions/results + pinned
+    // cross-runtime hashing) shared by the SDK, the CLI gate engine, the
+    // inspector client, and the backend's hand-mirrored validators.
+    "src/contract/index.ts",
     "src/host-config/index.ts",
     // Low-level first-party entry used by the backend and SDK tooling.
     "src/host-config/internal.ts",

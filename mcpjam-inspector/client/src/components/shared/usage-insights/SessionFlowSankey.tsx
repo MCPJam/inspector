@@ -349,20 +349,18 @@ export function SessionFlowSankey({
             </TooltipContent>
           </Tooltip>
         </div>
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="h-0.5 w-4 rounded-full bg-warning" />
-            Outcome and sentiment disagree
-          </span>
-          {foldedTotal > 0 ? (
-            <span>
-              {foldedTotal} smaller {foldedTotal === 1 ? "theme" : "themes"}{" "}
-              folded
-            </span>
-          ) : null}
-          {headerActions}
-          {tuningControl}
-        </div>
+        {foldedTotal > 0 || headerActions || tuningControl ? (
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+            {foldedTotal > 0 ? (
+              <span>
+                {foldedTotal} smaller {foldedTotal === 1 ? "theme" : "themes"}{" "}
+                folded
+              </span>
+            ) : null}
+            {headerActions}
+            {tuningControl}
+          </div>
+        ) : null}
       </div>
 
       {scan?.truncated ? (

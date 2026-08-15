@@ -209,3 +209,113 @@ describe("v1 eval-ingest proxies", () => {
     expect(fetchMock).toHaveBeenCalledTimes(suffixes.length);
   });
 });
+
+/**
+ * The measured blind spot (2026-08-15): 44 rows on this route in 72h carried
+ * `internal_error` 500 with no message, no slug, and no origin, so the
+ * MCPJam-fault monitor could never see them.
+ *
+ * `v1OnError` declares `mcpjam_internal` for the whole v1 router, and that
+ * declaration applies to the UNCLASSIFIED 5xx only — `INTERNAL_ERROR` is the
+ * one code asserting nothing about a hop. These pin both halves of that rule
+ * on the route the measurement came from.
+ */
+describe("v1 eval-ingest — failure attribution", () => {
+  const originalEnv = { CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL };
+  const originalFetch = global.fetch;
+
+  function appCapturingMeta(): { app: Hono; meta: () => unknown } {
+    let captured: unknown;
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      await next();
+      captured = c.get("webErrorMeta" as never);
+    });
+    app.route("/api/v1", v1Routes);
+    return { app, meta: () => captured };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    process.env.CONVEX_HTTP_URL = originalEnv.CONVEX_HTTP_URL;
+  });
+
+  it("owns an unclassified 500 — the exact class that was invisible", async () => {
+    // End-to-end, not a composition guess: boundary promotion -> mapErrorToV1
+    // -> v1OnError -> webErrorMeta. Every link has silently dropped the origin
+    // at some point in this program's history.
+    global.fetch = vi.fn().mockRejectedValue(new Error("boom")) as never;
+    const { app, meta } = appCapturingMeta();
+
+    await request(
+      app,
+      "/api/v1/projects/default/eval-ingest/report",
+      JSON.stringify({ results: [] })
+    );
+
+    expect(meta()).toMatchObject({ origin: "mcpjam", code: "INTERNAL_ERROR" });
+    // And a real message, where the row used to carry none at all.
+    expect(String((meta() as { message?: string }).message)).toContain("boom");
+  });
+
+  it("does NOT claim a connection-class failure, even on this route", async () => {
+    // `SERVER_UNREACHABLE` carries positive evidence about an upstream hop, and
+    // a boundary declaration must not overrule evidence. Documented gap rather
+    // than an oversight: on a route whose only outbound hop IS our own Convex
+    // this reads conservatively, and closing it needs a narrower signal than a
+    // router-wide declaration — not a louder one.
+    global.fetch = vi
+      .fn()
+      .mockRejectedValue(new TypeError("fetch failed")) as never;
+    const { app, meta } = appCapturingMeta();
+
+    await request(
+      app,
+      "/api/v1/projects/default/eval-ingest/report",
+      JSON.stringify({ results: [] })
+    );
+
+    expect(meta()).toMatchObject({ code: "SERVER_UNREACHABLE" });
+    expect((meta() as { origin?: string }).origin).not.toBe("mcpjam");
+  });
+
+  it("does NOT claim a caller's own bad input", async () => {
+    // Returned, not thrown, so it never reaches `v1OnError` — this is the path
+    // `v1Error`'s own stash covers. It must still never read `mcpjam`.
+    const { app, meta } = appCapturingMeta();
+
+    await request(
+      app,
+      "/api/v1/projects/default/eval-ingest/report",
+      "not json at all"
+    );
+
+    expect(meta()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((meta() as { origin?: string }).origin).not.toBe("mcpjam");
+  });
+
+  it("stashes meta for a RETURNED timeout, which never reaches v1OnError", async () => {
+    global.fetch = vi.fn().mockRejectedValue(
+      Object.assign(new Error("The operation was aborted"), {
+        name: "AbortError",
+      })
+    ) as never;
+    const { app, meta } = appCapturingMeta();
+
+    await request(
+      app,
+      "/api/v1/projects/default/eval-ingest/report",
+      JSON.stringify({ results: [] })
+    );
+
+    // A 504 that returns directly: before the backstop in `v1Error` this row
+    // logged as the bare `internal_error` fallback with no message.
+    expect(meta()).toMatchObject({ code: "TIMEOUT", status: 504 });
+  });
+});
