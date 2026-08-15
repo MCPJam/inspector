@@ -1730,7 +1730,10 @@ export async function executeLocalServerConnect(
           new WebRouteError(
             401,
             ErrorCode.UNAUTHORIZED,
-            `Connection failed for server ${serverDisplayName}: the server requires authorization (HTTP 401). Switch Authentication to Auto or OAuth to sign in.`,
+            // Same reasoning as the envelope below: no "Connection failed for
+            // server X:" preamble. `serverName` is already in the details bag
+            // for anyone who needs to attribute it.
+            `This server requires authorization (HTTP 401). Switch Authentication to Auto or OAuth to sign in.`,
             {
               upstreamAuthRequired: true,
               serverId,
@@ -1742,13 +1745,25 @@ export async function executeLocalServerConnect(
         );
       }
     }
+    const failureMessage =
+      error instanceof Error ? error.message : "Unknown error";
     return c.json(
       {
         success: false,
-        error: `Connection failed for server ${serverDisplayName}: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-        details: error instanceof Error ? error.message : "Unknown error",
+        // No "Connection failed for server X:" preamble. It was added to say
+        // WHICH server failed, but every surface that renders this already
+        // knows: the toast fires from that server's own connect, and the error
+        // sits on that server's card. What it actually did was push the
+        // sentence that explains the failure to the second half of the line —
+        // and against an error that names the server itself, repeat it
+        // ("Connection failed for server champions: MCP server "champions"
+        // doesn't support …").
+        //
+        // `serverName` rides in the response for any caller that does need to
+        // attribute it without parsing prose.
+        error: failureMessage,
+        serverName: serverDisplayName,
+        details: failureMessage,
         normalized: describeError(error),
       },
       500
