@@ -40,6 +40,7 @@ import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/scenario-server-op
 import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
 import { useScenarioTurnRating } from "@/hooks/useScenarioTurnRating";
 import { HostedTurnRating } from "@/components/hosted/hosted-turn-rating";
+import { useScenarioServerReachability } from "@/hooks/hosted/use-scenario-server-reachability";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
@@ -53,6 +54,7 @@ import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capab
 import { ScenarioSurfaceProvider } from "@/contexts/scenario-surface-context";
 import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { ScenarioHostOnboardingOverlays } from "@/components/hosted/ScenarioHostOnboardingOverlays";
+import { ScenarioUnreachableServersBanner } from "@/components/hosted/ScenarioUnreachableServersBanner";
 import { useScenarioHostIntroGate } from "@/components/hosted/useScenarioHostIntroGate";
 import {
   getScenarioHostLabel,
@@ -580,25 +582,87 @@ export function ScenarioChatPage({
     isAuthenticated,
   });
 
+  // Only servers the OAuth machinery never touches. Every `useOAuth` row —
+  // including a discover-mode one, which the mirror also reports as true — is
+  // the gate's: it verifies them against this same /validate endpoint, and a
+  // row that is merely waiting for consent, or that answers 401 until it gets
+  // it, is not an unreachable server. Probing those here would double-connect
+  // and mislabel them.
+  const reachabilityCandidates = useMemo(
+    () => sessionServersActive.filter((server) => !server.useOAuth),
+    [sessionServersActive]
+  );
+
+  const reachabilityByServerId = useScenarioServerReachability(
+    reachabilityCandidates,
+    !!session
+  );
+
   const scenarioServerConfigs = useMemo(() => {
     if (!session) return {};
 
     return Object.fromEntries(
-      sessionServersActive.map((server) => [
-        server.serverName,
-        {
-          name: server.serverName,
-          config: {
-            url: "https://scenario-chat.invalid",
-          } as any,
-          lastConnectionTime: new Date(),
-          connectionStatus: "connected",
-          retryCount: 0,
-          enabled: true,
-        } satisfies ServerWithName,
-      ])
+      sessionServersActive.map((server) => {
+        // Reported: a scenario whose only server never connected ran a full
+        // session with a green dot next to it. This map drives the composer's
+        // server list, so a server that did not answer must not claim it did.
+        // Servers still owned by the OAuth gate have no reachability entry and
+        // keep the optimistic status the gate's own flow depends on.
+        const reachability = reachabilityByServerId[server.serverId];
+        const connectionStatus =
+          reachability === "unreachable"
+            ? "failed"
+            : reachability === "checking"
+              ? "connecting"
+              : "connected";
+
+        return [
+          server.serverName,
+          {
+            name: server.serverName,
+            config: {
+              url: "https://scenario-chat.invalid",
+            } as any,
+            lastConnectionTime: new Date(),
+            connectionStatus,
+            retryCount: 0,
+            enabled: true,
+          } satisfies ServerWithName,
+        ];
+      })
     );
-  }, [session, sessionServersActive]);
+  }, [session, sessionServersActive, reachabilityByServerId]);
+
+  const reachableSessionServerIds = useMemo(
+    () =>
+      sessionServersActive
+        .filter(
+          (server) => reachabilityByServerId[server.serverId] !== "unreachable"
+        )
+        .map((server) => server.serverId),
+    [sessionServersActive, reachabilityByServerId]
+  );
+
+  const unreachableServerNames = useMemo(
+    () =>
+      sessionServersActive
+        .filter(
+          (server) => reachabilityByServerId[server.serverId] === "unreachable"
+        )
+        .map((server) => server.serverName),
+    [sessionServersActive, reachabilityByServerId]
+  );
+
+  // Sending before the probes answer is the silent failure in a new outfit: a
+  // server still being checked is withheld from the turn, so the model would
+  // answer with none of the tools the tester was sent here to exercise.
+  const isCheckingServerReachability = useMemo(
+    () =>
+      sessionServersActive.some(
+        (server) => reachabilityByServerId[server.serverId] === "checking"
+      ),
+    [sessionServersActive, reachabilityByServerId]
+  );
 
   const hostedServerIdsByName = useMemo(() => {
     if (!session) return {};
@@ -1069,6 +1133,7 @@ export function ScenarioChatPage({
 
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ScenarioUnreachableServersBanner serverNames={unreachableServerNames} />
         <ChatTabV2
           connectedOrConnectingServerConfigs={scenarioServerConfigs}
           selectedServerNames={sessionServersActive.map(
@@ -1082,9 +1147,13 @@ export function ScenarioChatPage({
             accessVersion: session.accessVersion,
             scenarioSurface: session.surface ?? "share_link",
             projectId: session.payload.projectId,
-            selectedServerIds: sessionServersActive.map(
-              (server) => server.serverId
-            ),
+            // `hostedContext.selectedServerIds` wins over the status-filtered
+            // names inside ChatTabV2, so a server proven unreachable has to be
+            // dropped HERE or the turn still ships it. Sending it anyway costs
+            // the whole turn: one server that fails `listTools` rejects the
+            // Promise.all behind the tool set. The tester already has the
+            // banner saying why it's missing.
+            selectedServerIds: reachableSessionServerIds,
             requestRefreshAccessVersion,
             refreshAccessSession,
             onAccessRevoked: handleHostedAccessRevoked,
@@ -1106,8 +1175,14 @@ export function ScenarioChatPage({
               ),
           }}
           onOAuthRequired={handleOAuthRequired}
-          scenarioComposerBlocked={introGate.composerBlocked}
-          scenarioComposerBlockedReason="Get started or authorize to send messages…"
+          scenarioComposerBlocked={
+            introGate.composerBlocked || isCheckingServerReachability
+          }
+          scenarioComposerBlockedReason={
+            introGate.composerBlocked
+              ? "Get started or authorize to send messages…"
+              : "Connecting to this session's tools…"
+          }
           scenarioOptionalInventory={scenarioOptionalInventory}
           onEnableScenarioOptionalServer={handleEnableScenarioOptionalServer}
           renderAssistantTurnActions={
