@@ -361,6 +361,151 @@ export interface PlatformEvalCase {
   updatedAt: number | null;
 }
 
+// ── Run comparison ───────────────────────────────────────────────────────────
+//
+// The public projection of the backend's run diff. Three naming decisions are
+// load-bearing and deliberate:
+//
+//   1. The internal diff's top-level `scores` is run-summary COUNTERS, and it
+//      collides by name with score-contract data. On this wire it is
+//      `passSummary`, and the word "scores" appears only inside
+//      `scoreContract` / `scoreDeltas`.
+//   2. `traceBlobIds` never crosses this boundary. The internal diff carries
+//      `_storage` ids; the DTO whitelist drops them.
+//   3. New rate fields are FRACTIONS and carry no `Percent` in the name. The
+//      one legacy percent field keeps its name so nobody mistakes it.
+
+/** A base/compare pair with its delta. Rates in these are fractions. */
+export interface PlatformNumericDiff {
+  base: number | null;
+  compare: number | null;
+  delta: number | null;
+  percentDelta: number | null;
+}
+
+export type PlatformCompareCaseStatus =
+  | "unchanged_passed"
+  | "unchanged_failed"
+  | "regressed"
+  | "fixed"
+  | "new_case"
+  | "removed_case"
+  | "changed";
+
+export interface PlatformScoreContractSide {
+  evaluationConfigHash: string | null;
+  /** `null` means NO verdict — treat it exactly like `"invalid"` for gating. */
+  scoreIntegrity: "valid" | "invalid" | null;
+  scoredIterations: number;
+  quarantinedIterations: number;
+}
+
+export interface PlatformScoreContractScorer {
+  scorerId: string;
+  gating: boolean;
+  deterministic: boolean;
+  /** Same id, different definition hash — the two sides did not measure alike. */
+  definitionChanged: boolean;
+  passRate: PlatformNumericDiff;
+  meanValue: PlatformNumericDiff;
+  errorCount: { base: number; compare: number };
+}
+
+export interface PlatformScoreContractDiff {
+  base: PlatformScoreContractSide;
+  compare: PlatformScoreContractSide;
+  evaluationConfigChanged: boolean;
+  scorers: PlatformScoreContractScorer[];
+}
+
+export interface PlatformCaseScoreSide {
+  status: "scored" | "error" | "skipped" | "not_applicable";
+  value: number | null;
+  passed: boolean | null;
+}
+
+export interface PlatformCaseScoreDelta {
+  scorerId: string;
+  gating: boolean;
+  deterministic: boolean;
+  definitionChanged: boolean;
+  base: PlatformCaseScoreSide | null;
+  compare: PlatformCaseScoreSide | null;
+  value: PlatformNumericDiff;
+}
+
+export interface PlatformRunCompareCaseSide {
+  outcome: "passed" | "failed" | "absent";
+  /** Iteration ids are public; `traceBlobIds` are NOT and never appear here. */
+  iterationIds: string[];
+  representativeIterationId: string | null;
+  error: string | null;
+}
+
+export interface PlatformRunCompareCase {
+  caseKey: string;
+  title: string;
+  status: PlatformCompareCaseStatus;
+  /** The scenario's own config (prompt, steps, expectations) changed. */
+  configChanged: boolean;
+  /** This case's evaluation config changed. */
+  evaluationConfigChanged: boolean;
+  scoreDeltas: PlatformCaseScoreDelta[];
+  base: PlatformRunCompareCaseSide;
+  compare: PlatformRunCompareCaseSide;
+}
+
+export interface PlatformRunCompareSide {
+  id: string;
+  runNumber: number;
+  result: string;
+  createdAt: number;
+  completedAt: number | null;
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    passRate: number;
+  } | null;
+}
+
+/**
+ * The compare wire.
+ *
+ * There is deliberately NO `baseline_not_found` member. A missing baseline
+ * arrives as a thrown `PlatformApiError` (404 with
+ * `details.reason === "BASELINE_NOT_FOUND"`), so a caller that forgets to
+ * handle it fails loudly instead of reading fields off a union member it never
+ * narrowed.
+ */
+export interface PlatformRunCompare {
+  suite: { id: string; name: string };
+  baseline: {
+    policy: "previous_completed" | "run";
+    baseRunId: string;
+  };
+  baseRun: PlatformRunCompareSide;
+  compareRun: PlatformRunCompareSide;
+  /**
+   * Run-summary counters — NOT score-contract data. Named `passSummary` here
+   * precisely because the internal field is called `scores` and the collision
+   * is a live foot-gun.
+   */
+  passSummary: {
+    passRatePercent: PlatformNumericDiff;
+    total: PlatformNumericDiff;
+    passed: PlatformNumericDiff;
+    failed: PlatformNumericDiff;
+  };
+  metrics: {
+    wallDurationMs: PlatformNumericDiff;
+    totalTokens: PlatformNumericDiff;
+    estimatedCostUsd: PlatformNumericDiff;
+  };
+  scoreContract: PlatformScoreContractDiff;
+  cases: PlatformRunCompareCase[];
+}
+
 export interface PlatformEvalSuiteDeleted {
   id: string;
   deleted: true;

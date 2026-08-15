@@ -1483,6 +1483,9 @@ describe("operation catalog consistency", () => {
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
+    // baseRunId is deliberately absent from the minimal input: omitting it is
+    // the common path (compare against the nearest completed predecessor).
+    compare_eval_run: { project: "p", runId: "r" },
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },

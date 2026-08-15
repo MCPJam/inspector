@@ -290,6 +290,9 @@ export type {
   DiffServerSnapshotsOptions,
   CollectAndDiffServerSnapshotInput,
 } from "./server-diff.js";
+// Adapts a run comparison into the same StructuredRunReport the server-diff
+// reporter uses, so `--reporter junit-xml` needs no second renderer.
+export { buildRunCompareReport } from "./run-compare.js";
 export {
   validateToolCallEnvelope,
   evaluateToolCallOutcome,
