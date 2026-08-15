@@ -54,8 +54,18 @@ export const TERMINAL_RUN_STATUSES = new Set([
   "timed_out",
 ]);
 
-/** Terminal run statuses that make a gate undecidable rather than failed. */
-const NON_VERDICT_STATUSES = new Set(["cancelled", "timed_out"]);
+/**
+ * Terminal run statuses that make a gate undecidable rather than failed.
+ *
+ * `"failed"` belongs here because it is an EXECUTION state, not a verdict:
+ * the platform vocabulary separates `status` ("completed" | "failed" |
+ * "cancelled") from `result` ("passed" | "failed"), and a run whose runner
+ * crashed mid-flight still carries the summary of the iterations it managed
+ * to record. Gating that partial summary is fail-OPEN — a run that dies after
+ * 3 passing iterations of 30 reads as a 100% pass rate and exits 0. Only
+ * `status: "completed"` has a summary that describes the whole run.
+ */
+const NON_VERDICT_STATUSES = new Set(["cancelled", "timed_out", "failed"]);
 
 /**
  * Whether a hosted run's status means "no verdict was established", as opposed

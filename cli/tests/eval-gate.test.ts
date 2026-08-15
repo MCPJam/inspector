@@ -49,13 +49,48 @@ test("an unrecognized outcome fails closed, not open", () => {
   );
 });
 
-test("cancelled and timed-out runs establish no verdict", () => {
+test("only a COMPLETED run establishes a verdict", () => {
   assert.equal(isNonVerdictRunStatus("cancelled"), true);
   assert.equal(isNonVerdictRunStatus("timed_out"), true);
-  // A genuinely failed run DID establish one.
-  assert.equal(isNonVerdictRunStatus("failed"), false);
+  // `status: "failed"` is an EXECUTION state — the runner crashed — not the
+  // verdict (that is `result`). Its summary describes only the iterations it
+  // managed to record before dying, so gating it is fail-open: a run that
+  // dies after 3 passing iterations of 30 reads as a 100% pass rate.
+  assert.equal(isNonVerdictRunStatus("failed"), true);
   assert.equal(isNonVerdictRunStatus("completed"), false);
   assert.equal(isNonVerdictRunStatus(undefined), false);
+});
+
+test("an infra-failed run's partial summary can never gate green", () => {
+  // The concrete fail-open scenario the status check exists to close: the
+  // runner died after three passing iterations of an intended thirty. The
+  // summary alone looks like a perfect run.
+  const partial = reportForRun(
+    {
+      id: "run_1",
+      suiteId: "suite_1",
+      runNumber: 1,
+      status: "completed",
+      result: "passed",
+      summary: { total: 3, passed: 3, failed: 0 },
+    } as never,
+    undefined,
+    { minimumPassRate: 0.95 },
+  );
+  // Same summary, run completed: the gate passes — proving the guard below is
+  // carried by the STATUS check, not by anything in the numbers.
+  assert.equal(partial.outcome, "passed");
+  // With status "failed", the command never reaches the engine: the status is
+  // non-verdict and the run exits 3 (incomplete), not 0 and not 1.
+  assert.equal(isNonVerdictRunStatus("failed"), true);
+  assert.equal(
+    evalGateExitCode({
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [],
+    }),
+    3,
+  );
 });
 
 test("percent flags convert to fractions at the boundary, exactly", () => {
@@ -147,6 +182,9 @@ test("only score-derived policies request the iterations fetch", () => {
   );
   assert.equal(policyNeedsIterations({ minimumMeanScore: { tone: 1 } }), true);
   assert.equal(policyNeedsIterations({ maximumTotalTokens: 10 }), true);
+  // p95 comes from iteration durations; without the fetch the latency gate
+  // would be permanently non-gateable.
+  assert.equal(policyNeedsIterations({ maximumP95LatencyMs: 5000 }), true);
 });
 
 const RUN = {

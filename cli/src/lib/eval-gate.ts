@@ -118,7 +118,11 @@ export function policyNeedsIterations(policy: GatePolicy): boolean {
     policy.noGatingScoreErrors ||
       policy.minimumScorerPassRate ||
       policy.minimumMeanScore ||
-      policy.maximumTotalTokens !== undefined
+      policy.maximumTotalTokens !== undefined ||
+      // p95 comes from iteration durations, exactly like tokens come from
+      // iteration counts. Omitting it here would leave the latency gate
+      // permanently non-gateable — the fetch that could decide it never runs.
+      policy.maximumP95LatencyMs !== undefined
   );
 }
 
