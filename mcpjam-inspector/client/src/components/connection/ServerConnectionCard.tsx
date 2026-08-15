@@ -49,6 +49,10 @@ import {
   getServerUrl,
 } from "./server-card-utils";
 import { track } from "@/lib/analytics";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import type { ServerDetailTab } from "./ServerDetailModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
 import { generateAgentBrief } from "@/lib/generate-agent-brief";
@@ -143,6 +147,30 @@ export function ServerConnectionCard({
   isMovingToProject = false,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
+
+  // A pinned protocol version the server doesn't offer is the one connect
+  // failure with an exact, one-click fix, so the card offers it instead of
+  // leaving the user to find the dropdown. `usePreviewedHostId` is the shared
+  // subscription every host-aware surface reads — the pin comes from whichever
+  // client is being previewed, so that is the client to open.
+  const navigate = useAppNavigate();
+  const [previewedHostId] = usePreviewedHostId(projectId ?? null);
+  const isProtocolPinFailure = isProtocolVersionPinFailure(
+    server.lastNormalizedError,
+    server.lastError,
+  );
+  const protocolPinAction = isProtocolPinFailure
+    ? {
+        label: "Change protocol version",
+        onClick: () => {
+          track("change_protocol_version_clicked", {
+            location: "server_connection_card",
+            has_host_id: Boolean(previewedHostId),
+          });
+          navigate(buildHostFocusTabPath(previewedHostId, "protocol"));
+        },
+      }
+    : undefined;
 
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -988,6 +1016,7 @@ export function ServerConnectionCard({
                 // change, not just at mount.
                 open={isErrorExpanded}
                 onOpenChange={setIsErrorExpanded}
+                action={protocolPinAction}
               />
               {server.retryCount > 0 && (
                 <div className="mt-1 text-xs text-muted-foreground">

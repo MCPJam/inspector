@@ -306,6 +306,41 @@ describe("startSuiteRunWithRecorder", () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
+  it("translates ENV_MODEL_REQUIRED into a branchable 409, with no echoes sent", async () => {
+    // The backend refuses a headless launch whose environment resolves to no
+    // model. Untranslated it reaches the caller as a bare Convex rejection —
+    // reading as an internal fault rather than the one-field misconfiguration
+    // it is. NOT gated on the drift echoes: this refusal is a property of the
+    // environment itself, not of a precondition we sent.
+    const { ConvexError } = await import("convex/values");
+    const mutationMock = vi.fn().mockRejectedValueOnce(
+      new ConvexError({
+        code: "ENV_MODEL_REQUIRED",
+        message: 'Environment "Prod" has no model to run.',
+        details: { environmentId: "env-1", hostId: "h1" },
+      })
+    );
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient: { mutation: mutationMock } as any,
+        suiteId: "suite-1",
+        serverIds: ["ps_1"],
+        environmentId: "env-1",
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: 'Environment "Prod" has no model to run.',
+      details: {
+        code: "ENV_MODEL_REQUIRED",
+        environmentId: "env-1",
+        // The same slug the v1 environments resolve route emits, so a caller
+        // branching on `details.reason` gets one answer from either surface.
+        reason: "environment_model_required",
+      },
+    });
+  });
+
   it("marks the suite run failed when iteration precreate fails", async () => {
     const mutationMock = vi
       .fn()

@@ -728,6 +728,27 @@ export type EvalSuiteRun = {
       rubricHits: string[];
     }>;
   };
+  // Groundedness judge (second named advisory judge): grades whether each
+  // case's final answer is SUPPORTED by its tool trajectory — a different
+  // question from goal completion. Mirrors the Convex `v.object` by hand.
+  // Advisory only — never changes the run's deterministic `passed`/`result`.
+  groundednessJobId?: string;
+  groundednessStatus?: "pending" | "completed" | "failed";
+  groundedness?: {
+    summary: string;
+    generatedAt: number;
+    modelUsed: string;
+    threshold: number;
+    cases: Array<{
+      caseKey: string;
+      /** Fraction of load-bearing claims the trajectory supports, in [0,1]. */
+      score: number;
+      passed: boolean;
+      reason: string;
+      /** The specific claims the trajectory does not support. */
+      unsupportedClaims: string[];
+    }>;
+  };
 };
 
 export type EvalRunNumericDiff = {

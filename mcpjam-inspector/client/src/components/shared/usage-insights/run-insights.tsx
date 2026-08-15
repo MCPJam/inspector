@@ -201,7 +201,11 @@ export function signalSentence(
     case "criterion_fail":
       return `"${c.subjectLabel}" failed in ${c.affectedSessions} of ${c.sliceTotal} graded sessions`;
     case "target_failures":
-      return `Failures concentrate on ${c.subjectLabel} (${c.affectedSessions} of ${c.sliceTotal})`;
+      // UNITS ARE SESSIONS. The detector used to have a second fire path off
+      // launch attempts, where this pair counted attempts and the bare
+      // "(1 of 2)" read as sessions. That path is gone (launch outcomes are
+      // reported as target health, never mined), so the noun is stated.
+      return `Tool errors concentrate on ${c.subjectLabel} in ${c.affectedSessions} of ${c.sliceTotal} ${plural(c.sliceTotal, "session")}`;
     case "persona_struggles":
       return `${c.subjectLabel} struggled in ${c.affectedSessions} of ${c.sliceTotal} sessions`;
     case "marginal_pass":
@@ -239,6 +243,29 @@ function ratioLabel(c: RailSignalCandidate): string {
 /** Hallucinated tools and failing criteria are the load-bearing problems. */
 function isBlockingShaped(detector: string): boolean {
   return detector === "hallucinated_tool" || detector === "criterion_fail";
+}
+
+/**
+ * A row may open into Why/Fix ONLY when it names a session that exhibits the
+ * anomaly.
+ *
+ * Cause and recommendation are the model's words. Behind an expander with no
+ * failing session to open, they are an unfalsifiable claim: the reader cannot
+ * check them, and the row's authority comes entirely from the confident prose.
+ * A contrast ("Clean 1") does not count — it proves the anomaly did NOT happen
+ * somewhere, which points at nothing to look at.
+ *
+ * The backend now enforces the same rule at both ends (`isGroundedCandidate`
+ * in the miners, `partitionByLoadedEvidence` before narration). This is the
+ * client's own check, not a mirror of theirs: an older server, a cached
+ * payload, or a future detector can still hand this component a row without
+ * exemplars, and it must degrade to the deterministic sentence rather than
+ * offer prose it cannot back.
+ */
+function canExpand(
+  signal: Pick<RailSignalCandidate, "exemplarSessionIds">,
+): boolean {
+  return signal.exemplarSessionIds.length > 0;
 }
 
 type Row = {
@@ -800,8 +827,8 @@ export function RunInsightsBanner() {
 }
 
 /**
- * Scorecard-adjacent Recommendations: pattern findings as expandable rows
- * matching the criterion scorecard chrome.
+ * Scorecard-adjacent Recommendations: pattern findings as expandable rows.
+ * Card chrome lives on Findings; this is a subsection, not a second card.
  */
 export function RunInsightsRecommendations() {
   const {
@@ -845,17 +872,14 @@ export function RunInsightsRecommendations() {
   if (signals.truncated) caveats.push("newest sessions only");
 
   return (
-    <div
-      className={cn(rows.length > 0 || busy || error ? "mt-4" : undefined)}
-      data-testid="run-insights-recommendations"
-    >
-      <div className="mb-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+    <div data-testid="run-insights-recommendations">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 pt-2.5 pb-2">
         <h3 className="text-sm font-semibold tracking-tight">Recommendations</h3>
         <span className="text-xs text-muted-foreground">
           Patterns to investigate across sessions
         </span>
       </div>
-      <div className="overflow-hidden rounded-lg border border-border/60 bg-card/60">
+      <div>
         {busy && rows.length === 0 ? (
           <p
             className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground"
@@ -944,12 +968,15 @@ function RecommendationRow({
   const chip = finding ? STATUS_CHIP[finding.status] : undefined;
   const affected = signal.affectedSessions;
   const headline = signalSentence(signal, { cohort });
-  const hasDetail = Boolean(
-    insight?.rootCause ||
-      insight?.recommendation ||
-      signal.exemplarSessionIds.length ||
-      signal.contrastSessionIds.length,
-  );
+  // Gated on a failing exemplar and nothing else — see `canExpand`. An
+  // exemplar alone is worth opening for (the session chips are the point);
+  // prose without one is not.
+  const hasDetail = canExpand(signal);
+  // Evidence can disappear under an OPEN row: signals are a live subscription,
+  // and a refresh that drops the exemplars would otherwise leave the model's
+  // prose on screen with nothing behind it. Derived, not stored, so the row
+  // closes the moment it stops qualifying.
+  const isExpanded = hasDetail && expanded;
 
   const toggleDismiss = () => {
     if (!finding) return;
@@ -973,7 +1000,7 @@ function RecommendationRow({
           type="button"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
           disabled={!hasDetail}
-          aria-expanded={expanded}
+          aria-expanded={hasDetail ? isExpanded : undefined}
           aria-label={headline}
           className={cn(
             "flex h-6 min-w-7 shrink-0 items-center justify-center rounded border px-1 font-mono text-xs font-semibold tabular-nums transition-colors",
@@ -990,6 +1017,7 @@ function RecommendationRow({
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
+          aria-expanded={hasDetail ? isExpanded : undefined}
           data-testid="run-insight-headline"
         >
           <span className="min-w-0 flex-1 truncate text-xs font-medium" title={headline}>
@@ -999,7 +1027,7 @@ function RecommendationRow({
             <ChevronRight
               className={cn(
                 "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-90",
+                isExpanded && "rotate-90",
               )}
               aria-hidden="true"
             />
@@ -1032,7 +1060,7 @@ function RecommendationRow({
           ) : null}
         </div>
       </div>
-      {expanded ? (
+      {isExpanded ? (
         <div
           className="space-y-1 border-t border-border/40 bg-muted/20 px-3 py-2 pl-12"
           data-testid="run-insight-detail"
@@ -1057,14 +1085,19 @@ function RecommendationRow({
                 onClick={() => onOpenSession(sessionId)}
               />
             ))}
-            {signal.contrastSessionIds.map((sessionId, i) => (
-              <SessionChip
-                key={sessionId}
-                label={`Clean ${i + 1}`}
-                onClick={() => onOpenSession(sessionId)}
-                subtle
-              />
-            ))}
+            {/* Contrast chips ride ALONGSIDE failing ones, never alone. A
+                lone "Clean 1" reads as evidence for a claim while pointing at
+                a session where the problem did not happen. */}
+            {signal.exemplarSessionIds.length > 0
+              ? signal.contrastSessionIds.map((sessionId, i) => (
+                  <SessionChip
+                    key={sessionId}
+                    label={`Clean ${i + 1}`}
+                    onClick={() => onOpenSession(sessionId)}
+                    subtle
+                  />
+                ))
+              : null}
           </div>
         </div>
       ) : null}
@@ -1202,12 +1235,15 @@ function InsightRow({
   const dismissed =
     dismissedOptimistic ?? Boolean(finding && finding.dismissedAt !== null);
   const chip = finding ? STATUS_CHIP[finding.status] : undefined;
-  const hasDetail = Boolean(
-    insight?.rootCause ||
-      insight?.recommendation ||
-      signal.exemplarSessionIds.length ||
-      signal.contrastSessionIds.length,
-  );
+  // Gated on a failing exemplar and nothing else — see `canExpand`. An
+  // exemplar alone is worth opening for (the session chips are the point);
+  // prose without one is not.
+  const hasDetail = canExpand(signal);
+  // Evidence can disappear under an OPEN row: signals are a live subscription,
+  // and a refresh that drops the exemplars would otherwise leave the model's
+  // prose on screen with nothing behind it. Derived, not stored, so the row
+  // closes the moment it stops qualifying.
+  const isExpanded = hasDetail && expanded;
 
   const toggleDismiss = () => {
     if (!finding) return;
@@ -1231,6 +1267,7 @@ function InsightRow({
           type="button"
           className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
+          aria-expanded={hasDetail ? isExpanded : undefined}
           data-testid="run-insight-headline"
         >
           <span
@@ -1249,7 +1286,7 @@ function InsightRow({
             <ChevronRight
               className={cn(
                 "mt-1 size-3 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-90",
+                isExpanded && "rotate-90",
               )}
               aria-hidden="true"
             />
@@ -1281,7 +1318,7 @@ function InsightRow({
         ) : null}
       </div>
 
-      {expanded ? (
+      {isExpanded ? (
         <div
           className="mt-1 space-y-1 pl-3.5"
           data-testid="run-insight-detail"
@@ -1306,14 +1343,19 @@ function InsightRow({
                 onClick={() => onOpenSession(sessionId)}
               />
             ))}
-            {signal.contrastSessionIds.map((sessionId, i) => (
-              <SessionChip
-                key={sessionId}
-                label={`Clean ${i + 1}`}
-                onClick={() => onOpenSession(sessionId)}
-                subtle
-              />
-            ))}
+            {/* Contrast chips ride ALONGSIDE failing ones, never alone. A
+                lone "Clean 1" reads as evidence for a claim while pointing at
+                a session where the problem did not happen. */}
+            {signal.exemplarSessionIds.length > 0
+              ? signal.contrastSessionIds.map((sessionId, i) => (
+                  <SessionChip
+                    key={sessionId}
+                    label={`Clean ${i + 1}`}
+                    onClick={() => onOpenSession(sessionId)}
+                    subtle
+                  />
+                ))
+              : null}
           </div>
         </div>
       ) : null}
