@@ -130,6 +130,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/computer/reset": "resetComputer",
 
   // Eval suites and cases
+  "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
@@ -152,6 +153,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Eval runs
   "post /projects/{projectId}/eval-runs": "createEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
