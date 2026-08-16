@@ -100,6 +100,22 @@ describe("useJsonTreeState", () => {
     );
   });
 
+  it("still collapses a wide container sitting exactly at the scan cap", () => {
+    const root = deeplyNested(100);
+    let cursor = root;
+    while (cursor.a) cursor = cursor.a as Record<string, unknown>;
+    // The node at the cap is wide, and its entries are never needed.
+    for (let i = 0; i < 1_000; i++) cursor[`k${i}`] = i;
+
+    const { result } = renderHook(() =>
+      useJsonTreeState({ value: root, defaultExpandDepth: 2 }),
+    );
+
+    // Depths 2 through 100, with the wide node at the cap still collapsed.
+    expect(result.current.collapsedPaths.size).toBe(99);
+    expect(result.current.isCollapsed(`root${".a".repeat(100)}`)).toBe(true);
+  });
+
   it("collapseAll collapses every container through the scan cap", () => {
     const { result } = renderHook(() => useJsonTreeState({}));
 

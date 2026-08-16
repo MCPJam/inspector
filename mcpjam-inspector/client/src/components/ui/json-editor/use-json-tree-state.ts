@@ -24,6 +24,14 @@ interface UseJsonTreeStateReturn {
 // levels: anything deeper stays hidden behind a collapsed ancestor anyway.
 const MAX_COLLAPSE_SCAN_DEPTH = 100;
 
+// Whether a container holds anything, without materializing its entries.
+function hasEntry(value: object): boolean {
+  for (const key in value) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) return true;
+  }
+  return false;
+}
+
 // Walks iteratively rather than recursively: deeply nested values overflowed
 // the call stack (INSPECTOR-CLIENT-232).
 function getPathsAtDepth(value: unknown, maxDepth: number): string[] {
@@ -36,6 +44,15 @@ function getPathsAtDepth(value: unknown, maxDepth: number): string[] {
     const node = stack.pop()!;
     if (typeof node.value !== "object" || node.value === null) continue;
 
+    // At the cap the children are never visited, so only collapsibility is
+    // still in question — answer it without enumerating a wide container.
+    if (node.depth >= MAX_COLLAPSE_SCAN_DEPTH) {
+      if (node.depth >= maxDepth && hasEntry(node.value)) {
+        paths.push(node.path);
+      }
+      continue;
+    }
+
     // Object.entries covers arrays too, and yields only populated indexes: a
     // sparse array costs nothing per hole, where mapping over one allocates a
     // tuple per hole (and holes cannot be destructured in the loop below).
@@ -45,7 +62,6 @@ function getPathsAtDepth(value: unknown, maxDepth: number): string[] {
     if (node.depth >= maxDepth) {
       paths.push(node.path);
     }
-    if (node.depth >= MAX_COLLAPSE_SCAN_DEPTH) continue;
 
     for (const [key, child] of entries) {
       stack.push({
