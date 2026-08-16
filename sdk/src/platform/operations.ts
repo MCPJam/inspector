@@ -36,6 +36,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
@@ -55,6 +56,7 @@ import type {
   PlatformPersona,
   PlatformPersonaDeleted,
   PlatformRunScorecard,
+  PlatformSessionSummary,
   PlatformSwarm,
   PlatformSwarmArchived,
   PlatformSwarmFinding,
@@ -2425,6 +2427,52 @@ export const getEvalRunOperation: PlatformOperation<
   },
 };
 
+const compareEvalRunInput = evalRunScopedInput.extend({
+  baseRunId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite.",
+    ),
+});
+
+export type CompareEvalRunInput = z.infer<typeof compareEvalRunInput>;
+
+export type CompareEvalRunResult = {
+  project: SelectedProjectInfo;
+  compare: PlatformRunCompare;
+};
+
+export const compareEvalRunOperation: PlatformOperation<
+  CompareEvalRunInput,
+  CompareEvalRunResult
+> = {
+  name: "compare_eval_run",
+  title: "Compare MCPJam eval runs",
+  description:
+    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
+  readOnly: true,
+  inputSchema: compareEvalRunInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const compare = await client.compareEvalRun(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        baseRunId: input.baseRunId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), compare };
+  },
+};
+
 const evalRunIterationsInput = evalRunScopedInput.extend({
   cursor: z
     .string()
@@ -2958,6 +3006,138 @@ export const listChatSessionsOperation: PlatformOperation<
     );
     return {
       ...(project ? { project: toSelectedProjectInfo(project) } : {}),
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const SESSION_SOURCE_TYPES = [
+  "direct",
+  "chatbox",
+  "eval",
+  "swarm",
+] as const;
+
+const searchSessionsInput = z.object({
+  query: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Search terms. Required — this operation does not list."),
+  scope: z
+    .enum(["titles", "transcripts"])
+    .optional()
+    .describe(
+      "What to search. 'titles' (default) matches session titles and first messages across the whole corpus; 'transcripts' matches what was actually said inside conversations.",
+    ),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  sourceTypes: z
+    .array(z.enum(SESSION_SOURCE_TYPES))
+    .min(1)
+    .optional()
+    .describe(
+      "Restrict to these session surfaces. Omit to search all available surfaces.",
+    ),
+  status: z
+    .enum(["active", "archived"])
+    .optional()
+    .describe("Filter by session status. Defaults to active."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe("Maximum number of sessions to return per page."),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Opaque pagination cursor from a previous response. Page with the same query and scope you opened with.",
+    ),
+});
+
+export type SearchSessionsInput = z.infer<typeof searchSessionsInput>;
+
+export type SearchSessionsResult = {
+  project: SelectedProjectInfo;
+  scope: "titles" | "transcripts";
+  items: PlatformSessionSummary[];
+  nextCursor?: string;
+};
+
+export const searchSessionsOperation: PlatformOperation<
+  SearchSessionsInput,
+  SearchSessionsResult
+> = {
+  name: "search_sessions",
+  title: "Search MCPJam sessions",
+  description:
+    "Search conversation sessions in a project across every surface (Playground, user testing, evals, swarms), ranked by relevance. " +
+    "scope=titles (default) searches session titles and opening messages; scope=transcripts searches what was said inside the conversations. " +
+    "Older sessions (created before 2026-08-14) are EXCLUDED from transcript search — they cannot match at all; use scope=titles to find them. " +
+    "Every result carries a link to open the session.",
+  readOnly: true,
+  inputSchema: searchSessionsInput,
+  async execute(input, { client, signal }) {
+    // Re-checked here, not just in the schema: `execute()` is called directly
+    // by surfaces that never parse the schema (the CLI binding, raw callers).
+    // The endpoint treats a blank `q` as an EMPTY SEARCH — so a blank query
+    // reaching it would return the project's recency feed, which this
+    // operation promises never to do.
+    const query = input.query?.trim() ?? "";
+    if (query.length === 0) {
+      throw operationInputError(
+        "query is required — search_sessions searches, it does not list.",
+      );
+    }
+
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const requestedScope = input.scope ?? "titles";
+    const page = await client.listSessions(
+      {
+        projectId: project.id,
+        q: query,
+        scope: requestedScope,
+        sourceTypes: input.sourceTypes,
+        status: input.status,
+        limit: input.limit,
+        cursor: input.cursor,
+      },
+      { signal },
+    );
+
+    // FAIL CLOSED on version skew. A backend that predates `scope` ignores the
+    // unknown query param, runs a title search, and answers without the echo.
+    // Returning those rows would label title matches as transcript matches —
+    // an answer the caller cannot detect is wrong. Only checked for a
+    // non-default scope: `titles` is what an old backend does anyway, so its
+    // results are correct with or without the marker.
+    if (requestedScope !== "titles" && page.scope !== requestedScope) {
+      throw new PlatformApiError(
+        "this backend does not support transcript search; retry with scope=titles",
+        "UNSUPPORTED",
+        // `status: 0` like every other client-synthesized error: the request
+        // itself returned 200, so quoting a server status would misreport
+        // what happened.
+        { status: 0 },
+      );
+    }
+
+    return {
+      project: toSelectedProjectInfo(project),
+      scope: requestedScope,
       items: page.items,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
@@ -7054,6 +7234,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
@@ -7063,6 +7244,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listJourneysOperation,
   listJourneyRunsOperation,
   getJourneyRunOperation,

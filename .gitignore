@@ -14,6 +14,7 @@ cli/dist/
 sdk/dist/
 chat-ui/dist/
 widget-react/dist/
+vitest/dist/
 
 # Local git worktrees checked out under the repo
 worktrees/
