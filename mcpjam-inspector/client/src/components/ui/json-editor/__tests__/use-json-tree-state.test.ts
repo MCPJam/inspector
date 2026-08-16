@@ -116,6 +116,17 @@ describe("useJsonTreeState", () => {
     expect(result.current.isCollapsed(`root${".a".repeat(100)}`)).toBe(true);
   });
 
+  it("still collapses at the cap when the requested expand depth exceeds it", () => {
+    const { result } = renderHook(() =>
+      useJsonTreeState({ value: deeplyNested(50_000), defaultExpandDepth: 200 }),
+    );
+
+    // Without clamping, nothing satisfies depth >= 200 before the cap stops the
+    // walk, so the set comes back empty and the whole value renders expanded.
+    expect(result.current.isCollapsed(`root${".a".repeat(100)}`)).toBe(true);
+    expect(result.current.collapsedPaths.size).toBe(1);
+  });
+
   it("collapseAll collapses every container through the scan cap", () => {
     const { result } = renderHook(() => useJsonTreeState({}));
 

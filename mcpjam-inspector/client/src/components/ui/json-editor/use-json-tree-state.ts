@@ -34,7 +34,11 @@ function hasEntry(value: object): boolean {
 
 // Walks iteratively rather than recursively: deeply nested values overflowed
 // the call stack (INSPECTOR-CLIENT-232).
-function getPathsAtDepth(value: unknown, maxDepth: number): string[] {
+function getPathsAtDepth(value: unknown, requestedDepth: number): string[] {
+  // Clamped so the cap always lands on or past the expand depth: otherwise a
+  // requested depth beyond the cap collapses nothing and the whole deep value
+  // renders expanded, which is the crash this walk exists to avoid.
+  const maxDepth = Math.min(requestedDepth, MAX_COLLAPSE_SCAN_DEPTH);
   const paths: string[] = [];
   const stack: Array<{ value: unknown; path: string; depth: number }> = [
     { value, path: "root", depth: 0 },
