@@ -289,6 +289,32 @@ export function parseSwarmSessionParams(search: string): {
   };
 }
 
+/**
+ * Build a deep-link to the cross-surface Sessions page, optionally focused on
+ * one session.
+ *
+ * Unlike {@link buildSwarmSessionPath} this carries no selection chain: the
+ * Sessions detail pane loads by `threadId` alone (`ShareUsageThreadDetail`
+ * subscribes per-thread), so a link never has to describe how to page a list
+ * to the row. That is what lets the backend mint `/sessions?session=…` as the
+ * universal permalink fallback for a session whose surface-native target does
+ * not exist (an eval Quick Run, a session whose parent run was deleted).
+ *
+ * `project` is threaded explicitly rather than inherited from the recipient's
+ * picker: `/sessions` has no project segment in its path, so without it the
+ * page renders whatever project the viewer was last parked on rather than the
+ * one the session belongs to.
+ */
+export function buildSessionsPath(
+  opts: { session?: string; project?: string } = {}
+): string {
+  const search = new URLSearchParams();
+  if (opts.session) search.set("session", opts.session);
+  if (opts.project) search.set("project", opts.project);
+  const query = search.toString();
+  return query ? `${routePaths.sessions}?${query}` : routePaths.sessions;
+}
+
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,
