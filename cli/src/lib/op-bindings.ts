@@ -135,6 +135,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_suite: { command: "eval run" },
   cancel_eval_run: { command: "eval cancel" },
   get_eval_run: { command: "eval status" },
+  compare_eval_run: { command: "eval compare" },
   list_eval_run_iterations: { command: "eval iterations" },
   get_eval_iteration_trace: { command: "eval trace" },
   get_eval_run_steps: { command: "eval steps" },
@@ -189,6 +190,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_chatboxes: { command: "chatboxes list" },
   get_chatbox: { command: "chatboxes get" },
   list_chat_sessions: { command: "chat-sessions list" },
+  search_sessions: { command: "sessions search" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "tunnel" },
