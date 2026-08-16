@@ -1,6 +1,11 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 interface UseJsonTreeStateOptions {
+  /**
+   * The value being rendered. Needed at hook-call time so the initial collapse
+   * state can be derived on the first render rather than after it.
+   */
+  value?: unknown;
   defaultExpandDepth?: number;
   initialCollapsedPaths?: Set<string>;
   onCollapseChange?: (paths: Set<string>) => void;
@@ -12,7 +17,6 @@ interface UseJsonTreeStateReturn {
   toggleCollapse: (path: string) => void;
   expandAll: () => void;
   collapseAll: (value: unknown) => void;
-  initializeFromValue: (value: unknown) => void;
 }
 
 // Each collapsed descendant costs a path string that grows with its depth, so
@@ -32,8 +36,11 @@ function getPathsAtDepth(value: unknown, maxDepth: number): string[] {
     const node = stack.pop()!;
     if (typeof node.value !== "object" || node.value === null) continue;
 
+    // Array.from, not map: map keeps holes, and destructuring a hole in the
+    // loop below throws. Holes materialize as undefined and get skipped by the
+    // object check above, matching the forEach this walk replaced.
     const entries: Array<[string, unknown]> = Array.isArray(node.value)
-      ? node.value.map((item, index) => [String(index), item])
+      ? Array.from(node.value, (item, index) => [String(index), item])
       : Object.entries(node.value);
     if (entries.length === 0) continue;
 
@@ -60,14 +67,26 @@ function getAllPaths(value: unknown): string[] {
 }
 
 export function useJsonTreeState({
+  value,
   defaultExpandDepth,
   initialCollapsedPaths,
   onCollapseChange,
 }: UseJsonTreeStateOptions = {}): UseJsonTreeStateReturn {
+  // Derived during the first render, not in a mount effect: an effect commits
+  // after that render, so the tree would paint fully expanded once before
+  // collapsing. That is wasted work on a large tool result and exhausts the
+  // renderer's heap on a deeply nested one (INSPECTOR-CLIENT-232).
+  // null means nothing was derived, so the effect below knows whether the
+  // parent still has to be told.
+  const [derivedCollapsedPaths] = useState<Set<string> | null>(() => {
+    if (initialCollapsedPaths !== undefined) return null;
+    if (defaultExpandDepth === undefined) return null;
+    return new Set(getPathsAtDepth(value, defaultExpandDepth));
+  });
+
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(
-    () => initialCollapsedPaths ?? new Set(),
+    () => derivedCollapsedPaths ?? initialCollapsedPaths ?? new Set(),
   );
-  const [initialized, setInitialized] = useState(false);
 
   const isCollapsed = useCallback(
     (path: string): boolean => collapsedPaths.has(path),
@@ -105,20 +124,14 @@ export function useJsonTreeState({
     [onCollapseChange],
   );
 
-  const initializeFromValue = useCallback(
-    (value: unknown) => {
-      if (initialized || initialCollapsedPaths !== undefined) return;
-
-      if (defaultExpandDepth !== undefined) {
-        const pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
-        const newCollapsed = new Set(pathsToCollapse);
-        setCollapsedPaths(newCollapsed);
-        onCollapseChange?.(newCollapsed);
-      }
-      setInitialized(true);
-    },
-    [initialized, defaultExpandDepth, initialCollapsedPaths, onCollapseChange],
-  );
+  // onCollapseChange is a parent callback, so it cannot fire while the state
+  // above is being derived — announcing the derived set has to wait for commit.
+  const announcedInitial = useRef(false);
+  useEffect(() => {
+    if (announcedInitial.current || derivedCollapsedPaths === null) return;
+    announcedInitial.current = true;
+    onCollapseChange?.(derivedCollapsedPaths);
+  }, [derivedCollapsedPaths, onCollapseChange]);
 
   // Sync with external collapsed paths if controlled
   useEffect(() => {
@@ -134,15 +147,7 @@ export function useJsonTreeState({
       toggleCollapse,
       expandAll,
       collapseAll,
-      initializeFromValue,
     }),
-    [
-      collapsedPaths,
-      isCollapsed,
-      toggleCollapse,
-      expandAll,
-      collapseAll,
-      initializeFromValue,
-    ],
+    [collapsedPaths, isCollapsed, toggleCollapse, expandAll, collapseAll],
   );
 }
