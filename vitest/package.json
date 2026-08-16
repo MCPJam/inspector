@@ -1,0 +1,39 @@
+{
+  "name": "@mcpjam/vitest",
+  "version": "0.0.0",
+  "description": "Run MCPJam eval suites inside vitest: one test per eval case, plus a gate test that fails the build on a policy breach.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:packaging": "node tests/packaging.e2e.mjs",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "vitest": ">=3.2.0 <4"
+  },
+  "dependencies": {
+    "@mcpjam/sdk": "^4.3.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}
