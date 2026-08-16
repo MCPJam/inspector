@@ -32,6 +32,13 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // defense-in-depth for guests if the mount order ever changes; GET-only.
   { pattern: /^\/host-catalog$/, methods: ["GET"] },
   { pattern: /^\/chat-sessions$/ },
+  // The unified sessions feed, reachable by the `search_sessions` platform
+  // tool. The allowlist's stated contract is "exactly the platform MCP tool
+  // surface", and this is on it. Safe because the backend threads the guest
+  // bearer's `guestExternalId` through to `ownsSession`: a guest sees their
+  // own rows and nothing else, which is the same guarantee `/chat-sessions`
+  // above already relies on. GET-only.
+  { pattern: /^\/projects\/[^/]+\/sessions$/, methods: ["GET"] },
   // Server connections. Guest-allowed on purpose: the whole point of the flow
   // is that someone with no account can connect a server, authorize it in a
   // browser, and have the credential stored against their materialized guest
