@@ -124,7 +124,7 @@ import {
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
@@ -151,19 +151,19 @@ interface ChatTabProps {
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
   showHostStyleSelector?: boolean;
-  hostStyle?: ChatboxHostStyle;
-  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
+  hostStyle?: ScenarioHostStyle;
+  onHostStyleChange?: (hostStyle: ScenarioHostStyle) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
-  /** When true, blocks sending until chatbox onboarding/OAuth completes. */
-  chatboxComposerBlocked?: boolean;
-  chatboxComposerBlockedReason?: string;
+  /** When true, blocks sending until scenario onboarding/OAuth completes. */
+  scenarioComposerBlocked?: boolean;
+  scenarioComposerBlockedReason?: string;
   /** Optional (off-by-default) servers the tester can attach from minimal chat. */
-  chatboxOptionalInventory?: Array<{
+  scenarioOptionalInventory?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onEnableChatboxOptionalServer?: (serverId: string) => void;
+  onEnableScenarioOptionalServer?: (serverId: string) => void;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
   /**
@@ -209,10 +209,10 @@ export function ChatTabV2({
   hostStyle,
   onHostStyleChange,
   onOAuthRequired,
-  chatboxComposerBlocked = false,
-  chatboxComposerBlockedReason,
-  chatboxOptionalInventory,
-  onEnableChatboxOptionalServer,
+  scenarioComposerBlocked = false,
+  scenarioComposerBlockedReason,
+  scenarioOptionalInventory,
+  onEnableScenarioOptionalServer,
   evalChatHandoff,
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
@@ -347,9 +347,9 @@ export function ChatTabV2({
       : null
   );
   const navigate = useAppNavigate();
-  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedScenarioId = hostedContext?.scenarioId;
   const hostedAccessVersion = hostedContext?.accessVersion;
-  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const hostedScenarioSurface = hostedContext?.scenarioSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
   const modelConfigOrganizationId = hostedContext?.projectId
     ? null
@@ -360,11 +360,11 @@ export function ChatTabV2({
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
-    // Chatbox surfaces resolve their model from the chatbox row
+    // Scenario surfaces resolve their model from the scenario row
     // (executionConfig.modelId), and share-link guests aren't members of the
     // host's project — so the project-scoped config query would throw and crash
-    // the page. Skip it whenever we're inside a chatbox.
-    disabled: Boolean(hostedChatboxId),
+    // the page. Skip it whenever we're inside a scenario.
+    disabled: Boolean(hostedScenarioId),
   });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
@@ -388,14 +388,14 @@ export function ChatTabV2({
   );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedChatboxId
+  const effectiveHostedOAuthTokens = hostedScenarioId
     ? undefined
     : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
     !effectiveHostedProjectId &&
-    !hostedChatboxId;
+    !hostedScenarioId;
 
   // Use shared chat session hook
   const {
@@ -465,8 +465,8 @@ export function ChatTabV2({
     // Phase 3: forward the resolved chat-tab host style so direct
     // chat traces persist with `claude`/`chatgpt` rather than
     // defaulting to `'claude'` regardless of user choice. Backend
-    // ingestion ignores it for chatbox flows (those resolve from the
-    // chatbox row), so it's safe to forward unconditionally.
+    // ingestion ignores it for scenario flows (those resolve from the
+    // scenario row), so it's safe to forward unconditionally.
     hostStyle:
       hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
@@ -490,7 +490,7 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail = Boolean(
-    HOSTED_MODE && !minimalMode && !hostedChatboxId
+    HOSTED_MODE && !minimalMode && !hostedScenarioId
   );
   const {
     session: reactiveHistorySession,
@@ -1276,8 +1276,8 @@ export function ChatTabV2({
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
-    !hostedChatboxId &&
-    !hostedChatboxSurface &&
+    !hostedScenarioId &&
+    !hostedScenarioSurface &&
     pendingDirectVisibility !== "project" &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
@@ -1791,14 +1791,14 @@ export function ChatTabV2({
   const historyRailStreaming = isStreamingActive;
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: submitBlocked || chatboxComposerBlocked,
+    composerDisabled: submitBlocked || scenarioComposerBlocked,
   });
 
   let placeholder = minimalMode
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
     : DEFAULT_CHAT_COMPOSER_PLACEHOLDER;
-  if (chatboxComposerBlocked && chatboxComposerBlockedReason) {
-    placeholder = chatboxComposerBlockedReason;
+  if (scenarioComposerBlocked && scenarioComposerBlockedReason) {
+    placeholder = scenarioComposerBlockedReason;
   } else if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -1981,7 +1981,7 @@ export function ChatTabV2({
 
   // An upstream hop returning an error page (a gateway 502 in front of
   // MCPJam) is transient, and resending is the entire fix. Without this the
-  // banner offered `Reset chat` alone, which on the chatbox surfaces throws
+  // banner offered `Reset chat` alone, which on the scenario surfaces throws
   // away the session the tester's whole run exists to collect.
   //
   // Gated on the formatter's own code, not on `isRetryable`: the server sets
@@ -1997,7 +1997,7 @@ export function ChatTabV2({
   // dropdown away. Send the user there instead of leaving them to find it.
   //
   // The host id comes from the turn's own hosted context, so the link lands on
-  // the client that actually holds the pin. It is absent on chatbox and
+  // the client that actually holds the pin. It is absent on scenario and
   // environment surfaces, where `buildHostFocusTabPath` degrades to the clients
   // list rather than building a path the `:hostId` route would reject.
   const changeProtocolVersionHandler =
@@ -2293,7 +2293,7 @@ export function ChatTabV2({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked || chatboxComposerBlocked,
+    submitDisabled: submitBlocked || scenarioComposerBlocked,
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
@@ -2326,18 +2326,18 @@ export function ChatTabV2({
           ...(effectiveHostedSelectedServerIds.length > 0
             ? { selectedServerIds: effectiveHostedSelectedServerIds }
             : {}),
-          ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+          ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
           ...(hostedAccessVersion !== undefined
             ? { accessVersion: hostedAccessVersion }
             : {}),
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
-    chatboxAttachableServers:
-      chatboxOptionalInventory && chatboxOptionalInventory.length > 0
-        ? chatboxOptionalInventory
+    scenarioAttachableServers:
+      scenarioOptionalInventory && scenarioOptionalInventory.length > 0
+        ? scenarioOptionalInventory
         : undefined,
-    onAttachChatboxServer: onEnableChatboxOptionalServer,
+    onAttachScenarioServer: onEnableScenarioOptionalServer,
     onManageOrgProviders: manageOrgProviders,
   };
 
@@ -2837,9 +2837,9 @@ export function ChatTabV2({
                               : undefined
                           }
                           // Also gated on `showHistoryRail`, not just compare
-                          // mode. `ChatTabV2` is the published chatbox runtime
-                          // too (`ChatboxChatPage` renders it with `minimalMode`
-                          // and a `hostedContext.chatboxId`), and it ships in
+                          // mode. `ChatTabV2` is the published scenario runtime
+                          // too (`ScenarioChatPage` renders it with `minimalMode`
+                          // and a `hostedContext.scenarioId`), and it ships in
                           // non-hosted builds (desktop / `npx` inspector) —
                           // surfaces where `showHistoryRail` is false because
                           // there is no history UI at all.

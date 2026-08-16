@@ -35,7 +35,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
+import { SessionReadinessBadge } from "@/components/scenarios/session-readiness";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import {
@@ -43,7 +43,7 @@ import {
   useAppNavigate,
   useCurrentSearchParam,
 } from "@/lib/app-navigation";
-import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
 import {
   SESSIONS_FEED_PAGE_SIZE,
   SESSIONS_FEED_QUERIES,
@@ -55,7 +55,7 @@ import {
 
 const SOURCE_TYPE_PILLS: SessionFeedSourceType[] = [
   "direct",
-  "chatbox",
+  "scenario",
   "eval",
   "swarm",
 ];
@@ -303,7 +303,7 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
           <ResizablePanel defaultSize={68} minSize={40}>
             <div className="h-full overflow-hidden">
               {selectedThreadId ? (
-                // The shared detail pane is chatbox/swarm-native; a Playground
+                // The shared detail pane is scenario/swarm-native; a Playground
                 // or eval transcript that trips one of its branches degrades
                 // to the row's own metadata instead of white-screening.
                 <ErrorBoundary

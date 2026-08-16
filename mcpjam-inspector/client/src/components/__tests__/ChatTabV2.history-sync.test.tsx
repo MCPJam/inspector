@@ -534,12 +534,12 @@ describe("ChatTabV2 history sync", () => {
     vi.useRealTimers();
   });
 
-  it("suppresses hosted OAuth token fallback for chatbox contexts", () => {
+  it("suppresses hosted OAuth token fallback for scenario contexts", () => {
     render(
       <ChatTabV2
         {...defaultProps}
         hostedContext={{
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
           projectId: "project-1",
           selectedServerIds: ["server-1"],
@@ -548,7 +548,7 @@ describe("ChatTabV2 history sync", () => {
     );
 
     expect(lastUseChatSessionOptionsRef.current?.hostedContext).toMatchObject({
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
     });
     expect(
@@ -1059,9 +1059,9 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.rewindToMessage).not.toHaveBeenCalled();
   });
 
-  it("withholds the edit affordance on the chatbox surface, which has no history", async () => {
-    // `ChatTabV2` is also the published chatbox runtime (`ChatboxChatPage`
-    // renders it with `minimalMode` + `hostedContext.chatboxId`), so
+  it("withholds the edit affordance on the scenario surface, which has no history", async () => {
+    // `ChatTabV2` is also the published scenario runtime (`ScenarioChatPage`
+    // renders it with `minimalMode` + `hostedContext.scenarioId`), so
     // `showHistoryRail` is false there. Editing BRANCHES and leaves the
     // original behind; with no history surface to reach it through, that
     // discards the original thread with no way back, and the notice's promise
@@ -1071,7 +1071,7 @@ describe("ChatTabV2 history sync", () => {
         {...defaultProps}
         minimalMode
         hostedContext={{
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
           projectId: "project-1",
           selectedServerIds: ["server-1"],

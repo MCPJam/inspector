@@ -36,7 +36,7 @@ interface ServerSelectionListProps {
  * Pure controlled list of server checkboxes. No data fetching, no
  * business rules — callers own `selectedIds` and the toggle handler.
  *
- * Used by the suite/chatbox attachment editor's Servers tab and any
+ * Used by the suite/scenario attachment editor's Servers tab and any
  * future surface that needs the same per-server selection UX. Stay
  * structural — visual flourishes (status dots, transport badges,
  * connection state) layer on top via a richer wrapper component, not

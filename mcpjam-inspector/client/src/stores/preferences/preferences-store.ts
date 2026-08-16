@@ -1,30 +1,30 @@
 import { createStore } from "zustand/vanilla";
 
 import {
-  normalizeChatboxHostStyleId,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  normalizeScenarioHostStyleId,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
 
 export type PreferencesState = {
   themeMode: ThemeMode;
   themePreset: ThemePreset;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   /**
    * Direct-Chat scoped MCP Apps `hostCapabilities` override. Undefined means
    * "use the active host style's preset" (advertised in ui/initialize).
    *
    * Direct Chat is the working bench where users iterate on capability
    * mocks while testing widgets; this field is the "save the bench" target
-   * so a tweaked configuration survives reloads. Chatbox / eval-suite /
+   * so a tweaked configuration survives reloads. Scenario / eval-suite /
    * project-default flows persist their own overrides through the v2
    * HostConfig row instead.
    */
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
   /**
    * Snapshot of the active host config's `chatUiOverride` (logo, palette,
-   * indicator, fonts). Wired into `ChatboxChatUiOverrideProvider` so
+   * indicator, fonts). Wired into `ScenarioChatUiOverrideProvider` so
    * playground / chat surfaces render with the host's customizations on
    * top of its host style preset. Undefined means "no override; preset
    * wins" — same semantics as `HostConfigInputV2.chatUiOverride`.
@@ -40,7 +40,7 @@ export type PreferencesState = {
   autoConnectServersEnabled: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   setThemePreset: (preset: ThemePreset) => void;
-  setHostStyle: (hostStyle: ChatboxHostStyle) => void;
+  setHostStyle: (hostStyle: ScenarioHostStyle) => void;
   setHostCapabilitiesOverride: (
     next: Record<string, unknown> | undefined,
   ) => void;
@@ -56,12 +56,12 @@ export const HOST_CAPABILITIES_OVERRIDE_KEY =
 export const CHAT_UI_OVERRIDE_KEY = "mcpjam-ui-playground-chat-ui-override";
 export const AUTO_CONNECT_SERVERS_KEY = "mcpjam-auto-connect-servers";
 
-function getStoredHostStyle(): ChatboxHostStyle {
+function getStoredHostStyle(): ScenarioHostStyle {
   if (typeof window === "undefined") return DEFAULT_HOST_STYLE.id;
 
   try {
     const stored = localStorage.getItem(HOST_STYLE_KEY);
-    const normalized = normalizeChatboxHostStyleId(stored);
+    const normalized = normalizeScenarioHostStyleId(stored);
     if (normalized) {
       return normalized;
     }

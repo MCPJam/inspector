@@ -577,7 +577,7 @@ export interface MCPJamHandlerOptions {
    */
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
   chatSessionId?: string;
@@ -586,7 +586,7 @@ export interface MCPJamHandlerOptions {
    * Swarm (journey-execution) continuity identity. When `sourceType === "swarm"`
    * these key the harness `swarm-chat` owner lane (`journeyRunId` + `hostId` +
    * `chatSessionId`) so a multi-turn swarm harness session resumes only its own
-   * runtime sidecar and never collides with a Direct/Chatbox lane. Set by the
+   * runtime sidecar and never collides with a Direct/Scenario lane. Set by the
    * swarm runner; absent for every other surface. See
    * `mcpjam-backend/convex/harnessSessions.ts` (`swarm-chat` owner).
    */
@@ -626,7 +626,7 @@ export interface MCPJamHandlerOptions {
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
   /**
-   * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
+   * Phase 3 execution scope from the server-resolved runtime config (scenario OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
    * broker start, session-state, ingest commit) so the backend re-resolves live
    * access + per-swarm host-funded caps. Absent ⇒ legacy member path.
@@ -840,7 +840,7 @@ interface StepContext {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
   chatSessionId?: string;
@@ -2300,7 +2300,7 @@ async function processOneStep(
     toolDefsByName,
     tools,
     authHeader,
-    chatboxId,
+    scenarioId,
     accessVersion,
     projectId,
     modelId,
@@ -2486,8 +2486,8 @@ async function processOneStep(
         systemPrompt: providerSystemPrompt,
         ...(temperature !== undefined ? { temperature } : {}),
         tools: activeToolDefs,
-        ...(chatboxId ? { chatboxId } : {}),
-        ...(chatboxId && Number.isFinite(accessVersion)
+        ...(scenarioId ? { scenarioId } : {}),
+        ...(scenarioId && Number.isFinite(accessVersion)
           ? { accessVersion }
           : {}),
         ...(projectId ? { projectId } : {}),
@@ -3240,7 +3240,7 @@ export async function runChatEngineLoop(
     temperature,
     tools,
     authHeader,
-    chatboxId,
+    scenarioId,
     accessVersion,
     projectId,
     mcpClientManager,
@@ -3390,7 +3390,7 @@ export async function runChatEngineLoop(
       // that must know a chunk ACTUALLY reached the browser: `write` below is
       // deliberately no-throw (a client disconnect must not bring down the
       // agentic loop), so a caller with only `write` cannot distinguish
-      // "delivered" from "silently dropped". The chatbox sandbox notices use
+      // "delivered" from "silently dropped". The scenario sandbox notices use
       // this to avoid acking — and therefore permanently consuming — a notice
       // that was written into a closed stream.
       isClosed: () => streamClosed,
@@ -3595,7 +3595,7 @@ export async function runChatEngineLoop(
           progressivePlan,
           discoveryState,
           authHeader,
-          chatboxId,
+          scenarioId,
           accessVersion,
           projectId,
           chatSessionId,
