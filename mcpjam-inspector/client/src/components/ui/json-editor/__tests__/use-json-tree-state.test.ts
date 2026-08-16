@@ -84,6 +84,22 @@ describe("useJsonTreeState", () => {
     );
   });
 
+  it("walks only the populated indexes of a huge sparse array", () => {
+    // length is a million, but one element exists. Building entries per index
+    // instead of per populated key allocates a million tuples to find it.
+    const sparse: unknown[] = [];
+    sparse.length = 1_000_000;
+    sparse[999_999] = { deep: true };
+
+    const { result } = renderHook(() =>
+      useJsonTreeState({ value: { list: sparse }, defaultExpandDepth: 1 }),
+    );
+
+    expect(result.current.collapsedPaths).toEqual(
+      new Set(["root.list", "root.list.999999"]),
+    );
+  });
+
   it("collapseAll collapses every container through the scan cap", () => {
     const { result } = renderHook(() => useJsonTreeState({}));
 

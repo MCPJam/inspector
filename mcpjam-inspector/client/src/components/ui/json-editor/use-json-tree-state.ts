@@ -36,12 +36,10 @@ function getPathsAtDepth(value: unknown, maxDepth: number): string[] {
     const node = stack.pop()!;
     if (typeof node.value !== "object" || node.value === null) continue;
 
-    // Array.from, not map: map keeps holes, and destructuring a hole in the
-    // loop below throws. Holes materialize as undefined and get skipped by the
-    // object check above, matching the forEach this walk replaced.
-    const entries: Array<[string, unknown]> = Array.isArray(node.value)
-      ? Array.from(node.value, (item, index) => [String(index), item])
-      : Object.entries(node.value);
+    // Object.entries covers arrays too, and yields only populated indexes: a
+    // sparse array costs nothing per hole, where mapping over one allocates a
+    // tuple per hole (and holes cannot be destructured in the loop below).
+    const entries: Array<[string, unknown]> = Object.entries(node.value);
     if (entries.length === 0) continue;
 
     if (node.depth >= maxDepth) {
