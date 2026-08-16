@@ -104,6 +104,18 @@ export function toolMatchScoreDefinition(options: {
   expectedToolCalls: EvalExpectedToolCall[];
   matchOptions: Required<Omit<EvalMatchOptions, "allowExtraToolCalls">>;
   role?: ScorerRole;
+  /**
+   * Negative-case polarity. Part of the HASH, not just the behaviour: a
+   * negative tool-match ("pass iff nothing was called") and a positive one
+   * are different scorers, and digesting them identically would let a case
+   * flip polarity while its `definitionHash` claimed nothing changed — so a
+   * run comparison would read the flip as a regression rather than as a
+   * changed definition.
+   *
+   * Omitted from the payload when false/absent so every EXISTING definition
+   * hashes exactly as before; only a negative case gets a new digest.
+   */
+  isNegativeTest?: boolean;
 }): ScoreDefinition {
   return {
     scorerId: TOOL_MATCH_SCORER_ID,
@@ -115,6 +127,7 @@ export function toolMatchScoreDefinition(options: {
         arguments: call.arguments ?? {},
       })),
       matchOptions: options.matchOptions,
+      ...(options.isNegativeTest ? { isNegativeTest: true } : {}),
     }),
     label: "expected tool calls",
     deterministic: true,
