@@ -122,6 +122,90 @@ export interface PlatformChatSession {
 }
 
 /**
+ * Which session surface a row came from. Open-ended on the wire: switch on it
+ * and tolerate an unknown value rather than assuming this list is closed.
+ */
+export type PlatformSessionSourceType = "direct" | "chatbox" | "eval" | "swarm";
+
+/** The session's parent run, discriminated on `kind`. Also open-ended. */
+export interface PlatformSessionParentRef {
+  kind: "evalRun" | "journeyRun" | "chatbox";
+  /** Human-readable parent name; null when the parent row is gone. */
+  label: string | null;
+  iterationId?: string;
+  /** eval only; null means Quick Run (no suite run exists). */
+  suiteRunId?: string | null;
+  suiteId?: string | null;
+  journeyRunId?: string;
+  journeyRefId?: string | null;
+  chatboxId?: string;
+}
+
+/** Where a human goes to read a session. Always present. */
+export interface PlatformSessionLink {
+  /** App-relative path, including `?project=`. */
+  path: string;
+  /** Absolute URL for the same target. */
+  url: string;
+}
+
+/**
+ * One row of the unified, cross-surface sessions feed
+ * (`GET /projects/{projectId}/sessions`).
+ *
+ * Distinct from `PlatformChatSession`, which is the Playground-only projection
+ * behind the older `/chat-sessions` route: this one spans every surface,
+ * carries a typed parent reference, and pages on an opaque cursor.
+ */
+export interface PlatformSessionSummary {
+  id: string;
+  chatSessionId: string;
+  projectId: string | null;
+  sourceType: PlatformSessionSourceType;
+  origin: string | null;
+  status: string;
+  synthetic: boolean;
+  lockReason: string | null;
+  title: string | null;
+  firstMessagePreview: string;
+  /** Direct sessions only: "private" | "project". null elsewhere. */
+  visibility: string | null;
+  ownedByViewer: boolean;
+  startedAt: number;
+  lastActivityAt: number;
+  modelId: string | null;
+  messageCount: number;
+  /** Absent (not 0) when the session never reported the counter. */
+  cumulativeUserMessageCount?: number;
+  cumulativeToolCallCount?: number;
+  cumulativeInputTokens?: number;
+  cumulativeOutputTokens?: number;
+  parentRef: PlatformSessionParentRef | null;
+  link: PlatformSessionLink;
+  /**
+   * Transcript-scope results only: a window of the transcript around the
+   * match. `null` when no window could be located; ABSENT on title-scope
+   * results, which have no transcript to quote.
+   */
+  matchPreview?: string | null;
+}
+
+/**
+ * The sessions page, plus the server's echo of the search scope it actually
+ * honored.
+ *
+ * The echo exists so a client can tell an UNDERSTOOD `scope` from an IGNORED
+ * one. A backend predating the parameter drops it silently and returns title
+ * results; without the marker those are indistinguishable from the transcript
+ * results the caller asked for. `scope` is optional here precisely because
+ * such a backend omits it — its absence is the signal, and callers requesting
+ * a non-default scope must check for it.
+ */
+export type PlatformSessionsPage = PlatformPage<PlatformSessionSummary> & {
+  scope?: string;
+};
+
+/**
  * Full eval run record, as returned by `GET /projects/{p}/eval-runs/{runId}`
  * and the suite run-history listing. Distinct from `PlatformEvalRunSummary`,
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
@@ -359,6 +443,151 @@ export interface PlatformEvalCase {
   checks?: PublicCheckOverride;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+// ── Run comparison ───────────────────────────────────────────────────────────
+//
+// The public projection of the backend's run diff. Three naming decisions are
+// load-bearing and deliberate:
+//
+//   1. The internal diff's top-level `scores` is run-summary COUNTERS, and it
+//      collides by name with score-contract data. On this wire it is
+//      `passSummary`, and the word "scores" appears only inside
+//      `scoreContract` / `scoreDeltas`.
+//   2. `traceBlobIds` never crosses this boundary. The internal diff carries
+//      `_storage` ids; the DTO whitelist drops them.
+//   3. New rate fields are FRACTIONS and carry no `Percent` in the name. The
+//      one legacy percent field keeps its name so nobody mistakes it.
+
+/** A base/compare pair with its delta. Rates in these are fractions. */
+export interface PlatformNumericDiff {
+  base: number | null;
+  compare: number | null;
+  delta: number | null;
+  percentDelta: number | null;
+}
+
+export type PlatformCompareCaseStatus =
+  | "unchanged_passed"
+  | "unchanged_failed"
+  | "regressed"
+  | "fixed"
+  | "new_case"
+  | "removed_case"
+  | "changed";
+
+export interface PlatformScoreContractSide {
+  evaluationConfigHash: string | null;
+  /** `null` means NO verdict — treat it exactly like `"invalid"` for gating. */
+  scoreIntegrity: "valid" | "invalid" | null;
+  scoredIterations: number;
+  quarantinedIterations: number;
+}
+
+export interface PlatformScoreContractScorer {
+  scorerId: string;
+  gating: boolean;
+  deterministic: boolean;
+  /** Same id, different definition hash — the two sides did not measure alike. */
+  definitionChanged: boolean;
+  passRate: PlatformNumericDiff;
+  meanValue: PlatformNumericDiff;
+  errorCount: { base: number; compare: number };
+}
+
+export interface PlatformScoreContractDiff {
+  base: PlatformScoreContractSide;
+  compare: PlatformScoreContractSide;
+  evaluationConfigChanged: boolean;
+  scorers: PlatformScoreContractScorer[];
+}
+
+export interface PlatformCaseScoreSide {
+  status: "scored" | "error" | "skipped" | "not_applicable";
+  value: number | null;
+  passed: boolean | null;
+}
+
+export interface PlatformCaseScoreDelta {
+  scorerId: string;
+  gating: boolean;
+  deterministic: boolean;
+  definitionChanged: boolean;
+  base: PlatformCaseScoreSide | null;
+  compare: PlatformCaseScoreSide | null;
+  value: PlatformNumericDiff;
+}
+
+export interface PlatformRunCompareCaseSide {
+  outcome: "passed" | "failed" | "absent";
+  /** Iteration ids are public; `traceBlobIds` are NOT and never appear here. */
+  iterationIds: string[];
+  representativeIterationId: string | null;
+  error: string | null;
+}
+
+export interface PlatformRunCompareCase {
+  caseKey: string;
+  title: string;
+  status: PlatformCompareCaseStatus;
+  /** The scenario's own config (prompt, steps, expectations) changed. */
+  configChanged: boolean;
+  /** This case's evaluation config changed. */
+  evaluationConfigChanged: boolean;
+  scoreDeltas: PlatformCaseScoreDelta[];
+  base: PlatformRunCompareCaseSide;
+  compare: PlatformRunCompareCaseSide;
+}
+
+export interface PlatformRunCompareSide {
+  id: string;
+  runNumber: number;
+  result: string;
+  createdAt: number;
+  completedAt: number | null;
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    passRate: number;
+  } | null;
+}
+
+/**
+ * The compare wire.
+ *
+ * There is deliberately NO `baseline_not_found` member. A missing baseline
+ * arrives as a thrown `PlatformApiError` (404 with
+ * `details.reason === "BASELINE_NOT_FOUND"`), so a caller that forgets to
+ * handle it fails loudly instead of reading fields off a union member it never
+ * narrowed.
+ */
+export interface PlatformRunCompare {
+  suite: { id: string; name: string };
+  baseline: {
+    policy: "previous_completed" | "run";
+    baseRunId: string;
+  };
+  baseRun: PlatformRunCompareSide;
+  compareRun: PlatformRunCompareSide;
+  /**
+   * Run-summary counters — NOT score-contract data. Named `passSummary` here
+   * precisely because the internal field is called `scores` and the collision
+   * is a live foot-gun.
+   */
+  passSummary: {
+    passRatePercent: PlatformNumericDiff;
+    total: PlatformNumericDiff;
+    passed: PlatformNumericDiff;
+    failed: PlatformNumericDiff;
+  };
+  metrics: {
+    wallDurationMs: PlatformNumericDiff;
+    totalTokens: PlatformNumericDiff;
+    estimatedCostUsd: PlatformNumericDiff;
+  };
+  scoreContract: PlatformScoreContractDiff;
+  cases: PlatformRunCompareCase[];
 }
 
 export interface PlatformEvalSuiteDeleted {

@@ -27,6 +27,7 @@ import {
   getChatboxOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
+  compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
@@ -38,6 +39,7 @@ import {
   isPlatformApiError,
   listChatboxesOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
@@ -181,6 +183,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -196,6 +199,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //

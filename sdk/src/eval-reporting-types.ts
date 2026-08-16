@@ -107,6 +107,8 @@ export type EvalResultInput = {
   /** Extensible per-iteration metadata; predicate verdicts are nested here. */
   metadata?: Record<string, unknown>;
   isNegativeTest?: boolean;
+  /** Reference output for judge scorers; emitted by the result mappers. */
+  expectedOutput?: string;
   advancedConfig?: Record<string, unknown>;
   widgetSnapshots?: EvalWidgetSnapshotInput[];
   /**
