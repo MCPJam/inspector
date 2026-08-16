@@ -22,6 +22,11 @@ const BROWSER_SAFE_ENTRIES: Array<{ label: string; path: string }> = [
   // render scores, and its SHA-256 comes from `@noble/hashes` precisely so it
   // does not reach for node:crypto (and does not need async Web Crypto).
   { label: "@mcpjam/sdk/contract", path: "../src/contract/index.ts" },
+  // Not a published entry: pure comparison arithmetic reachable from the
+  // compare gates, which the CLI evaluates today and the dashboard will.
+  // Bundled here so a future `node:crypto` import in it is caught AT the
+  // module rather than after something pulls it into a browser build.
+  { label: "sdk/src/compare-stats.ts", path: "../src/compare-stats.ts" },
 ];
 
 describe("browser entry Node-import guard", () => {
@@ -62,6 +67,7 @@ describe("browser entry Node-import guard", () => {
     expect(BROWSER_SAFE_ENTRIES.map((entry) => entry.label).sort()).toEqual([
       "@mcpjam/sdk/browser",
       "@mcpjam/sdk/contract",
+      "sdk/src/compare-stats.ts",
     ]);
   });
 });
