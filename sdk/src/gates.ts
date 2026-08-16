@@ -68,8 +68,41 @@ export type GatePolicy = {
   minimumMeanScore?: Record<string, number>;
   // No `maximumCostUsd`: there is no price source yet, and a cost gate that
   // silently evaluates against zero is worse than no cost gate. The name is
-  // reserved.
+  // reserved. `maximumCostIncrease` — its comparative twin — is reserved for
+  // the same reason and on the same condition.
+
+  // ── comparative gates ────────────────────────────────────────────────────
+  // These need a BASELINE and are evaluated by `evaluateCompareGates`, not by
+  // `evaluateGates`. Passing one to the single-run evaluator is a usage error,
+  // never a silent no-op: a policy that says "fail on regressions" and is then
+  // ignored is worse than no policy, because CI reports green either way.
+
+  /** Fail if any deterministic gating scorer flipped passed -> failed. */
+  noDeterministicRegressions?: boolean;
+  /** Fail if p95 e2e latency rose by more than this many ms. */
+  maximumP95LatencyIncreaseMs?: number;
+  /** Statistical pass-rate regression. Fractions; see `compare-stats.ts`. */
+  passRateRegression?: {
+    minSampleSize?: number;
+    minEffectSize?: number;
+  };
 };
+
+/**
+ * The comparative fields, listed once so the single-run evaluator can fail
+ * closed on every one of them without a second list to forget to update.
+ */
+export const COMPARATIVE_GATE_FIELDS = [
+  "noDeterministicRegressions",
+  "maximumP95LatencyIncreaseMs",
+  "passRateRegression",
+] as const satisfies ReadonlyArray<keyof GatePolicy>;
+
+// FROZEN, not merely `as const`: this array decides which policy fields
+// `evaluateGates` refuses to evaluate silently, and `as const` is a
+// compile-time claim that a runtime `push` would quietly break — turning a
+// fail-closed guard into a hole in exactly the surface it protects.
+Object.freeze(COMPARATIVE_GATE_FIELDS);
 
 export type GateStatus =
   /** Evidence present, threshold met. */
@@ -378,6 +411,34 @@ export function evaluateGates(
   const noSnapshot: GateVerdict["message"] =
     "this run carries no evaluation config, so its scores cannot be resolved " +
     "to definitions (whether each one gates is unknown)";
+
+  // ── comparative fields fail CLOSED here. Silently ignoring a policy that
+  // asks about a baseline this evaluator does not have would report green for
+  // a question nobody answered — the exact failure mode a gate exists to
+  // prevent. A usage error is loud and unambiguous.
+  for (const field of COMPARATIVE_GATE_FIELDS) {
+    const value = policy[field];
+    // `undefined` is "not asked for"; an explicit `false` is "asked for, and
+    // disabled" — the same semantics `noGatingScoreErrors` already has. Note
+    // this deliberately does NOT skip falsy in general:
+    // `maximumP95LatencyIncreaseMs: 0` is a real, strict threshold.
+    if (
+      value === undefined ||
+      // `false` disables the BOOLEAN gate only. `false` on a numeric or object
+      // field is a malformed policy, not an opt-out, and must stay loud.
+      (field === "noDeterministicRegressions" && value === false)
+    ) {
+      continue;
+    }
+    verdicts.push({
+      gate: field,
+      status: "usage_error",
+      message:
+        `"${field}" is a comparative gate and requires a baseline run — ` +
+        `use evaluateCompareGates() or \`mcpjam eval compare\`. ` +
+        `evaluateGates() sees one run and cannot decide it.`,
+    });
+  }
 
   // ── pass rate: never depends on scores, so it works with no integrity
   // verdict at all. This is what makes a pass-rate gate usable before the
