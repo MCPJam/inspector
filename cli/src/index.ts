@@ -16,6 +16,7 @@ import { registerEvalCommands } from "./commands/eval.js";
 import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
 import { registerOrganizationsCommands } from "./commands/organizations.js";
+import { registerSessionsCommands } from "./commands/sessions.js";
 import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
@@ -105,6 +106,7 @@ export async function main(
   registerProjectsCommands(program);
   registerEvalCommands(program);
   registerChatCommands(program);
+  registerSessionsCommands(program);
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
   const journeys = registerJourneysCommands(program);
