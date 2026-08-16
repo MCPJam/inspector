@@ -22,6 +22,10 @@ import {
   toRunScoreIntegrity,
   toScoreProjection,
 } from "./eval-score-projection.js";
+import {
+  toRunCompareDto,
+  type RunCompareBaseline,
+} from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
@@ -2108,6 +2112,99 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
     ...toRunDto(run!),
     ...(insights ? { insights } : {}),
   });
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/compare
+// This run against a baseline. `?baseRunId=` names one explicitly; omitting it
+// selects the nearest earlier COMPLETED run in the same suite.
+//
+// Baseline resolution is server-side: `listEvalSuiteRuns` has no cursor, so a
+// client walk cannot be bounded-correct, and the policy belongs beside the
+// backend's other baseline resolvers.
+//
+// This calls an ACTION rather than a query — the diff hydrates trace blobs
+// from storage, which a Convex query cannot do. Same reason
+// `getTestSuiteRunDiff` is an action.
+evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const baseRunId = c.req.query("baseRunId");
+  // Forwarded, not dropped: the SDK client sends it, and a silently ignored
+  // knob is worse than an absent one. Parsed defensively — the action clamps
+  // the range, so this only has to refuse non-numbers.
+  const rawPreviewChars = c.req.query("previewChars");
+  const previewChars =
+    rawPreviewChars === undefined ? undefined : Number(rawPreviewChars);
+  if (previewChars !== undefined && !Number.isFinite(previewChars)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "previewChars must be a number",
+    );
+  }
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  // Fetch the compare run FIRST so an unauthorized or cross-project caller
+  // gets a 404 from the cheap read, before the action does any work.
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let result: unknown;
+  try {
+    result = await convex.action("testSuites:compareTestSuiteRuns" as any, {
+      compareRunId: runId,
+      ...(baseRunId ? { baseRunId } : {}),
+      ...(previewChars !== undefined ? { previewChars } : {}),
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+
+  const envelope = (result ?? {}) as Record<string, unknown>;
+  if (envelope.status === "baseline_not_found") {
+    // 404 + a `details.reason`, following the CONCURRENT_RUN_LIMIT idiom.
+    //
+    // NOT 422: the pinned error-status fixture maps 422 to
+    // FEATURE_NOT_SUPPORTED, and minting a new error code is a cross-repo
+    // contract change this route does not get to make. The CLI keys on
+    // `details.reason` and maps it to exit 3 (incomplete) — never exit 1,
+    // which would report a regression nobody observed.
+    return v1Error(
+      c,
+      "NOT_FOUND",
+      baseRunId
+        ? "The requested baseline run was not found, is not completed, or belongs to another suite."
+        : "No earlier completed run in this suite to compare against.",
+      { reason: "BASELINE_NOT_FOUND", ...(baseRunId ? { baseRunId } : {}) },
+    );
+  }
+
+  const baselineSource = (envelope.baseline ?? {}) as Record<string, unknown>;
+  const baseline: RunCompareBaseline = {
+    // Falls back to what the REQUEST asked for, not to a literal. `baseline`
+    // is an audit field — a caller reads it to learn HOW the baseline was
+    // chosen — so publishing an explicitly named run as `previous_completed`
+    // (which a deploy-order skew could cause) is worse than saying nothing.
+    policy:
+      baselineSource.policy === "run" ||
+      (baselineSource.policy === undefined && Boolean(baseRunId))
+        ? "run"
+        : "previous_completed",
+    baseRunId: String(baselineSource.baseRunId ?? ""),
+  };
+
+  return v1Resource(c, toRunCompareDto(envelope.diff, baseline));
 });
 
 // POST /v1/projects/:projectId/eval-runs/:runId/insights
