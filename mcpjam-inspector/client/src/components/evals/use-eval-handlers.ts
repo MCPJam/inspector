@@ -33,7 +33,11 @@ import { draftTestCaseId } from "./draft-test-case";
 import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
-import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  getBillingErrorMessage,
+  getEvalIterationLimitFromError,
+} from "@/lib/billing-entitlements";
+import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import type { ModelDefinition } from "@/shared/types";
 import {
   buildEvalConvexAuthPayload,
@@ -194,6 +198,9 @@ interface UseEvalHandlersProps {
   selectedSuiteId: string | null;
   selectedTestId: string | null;
   projectId?: string | null;
+  /** Owner of the eval-iteration quota. Lets a server-side cap rejection open
+   * the same upgrade wall as the client-side pre-check. */
+  organizationId?: string | null;
   connectedServerNames?: Set<string>;
   ensureServersReady?: (
     serverNames: string[]
@@ -221,6 +228,7 @@ export function useEvalHandlers({
   selectedSuiteId,
   selectedTestId,
   projectId = null,
+  organizationId = null,
   connectedServerNames,
   ensureServersReady,
   latestRunBySuiteId,
@@ -230,6 +238,35 @@ export function useEvalHandlers({
   availableModels,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
+  /**
+   * The client-side quota pre-check in EvalsTab can pass on a stale read — a
+   * teammate spends the last iterations while this user sits on Run — and the
+   * server then rejects the start. That rejection is the same wall, so it gets
+   * the same decision surface instead of the dead-end toast.
+   *
+   * Returns whether the wall took the error; callers keep their own toast for
+   * everything else.
+   */
+  const openEvalIterationWall = useCallback(
+    (error: unknown): boolean => {
+      if (!organizationId) return false;
+      if (getEnvironmentConflictMessage(error)) return false;
+      const limit = getEvalIterationLimitFromError(error);
+      if (!limit) return false;
+
+      usePlanLimitDialogStore.getState().open({
+        kind: "evalIterations",
+        organizationId,
+        used: limit.used,
+        allowed: limit.allowed,
+        resetsAt: limit.resetsAt,
+        windowKind: limit.windowKind,
+        origin: "evals",
+      });
+      return true;
+    },
+    [organizationId]
+  );
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
@@ -557,12 +594,17 @@ export function useEvalHandlers({
         });
       } catch (error) {
         console.error("Failed to replay evals:", error);
-        toast.error(
-          getBillingErrorMessage(error, "Failed to replay eval run"),
-          {
-            id: replayToastId,
-          }
-        );
+        if (openEvalIterationWall(error)) {
+          // The wall carries the message now; leave no orphaned loading toast.
+          toast.dismiss(replayToastId);
+        } else {
+          toast.error(
+            getBillingErrorMessage(error, "Failed to replay eval run"),
+            {
+              id: replayToastId,
+            }
+          );
+        }
       } finally {
         setReplayingRunId(null);
       }
@@ -573,6 +615,7 @@ export function useEvalHandlers({
       selectedSuiteEntry,
       getSuiteExecutionContext,
       getAccessToken,
+      openEvalIterationWall,
     ]
   );
 
@@ -901,10 +944,12 @@ export function useEvalHandlers({
         }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
-        toast.error(
-          getEnvironmentConflictMessage(error) ??
-            getBillingErrorMessage(error, "Failed to start eval run")
-        );
+        if (!openEvalIterationWall(error)) {
+          toast.error(
+            getEnvironmentConflictMessage(error) ??
+              getBillingErrorMessage(error, "Failed to start eval run")
+          );
+        }
       } finally {
         setRerunningSuiteId(null);
       }
@@ -922,6 +967,7 @@ export function useEvalHandlers({
       getSuiteExecutionContext,
       handleReplayRun,
       evalsNavigationContext,
+      openEvalIterationWall,
     ]
   );
 
@@ -1197,7 +1243,9 @@ export function useEvalHandlers({
         return successfulRuns[0]?.data ?? null;
       } catch (error) {
         console.error("Failed to run test case:", error);
-        toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+        if (!openEvalIterationWall(error)) {
+          toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+        }
         return null;
       } finally {
         setRunningTestCaseId(null);
@@ -1213,6 +1261,7 @@ export function useEvalHandlers({
       ensureServersReady,
       projectServers,
       isDirectGuest,
+      openEvalIterationWall,
     ]
   );
 

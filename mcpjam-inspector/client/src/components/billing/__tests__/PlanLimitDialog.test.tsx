@@ -1,7 +1,9 @@
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlanLimitDialog } from "../PlanLimitDialog";
+import { stashUpgradeReturnToken } from "@/hooks/use-upgrade-checkout";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 
 // Hoisted so the vi.mock factories below (which vitest lifts to the top of the
@@ -107,8 +109,18 @@ beforeEach(() => {
   billingState.plan = "free";
   billingState.isLoading = false;
   window.history.replaceState(null, "", "/evals");
+  window.sessionStorage.clear();
   usePlanLimitDialogStore.setState({ isOpen: false, limit: null });
 });
+
+/**
+ * A return is only honored in the tab that started checkout, so the tests have
+ * to arrive the way a real user does: with the one-shot token in hand.
+ */
+function arriveFromCheckout(url: string, organizationId = "org-1") {
+  stashUpgradeReturnToken(organizationId);
+  window.history.replaceState(null, "", url);
+}
 
 describe("PlanLimitDialog", () => {
   it("renders nothing while closed", () => {
@@ -346,9 +358,7 @@ describe("PlanLimitDialog", () => {
   describe("checkout return", () => {
     it("confirms in place and strips the return params once the plan is paid", async () => {
       billingState.plan = "team";
-      window.history.replaceState(
-        null,
-        "",
+      arriveFromCheckout(
         "/evals?suite=abc&upgrade=return&upgrade_org=org-1&upgrade_from=evals"
       );
       render(<PlanLimitDialog />);
@@ -369,14 +379,14 @@ describe("PlanLimitDialog", () => {
 
     it("waits for delayed billing state before confirming checkout", async () => {
       billingState.plan = "free";
-      window.history.replaceState(
-        null,
-        "",
+      arriveFromCheckout(
         "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
       );
       const view = render(<PlanLimitDialog />);
 
-      expect(window.location.search).toContain("upgrade=return");
+      // Params are consumed on arrival — the pending outcome lives in state,
+      // so a reload or a shared copy of the link can't replay this.
+      expect(window.location.search).toBe("");
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(trackMock).not.toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
@@ -397,21 +407,18 @@ describe("PlanLimitDialog", () => {
       vi.useFakeTimers();
       try {
         billingState.plan = "free";
-        window.history.replaceState(
-          null,
-          "",
+        arriveFromCheckout(
           "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
         );
         render(<PlanLimitDialog />);
 
-        expect(window.location.search).toContain("upgrade=return");
         await act(async () => {
           await vi.advanceTimersByTimeAsync(30_000);
         });
 
         expect(trackMock).toHaveBeenCalledWith(
           "plan_limit_upgrade_returned",
-          expect.objectContaining({ upgraded: false })
+          expect.objectContaining({ upgraded: false, settlement: "pending" })
         );
         expect(toastSuccess).not.toHaveBeenCalled();
         expect(window.location.search).toBe("");
@@ -420,11 +427,109 @@ describe("PlanLimitDialog", () => {
       }
     });
 
-    it("uses credit wording when the user came from the credits wall", async () => {
+    it("still confirms a purchase whose webhook lands after the grace window", async () => {
+      vi.useFakeTimers();
+      try {
+        billingState.plan = "free";
+        arriveFromCheckout(
+          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        );
+        const view = render(<PlanLimitDialog />);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(30_000);
+        });
+        expect(trackMock).toHaveBeenCalledWith(
+          "plan_limit_upgrade_returned",
+          expect.objectContaining({ upgraded: false, settlement: "pending" })
+        );
+
+        // A slow webhook is still a real purchase: the user gets the
+        // confirmation they paid for, and the record is corrected.
+        billingState.plan = "team";
+        view.rerender(<PlanLimitDialog />);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        expect(toastSuccess).toHaveBeenCalledWith(
+          expect.stringMatching(/You're on our Team plan/)
+        );
+        expect(trackMock).toHaveBeenCalledWith(
+          "plan_limit_upgrade_returned",
+          expect.objectContaining({ upgraded: true, settlement: "late" })
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("survives the StrictMode double render the app actually mounts under", async () => {
+      // main.tsx wraps the tree in StrictMode, which double-invokes render-phase
+      // initializers and remounts effects in dev. Claiming the marker twice
+      // would burn the one-shot token and swallow the confirmation.
+      billingState.plan = "team";
+      arriveFromCheckout(
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+      );
+      render(
+        <StrictMode>
+          <PlanLimitDialog />
+        </StrictMode>
+      );
+
+      await waitFor(() => {
+        expect(toastSuccess).toHaveBeenCalledWith(
+          expect.stringMatching(/You're on our Team plan/)
+        );
+      });
+    });
+
+    it("ignores a return marker that did not come from this tab's checkout", async () => {
+      // A bookmarked or shared link: no token, so no purchase is announced and
+      // no conversion is recorded for a checkout that never happened.
       billingState.plan = "team";
       window.history.replaceState(
         null,
         "",
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+      );
+      render(<PlanLimitDialog />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.anything()
+      );
+      expect(window.location.search).toBe("");
+    });
+
+    it("ignores a return marker naming an organization it was not issued for", async () => {
+      billingState.plan = "team";
+      arriveFromCheckout(
+        "/evals?upgrade=return&upgrade_org=org-2&upgrade_from=evals",
+        "org-1"
+      );
+      render(<PlanLimitDialog />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.anything()
+      );
+    });
+
+    it("uses credit wording when the user came from the credits wall", async () => {
+      billingState.plan = "team";
+      arriveFromCheckout(
         "/chat?upgrade=return&upgrade_org=org-1&upgrade_from=credits"
       );
       render(<PlanLimitDialog />);
@@ -438,16 +543,14 @@ describe("PlanLimitDialog", () => {
 
     it("waits for billing status before deciding", () => {
       billingState.isLoading = true;
-      window.history.replaceState(
-        null,
-        "",
-        "/evals?upgrade=return&upgrade_org=org-1"
-      );
+      arriveFromCheckout("/evals?upgrade=return&upgrade_org=org-1");
       render(<PlanLimitDialog />);
 
       expect(toastSuccess).not.toHaveBeenCalled();
-      // Params survive so a later render can still resolve the outcome.
-      expect(window.location.search).toContain("upgrade=return");
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.anything()
+      );
     });
   });
 });

@@ -402,6 +402,48 @@ export function isComputerStartLimitError(error: unknown): boolean {
   return (payload.limitName ?? payload.limit) === "computerStartsPerDay";
 }
 
+export interface EvalIterationLimitError {
+  allowed: number | null;
+  used: number;
+  resetsAt: number | null;
+  windowKind: "day" | "month";
+}
+
+/**
+ * The server is the authority on the eval-iteration cap. The client's quota
+ * query can be stale — a teammate spending the last iterations while this user
+ * sits on the Run button — so a run can clear the pre-check and still be
+ * rejected. Detected here so that rejection can reach the same upgrade wall as
+ * the pre-check instead of the dead-end toast the wall replaced.
+ */
+export function getEvalIterationLimitFromError(
+  error: unknown
+): EvalIterationLimitError | null {
+  const payload = extractBillingErrorPayload(error);
+  if (!payload || payload.code !== "billing_limit_reached") {
+    return null;
+  }
+  if ((payload.limitName ?? payload.limit) !== "maxEvalIterationsPerMonth") {
+    return null;
+  }
+
+  const allowed =
+    typeof payload.allowedValue === "number" ? payload.allowedValue : null;
+  const used =
+    typeof payload.currentValue === "number"
+      ? payload.currentValue
+      : typeof payload.current === "number"
+      ? payload.current
+      : allowed ?? 0;
+
+  return {
+    allowed,
+    used,
+    resetsAt: typeof payload.resetsAt === "number" ? payload.resetsAt : null,
+    windowKind: payload.windowKind === "month" ? "month" : "day",
+  };
+}
+
 export function getBillingErrorMessage(
   error: unknown,
   fallback: string,

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import {
+  consumeUpgradeReturnToken,
   UPGRADE_RETURN_ORG_PARAM,
   UPGRADE_RETURN_ORIGIN_PARAM,
   UPGRADE_RETURN_PARAM,
   useUpgradeCheckout,
   type UpgradeOrigin,
 } from "@/hooks/use-upgrade-checkout";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
@@ -55,7 +57,9 @@ interface UpgradeReturn {
   origin: UpgradeOrigin;
 }
 
-function readUpgradeReturn(): UpgradeReturn | null {
+/** Pure: reading the URL is safe to repeat. Claiming the return is not, and
+ * happens once in an effect below. */
+function readUpgradeReturnParams(): UpgradeReturn | null {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
   if (params.get(UPGRADE_RETURN_PARAM) !== "return") return null;
@@ -92,19 +96,20 @@ function stripUpgradeReturnParams(): void {
  * the confirmation is gated on the plan having actually changed. Never
  * announce a purchase we can't see.
  */
-function useUpgradeReturnFlow(): void {
-  const [upgradeReturn] = useState<UpgradeReturn | null>(() =>
-    readUpgradeReturn()
-  );
+function UpgradeReturnFlow({
+  upgradeReturn,
+}: {
+  upgradeReturn: UpgradeReturn;
+}) {
   const [settlementGraceElapsed, setSettlementGraceElapsed] = useState(false);
-  const handledRef = useRef(false);
+  const settledRef = useRef(false);
+  const waitReportedRef = useRef(false);
   const { billingStatus, planCatalog, isLoadingBilling } =
-    useOrganizationBilling(upgradeReturn?.organizationId ?? null);
+    useOrganizationBilling(upgradeReturn.organizationId);
 
   useEffect(() => {
     if (
-      !upgradeReturn ||
-      handledRef.current ||
+      settledRef.current ||
       isLoadingBilling ||
       billingStatus?.plan !== "free"
     ) {
@@ -115,17 +120,30 @@ function useUpgradeReturnFlow(): void {
       setSettlementGraceElapsed(true);
     }, UPGRADE_RETURN_SETTLEMENT_GRACE_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [billingStatus?.plan, isLoadingBilling, upgradeReturn]);
+  }, [billingStatus?.plan, isLoadingBilling]);
 
   useEffect(() => {
-    if (!upgradeReturn || handledRef.current) return;
+    if (settledRef.current) return;
     if (isLoadingBilling || !billingStatus) return;
 
     const upgraded = billingStatus.plan !== "free";
     if (!upgraded && !settlementGraceElapsed) return;
+    // A webhook slower than the grace window is still a real purchase. Report
+    // the wait once, then keep watching: the plan flip that lands late still
+    // owes the user a confirmation, and freezing the record at "abandoned"
+    // would misreport a customer who paid.
+    if (!upgraded && waitReportedRef.current) return;
 
-    handledRef.current = true;
-    stripUpgradeReturnParams();
+    const settlement = upgraded
+      ? waitReportedRef.current
+        ? "late"
+        : "immediate"
+      : "pending";
+    if (upgraded) {
+      settledRef.current = true;
+    } else {
+      waitReportedRef.current = true;
+    }
 
     if (upgraded) {
       const teamName = planCatalog?.plans.team.displayName ?? "Team";
@@ -141,6 +159,9 @@ function useUpgradeReturnFlow(): void {
       organization_id: upgradeReturn.organizationId,
       origin: upgradeReturn.origin,
       upgraded,
+      // "pending" is a checkout we couldn't see settle in time, not a bail.
+      // Count conversions on "immediate" + "late".
+      settlement,
       plan: billingStatus.plan,
       current_plan: billingStatus.plan,
       effective_plan: billingStatus.effectivePlan ?? billingStatus.plan,
@@ -154,6 +175,49 @@ function useUpgradeReturnFlow(): void {
     settlementGraceElapsed,
     upgradeReturn,
   ]);
+
+  return null;
+}
+
+function UpgradeReturnFlowBoundary() {
+  const [pendingReturn] = useState<UpgradeReturn | null>(() =>
+    readUpgradeReturnParams()
+  );
+  const [upgradeReturn, setUpgradeReturn] = useState<UpgradeReturn | null>(
+    null
+  );
+  const claimedRef = useRef(false);
+
+  // Claiming is a side effect — it burns the one-shot token and rewrites the
+  // URL — so it runs in an effect, guarded to once. The app mounts under
+  // StrictMode, which double-invokes render-phase work and remounts effects in
+  // dev; a marker claimed twice is a confirmation lost.
+  useEffect(() => {
+    if (!pendingReturn || claimedRef.current) return;
+    claimedRef.current = true;
+    // Strip regardless of the outcome: these params must not survive into a
+    // reload, a bookmark, or a link pasted to someone else.
+    stripUpgradeReturnParams();
+    // Only the tab that started checkout can settle a return. Without this the
+    // marker is just a URL: anyone loading it in an org already on a paid plan
+    // gets a purchase confirmation, and the funnel gets a conversion, for a
+    // checkout that never happened.
+    if (consumeUpgradeReturnToken(pendingReturn.organizationId)) {
+      setUpgradeReturn(pendingReturn);
+    }
+  }, [pendingReturn]);
+
+  if (!upgradeReturn) return null;
+
+  // The org id rides in from a URL, so the billing query can reject it — a
+  // deleted org, or membership revoked between checkout and return. Convex
+  // rethrows that from `useQuery` during render, and this is mounted app-wide,
+  // so without a boundary one bad marker replaces the entire app.
+  return (
+    <ErrorBoundary name="upgrade-return-flow" fallback={null}>
+      <UpgradeReturnFlow upgradeReturn={upgradeReturn} />
+    </ErrorBoundary>
+  );
 }
 
 /**
@@ -162,8 +226,15 @@ function useUpgradeReturnFlow(): void {
  * through the billing page.
  */
 export function PlanLimitDialog() {
-  useUpgradeReturnFlow();
+  return (
+    <>
+      <UpgradeReturnFlowBoundary />
+      <PlanLimitWall />
+    </>
+  );
+}
 
+function PlanLimitWall() {
   const isOpen = usePlanLimitDialogStore((s) => s.isOpen);
   const limit = usePlanLimitDialogStore((s) => s.limit);
   const close = usePlanLimitDialogStore((s) => s.close);
@@ -180,18 +251,31 @@ export function PlanLimitDialog() {
     isLoading: isLoadingRequestRecipients,
   } = useUpgradeRequestRecipients(organizationId);
 
+  // Derived once, for both the impression event and the render. Two copies of
+  // this rule drift, and then the funnel reports a variant nobody saw.
+  //
+  // Nothing plan-specific renders until billing resolves: the hook defaults to
+  // free/can't-manage, which would flash the member wall at an owner (whose
+  // "email your owner" draft is addressed to themself) and the Free pitch at a
+  // paid org.
+  const isBillingReady = !upgrade.isLoadingBilling;
+  const isFreePlan = upgrade.effectivePlan === "free";
+  const isEnterprisePlan = upgrade.effectivePlan === "enterprise";
+  const showUpgrade = isBillingReady && isFreePlan && upgrade.canManageBilling;
+  // A paid org at its own ceiling has no self-serve step left, so it gets the
+  // sales path instead of a checkout button.
+  const showEnterprise = isBillingReady && !isFreePlan && !isEnterprisePlan;
+  // Enterprise is excluded deliberately: asking an owner to "upgrade to Team"
+  // is a downgrade pitch, and there is nothing above Enterprise to ask for.
+  const showRequest =
+    isBillingReady && !showUpgrade && !showEnterprise && !isEnterprisePlan;
+
   useEffect(() => {
     if (!isOpen || !limit) {
       impressionTrackedRef.current = false;
       return;
     }
     if (upgrade.isLoadingBilling || impressionTrackedRef.current) return;
-
-    const isFreePlan = upgrade.effectivePlan === "free";
-    const showUpgrade = isFreePlan && upgrade.canManageBilling;
-    const showEnterprise =
-      !isFreePlan && upgrade.effectivePlan !== "enterprise";
-    const showRequest = !showUpgrade && !showEnterprise;
     if (showRequest && isLoadingRequestRecipients) return;
 
     impressionTrackedRef.current = true;
@@ -226,6 +310,9 @@ export function PlanLimitDialog() {
     limit,
     organizationId,
     requestRecipients.length,
+    showEnterprise,
+    showRequest,
+    showUpgrade,
     upgrade.annualSupported,
     upgrade.canManageBilling,
     upgrade.currentPlan,
@@ -294,9 +381,9 @@ export function PlanLimitDialog() {
   const perWindow = limit.windowKind === "day" ? "a day" : "a month";
 
   // An org already on a paid plan can hit its own ceiling. Naming "Free" there
-  // would be wrong, and so would pitching the plan they're already on.
-  const isFreePlan = upgrade.effectivePlan === "free";
-  const planName = isFreePlan ? "Free" : "Your plan";
+  // would be wrong, and so would pitching the plan they're already on. While
+  // billing loads we don't know which, so the neutral name stands in.
+  const planName = isBillingReady && isFreePlan ? "Free" : "Your plan";
   const planSentence =
     limit.allowed != null
       ? `${planName} includes ${formatCount(limit.allowed)} ${perWindow}, and `
@@ -310,15 +397,13 @@ export function PlanLimitDialog() {
       )}${resetDistance ? `, ${resetDistance} from now` : ""}.`
     : "";
 
-  const showUpgrade = isFreePlan && upgrade.canManageBilling;
-  // A paid org at its own ceiling has no self-serve step left, so it gets the
-  // sales path instead of a checkout button.
-  const showEnterprise = !isFreePlan && upgrade.effectivePlan !== "enterprise";
   // The eval figure comes from the plan catalog, never a hardcoded string, so
   // it tracks whatever billing actually enforces. Credits deliberately have no
   // figure: they aren't in the catalog, so the only source would be the
   // hardcoded marketing table, which is exactly what goes stale.
-  const upgradeSentence = isFreePlan
+  const upgradeSentence = !isBillingReady
+    ? ""
+    : isFreePlan
     ? `Our ${upgrade.teamName} plan includes ${
         upgrade.teamEvalIterations
           ? `${formatCount(upgrade.teamEvalIterations)} per seat each month`
@@ -332,12 +417,13 @@ export function PlanLimitDialog() {
     <PlanLimitDialogView
       title={`You're out of eval iterations ${windowLabel}`}
       description={`${`${planSentence}${resetSentence} ${upgradeSentence}`.trim()}${
-        isFreePlan && !upgrade.canManageBilling
+        isBillingReady && isFreePlan && !upgrade.canManageBilling
           ? " Only an owner can upgrade this organization."
           : ""
       }`}
       showUpgrade={showUpgrade}
       showEnterprise={showEnterprise}
+      showRequest={showRequest}
       requestRecipients={requestRecipients}
       organizationId={organizationId}
       organizationName={upgrade.organizationName}
@@ -352,6 +438,7 @@ export function PlanLimitDialog() {
       monthlySupported={upgrade.monthlySupported}
       teamName={upgrade.teamName}
       isStarting={upgrade.isStarting}
+      isLoadingPrices={upgrade.isLoadingPrices}
       onUpgrade={() => void handleUpgrade()}
       onRequestEnterprise={handleRequestEnterprise}
       onDismiss={handleDismiss}

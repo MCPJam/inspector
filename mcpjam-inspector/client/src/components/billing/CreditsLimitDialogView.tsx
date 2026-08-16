@@ -21,6 +21,9 @@ export interface CreditsLimitDialogViewProps {
   isKnownNonManager: boolean;
   /** Free orgs whose user can manage billing. A paid org gets credits only. */
   showUpgrade: boolean;
+  /** Can buy credits but can't upgrade (admins). They keep the credits path
+   * and get a way to ask an owner, instead of a pitch with no button. */
+  showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   requestAction?: UpgradeRequestAction;
   organizationId?: string | null;
@@ -34,6 +37,7 @@ export interface CreditsLimitDialogViewProps {
   monthlySupported: boolean;
   teamName: string;
   isStarting: boolean;
+  isLoadingPrices?: boolean;
   onUpgrade: () => void;
   onBuyCredits: () => void;
   onUseOwnKey: () => void;
@@ -55,6 +59,7 @@ export function CreditsLimitDialogView({
   description,
   isKnownNonManager,
   showUpgrade,
+  showRequestUpgrade = false,
   requestRecipients,
   requestAction = "upgrade",
   organizationId,
@@ -68,6 +73,7 @@ export function CreditsLimitDialogView({
   monthlySupported,
   teamName,
   isStarting,
+  isLoadingPrices = false,
   onUpgrade,
   onBuyCredits,
   onUseOwnKey,
@@ -115,7 +121,19 @@ export function CreditsLimitDialogView({
                 monthlySupported={monthlySupported}
                 teamName={teamName}
                 isStarting={isStarting}
+                isLoadingPrices={isLoadingPrices}
                 onUpgrade={onUpgrade}
+              />
+            ) : null}
+            {showRequestUpgrade ? (
+              <RequestUpgradeButton
+                recipients={requestRecipients}
+                organizationName={organizationName}
+                teamName={teamName}
+                origin="credits"
+                limitKind="credits"
+                requestAction="upgrade"
+                organizationId={organizationId}
               />
             ) : null}
             <DialogFooter className="sm:justify-between">

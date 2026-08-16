@@ -93,14 +93,30 @@ export function MCPJamLimitDialog() {
     : false;
 
   // Pitching Team to an org already on Team would be nonsense; those orgs get
-  // the buy-credits path only.
-  const isFreeEffectivePlan = creditsUpgrade.effectivePlan === "free";
+  // the buy-credits path only. Until billing resolves we don't know which this
+  // is, and the hook defaults to Free — so hold the plan-specific copy rather
+  // than flash a Free pitch at a Team org.
+  const isBillingReady = !creditsUpgrade.isLoadingBilling;
+  const isFreeEffectivePlan =
+    isBillingReady && creditsUpgrade.effectivePlan === "free";
   const showCreditsUpgrade =
     isFreeEffectivePlan && creditsUpgrade.canManageBilling;
-  const creditsRequestAction = isFreeEffectivePlan ? "upgrade" : "buyCredits";
+  // Buying credits and upgrading the plan are two different permissions:
+  // admins can do the first, only owners the second. An admin who can't
+  // upgrade must not be pitched the upgrade with no way to act on it — they
+  // get the buy-credits copy plus a way to ask an owner.
+  const showCreditsUpgradeRequest =
+    !isKnownNonManager && isFreeEffectivePlan && !creditsUpgrade.canManageBilling;
+  const creditsRequestAction =
+    isKnownNonManager && !isFreeEffectivePlan ? "buyCredits" : "upgrade";
   const memberDescription = isFreeEffectivePlan
     ? "Ask an organization owner or admin to buy credits or upgrade the plan."
     : "Ask an organization owner or admin to buy credits.";
+  // Audience follows the billing permission, the same rule the eval wall uses.
+  // `can_buy_credits` is what separates an admin from a plain member.
+  const creditsAudience = creditsUpgrade.canManageBilling
+    ? "billing_manager"
+    : "member";
 
   useEffect(() => {
     if (!showGuestDialog) {
@@ -143,7 +159,7 @@ export function MCPJamLimitDialog() {
       organization_resolved: Boolean(billingOrgId),
       limit_kind: "credits",
       origin: "credits",
-      audience: isKnownNonManager ? "member" : "billing_manager",
+      audience: creditsAudience,
       primary_action: isKnownNonManager
         ? requestRecipients.length > 0
           ? "request_owner"
@@ -163,6 +179,7 @@ export function MCPJamLimitDialog() {
     });
   }, [
     billingOrgId,
+    creditsAudience,
     creditsRequestAction,
     creditsUpgrade.annualSupported,
     creditsUpgrade.canManageBilling,
@@ -251,7 +268,7 @@ export function MCPJamLimitDialog() {
       origin: "credits",
       current_plan: creditsUpgrade.currentPlan,
       effective_plan: creditsUpgrade.effectivePlan,
-      audience: isKnownNonManager ? "member" : "billing_manager",
+      audience: creditsAudience,
     });
   };
 
@@ -300,13 +317,17 @@ export function MCPJamLimitDialog() {
           description={
             isKnownNonManager
               ? memberDescription
-              : isFreeEffectivePlan
+              : showCreditsUpgrade
               ? `Free credits reset daily. Our ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
               : "Buy credits to keep your team going, or use your own API key."
           }
           isKnownNonManager={isKnownNonManager}
           showUpgrade={showCreditsUpgrade}
-          requestRecipients={requestRecipients}
+          showRequestUpgrade={showCreditsUpgradeRequest}
+          // Empty until billing resolves: the draft's wording depends on the
+          // plan, and RequestUpgradeButton already renders nothing without a
+          // recipient.
+          requestRecipients={isBillingReady ? requestRecipients : []}
           requestAction={creditsRequestAction}
           organizationId={billingOrgId}
           organizationName={creditsUpgrade.organizationName}
@@ -319,6 +340,7 @@ export function MCPJamLimitDialog() {
           monthlySupported={creditsUpgrade.monthlySupported}
           teamName={creditsUpgrade.teamName}
           isStarting={creditsUpgrade.isStarting}
+          isLoadingPrices={creditsUpgrade.isLoadingPrices}
           onUpgrade={() => void handleUpgrade()}
           onBuyCredits={handleTopUp}
           onUseOwnKey={handleBYOK}

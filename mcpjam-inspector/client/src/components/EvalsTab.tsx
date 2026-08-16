@@ -245,6 +245,7 @@ function EvalsTabContent({
     selectedSuiteId,
     selectedTestId,
     projectId: projectId ?? null,
+    organizationId,
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,

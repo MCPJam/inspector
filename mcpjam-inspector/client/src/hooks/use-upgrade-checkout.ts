@@ -23,6 +23,60 @@ export const UPGRADE_RETURN_PARAM = "upgrade";
 export const UPGRADE_RETURN_ORG_PARAM = "upgrade_org";
 export const UPGRADE_RETURN_ORIGIN_PARAM = "upgrade_from";
 
+/**
+ * The URL params alone can't be trusted: they survive bookmarking, sharing and
+ * signed-out loads, and acting on them would announce a purchase (and record a
+ * conversion) that never happened. This one-shot token is written in the tab
+ * that starts checkout and consumed on the way back, so only a genuine return
+ * from Stripe settles.
+ *
+ * It also keeps a stranger's copy of the link from feeding an org id we have no
+ * access to into a Convex `v.id` query.
+ */
+const UPGRADE_RETURN_TOKEN_KEY = "mcpjam.upgradeReturnToken";
+const UPGRADE_RETURN_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
+
+export function stashUpgradeReturnToken(organizationId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      UPGRADE_RETURN_TOKEN_KEY,
+      JSON.stringify({ organizationId, issuedAt: Date.now() })
+    );
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies). Checkout
+    // still works; the user just doesn't get the return confirmation.
+  }
+}
+
+export function consumeUpgradeReturnToken(organizationId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.sessionStorage.getItem(UPGRADE_RETURN_TOKEN_KEY);
+    if (!raw) return false;
+    window.sessionStorage.removeItem(UPGRADE_RETURN_TOKEN_KEY);
+    const parsed = JSON.parse(raw) as {
+      organizationId?: string;
+      issuedAt?: number;
+    };
+    if (parsed?.organizationId !== organizationId) return false;
+    return (
+      typeof parsed.issuedAt === "number" &&
+      Date.now() - parsed.issuedAt < UPGRADE_RETURN_TOKEN_TTL_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The desktop shell cancels in-app navigation to an external origin and hands
+ * the URL to the system browser, so checkout can never complete in place.
+ */
+function isDesktopApp(): boolean {
+  return typeof window !== "undefined" && window.isElectron === true;
+}
+
 function formatMoney(cents: number, currency: string): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
@@ -88,6 +142,7 @@ export function useUpgradeCheckout({
     startPlanChange,
     isStartingPlanChange,
     isLoadingBilling,
+    isLoadingPlanCatalog,
   } = useOrganizationBilling(organizationId);
 
   const teamEntry = planCatalog?.plans.team;
@@ -164,6 +219,12 @@ export function useUpgradeCheckout({
 
   const start = useCallback(async () => {
     if (!organizationId) return;
+    // The catalog is a separate query from billingStatus, so the CTA can be
+    // live while prices and interval support are still unknown. Never send
+    // anyone to checkout on a price we haven't shown them.
+    if (isLoadingPlanCatalog || !teamEntry) {
+      return { redirected: false as const };
+    }
     const checkoutInterval = resolveUpgradeInterval(
       interval,
       annualSupported,
@@ -219,7 +280,20 @@ export function useUpgradeCheckout({
       if (result.kind === "checkout" || result.kind === "portal") {
         const nextUrl =
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
-        // Same tab, so the return URL brings the user back in place.
+        if (isDesktopApp()) {
+          // Return-in-place is impossible here: the shell opens Stripe in the
+          // system browser, so the return URL lands in a different session.
+          // Say where checkout went and release the dialog, rather than
+          // leaving it open behind a page that will never navigate.
+          window.open(nextUrl, "_blank", "noopener,noreferrer");
+          toast.info(
+            "Finish checkout in your browser. Your new plan unlocks here automatically."
+          );
+          return { redirected: true as const, shouldDismiss: true as const };
+        }
+        // Same tab, so the return URL brings the user back in place. The token
+        // is what makes that return trustworthy on the way back.
+        stashUpgradeReturnToken(organizationId);
         window.location.assign(nextUrl);
         return { redirected: true as const, shouldDismiss: false as const };
       }
@@ -271,12 +345,13 @@ export function useUpgradeCheckout({
     currentPlan,
     effectivePlan,
     interval,
+    isLoadingPlanCatalog,
     limitKind,
     monthlySupported,
     organizationId,
     origin,
     startPlanChange,
-    teamEntry?.prices,
+    teamEntry,
   ]);
 
   return {
@@ -300,6 +375,9 @@ export function useUpgradeCheckout({
     organizationName: billingStatus?.organizationName ?? "your organization",
     canManageBilling,
     isLoadingBilling,
+    /** Prices and interval support come from here, so the CTA stays disabled
+     * until it can name what the user is about to buy. */
+    isLoadingPrices: isLoadingPlanCatalog,
     isStarting: isStartingPlanChange,
     start,
   };

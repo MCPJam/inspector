@@ -22,7 +22,11 @@ export interface PlanLimitDialogViewProps {
   showUpgrade: boolean;
   /** Sales path: paid orgs below Enterprise that hit their own ceiling. */
   showEnterprise: boolean;
-  /** Owner-request path: free orgs whose user can't manage billing. */
+  /** Owner-request path: free orgs whose user can't manage billing. Defaults
+   * to "neither of the other two", which is wrong for an Enterprise org at its
+   * own ceiling — there is nothing to ask an owner for. The container decides.
+   */
+  showRequest?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   organizationId?: string | null;
   organizationName: string;
@@ -37,6 +41,7 @@ export interface PlanLimitDialogViewProps {
   monthlySupported: boolean;
   teamName: string;
   isStarting: boolean;
+  isLoadingPrices?: boolean;
   onUpgrade: () => void;
   onRequestEnterprise: () => void;
   onDismiss: () => void;
@@ -59,6 +64,7 @@ export function PlanLimitDialogView({
   description,
   showUpgrade,
   showEnterprise,
+  showRequest,
   requestRecipients,
   organizationId,
   organizationName,
@@ -73,12 +79,13 @@ export function PlanLimitDialogView({
   monthlySupported,
   teamName,
   isStarting,
+  isLoadingPrices = false,
   onUpgrade,
   onRequestEnterprise,
   onDismiss,
   modal = true,
 }: PlanLimitDialogViewProps) {
-  const showRequest = !showUpgrade && !showEnterprise;
+  const showRequestPath = showRequest ?? (!showUpgrade && !showEnterprise);
 
   return (
     <Dialog
@@ -112,6 +119,7 @@ export function PlanLimitDialogView({
             monthlySupported={monthlySupported}
             teamName={teamName}
             isStarting={isStarting}
+            isLoadingPrices={isLoadingPrices}
             onUpgrade={onUpgrade}
           />
         ) : null}
@@ -126,7 +134,7 @@ export function PlanLimitDialogView({
             </Button>
           </DialogFooter>
         ) : null}
-        {showRequest ? (
+        {showRequestPath ? (
           <RequestUpgradeButton
             recipients={requestRecipients}
             organizationName={organizationName}

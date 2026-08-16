@@ -15,6 +15,9 @@ interface UpgradeIntervalPickerProps {
   monthlySupported: boolean;
   teamName: string;
   isStarting: boolean;
+  /** Catalog still in flight: the cards have no prices yet, so checkout must
+   * not be reachable. */
+  isLoadingPrices?: boolean;
   onUpgrade: () => void;
   className?: string;
 }
@@ -41,6 +44,7 @@ export function UpgradeIntervalPicker({
   monthlySupported,
   teamName,
   isStarting,
+  isLoadingPrices = false,
   onUpgrade,
   className,
 }: UpgradeIntervalPickerProps) {
@@ -87,7 +91,7 @@ export function UpgradeIntervalPicker({
               type="button"
               role="radio"
               aria-checked={isSelected}
-              disabled={isStarting}
+              disabled={isStarting || isLoadingPrices}
               onClick={() => onIntervalChange(option.interval)}
               data-testid={`upgrade-interval-${option.interval}`}
               className={cn(
@@ -128,10 +132,14 @@ export function UpgradeIntervalPicker({
         type="button"
         className="w-full"
         onClick={onUpgrade}
-        disabled={isStarting}
+        disabled={isStarting || isLoadingPrices}
         data-testid="upgrade-plan-cta"
       >
-        {isStarting ? "Redirecting…" : `Upgrade to ${teamName}`}
+        {isLoadingPrices
+          ? "Loading prices…"
+          : isStarting
+          ? "Redirecting…"
+          : `Upgrade to ${teamName}`}
       </Button>
     </div>
   );

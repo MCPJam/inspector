@@ -107,21 +107,27 @@ describe("getBillingErrorMessage", () => {
     expect(message).toMatch(
       /^This organization has reached its eval iteration limit \(25\)\. Resets /
     );
-    expect(message).toMatch(/Upgrade to continue now\.$/);
+    // The 402 payload doesn't say who is reading, and this toast reaches
+    // members too. No next step beats naming one they can't take.
+    expect(message).not.toMatch(/Upgrade to continue now/);
+    expect(message).not.toMatch(/Ask an organization owner/);
   });
 
-  it("points members to an owner after naming the eval reset", () => {
-    const message = formatBillingLimitReachedMessage(
-      "maxEvalIterationsPerMonth",
-      25,
-      false,
-      { resetsAt: Date.UTC(2026, 5, 2), windowKind: "day" }
-    );
+  it("keeps the eval reset message role-neutral for either reader", () => {
+    // A capped-until-reset message names no next step for anyone: the owner
+    // doesn't need one, and the member can't act on the one we'd give them.
+    for (const canManageBilling of [true, false]) {
+      const message = formatBillingLimitReachedMessage(
+        "maxEvalIterationsPerMonth",
+        25,
+        canManageBilling,
+        { resetsAt: Date.UTC(2026, 5, 2), windowKind: "day" }
+      );
 
-    expect(message).toMatch(/Resets /);
-    expect(message).toMatch(
-      /Ask an organization owner to upgrade to continue now\.$/
-    );
+      expect(message).toMatch(/Resets /);
+      expect(message).not.toMatch(/Upgrade to continue now/);
+      expect(message).not.toMatch(/Ask an organization owner/);
+    }
   });
 
   it("ignores invalid eval reset timestamps", () => {
