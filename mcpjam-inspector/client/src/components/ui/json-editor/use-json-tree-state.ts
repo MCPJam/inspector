@@ -15,51 +15,38 @@ interface UseJsonTreeStateReturn {
   initializeFromValue: (value: unknown) => void;
 }
 
-function getPathsAtDepth(
-  value: unknown,
-  maxDepth: number,
-  currentPath = "root",
-  currentDepth = 0,
-): string[] {
+// Each collapsed descendant costs a path string that grows with its depth, so
+// scanning a deeply nested value is quadratic in memory. Stop past this many
+// levels: anything deeper stays hidden behind a collapsed ancestor anyway.
+const MAX_COLLAPSE_SCAN_DEPTH = 100;
+
+// Walks iteratively rather than recursively: deeply nested values overflowed
+// the call stack (INSPECTOR-CLIENT-232).
+function getPathsAtDepth(value: unknown, maxDepth: number): string[] {
   const paths: string[] = [];
+  const stack: Array<{ value: unknown; path: string; depth: number }> = [
+    { value, path: "root", depth: 0 },
+  ];
 
-  if (currentDepth >= maxDepth) {
-    if (
-      (typeof value === "object" &&
-        value !== null &&
-        Object.keys(value).length > 0) ||
-      (Array.isArray(value) && value.length > 0)
-    ) {
-      paths.push(currentPath);
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (typeof node.value !== "object" || node.value === null) continue;
+
+    const entries: Array<[string, unknown]> = Array.isArray(node.value)
+      ? node.value.map((item, index) => [String(index), item])
+      : Object.entries(node.value);
+    if (entries.length === 0) continue;
+
+    if (node.depth >= maxDepth) {
+      paths.push(node.path);
     }
-    // Nodes at or beyond maxDepth are collapsed from their ancestor above,
-    // so descending further only risks a stack overflow on deeply nested
-    // values without changing which paths get collapsed.
-    return paths;
-  }
+    if (node.depth >= MAX_COLLAPSE_SCAN_DEPTH) continue;
 
-  if (typeof value === "object" && value !== null) {
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => {
-        paths.push(
-          ...getPathsAtDepth(
-            item,
-            maxDepth,
-            `${currentPath}.${index}`,
-            currentDepth + 1,
-          ),
-        );
-      });
-    } else {
-      Object.entries(value).forEach(([key, val]) => {
-        paths.push(
-          ...getPathsAtDepth(
-            val,
-            maxDepth,
-            `${currentPath}.${key}`,
-            currentDepth + 1,
-          ),
-        );
+    for (const [key, child] of entries) {
+      stack.push({
+        value: child,
+        path: `${node.path}.${key}`,
+        depth: node.depth + 1,
       });
     }
   }
@@ -67,29 +54,9 @@ function getPathsAtDepth(
   return paths;
 }
 
-function getAllPaths(value: unknown, currentPath = "root"): string[] {
-  const paths: string[] = [];
-
-  if (typeof value === "object" && value !== null) {
-    if (Array.isArray(value)) {
-      if (value.length > 0) {
-        paths.push(currentPath);
-        value.forEach((item, index) => {
-          paths.push(...getAllPaths(item, `${currentPath}.${index}`));
-        });
-      }
-    } else {
-      const keys = Object.keys(value);
-      if (keys.length > 0) {
-        paths.push(currentPath);
-        Object.entries(value).forEach(([key, val]) => {
-          paths.push(...getAllPaths(val, `${currentPath}.${key}`));
-        });
-      }
-    }
-  }
-
-  return paths;
+// "Collapse everything" is the same walk with an expand depth of zero.
+function getAllPaths(value: unknown): string[] {
+  return getPathsAtDepth(value, 0);
 }
 
 export function useJsonTreeState({
@@ -143,17 +110,7 @@ export function useJsonTreeState({
       if (initialized || initialCollapsedPaths !== undefined) return;
 
       if (defaultExpandDepth !== undefined) {
-        let pathsToCollapse: string[];
-        try {
-          pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
-        } catch (error) {
-          // Defensive fallback: if computing collapse paths fails on
-          // pathological input, leave everything expanded instead of
-          // crashing the surrounding view.
-          console.error("Failed to compute default collapsed paths", error);
-          setInitialized(true);
-          return;
-        }
+        const pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
         const newCollapsed = new Set(pathsToCollapse);
         setCollapsedPaths(newCollapsed);
         onCollapseChange?.(newCollapsed);
