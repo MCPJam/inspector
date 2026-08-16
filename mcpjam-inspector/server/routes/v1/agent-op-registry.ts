@@ -44,6 +44,7 @@ import {
   getEnvironmentOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
+  compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
@@ -539,6 +540,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getEvalCaseOperation, tier: "direct" },
   { operation: listEvalSuiteRunsOperation, tier: "direct" },
   { operation: getEvalRunOperation, tier: "direct" },
+  {
+    operation: compareEvalRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
+    ],
+  },
   { operation: listEvalRunIterationsOperation, tier: "direct" },
   { operation: getEvalRunStepsOperation, tier: "direct" },
   {
@@ -1105,6 +1113,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   get_chatbox: "Published chatboxes are a human sharing surface.",
   list_chat_sessions:
     "Other people's conversations are not the agent's to read.",
+  // Same doctrine, and search does not soften it: a query that returns titles
+  // and transcript previews across every surface reads MORE of other people's
+  // conversations than the listing does, not less. The in-app chat surface has
+  // its own narrowed copy (WORKSPACE_OPERATIONS, minus chatbox rows via the
+  // input clamp); this registry has no input-transform seam, so the only
+  // honest options here are all-or-nothing.
+  search_sessions:
+    "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
