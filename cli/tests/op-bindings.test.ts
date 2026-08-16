@@ -9,6 +9,7 @@ import { registerEvalCommands } from "../src/commands/eval.js";
 import { registerHostsCommands } from "../src/commands/hosts.js";
 import { registerJourneysCommands } from "../src/commands/journeys.js";
 import { registerScenariosCommands } from "../src/commands/scenarios.js";
+import { registerSessionsCommands } from "../src/commands/sessions.js";
 import { registerImagesCommands } from "../src/commands/images.js";
 import { registerOrganizationsCommands } from "../src/commands/organizations.js";
 import { registerProjectsCommands } from "../src/commands/projects.js";
@@ -32,6 +33,7 @@ function buildPlatformProgram(): Command {
   registerProjectsCommands(program);
   registerEvalCommands(program);
   registerChatCommands(program);
+  registerSessionsCommands(program);
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
   const journeys = registerJourneysCommands(program);
