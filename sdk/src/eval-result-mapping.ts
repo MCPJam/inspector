@@ -734,6 +734,19 @@ function syntheticStepsForCase(
   };
 }
 
+/**
+ * Hosted-case identity and semantics carried onto every result row.
+ *
+ * Separate from `expectedToolCalls` and friends because these three describe
+ * WHICH case this is and how it is graded, not what it expected — and the
+ * backend reads them to join a local run to a hosted case's history.
+ */
+export type EvalCaseIdentity = {
+  externalCaseId?: string;
+  isNegativeTest?: boolean;
+  expectedOutput?: string;
+};
+
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
@@ -742,7 +755,8 @@ export function iterationsToEvalResultInputs(
   hostExtras?: Record<string, string | number | boolean>,
   predicates?: Predicate[],
   matchOptions?: import("./matchers.js").EvalMatchOptions,
-  evaluationConfig?: EvaluationConfigSnapshot
+  evaluationConfig?: EvaluationConfigSnapshot,
+  caseIdentity?: EvalCaseIdentity
 ): EvalResultInput[] {
   const advancedConfig = syntheticStepsForCase(iterations, predicates);
   return iterations.map((iteration, index) => {
@@ -773,6 +787,19 @@ export function iterationsToEvalResultInputs(
       durationMs: durationMs > 0 ? durationMs : undefined,
       expectedToolCalls,
       actualToolCalls,
+      // Hosted↔local identity and semantics. These are the SAME wire fields
+      // the backend already hashes into caseKey and renders on the run page,
+      // so a materialized hosted case joins its own history instead of
+      // appearing as a new scenario.
+      ...(caseIdentity?.externalCaseId !== undefined
+        ? { externalCaseId: caseIdentity.externalCaseId }
+        : {}),
+      ...(caseIdentity?.isNegativeTest !== undefined
+        ? { isNegativeTest: caseIdentity.isNegativeTest }
+        : {}),
+      ...(caseIdentity?.expectedOutput !== undefined
+        ? { expectedOutput: caseIdentity.expectedOutput }
+        : {}),
       tokens: {
         input: iteration.tokens.input,
         output: iteration.tokens.output,
@@ -810,7 +837,8 @@ export function suiteTestResultsToEvalResultInputs(
   matchOptionsByTest?: Record<
     string,
     import("./matchers.js").EvalMatchOptions | undefined
-  >
+  >,
+  caseIdentityByTest?: Record<string, EvalCaseIdentity | undefined>
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
@@ -844,6 +872,7 @@ export function suiteTestResultsToEvalResultInputs(
         predicateResults: iteration.predicateResults,
       });
 
+      const identity = caseIdentityByTest?.[testName];
       inputs.push({
         caseTitle: testName,
         query: prompts[0]?.getPrompt() ?? testName,
@@ -851,6 +880,15 @@ export function suiteTestResultsToEvalResultInputs(
         durationMs: durationMs > 0 ? durationMs : undefined,
         expectedToolCalls,
         actualToolCalls,
+        ...(identity?.externalCaseId !== undefined
+          ? { externalCaseId: identity.externalCaseId }
+          : {}),
+        ...(identity?.isNegativeTest !== undefined
+          ? { isNegativeTest: identity.isNegativeTest }
+          : {}),
+        ...(identity?.expectedOutput !== undefined
+          ? { expectedOutput: identity.expectedOutput }
+          : {}),
         tokens: {
           input: iteration.tokens.input,
           output: iteration.tokens.output,
