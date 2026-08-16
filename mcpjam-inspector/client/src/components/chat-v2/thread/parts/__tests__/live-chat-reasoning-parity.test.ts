@@ -1,0 +1,50 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { LIVE_CHAT_REASONING_DISPLAY_MODE } from "../reasoning-part";
+
+/**
+ * Guard for the BB-111 follow-up bug.
+ *
+ * `Thread` defaults `reasoningDisplayMode` to "inline", and there is more than
+ * one live-chat path that renders it. Setting the collapsed mode on only some
+ * of them is exactly what shipped first: with two models selected reasoning
+ * appeared as a tidy collapsed block, but with a single client selected it
+ * rendered as raw inline text with no header at all.
+ *
+ * These are source-level assertions on purpose. Rendering `PlaygroundMain`
+ * needs most of the app's providers, and the failure mode here is not "the
+ * component misbehaves" — it is "a live surface forgot to pass the prop".
+ * Reading the call site catches that directly, and catches it for a NEW live
+ * surface too.
+ */
+const LIVE_CHAT_THREAD_CALL_SITES = [
+  // Single-host Playground thread — the path that regressed.
+  "../../../../ui-playground/PlaygroundMain.tsx",
+  // Multi-model / multi-host compare cards.
+  "../../../../ui-playground/multi-model-playground-card.tsx",
+  // MCPJam agent thread.
+  "../../../../mcpjam-agent/McpjamAgentThread.tsx",
+] as const;
+
+describe("live chat reasoning display parity", () => {
+  it("collapses reasoning on live chat surfaces", () => {
+    // Pinned so flipping the shared default is a deliberate, visible edit
+    // rather than something that silently changes every live surface.
+    expect(LIVE_CHAT_REASONING_DISPLAY_MODE).toBe("collapsed");
+  });
+
+  it.each(LIVE_CHAT_THREAD_CALL_SITES)(
+    "%s drives reasoning display from the shared constant",
+    (relativePath) => {
+      const source = readFileSync(
+        new URL(relativePath, import.meta.url),
+        "utf8",
+      );
+
+      expect(source).toContain("LIVE_CHAT_REASONING_DISPLAY_MODE");
+      // A hardcoded mode next to the import is how these drifted apart before.
+      expect(source).not.toMatch(/reasoningDisplayMode\s*=\s*"inline"/);
+      expect(source).not.toMatch(/reasoningDisplayMode=\{?"inline"\}?/);
+    },
+  );
+});

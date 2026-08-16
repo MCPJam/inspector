@@ -18,6 +18,7 @@ import { Switch } from "@mcpjam/design-system/switch";
 import { cn } from "@/lib/utils";
 import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import { Thread } from "@/components/chat-v2/thread";
+import { LIVE_CHAT_REASONING_DISPLAY_MODE } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { MarkdownLinkBaseProvider } from "@/components/chat-v2/thread/memomized-markdown";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
@@ -299,6 +300,8 @@ export function McpjamAgentThread({
               sendFollowUpMessage={handleSubmit}
               isLoading={isStreaming}
               onToolApprovalResponse={session.addToolApprovalResponse}
+              // Live chat, same as the Playground threads (BB-111).
+              reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
               minimalMode
               // Match `Thread`'s standalone-thinking-indicator wrapper
               // (`thread.tsx:368` uses `max-w-4xl mx-auto px-4`) so the dots

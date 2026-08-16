@@ -619,6 +619,70 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  // BB-111 regression guard. Persistence is covered by the test above; this
+  // pins the OTHER half — that reasoning reaches the live UI stream. The bug
+  // that shipped was invisible precisely because nothing errored: after the
+  // OpenRouter → AI Gateway migration the backend simply stopped sending
+  // reasoning deltas and the feature disappeared with no failing test.
+  it("forwards reasoning chunks verbatim to the client stream", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "reasoning-start", id: "reasoning-1" },
+        {
+          type: "reasoning-delta",
+          id: "reasoning-1",
+          delta: "The user wants the server list.",
+        },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Here they are:" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ])
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "List my servers" }] as any,
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onConversationComplete: vi.fn(),
+    });
+
+    await lastExecution;
+
+    const reasoningChunks = writtenChunks.filter((chunk) =>
+      String(chunk?.type).startsWith("reasoning")
+    );
+    expect(reasoningChunks).toEqual([
+      { type: "reasoning-start", id: "reasoning-1" },
+      {
+        type: "reasoning-delta",
+        id: "reasoning-1",
+        delta: "The user wants the server list.",
+      },
+      { type: "reasoning-end", id: "reasoning-1" },
+    ]);
+
+    // Reasoning must precede the answer, or the client renders the summary
+    // below the text it was supposed to explain.
+    const firstReasoningIndex = writtenChunks.findIndex((chunk) =>
+      String(chunk?.type).startsWith("reasoning")
+    );
+    const firstTextIndex = writtenChunks.findIndex(
+      (chunk) => chunk?.type === "text-start"
+    );
+    expect(firstReasoningIndex).toBeGreaterThanOrEqual(0);
+    expect(firstReasoningIndex).toBeLessThan(firstTextIndex);
+  });
+
   it("emits ordered live trace events for a text-only streamed turn", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       createSseResponse([
