@@ -290,6 +290,41 @@ export type {
   DiffServerSnapshotsOptions,
   CollectAndDiffServerSnapshotInput,
 } from "./server-diff.js";
+// Adapts a run comparison into the same StructuredRunReport the server-diff
+// reporter uses, so `--reporter junit-xml` needs no second renderer.
+export { buildRunCompareReport } from "./run-compare.js";
+// Already the p95 the gate engine uses internally. Exported so the CLI's
+// compare command computes latency the SAME way rather than growing a second
+// percentile implementation next to it.
+export { calculateLatencyStats, calculatePercentile } from "./percentiles.js";
+
+// Hosted corpus: materialize eval cases into local EvalTests, and lock what was
+// materialized. Pure — the file I/O half lives in @mcpjam/cli.
+export {
+  CORPUS_LOCK_VERSION,
+  HostedOnlyCaseError,
+  buildCorpus,
+  buildCorpusLock,
+  evalTestFromPlatformCase,
+  loadCorpusFromLock,
+  resolveCaseNames,
+  resolveEffectiveChecks,
+  scenarioContentHash,
+  sdkMatchOptionsFromPublic,
+  verifyCorpusLock,
+} from "./corpus.js";
+export type {
+  BuildCorpusInput,
+  CorpusCase,
+  CorpusDrift,
+  CorpusLock,
+  CorpusSkip,
+  EvalTestFromCaseOptions,
+  LoadedCorpus,
+  PublicCheckOverride,
+  PublicMatchOptions,
+} from "./corpus.js";
+export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
   evaluateToolCallOutcome,
@@ -973,6 +1008,7 @@ export {
   gateInputFromSuiteResult,
   passRateFractionFromPercent,
 } from "./gates.js";
+export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
 export type {
   GateInput,
   GatePolicy,
@@ -982,6 +1018,32 @@ export type {
   GateVerdict,
   ScoreIntegrity,
 } from "./gates.js";
+
+// Run-over-run comparison: the statistics, and the gates built on them.
+// Separate from the single-run engine because the question is different —
+// "did these two runs measure the same thing, and if so did it get worse?"
+export { evaluateCompareGates } from "./compare-gates.js";
+export type {
+  CompareGateInput,
+  DeterministicScoreRegression,
+} from "./compare-gates.js";
+export {
+  DEFAULT_MIN_EFFECT_SIZE,
+  DEFAULT_MIN_SAMPLE_SIZE,
+  Z_95,
+  assessPassRateRegression,
+  detectFlakyCases,
+  newcombeDifferenceInterval,
+  wilsonInterval,
+} from "./compare-stats.js";
+export type {
+  ConfidenceInterval,
+  DifferenceInterval,
+  FlakyCase,
+  ProportionSample,
+  RegressionAssessment,
+  RegressionVerdict,
+} from "./compare-stats.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
 export { evaluateToolCalls } from "./matchers.js";
