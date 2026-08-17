@@ -103,7 +103,7 @@ function buildHostedEngineStub(captureCalls: unknown[]) {
  */
 function stubDirectEngine(
   captureCalls: unknown[],
-  overrides: { aborted?: boolean; engineError?: { message: string } } = {},
+  overrides: { aborted?: boolean; engineError?: { message: string } } = {}
 ) {
   runDirectChatTurnMock.mockImplementation((opts: any) => {
     captureCalls.push(opts);
@@ -174,7 +174,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
 
     const result = await drainAssistantTurn(
-      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      baseArgs() as Parameters<typeof drainAssistantTurn>[0]
     );
 
     expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
@@ -217,7 +217,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
           name: "Claude",
           provider: "anthropic",
         } as ModelDefinition,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
@@ -255,7 +255,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
           name: "Llama3 local",
           provider: "ollama",
         } as ModelDefinition,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     expect(runDirectChatTurnMock).toHaveBeenCalledTimes(1);
@@ -274,7 +274,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [
       string,
-      { body: string },
+      { body: string }
     ];
     expect(url).toBe("https://convex.test/stream/org/local-usage");
     expect(JSON.parse(init.body)).toMatchObject({
@@ -288,7 +288,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     });
   });
 
-  it("tags the HOSTED engine turn with sourceType:\"swarm\" when the swarm surface drives the turn", async () => {
+  it('tags the HOSTED engine turn with sourceType:"swarm" when the swarm surface drives the turn', async () => {
     // CONTRACT (finding 3): the swarm runner passes `persist.sourceType` =
     // "swarm" into drainAssistantTurn. That must reach the hosted engine's
     // sourceType so hosted usage rows are attributed to the journey surface —
@@ -304,7 +304,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
         // the drain fails closed on partial swarm identity.
         journeyRunId: "journey-run-1",
         hostId: "host-1",
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     const opts = calls[0] as any;
@@ -315,7 +315,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.origin).toBe("scenario");
   });
 
-  it("posts the local-BYOK usage writeback with sourceType:\"swarm\" for the swarm surface", async () => {
+  it('posts the local-BYOK usage writeback with sourceType:"swarm" for the swarm surface', async () => {
     // CONTRACT (finding 3): the local-BYOK usage writeback row must also carry
     // "swarm" so per-journey local spend is attributed correctly.
     const calls: unknown[] = [];
@@ -339,13 +339,13 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
           name: "Llama3 local",
           provider: "ollama",
         } as ModelDefinition,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [
       string,
-      { body: string },
+      { body: string }
     ];
     expect(url).toBe("https://convex.test/stream/org/local-usage");
     const body = JSON.parse(init.body);
@@ -365,8 +365,8 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
           sourceType: "swarm",
           journeyRunId: "journey-run-1",
           // hostId missing
-        }) as Parameters<typeof drainAssistantTurn>[0],
-      ),
+        }) as Parameters<typeof drainAssistantTurn>[0]
+      )
     ).rejects.toThrow(/partial continuity identity/i);
 
     await expect(
@@ -375,8 +375,8 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
           sourceType: "swarm",
           hostId: "host-1",
           // journeyRunId missing
-        }) as Parameters<typeof drainAssistantTurn>[0],
-      ),
+        }) as Parameters<typeof drainAssistantTurn>[0]
+      )
     ).rejects.toThrow(/partial continuity identity/i);
   });
 
@@ -400,8 +400,8 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
           } as ModelDefinition,
           requireToolApproval: true,
           tools: { search: { description: "noop" } } as any,
-        }) as Parameters<typeof drainAssistantTurn>[0],
-      ),
+        }) as Parameters<typeof drainAssistantTurn>[0]
+      )
     ).rejects.toThrow(/approval-required tool calls.*Disable tool approval/i);
 
     // Refusal happens before the model is built or the engine is invoked.
@@ -431,7 +431,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
         } as ModelDefinition,
         requireToolApproval: false,
         tools: { search: { description: "noop" } } as any,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     expect(runDirectChatTurnMock).toHaveBeenCalledTimes(1);
@@ -440,8 +440,8 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   it("throws with a clear message when org-BYOK derivation fails", async () => {
     resolveSyntheticModelSourceMock.mockRejectedValue(
       new Error(
-        "Synthetic dispatch failed to derive org provider key: missing customProviderName",
-      ),
+        "Synthetic dispatch failed to derive org provider key: missing customProviderName"
+      )
     );
 
     await expect(
@@ -453,8 +453,8 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
             name: "Custom",
             provider: "custom",
           } as ModelDefinition,
-        }) as Parameters<typeof drainAssistantTurn>[0],
-      ),
+        }) as Parameters<typeof drainAssistantTurn>[0]
+      )
     ).rejects.toThrow(/derive org provider key/i);
   });
 });
@@ -479,7 +479,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     });
 
     await expect(
-      drainAssistantTurn(baseArgs() as Parameters<typeof drainAssistantTurn>[0]),
+      drainAssistantTurn(baseArgs() as Parameters<typeof drainAssistantTurn>[0])
     ).rejects.toThrow(/spend cap.*spend_cap_exceeded.*HTTP 429/i);
   });
 
@@ -493,7 +493,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     }));
 
     await expect(
-      drainAssistantTurn(baseArgs() as Parameters<typeof drainAssistantTurn>[0]),
+      drainAssistantTurn(baseArgs() as Parameters<typeof drainAssistantTurn>[0])
     ).rejects.toThrow(/engine returned no turn trace/i);
   });
 
@@ -513,7 +513,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     const result = await drainAssistantTurn(
       baseArgs({
         abortSignal: controller.signal,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
     expect(result.turnTrace).toBeUndefined();
   });
@@ -536,7 +536,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     });
 
     const result = await drainAssistantTurn(
-      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      baseArgs() as Parameters<typeof drainAssistantTurn>[0]
     );
     expect(result.turnTrace).toEqual(TURN_TRACE);
   });
@@ -561,8 +561,8 @@ describe("drainAssistantTurn — engine error surfacing", () => {
             name: "Llama3 local",
             provider: "ollama",
           } as ModelDefinition,
-        }) as Parameters<typeof drainAssistantTurn>[0],
-      ),
+        }) as Parameters<typeof drainAssistantTurn>[0]
+      )
     ).rejects.toThrow(/provider exploded/);
     // A local-BYOK turn that consumed tokens then errored mid-stream must STILL
     // post the /stream/org/local-usage writeback — matching the old
@@ -570,7 +570,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     // only gated transcript persistence on the error (cubic P1: undercount).
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String((fetchMock.mock.calls[0] as any[])[0])).toContain(
-      "/stream/org/local-usage",
+      "/stream/org/local-usage"
     );
   });
 
@@ -595,7 +595,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
           name: "Llama3 local",
           provider: "ollama",
         } as ModelDefinition,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
     expect(result.turnTrace).toBeUndefined();
     // Aborted turns return the input history unchanged and never bill.
@@ -626,7 +626,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
           name: "Llama3 local",
           provider: "ollama",
         } as ModelDefinition,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     // Turn resolves successfully; the rejection was swallowed/logged.
@@ -675,7 +675,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
           name: "Llama3 local",
           provider: "ollama",
         } as ModelDefinition,
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     // No duplicate of the input `user: hi` message.
@@ -697,7 +697,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     await drainAssistantTurn(
       baseArgs({
         hooks: { onToolCall, onToolResult, prepareAdvertisedTools },
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     const opts = calls[0] as any;
@@ -729,7 +729,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
           provider: "ollama",
         } as ModelDefinition,
         hooks: { prepareAdvertisedTools, onToolResultChunk },
-      }) as Parameters<typeof drainAssistantTurn>[0],
+      }) as Parameters<typeof drainAssistantTurn>[0]
     );
 
     const opts = calls[0] as any;

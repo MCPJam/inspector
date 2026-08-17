@@ -219,7 +219,14 @@ export type RequestEventMap = {
     path: string;
   };
   "chat.session.persist.failed": {
-    failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
+    failureKind:
+      | "timeout"
+      | "http_error"
+      // A 2xx whose body could not be read, or carried no version. Distinct
+      // from http_error: the request succeeded, the contract did not.
+      | "protocol_error"
+      | "exception"
+      | "version_conflict";
     statusCode?: number;
     sourceType?: "scenario" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
@@ -228,6 +235,18 @@ export type RequestEventMap = {
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
     origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+  };
+  /**
+   * The backend accepted the request but declined the write, judging the
+   * transcript a replay. Previously invisible — the turn was dropped and
+   * nothing recorded it — which is how hosted turns went missing for months.
+   * Its own event so the silent-drop class is measurable rather than inferred.
+   */
+  "chat.session.persist.skipped": {
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
+    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+    /** False means the payload had no idempotency key to dedupe on. */
+    hasTurnId: boolean;
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";
@@ -393,7 +412,9 @@ function blankToNull(value: string | undefined): string | null {
 }
 
 export function resolveAppVersion(): string | null {
-  return blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version);
+  return (
+    blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version)
+  );
 }
 
 /**

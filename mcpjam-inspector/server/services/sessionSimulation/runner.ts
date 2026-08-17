@@ -41,10 +41,40 @@ import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
   persistChatSessionToConvex,
+  type PersistChatOutcome,
   type PersistedTurnTrace,
   type ChatOrigin,
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
+
+/**
+ * Headless runs have no stream to carry a `data-persist-receipt`, but the
+ * outcome still matters: a synthetic run whose transcripts never landed used to
+ * be indistinguishable from one that saved cleanly. `not-attempted` is silent —
+ * it means persistence was not configured for this run, which is expected.
+ */
+function warnIfSimulationPersistNotSaved(
+  outcome: PersistChatOutcome | undefined,
+  stage: "empty-session" | "turn"
+): void {
+  // This is observability, not control flow — it must never be the thing that
+  // takes a synthetic run down, so an absent outcome is simply nothing to say.
+  if (
+    !outcome ||
+    outcome.outcome === "saved" ||
+    outcome.outcome === "duplicate" ||
+    outcome.outcome === "not-attempted"
+  ) {
+    return;
+  }
+  logger.warn("[sessionSimulation] chat persist did not save", {
+    stage,
+    outcome: outcome.outcome,
+    ...(outcome.outcome === "failed"
+      ? { failureKind: outcome.failureKind }
+      : {}),
+  });
+}
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
 import {
   createBrowserSessionContext,
@@ -442,9 +472,10 @@ export async function runSyntheticHostSession(
    *
    * The flag records "the write was ATTEMPTED", not "the row exists":
    * `persistChatSessionToConvex` is fail-soft — an HTTP error, a timeout, or a
-   * missing `CONVEX_HTTP_URL`/auth header is logged and it returns normally. So a
-   * silently-failed write is not re-attempted from the terminal path. It only
-   * re-attempts a write that THREW. The outbox absorbs the rest:
+   * missing `CONVEX_HTTP_URL`/auth header returns a non-`saved` outcome rather
+   * than throwing (it is logged, and now also reported through the returned
+   * outcome). So a failed write is not re-attempted from the terminal path. It
+   * only re-attempts a write that THREW. The outbox absorbs the rest:
    * `recordBrowserArtifacts` returns `null` while the row is missing, and the
    * batch stays held.
    *
@@ -473,7 +504,10 @@ export async function runSyntheticHostSession(
     } catch {
       emptySessionModelSource = "byok";
     }
-    await persistChatSessionToConvex({
+    // Headless: no stream to carry a receipt, but the outcome is still worth
+    // seeing — a synthetic run whose transcripts never landed used to look
+    // identical to one that saved cleanly.
+    const emptySessionPersist = await persistChatSessionToConvex({
       chatSessionId,
       modelId: String(modelDefinition.id),
       modelSource: emptySessionModelSource,
@@ -495,6 +529,7 @@ export async function runSyntheticHostSession(
       ...(persist.targetId ? { targetId: persist.targetId } : {}),
       resumeConfig,
     });
+    warnIfSimulationPersistNotSaved(emptySessionPersist, "empty-session");
     sessionRowEnsured = true;
   };
 
@@ -936,7 +971,7 @@ export async function runSyntheticHostSession(
         toolSnapshot = undefined;
       }
 
-      await persistChatSessionToConvex({
+      const turnPersist = await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
         modelSource: sessionModelSource ?? "mcpjam",
@@ -970,6 +1005,7 @@ export async function runSyntheticHostSession(
         // attribution above. Undefined for the emulated engine.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
       });
+      warnIfSimulationPersistNotSaved(turnPersist, "turn");
       anyTurnPersisted = true;
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
