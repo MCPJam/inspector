@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hostedChatSchema } from "../auth";
-import { parseWithSchema } from "../errors";
+import { ErrorCode, WebRouteError, parseWithSchema } from "../errors";
 
 /**
  * `expectedVersion` is the resumed thread's optimistic-concurrency baseline. It
@@ -43,6 +43,20 @@ describe("hostedChatSchema expectedVersion", () => {
     ["a numeric string", "4"],
     ["a boolean", true],
   ])("rejects %s at the request boundary", (_label, value) => {
-    expect(() => parse(value)).toThrow();
+    // Asserted as the route's actual 400 contract, not merely "it threw": a
+    // rejection that surfaced as a 500 would still satisfy `toThrow`, and the
+    // whole point of validating here is that the caller is told which field is
+    // wrong instead of getting an opaque failure from deep inside the ingest.
+    let thrown: unknown;
+    try {
+      parse(value);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(WebRouteError);
+    const routeError = thrown as WebRouteError;
+    expect(routeError.status).toBe(400);
+    expect(routeError.code).toBe(ErrorCode.VALIDATION_ERROR);
   });
 });

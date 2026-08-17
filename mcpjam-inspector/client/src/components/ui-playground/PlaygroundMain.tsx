@@ -3246,6 +3246,14 @@ export function PlaygroundMain({
         if (!(await ensureSelectedServerReadyForChat())) {
           return;
         }
+        // Every send entry point takes the same thread preflight, not just the
+        // composer: a resumed session that moved between subscription updates
+        // would otherwise send with a stale `expectedVersion`, and now that the
+        // hosted route honors it, the turn runs in full and only THEN takes a
+        // 409 and a conflict detach. A no-op when no history thread is open.
+        if (!(await ensureThreadReadyForSend())) {
+          return;
+        }
         sendMessage({
           text,
           metadata: outgoingSenderMetadata,
@@ -3256,6 +3264,7 @@ export function PlaygroundMain({
     },
     [
       ensureSelectedServerReadyForChat,
+      ensureThreadReadyForSend,
       modelContextQueue,
       sendMessage,
       outgoingSenderMetadata,
@@ -4037,6 +4046,10 @@ export function PlaygroundMain({
           composer.setInput(prompt);
           return;
         }
+        if (!(await ensureThreadReadyForSend())) {
+          composer.setInput(prompt);
+          return;
+        }
         if (isCompareMode) {
           queueBroadcastRequest({
             text: prompt,
@@ -4067,6 +4080,7 @@ export function PlaygroundMain({
       composer,
       composerDisabled,
       ensureSelectedServerReadyForChat,
+      ensureThreadReadyForSend,
       fileAttachments,
       isCompareMode,
       modelContextQueue,
@@ -4089,6 +4103,10 @@ export function PlaygroundMain({
         return;
       }
       if (!(await ensureSelectedServerReadyForChat())) {
+        composer.setInput(text);
+        return;
+      }
+      if (!(await ensureThreadReadyForSend())) {
         composer.setInput(text);
         return;
       }
@@ -4115,6 +4133,7 @@ export function PlaygroundMain({
       composerDisabled,
       sendBlocked,
       ensureSelectedServerReadyForChat,
+      ensureThreadReadyForSend,
       isCompareMode,
       queueBroadcastRequest,
       trackSendMessage,
