@@ -42,6 +42,16 @@ describe("live chat reasoning display parity", () => {
       );
 
       expect(source).toContain("LIVE_CHAT_REASONING_DISPLAY_MODE");
+
+      // Referencing the constant is not enough on its own. The compare card
+      // reaches `Thread` in two hops — the constant sits on its prop DEFAULT
+      // and the value is forwarded separately — so deleting the forwarding
+      // line (the exact "forgot to pass the prop" regression this guards)
+      // would leave the constant in the file and pass a name-only check while
+      // the surface silently fell back to `Thread`'s "inline". Require an
+      // actual prop pass too.
+      expect(source).toMatch(/reasoningDisplayMode=\{/);
+
       // A hardcoded mode next to the import is how these drifted apart before.
       expect(source).not.toMatch(/reasoningDisplayMode\s*=\s*"inline"/);
       expect(source).not.toMatch(/reasoningDisplayMode=\{?"inline"\}?/);

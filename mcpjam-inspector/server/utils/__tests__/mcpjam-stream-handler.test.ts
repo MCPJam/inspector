@@ -672,15 +672,64 @@ describe("mcpjam-stream-handler", () => {
     ]);
 
     // Reasoning must precede the answer, or the client renders the summary
-    // below the text it was supposed to explain.
-    const firstReasoningIndex = writtenChunks.findIndex((chunk) =>
-      String(chunk?.type).startsWith("reasoning")
-    );
+    // below the text it was supposed to explain. Assert on the LAST reasoning
+    // chunk, not the first: "first reasoning before first text" still holds if
+    // a stray delta or the reasoning-end leaks out after text-start, which is
+    // exactly the interleaving that would misorder the UI.
+    const reasoningIndexes = writtenChunks
+      .map((chunk, index) =>
+        String(chunk?.type).startsWith("reasoning") ? index : -1
+      )
+      .filter((index) => index >= 0);
     const firstTextIndex = writtenChunks.findIndex(
       (chunk) => chunk?.type === "text-start"
     );
-    expect(firstReasoningIndex).toBeGreaterThanOrEqual(0);
-    expect(firstReasoningIndex).toBeLessThan(firstTextIndex);
+    expect(reasoningIndexes.length).toBeGreaterThan(0);
+    expect(Math.max(...reasoningIndexes)).toBeLessThan(firstTextIndex);
+  });
+
+  // The pre-fix production shape, pinned. This is what the AI Gateway sent
+  // before the backend started asking for a reasoning summary: a balanced
+  // reasoning block with NO deltas. It must stay a no-op — an empty reasoning
+  // part would render as a stray "Reasoning" header with nothing inside it.
+  it("persists no reasoning part when the block carries no deltas", async () => {
+    const onConversationComplete = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "reasoning-start", id: "reasoning-1" },
+        // No reasoning-delta at all, plus an explicitly empty one — the
+        // handler coalesces `delta ?? ""`, so neither may create a part.
+        { type: "reasoning-delta", id: "reasoning-1", delta: "" },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Here they are:" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ])
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "List my servers" }] as any,
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onConversationComplete,
+    });
+
+    await lastExecution;
+
+    const fullHistory = onConversationComplete.mock.calls[0]?.[0];
+    expect(fullHistory[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "Here they are:" }],
+    });
   });
 
   it("emits ordered live trace events for a text-only streamed turn", async () => {
