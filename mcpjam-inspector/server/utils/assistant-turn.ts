@@ -383,12 +383,19 @@ function buildHandlerOptions(
         opts.persistMode === "handler" &&
         typeof opts.onConversationComplete === "function"
       ) {
-        await opts.onConversationComplete(
+        // RETURNED, not just awaited. The engine reads this to decide whether
+        // the turn was actually saved — it emits the persist receipt from it,
+        // and the harness releases its session lease when it is not a success.
+        // Swallowing it here would make `undefined` mean both "this caller
+        // reports nothing" and "the outcome was dropped in transit", and the
+        // engine reads the first meaning: a failed ingest would look saved.
+        return await opts.onConversationComplete(
           fullHistory,
           turnTrace,
           harnessSessionCommit
         );
       }
+      return undefined;
     };
 
   const handlerOptions: MCPJamHandlerOptions = {
@@ -564,7 +571,7 @@ export async function runAssistantTurn(
   // fall back to emulated.
   const canonicalHarnessModelId = getCanonicalModelId(
     harnessModelId,
-    opts.modelDefinition.provider,
+    opts.modelDefinition.provider
   );
   const modelEligible =
     isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
@@ -582,7 +589,7 @@ export async function runAssistantTurn(
         modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
         sourceType: opts.sourceType,
-      },
+      }
     );
   }
   const engineResult = useHarness

@@ -179,6 +179,13 @@ export interface WebChatTurnPersistContext {
   /** Direct-chat lineage when this session was created by message edit. */
   rewind?: ChatRewind;
   /**
+   * Optimistic-concurrency baseline for a resumed thread: the session version
+   * the client believes it is continuing from. The client has always sent it;
+   * this path used to discard it, leaving hosted sessions with no protection
+   * against a second tab or device overwriting a turn.
+   */
+  expectedVersion?: number;
+  /**
    * Direct-chat only. May be a pre-built payload, `null` to opt out (e.g.
    * agent surfaces), or a builder closure that receives the post-prepare
    * `resolvedTemperature` (matches legacy chat-v2 which fed
@@ -838,7 +845,10 @@ export async function streamWebChatTurn(
         }
       }
 
-      await persistChatSessionToConvex({
+      // Returned, not discarded: the engine turns this into the turn's
+      // `data-persist-receipt` so the client is TOLD what happened to its save
+      // rather than inferring it from a version poll.
+      return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
         modelId,
         modelSource,
@@ -876,6 +886,9 @@ export async function streamWebChatTurn(
             }
           : {}),
         turnTrace,
+        ...(persist.expectedVersion !== undefined
+          ? { expectedVersion: persist.expectedVersion }
+          : {}),
         // §3: chat-backed harness resume-state commit, applied atomically with
         // the transcript inside the ingest mutation.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),

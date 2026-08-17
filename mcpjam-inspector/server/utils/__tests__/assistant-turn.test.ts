@@ -222,6 +222,54 @@ describe("runAssistantTurn", () => {
     expect(result.response).toBeInstanceOf(Response);
   });
 
+  it("carries the caller's persist outcome through to the receipt on the wire", async () => {
+    // The wrapper used to await `onConversationComplete` and drop what it
+    // returned, which made `undefined` mean both "this caller reports nothing"
+    // and "the outcome was lost in transit" — and the engine reads the first,
+    // so a failed ingest would have looked saved.
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ])
+    );
+
+    await runAssistantTurn({
+      messages: [{ role: "user", content: "Hi." }] as any,
+      modelDefinition: baseModelDefinition,
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      authContext: { kind: "user_bearer", token: "Bearer user-token" },
+      sourceType: "direct",
+      origin: "playground",
+      chatSessionId: "assistant-turn-session",
+      streamSink: "ui",
+      persistMode: "handler",
+      onConversationComplete: async () => ({
+        outcome: "failed" as const,
+        failureKind: "timeout" as const,
+      }),
+    });
+
+    await lastExecution;
+
+    expect(
+      writtenChunks.find((chunk) => chunk?.type === "data-persist-receipt")
+    ).toMatchObject({
+      data: {
+        outcome: "failed",
+        failureKind: "timeout",
+        chatSessionId: "assistant-turn-session",
+      },
+    });
+  });
+
   it("does NOT call the caller's onConversationComplete in persistMode:caller", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       createSseResponse([
