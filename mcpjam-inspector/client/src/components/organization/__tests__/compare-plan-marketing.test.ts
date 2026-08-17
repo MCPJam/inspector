@@ -18,7 +18,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     ).toBe(false);
 
     expect(
-      COMPARE_PLAN_MARKETING_SECTIONS.some((s) => s.title === "Chatboxes"),
+      COMPARE_PLAN_MARKETING_SECTIONS.some((s) => s.title === "Scenarios"),
     ).toBe(false);
 
     const rowCount = COMPARE_PLAN_MARKETING_SECTIONS.reduce(

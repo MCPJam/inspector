@@ -89,12 +89,12 @@ import {
 } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  getChatboxChatBackground,
-  getChatboxHostFamily,
-  getChatboxHostLogo,
-  getChatboxShellStyle,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  getScenarioHostFamily,
+  getScenarioHostLogo,
+  getScenarioShellStyle,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
@@ -169,11 +169,11 @@ import {
 } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
 import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioChatUiOverrideProvider,
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
@@ -295,7 +295,7 @@ type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundCompareThemeScopeProps {
   children: ReactNode;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
   chatUiOverride: ChatUiOverride | undefined;
   effectiveThreadTheme: ThreadThemeMode;
@@ -311,13 +311,13 @@ function PlaygroundCompareThemeScope({
   hostShellStyle,
 }: PlaygroundCompareThemeScopeProps) {
   return (
-    <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
-        <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-          <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+    <ScenarioHostStyleProvider value={hostStyle}>
+      <ScenarioHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+        <ScenarioChatUiOverrideProvider value={chatUiOverride}>
+          <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             <div
               className={cn(
-                "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
+                "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
                 effectiveThreadTheme === "dark" && "dark"
               )}
               data-testid="playground-compare-shell"
@@ -327,10 +327,10 @@ function PlaygroundCompareThemeScope({
             >
               {children}
             </div>
-          </ChatboxHostThemeProvider>
-        </ChatboxChatUiOverrideProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
-    </ChatboxHostStyleProvider>
+          </ScenarioHostThemeProvider>
+        </ScenarioChatUiOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
+    </ScenarioHostStyleProvider>
   );
 }
 
@@ -1000,7 +1000,7 @@ export function PlaygroundMain({
     mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
     // previewed host's hostConfig. The server re-resolves via the shared
-    // execution-context helper, so this also flows through chatbox sessions
+    // execution-context helper, so this also flows through scenario sessions
     // (where the persisted host config wins via the runtime-config fetch).
     builtInToolIds: previewedHost?.config?.builtInToolIds,
     personalComputerEngine: personalComputerEngineOption,
@@ -1173,11 +1173,11 @@ export function PlaygroundMain({
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const effectiveThreadTheme = extractHostTheme(hostContext) ?? globalThemeMode;
-  const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
+  const hostStyleFamily = getScenarioHostFamily(hostStyle) ?? "claude";
   const hostBackgroundColor =
-    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
+    getScenarioChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
-  const hostShellStyle = getChatboxShellStyle(
+  const hostShellStyle = getScenarioShellStyle(
     hostStyle,
     effectiveThreadTheme,
     chatUiOverride
@@ -4856,7 +4856,7 @@ export function PlaygroundMain({
                           // identity row so columns are immediately branded.
                           showComparisonChrome={false}
                           showIdentityHeader
-                          logoSrc={getChatboxHostLogo(
+                          logoSrc={getScenarioHostLogo(
                             column.hostSnapshot.hostStyle,
                             column.hostSnapshot.chatUiOverride,
                             effectiveThreadTheme
@@ -4987,11 +4987,11 @@ export function PlaygroundMain({
           ) : (
             <>
               {showLiveTraceDiagnostics && (
-                <ChatboxHostStyleProvider value={hostStyle}>
-                  <ChatboxHostCapabilitiesOverrideProvider
+                <ScenarioHostStyleProvider value={hostStyle}>
+                  <ScenarioHostCapabilitiesOverrideProvider
                     value={hostCapabilitiesOverride}
                   >
-                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                    <ScenarioHostThemeProvider value={effectiveThreadTheme}>
                       <div
                         className={cn(
                           "flex h-full min-h-0 flex-col overflow-hidden",
@@ -5054,9 +5054,9 @@ export function PlaygroundMain({
                           </div>
                         </div>
                       </div>
-                    </ChatboxHostThemeProvider>
-                  </ChatboxHostCapabilitiesOverrideProvider>
-                </ChatboxHostStyleProvider>
+                    </ScenarioHostThemeProvider>
+                  </ScenarioHostCapabilitiesOverrideProvider>
+                </ScenarioHostStyleProvider>
               )}
 
               {/* Device frame container */}
@@ -5066,14 +5066,14 @@ export function PlaygroundMain({
                   showLiveTraceDiagnostics ? { display: "none" } : undefined
                 }
               >
-                <ChatboxHostStyleProvider value={hostStyle}>
-                  <ChatboxHostCapabilitiesOverrideProvider
+                <ScenarioHostStyleProvider value={hostStyle}>
+                  <ScenarioHostCapabilitiesOverrideProvider
                     value={hostCapabilitiesOverride}
                   >
-                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                    <ScenarioHostThemeProvider value={effectiveThreadTheme}>
                       <div
                         className={cn(
-                          "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                          "scenario-host-shell app-theme-scope relative flex flex-col overflow-hidden",
                           effectiveThreadTheme === "dark" && "dark"
                         )}
                         data-testid="playground-thread-shell"
@@ -5100,9 +5100,9 @@ export function PlaygroundMain({
                           {threadContent}
                         </div>
                       </div>
-                    </ChatboxHostThemeProvider>
-                  </ChatboxHostCapabilitiesOverrideProvider>
-                </ChatboxHostStyleProvider>
+                    </ScenarioHostThemeProvider>
+                  </ScenarioHostCapabilitiesOverrideProvider>
+                </ScenarioHostStyleProvider>
               </div>
             </>
           )}

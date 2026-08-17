@@ -66,8 +66,8 @@
       "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
     },
     {
-      "name": "Chatboxes",
-      "description": "Read-only access to the chatboxes published from a project: listing, settings, attached servers, and share links."
+      "name": "Scenarios",
+      "description": "Read-only access to the scenarios published from a project: listing, settings, attached servers, and share links."
     },
     {
       "name": "Catalog",
@@ -1952,6 +1952,60 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/compare": {
+      "get": {
+        "operationId": "compareEvalRun",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Compare a run against a baseline",
+        "description": "Compare this run against a baseline run: per-case status (`regressed`, `fixed`, `new_case`, `removed_case`, `changed`), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. Omit `baseRunId` to compare against the nearest earlier **completed** run in the same suite. Returns `404` with `details.reason` = `BASELINE_NOT_FOUND` when there is no comparable predecessor — that is an incomplete comparison, not a failing one. A scorer whose `definitionChanged` is `true` was graded by a different definition on each side, so its delta is not a regression.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          },
+          {
+            "name": "baseRunId",
+            "in": "query",
+            "required": false,
+            "description": "Run ID to compare against. Omit to use the nearest earlier completed run in the same suite.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The comparison.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunCompare"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-runs/{runId}/iterations": {
       "get": {
         "operationId": "listEvalRunIterations",
@@ -3393,6 +3447,121 @@
         }
       }
     },
+    "/projects/{projectId}/sessions": {
+      "get": {
+        "operationId": "listSessions",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Search or list unified sessions",
+        "description": "The unified, cross-surface sessions feed for one project: Playground, user-testing, eval, and swarm transcripts in one list, newest first. Project-NESTED (unlike `/chat-sessions`) because `projectId` owns the scope here rather than filtering it.\n\nSupplying `q` at all switches to relevance-ordered search; `scope` then chooses what is searched. Row-level visibility applies in every mode: a caller never receives another member's private Playground session.\n\nThe response echoes the honored `scope`. A deployment predating that parameter omits the echo \u2014 clients requesting a non-default scope MUST treat its absence as \"unsupported\" rather than accepting the results.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Search terms. Supplying this at all switches from the recency feed to relevance-ordered search; `q=` (blank) is an empty search, not \"no filter\".",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "description": "What to search. `titles` (default) matches titles and opening messages; `transcripts` matches conversation content. Requires `q`; an unknown value is a 400.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "titles",
+                "transcripts"
+              ],
+              "default": "titles"
+            }
+          },
+          {
+            "name": "sourceType",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated surfaces to include: `direct`, `scenario`, `eval`, `swarm`. Omit for all. An unknown value is a 400 rather than a silent widening.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "`active` (default) or `archived`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived"
+              ],
+              "default": "active"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1\u2013200. Defaults to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor: echo back the previous page's `nextCursor`. Never construct one, and never assume it encodes a timestamp. Cursors do not cross scopes \u2014 page with the parameters you opened with.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of sessions \u2014 newest first when listing, most relevant first when searching.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummaryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/chat-sessions": {
       "get": {
         "operationId": "listChatSessions",
@@ -3476,14 +3645,14 @@
         }
       }
     },
-    "/projects/{projectId}/chatboxes": {
+    "/projects/{projectId}/scenarios": {
       "get": {
-        "operationId": "listChatboxes",
+        "operationId": "listScenarios",
         "tags": [
-          "Chatboxes"
+          "Scenarios"
         ],
-        "summary": "List a project's chatboxes",
-        "description": "The chatboxes published from this project \u2014 name, access mode, attached servers, and share link. Read-only.",
+        "summary": "List a project's scenarios",
+        "description": "The scenarios published from this project \u2014 name, access mode, attached servers, and share link. Read-only.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -3491,11 +3660,11 @@
         ],
         "responses": {
           "200": {
-            "description": "The project's chatboxes.",
+            "description": "The project's scenarios.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChatboxPage"
+                  "$ref": "#/components/schemas/ScenarioPage"
                 }
               }
             }
@@ -3524,29 +3693,29 @@
         }
       }
     },
-    "/projects/{projectId}/chatboxes/{chatboxId}": {
+    "/projects/{projectId}/scenarios/{scenarioId}": {
       "get": {
-        "operationId": "getChatbox",
+        "operationId": "getScenario",
         "tags": [
-          "Chatboxes"
+          "Scenarios"
         ],
-        "summary": "Get a chatbox",
-        "description": "One chatbox's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A chatbox that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "summary": "Get a scenario",
+        "description": "One scenario's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A scenario that exists but belongs to a different project reads as `404 NOT_FOUND`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/chatboxId"
+            "$ref": "#/components/parameters/scenarioId"
           }
         ],
         "responses": {
           "200": {
-            "description": "The chatbox settings.",
+            "description": "The scenario settings.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChatboxDetail"
+                  "$ref": "#/components/schemas/ScenarioDetail"
                 }
               }
             }
@@ -3582,7 +3751,7 @@
           "Tunnels"
         ],
         "summary": "Create (or revive) a relay tunnel for a named project server",
-        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and chatboxes can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP \u2014 the backend otherwise stores only a hash of the secret \u2014 mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests \u2014 this is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
+        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and scenarios can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP \u2014 the backend otherwise stores only a hash of the secret \u2014 mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests \u2014 this is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -8077,11 +8246,11 @@
           "type": "string"
         }
       },
-      "chatboxId": {
-        "name": "chatboxId",
+      "scenarioId": {
+        "name": "scenarioId",
         "in": "path",
         "required": true,
-        "description": "Chatbox ID, as returned by the project's chatbox list.",
+        "description": "Scenario ID, as returned by the project's scenario list.",
         "schema": {
           "type": "string"
         }
@@ -9873,6 +10042,487 @@
           }
         }
       },
+      "NumericDiff": {
+        "description": "A base/compare pair with its delta. Rate-valued instances are FRACTIONS unless the field name ends in `Percent`.",
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "compare": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "percentDelta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "base",
+          "compare",
+          "delta",
+          "percentDelta"
+        ]
+      },
+      "ScoreContractSide": {
+        "type": "object",
+        "properties": {
+          "evaluationConfigHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scoreIntegrity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "valid",
+              "invalid",
+              null
+            ],
+            "description": "`null` means no verdict was produced. A gate must treat it exactly like `invalid` — absent evidence is not valid evidence."
+          },
+          "scoredIterations": {
+            "type": "integer"
+          },
+          "quarantinedIterations": {
+            "type": "integer",
+            "description": "Iterations with at least one row that failed to verify at ingest. Counted here, and excluded from every rate."
+          }
+        },
+        "required": [
+          "evaluationConfigHash",
+          "scoreIntegrity",
+          "scoredIterations",
+          "quarantinedIterations"
+        ]
+      },
+      "ScoreContractScorer": {
+        "type": "object",
+        "properties": {
+          "scorerId": {
+            "type": "string"
+          },
+          "gating": {
+            "type": "boolean"
+          },
+          "deterministic": {
+            "type": "boolean"
+          },
+          "definitionChanged": {
+            "type": "boolean",
+            "description": "The same scorer id was graded under a different definition hash on each side. Its delta is NOT a regression — the two runs did not measure the same thing."
+          },
+          "passRate": {
+            "$ref": "#/components/schemas/NumericDiff"
+          },
+          "meanValue": {
+            "$ref": "#/components/schemas/NumericDiff"
+          },
+          "errorCount": {
+            "type": "object",
+            "properties": {
+              "base": {
+                "type": "integer"
+              },
+              "compare": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "base",
+              "compare"
+            ]
+          }
+        },
+        "required": [
+          "scorerId",
+          "gating",
+          "deterministic",
+          "definitionChanged",
+          "passRate",
+          "meanValue",
+          "errorCount"
+        ]
+      },
+      "CaseScoreSide": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "scored",
+              "error",
+              "skipped",
+              "not_applicable"
+            ]
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "value",
+          "passed"
+        ]
+      },
+      "CaseScoreDelta": {
+        "type": "object",
+        "properties": {
+          "scorerId": {
+            "type": "string"
+          },
+          "gating": {
+            "type": "boolean"
+          },
+          "deterministic": {
+            "type": "boolean"
+          },
+          "definitionChanged": {
+            "type": "boolean"
+          },
+          "base": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CaseScoreSide"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "compare": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CaseScoreSide"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/NumericDiff"
+          }
+        },
+        "required": [
+          "scorerId",
+          "gating",
+          "deterministic",
+          "definitionChanged",
+          "base",
+          "compare",
+          "value"
+        ]
+      },
+      "EvalRunCompareCaseSide": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "absent"
+            ]
+          },
+          "iterationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "representativeIterationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "outcome",
+          "iterationIds",
+          "representativeIterationId",
+          "error"
+        ]
+      },
+      "EvalRunCompareCase": {
+        "type": "object",
+        "properties": {
+          "caseKey": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unchanged_passed",
+              "unchanged_failed",
+              "regressed",
+              "fixed",
+              "new_case",
+              "removed_case",
+              "changed"
+            ]
+          },
+          "configChanged": {
+            "type": "boolean",
+            "description": "The scenario's own config (prompt, steps, expectations) changed."
+          },
+          "evaluationConfigChanged": {
+            "type": "boolean",
+            "description": "This case's evaluation config changed."
+          },
+          "scoreDeltas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseScoreDelta"
+            }
+          },
+          "base": {
+            "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          },
+          "compare": {
+            "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          }
+        },
+        "required": [
+          "caseKey",
+          "title",
+          "status",
+          "configChanged",
+          "evaluationConfigChanged",
+          "scoreDeltas",
+          "base",
+          "compare"
+        ]
+      },
+      "EvalRunCompareSide": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "runNumber": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "completedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "passed": {
+                    "type": "integer"
+                  },
+                  "failed": {
+                    "type": "integer"
+                  },
+                  "passRate": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "total",
+                  "passed",
+                  "failed",
+                  "passRate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "runNumber",
+          "result",
+          "createdAt",
+          "completedAt",
+          "summary"
+        ]
+      },
+      "EvalRunCompare": {
+        "type": "object",
+        "properties": {
+          "suite": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          },
+          "baseline": {
+            "type": "object",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": [
+                  "previous_completed",
+                  "run"
+                ]
+              },
+              "baseRunId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "policy",
+              "baseRunId"
+            ]
+          },
+          "baseRun": {
+            "$ref": "#/components/schemas/EvalRunCompareSide"
+          },
+          "compareRun": {
+            "$ref": "#/components/schemas/EvalRunCompareSide"
+          },
+          "passSummary": {
+            "description": "Run-summary counters. Named `passSummary`, not `scores`, so it cannot be confused with `scoreContract` — the two answer different questions.",
+            "type": "object",
+            "properties": {
+              "passRatePercent": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "total": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "passed": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "failed": {
+                "$ref": "#/components/schemas/NumericDiff"
+              }
+            },
+            "required": [
+              "passRatePercent",
+              "total",
+              "passed",
+              "failed"
+            ]
+          },
+          "metrics": {
+            "type": "object",
+            "properties": {
+              "wallDurationMs": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "totalTokens": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "estimatedCostUsd": {
+                "$ref": "#/components/schemas/NumericDiff"
+              }
+            },
+            "required": [
+              "wallDurationMs",
+              "totalTokens",
+              "estimatedCostUsd"
+            ]
+          },
+          "scoreContract": {
+            "type": "object",
+            "properties": {
+              "base": {
+                "$ref": "#/components/schemas/ScoreContractSide"
+              },
+              "compare": {
+                "$ref": "#/components/schemas/ScoreContractSide"
+              },
+              "evaluationConfigChanged": {
+                "type": "boolean"
+              },
+              "scorers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ScoreContractScorer"
+                }
+              }
+            },
+            "required": [
+              "base",
+              "compare",
+              "evaluationConfigChanged",
+              "scorers"
+            ]
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalRunCompareCase"
+            }
+          }
+        },
+        "required": [
+          "suite",
+          "baseline",
+          "baseRun",
+          "compareRun",
+          "passSummary",
+          "metrics",
+          "scoreContract",
+          "cases"
+        ]
+      },
       "EvalRunPage": {
         "type": "object",
         "required": [
@@ -10832,6 +11482,211 @@
           }
         }
       },
+      "SessionLink": {
+        "type": "object",
+        "required": [
+          "path",
+          "url"
+        ],
+        "description": "Where a human goes to read this session. Prefers the surface-native page; falls back to `/sessions?session=` when the session has none (an eval Quick Run, or a deleted parent run).",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "App-relative path, including `?project=`."
+          },
+          "url": {
+            "type": "string",
+            "description": "Absolute URL for the same target."
+          }
+        }
+      },
+      "SessionParentRef": {
+        "type": "object",
+        "required": [
+          "kind",
+          "label"
+        ],
+        "description": "The session's parent run, discriminated on `kind`. Additive: switch on `kind` and tolerate an unknown value.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "evalRun",
+              "journeyRun",
+              "scenario"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "nullable": true,
+            "description": "Human-readable parent name; null when the parent row is gone."
+          },
+          "iterationId": {
+            "type": "string"
+          },
+          "suiteRunId": {
+            "type": "string",
+            "nullable": true,
+            "description": "eval only; null means Quick Run (no suite run exists)."
+          },
+          "suiteId": {
+            "type": "string",
+            "nullable": true
+          },
+          "journeyRunId": {
+            "type": "string"
+          },
+          "journeyRefId": {
+            "type": "string",
+            "nullable": true
+          },
+          "scenarioId": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "chatSessionId",
+          "projectId",
+          "sourceType",
+          "origin",
+          "status",
+          "synthetic",
+          "lockReason",
+          "title",
+          "firstMessagePreview",
+          "visibility",
+          "ownedByViewer",
+          "startedAt",
+          "lastActivityAt",
+          "modelId",
+          "messageCount",
+          "parentRef",
+          "link"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatSessionId": {
+            "type": "string",
+            "description": "Wire id used by the Playground restore; distinct from `id`."
+          },
+          "projectId": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "scenario",
+              "eval",
+              "swarm"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string"
+          },
+          "synthetic": {
+            "type": "boolean"
+          },
+          "lockReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "firstMessagePreview": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "nullable": true,
+            "description": "Direct sessions only: `private` or `project`. Null elsewhere."
+          },
+          "ownedByViewer": {
+            "type": "boolean"
+          },
+          "startedAt": {
+            "type": "integer"
+          },
+          "lastActivityAt": {
+            "type": "integer"
+          },
+          "modelId": {
+            "type": "string",
+            "nullable": true
+          },
+          "messageCount": {
+            "type": "integer"
+          },
+          "cumulativeUserMessageCount": {
+            "type": "integer",
+            "description": "Absent (not 0) when the session never reported the counter."
+          },
+          "cumulativeToolCallCount": {
+            "type": "integer"
+          },
+          "cumulativeInputTokens": {
+            "type": "integer"
+          },
+          "cumulativeOutputTokens": {
+            "type": "integer"
+          },
+          "parentRef": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionParentRef"
+              }
+            ],
+            "nullable": true
+          },
+          "link": {
+            "$ref": "#/components/schemas/SessionLink"
+          },
+          "matchPreview": {
+            "type": "string",
+            "nullable": true,
+            "description": "`scope=transcripts` only: a window of the transcript around the match. Null when no window could be located; absent entirely on title-scope results."
+          }
+        }
+      },
+      "SessionSummaryPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass as `cursor` to fetch the next page. Omitted on the last page."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "titles",
+              "transcripts"
+            ],
+            "description": "The scope the server actually honored. ABSENT from deployments predating the parameter \u2014 treat its absence as \"transcript search unsupported\"."
+          }
+        }
+      },
       "ChatSessionPage": {
         "type": "object",
         "required": [
@@ -10906,9 +11761,9 @@
           }
         }
       },
-      "ChatboxLink": {
+      "ScenarioLink": {
         "type": "object",
-        "description": "Share link for the chatbox. The URL embeds the access token; visible to any caller who can read the chatbox (the same audience that sees it in the hosted UI).",
+        "description": "Share link for the scenario. The URL embeds the access token; visible to any caller who can read the scenario (the same audience that sees it in the hosted UI).",
         "required": [
           "path",
           "url"
@@ -10924,9 +11779,9 @@
           }
         }
       },
-      "ChatboxServer": {
+      "ScenarioServer": {
         "type": "object",
-        "description": "A server attached to the chatbox. Chatboxes attach HTTP servers only, so `url` is the server's endpoint.",
+        "description": "A server attached to the scenario. Scenarios attach HTTP servers only, so `url` is the server's endpoint.",
         "required": [
           "id",
           "name",
@@ -10951,9 +11806,9 @@
           }
         }
       },
-      "Chatbox": {
+      "Scenario": {
         "type": "object",
-        "description": "Summary of a published chatbox, as returned by the list endpoint.",
+        "description": "Summary of a published scenario, as returned by the list endpoint.",
         "required": [
           "id",
           "name",
@@ -10984,7 +11839,7 @@
               "string",
               "null"
             ],
-            "description": "Who can use the chatbox.",
+            "description": "Who can use the scenario.",
             "enum": [
               "project_members",
               "invited_only",
@@ -10997,14 +11852,14 @@
               "string",
               "null"
             ],
-            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
           },
           "hostName": {
             "type": [
@@ -11024,7 +11879,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ChatboxLink"
+                "$ref": "#/components/schemas/ScenarioLink"
               },
               {
                 "type": "null"
@@ -11047,9 +11902,9 @@
           }
         }
       },
-      "ChatboxDetail": {
+      "ScenarioDetail": {
         "type": "object",
-        "description": "A chatbox's full read-only settings: the summary fields plus the host execution config and resolved servers.",
+        "description": "A scenario's full read-only settings: the summary fields plus the host execution config and resolved servers.",
         "required": [
           "id",
           "name",
@@ -11082,7 +11937,7 @@
               "string",
               "null"
             ],
-            "description": "Who can use the chatbox.",
+            "description": "Who can use the scenario.",
             "enum": [
               "project_members",
               "invited_only",
@@ -11095,14 +11950,14 @@
               "string",
               "null"
             ],
-            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
           },
           "hostName": {
             "type": [
@@ -11122,7 +11977,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ChatboxLink"
+                "$ref": "#/components/schemas/ScenarioLink"
               },
               {
                 "type": "null"
@@ -11148,7 +12003,7 @@
               "string",
               "null"
             ],
-            "description": "Model the chatbox chats with."
+            "description": "Model the scenario chats with."
           },
           "systemPrompt": {
             "type": [
@@ -11168,12 +12023,12 @@
           "servers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChatboxServer"
+              "$ref": "#/components/schemas/ScenarioServer"
             }
           }
         }
       },
-      "ChatboxPage": {
+      "ScenarioPage": {
         "type": "object",
         "required": [
           "items"
@@ -11182,7 +12037,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Chatbox"
+              "$ref": "#/components/schemas/Scenario"
             }
           }
         }

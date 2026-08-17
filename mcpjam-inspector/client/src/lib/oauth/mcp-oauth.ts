@@ -1805,8 +1805,8 @@ async function createHostedOAuthSessionIfNeeded(input: {
       ...(pendingMarker.accessScope
         ? { accessScope: pendingMarker.accessScope }
         : {}),
-      ...(pendingMarker.chatboxId
-        ? { chatboxId: pendingMarker.chatboxId }
+      ...(pendingMarker.scenarioId
+        ? { scenarioId: pendingMarker.scenarioId }
         : {}),
     }),
   });
@@ -1866,8 +1866,8 @@ async function readHostedOAuthSessionProgress(input: {
         ...(input.context.accessScope
           ? { accessScope: input.context.accessScope }
           : {}),
-        ...(input.context.chatboxId
-          ? { chatboxId: input.context.chatboxId }
+        ...(input.context.scenarioId
+          ? { scenarioId: input.context.scenarioId }
           : {}),
       }),
     }
@@ -3161,7 +3161,7 @@ export async function completeHostedOAuthCallback(
                 },
               }),
           ...(context.accessScope ? { accessScope: context.accessScope } : {}),
-          ...(context.chatboxId ? { chatboxId: context.chatboxId } : {}),
+          ...(context.scenarioId ? { scenarioId: context.scenarioId } : {}),
         }),
       });
 

@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   },
   paginatedCalls: [] as Array<{ name: string; args: unknown }>,
   detailThreadIds: [] as string[],
+  detailSessionLinks: [] as string[],
 }));
 
 vi.mock("convex/react", () => ({
@@ -52,8 +53,15 @@ vi.mock("convex/react", () => ({
 // panel's contract with it is just "opens the row's `id`", so stub it and
 // record the id.
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
-  ShareUsageThreadDetail: ({ threadId }: { threadId: string }) => {
+  ShareUsageThreadDetail: ({
+    threadId,
+    sessionLink,
+  }: {
+    threadId: string;
+    sessionLink?: string;
+  }) => {
     mocks.detailThreadIds.push(threadId);
+    if (sessionLink) mocks.detailSessionLinks.push(sessionLink);
     return <div data-testid="thread-detail-stub">{threadId}</div>;
   },
 }));
@@ -101,6 +109,11 @@ function lastCall() {
 beforeEach(() => {
   mocks.paginatedCalls.length = 0;
   mocks.detailThreadIds.length = 0;
+  mocks.detailSessionLinks.length = 0;
+  // The panel reads its selection from the URL, so the URL is shared state
+  // between tests now — one that clicks a row would otherwise leave the next
+  // one rendering a detail pane it never asked for.
+  window.history.replaceState({}, "", "/sessions");
   setRows([]);
 });
 
@@ -126,7 +139,7 @@ describe("SessionsPanel — query contract", () => {
 
     // Selecting every pill means "no filter" — the arg must drop back out so
     // the backend serves the plain project index.
-    for (const pill of ["direct", "chatbox", "eval"]) {
+    for (const pill of ["direct", "scenario", "eval"]) {
       fireEvent.click(screen.getByTestId(`sessions-source-pill-${pill}`));
     }
     expect(lastCall().args).toEqual({ projectId: "p1" });
@@ -224,6 +237,51 @@ describe("SessionsPanel — rows and detail", () => {
     );
     expect(mocks.detailThreadIds).toContain("doc_abc");
     expect(mocks.detailThreadIds).not.toContain("cs_abc");
+  });
+
+  test("puts the selection in the URL, stamped with the panel's project", () => {
+    // Selection lives in the URL because `/sessions?session=` is the backend's
+    // universal permalink fallback: every `/v1/sessions` item carries a link
+    // pointing here, so arriving at one must open that session.
+    // Starts at a BARE /sessions: the panel must stamp its own projectId
+    // rather than copying the absent param forward.
+    window.history.replaceState({}, "", "/sessions");
+    setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
+    render(<SessionsPanel projectId="p1" />);
+
+    fireEvent.click(screen.getByTestId("session-row-cs_abc"));
+
+    const url = new URL(window.location.href);
+    expect(url.pathname).toBe("/sessions");
+    expect(url.searchParams.get("session")).toBe("doc_abc");
+    // Dropping `project` would silently move the page to whatever project the
+    // viewer's picker was parked on.
+    expect(url.searchParams.get("project")).toBe("p1");
+  });
+
+  test("opens the session named by ?session= on first render", () => {
+    // The permalink case. No click, and no page-walk: the detail pane loads by
+    // thread id independently of where the row falls in the list.
+    window.history.replaceState({}, "", "/sessions?session=doc_deep");
+    setRows([]);
+    render(<SessionsPanel projectId="p1" />);
+
+    expect(screen.getByTestId("thread-detail-stub")).toHaveTextContent(
+      "doc_deep"
+    );
+  });
+
+  test("hands the detail pane a shareable absolute link for the selection", () => {
+    window.history.replaceState({}, "", "/sessions?session=doc_abc");
+    setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
+    render(<SessionsPanel projectId="p1" />);
+
+    const link = mocks.detailSessionLinks.at(-1) ?? "";
+    expect(link).toContain("/sessions?session=doc_abc");
+    // The panel's own projectId, not the URL's — a recipient parked on another
+    // project has to land on this one.
+    expect(link).toContain("project=p1");
+    expect(link).toMatch(/^https?:\/\//);
   });
 
   test("an empty unfiltered feed shows the getting-started empty state", () => {

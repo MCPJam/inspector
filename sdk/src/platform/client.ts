@@ -1,7 +1,7 @@
 import { PlatformApiError } from "./errors.js";
 import type {
-  PlatformChatbox,
-  PlatformChatboxDetail,
+  PlatformScenarioSummary,
+  PlatformScenarioDetail,
   PlatformChatSession,
   PlatformDoctorReport,
   PlatformEvalIteration,
@@ -30,6 +30,7 @@ import type {
   PlatformJourneyArchived,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformRunCompare,
   PlatformRunScorecard,
   PlatformGuestExecution,
   PlatformScenario,
@@ -68,6 +69,7 @@ import type {
   PlatformServerConnection,
   PlatformServerConnectionCreateBody,
   PlatformProjectServer,
+  PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
 } from "./types.js";
@@ -380,27 +382,75 @@ export class PlatformApiClient {
     );
   }
 
-  listChatboxes(
-    params: { projectId: string },
+  /**
+   * The unified, cross-surface sessions feed for one project.
+   *
+   * `q` is optional HERE (omitted = the recency feed) even though the
+   * `search_sessions` operation requires it: a client method is the general
+   * transport, and list-mode is a legitimate use of the endpoint. The
+   * operation narrows that on purpose — an agent asking for "the sessions"
+   * unfiltered is almost never what its user meant.
+   *
+   * `sourceTypes` is CSV-joined because the endpoint takes a repeated-value
+   * `sourceType` param as one comma-separated string; an empty array is sent
+   * as nothing at all rather than as `sourceType=`, which the backend would
+   * reject.
+   *
+   * `cursor` passes through unrenamed — it is an opaque Convex cursor, so echo
+   * back exactly what the previous page returned and never construct one.
+   */
+  listSessions(
+    params: {
+      projectId: string;
+      q?: string;
+      scope?: "titles" | "transcripts";
+      sourceTypes?: string[];
+      status?: string;
+      limit?: number;
+      cursor?: string;
+    },
     options?: RequestOptions,
-  ): Promise<PlatformPage<PlatformChatbox>> {
+  ): Promise<PlatformSessionsPage> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/chatboxes`,
+      `/projects/${encodeURIComponent(params.projectId)}/sessions`,
+      {
+        query: {
+          q: params.q,
+          scope: params.scope,
+          sourceType: params.sourceTypes?.length
+            ? params.sourceTypes.join(",")
+            : undefined,
+          status: params.status,
+          limit: params.limit,
+          cursor: params.cursor,
+        },
+      },
+      options,
+    );
+  }
+
+  listScenarios(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformScenarioSummary>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/scenarios`,
       {},
       options,
     );
   }
 
-  getChatbox(
-    params: { projectId: string; chatboxId: string },
+  getScenario(
+    params: { projectId: string; scenarioId: string },
     options?: RequestOptions,
-  ): Promise<PlatformChatboxDetail> {
+  ): Promise<PlatformScenarioDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
         params.projectId,
-      )}/chatboxes/${encodeURIComponent(params.chatboxId)}`,
+      )}/scenarios/${encodeURIComponent(params.scenarioId)}`,
       {},
       options,
     );
@@ -1015,6 +1065,44 @@ export class PlatformApiClient {
         params.runId,
       )}/iterations/${encodeURIComponent(params.iterationId)}/steps`,
       {},
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-runs/{runId}/compare` — this run against a
+   * baseline.
+   *
+   * Omitting `baseRunId` selects the nearest earlier COMPLETED run in the same
+   * suite. Baseline resolution is server-side on purpose: `listEvalSuiteRuns`
+   * has no cursor, so a client-side walk cannot be bounded-correct, and the
+   * policy belongs beside the backend's other baseline resolvers.
+   *
+   * THROWS `PlatformApiError` (404, `details.reason === "BASELINE_NOT_FOUND"`)
+   * when no baseline resolves — a suite's first run, or one whose whole lookup
+   * window never completed. That is an incomplete comparison, not a failing
+   * one; callers must not map it to a regression.
+   */
+  compareEvalRun(
+    params: {
+      projectId: string;
+      runId: string;
+      baseRunId?: string;
+      previewChars?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRunCompare> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/compare`,
+      {
+        query: {
+          baseRunId: params.baseRunId,
+          previewChars: params.previewChars,
+        },
+      },
       options,
     );
   }

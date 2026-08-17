@@ -26,8 +26,8 @@ import {
   type ShowServersPayload,
 } from "./show-servers.js";
 import type {
-  PlatformChatbox,
-  PlatformChatboxDetail,
+  PlatformScenarioSummary,
+  PlatformScenarioDetail,
   PlatformChatSession,
   PlatformDoctorReport,
   PlatformEvalCase,
@@ -36,6 +36,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
@@ -55,6 +56,7 @@ import type {
   PlatformPersona,
   PlatformPersonaDeleted,
   PlatformRunScorecard,
+  PlatformSessionSummary,
   PlatformSwarm,
   PlatformSwarmArchived,
   PlatformSwarmFinding,
@@ -417,7 +419,7 @@ async function resolveProjectOrThrow(
 // ── Named-resource resolution ────────────────────────────────────────
 
 /**
- * Resolve a suite/chatbox/server selector against a project listing the same
+ * Resolve a suite/scenario/server selector against a project listing the same
  * way `resolveProject` works: exact id first, then unique case-insensitive
  * name. Failures become NOT_FOUND platform errors whose message enumerates
  * the valid choices, so every surface renders the same actionable text.
@@ -492,7 +494,7 @@ function toOtherProjects(
 // ── Server live operations ───────────────────────────────────────────
 // Live MCP ops against one saved server: the platform authorizes the caller,
 // opens an ephemeral connection, runs the op, and disconnects. The server is
-// matched by name or ID within the project, like suites and chatboxes.
+// matched by name or ID within the project, like suites and scenarios.
 
 const SERVER_SELECTOR_DESCRIPTION =
   "Server name or ID, as saved in the project.";
@@ -2425,6 +2427,52 @@ export const getEvalRunOperation: PlatformOperation<
   },
 };
 
+const compareEvalRunInput = evalRunScopedInput.extend({
+  baseRunId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite.",
+    ),
+});
+
+export type CompareEvalRunInput = z.infer<typeof compareEvalRunInput>;
+
+export type CompareEvalRunResult = {
+  project: SelectedProjectInfo;
+  compare: PlatformRunCompare;
+};
+
+export const compareEvalRunOperation: PlatformOperation<
+  CompareEvalRunInput,
+  CompareEvalRunResult
+> = {
+  name: "compare_eval_run",
+  title: "Compare MCPJam eval runs",
+  description:
+    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
+  readOnly: true,
+  inputSchema: compareEvalRunInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const compare = await client.compareEvalRun(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        baseRunId: input.baseRunId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), compare };
+  },
+};
+
 const evalRunIterationsInput = evalRunScopedInput.extend({
   cursor: z
     .string()
@@ -2805,20 +2853,20 @@ export const closeTunnelOperation: PlatformOperation<
 
 // ── Chat operations ──────────────────────────────────────────────────
 
-export type ListChatboxesResult = {
+export type ListScenariosResult = {
   project: SelectedProjectInfo;
-  items: PlatformChatbox[];
+  items: PlatformScenarioSummary[];
   otherProjects: ProjectInfo[];
 };
 
-export const listChatboxesOperation: PlatformOperation<
+export const listScenariosOperation: PlatformOperation<
   ProjectScopedInput,
-  ListChatboxesResult
+  ListScenariosResult
 > = {
-  name: "list_chatboxes",
-  title: "List MCPJam chatboxes",
+  name: "list_scenarios",
+  title: "List MCPJam scenarios",
   description:
-    "List the chatboxes published from an MCPJam project: name, access mode, attached servers, and share link. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+    "List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
   inputSchema: projectScopedInput,
   async execute(input, { client, signal }) {
@@ -2827,7 +2875,7 @@ export const listChatboxesOperation: PlatformOperation<
       input.project,
       signal,
     );
-    const page = await client.listChatboxes(
+    const page = await client.listScenarios(
       { projectId: project.id },
       { signal },
     );
@@ -2839,54 +2887,54 @@ export const listChatboxesOperation: PlatformOperation<
   },
 };
 
-const chatboxScopedInput = z.object({
+const scenarioScopedInput = z.object({
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  chatbox: z.string().trim().min(1).describe("Chatbox name or ID."),
+  scenario: z.string().trim().min(1).describe("Scenario name or ID."),
 });
 
-export type GetChatboxInput = z.infer<typeof chatboxScopedInput>;
+export type GetScenarioInput = z.infer<typeof scenarioScopedInput>;
 
-export type GetChatboxResult = {
+export type GetScenarioResult = {
   project: SelectedProjectInfo;
-  chatbox: PlatformChatboxDetail;
+  scenario: PlatformScenarioDetail;
 };
 
-export const getChatboxOperation: PlatformOperation<
-  GetChatboxInput,
-  GetChatboxResult
+export const getScenarioOperation: PlatformOperation<
+  GetScenarioInput,
+  GetScenarioResult
 > = {
-  name: "get_chatbox",
-  title: "Get MCPJam chatbox",
+  name: "get_scenario",
+  title: "Get MCPJam scenario",
   description:
-    "Get one chatbox's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. The chatbox is matched by name or ID within the project.",
+    "Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. The scenario is matched by name or ID within the project.",
   readOnly: true,
-  inputSchema: chatboxScopedInput,
+  inputSchema: scenarioScopedInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal,
     );
-    const page = await client.listChatboxes(
+    const page = await client.listScenarios(
       { projectId: project.id },
       { signal },
     );
     const match = resolveByIdOrName(
       page.items,
-      input.chatbox,
-      "Chatbox",
+      input.scenario,
+      "Scenario",
       `project "${project.name}"`,
     );
-    const chatbox = await client.getChatbox(
-      { projectId: project.id, chatboxId: match.id },
+    const scenario = await client.getScenario(
+      { projectId: project.id, scenarioId: match.id },
       { signal },
     );
-    return { project: toSelectedProjectInfo(project), chatbox };
+    return { project: toSelectedProjectInfo(project), scenario };
   },
 };
 
@@ -2958,6 +3006,138 @@ export const listChatSessionsOperation: PlatformOperation<
     );
     return {
       ...(project ? { project: toSelectedProjectInfo(project) } : {}),
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const SESSION_SOURCE_TYPES = [
+  "direct",
+  "scenario",
+  "eval",
+  "swarm",
+] as const;
+
+const searchSessionsInput = z.object({
+  query: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Search terms. Required — this operation does not list."),
+  scope: z
+    .enum(["titles", "transcripts"])
+    .optional()
+    .describe(
+      "What to search. 'titles' (default) matches session titles and first messages across the whole corpus; 'transcripts' matches what was actually said inside conversations.",
+    ),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  sourceTypes: z
+    .array(z.enum(SESSION_SOURCE_TYPES))
+    .min(1)
+    .optional()
+    .describe(
+      "Restrict to these session surfaces. Omit to search all available surfaces.",
+    ),
+  status: z
+    .enum(["active", "archived"])
+    .optional()
+    .describe("Filter by session status. Defaults to active."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe("Maximum number of sessions to return per page."),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Opaque pagination cursor from a previous response. Page with the same query and scope you opened with.",
+    ),
+});
+
+export type SearchSessionsInput = z.infer<typeof searchSessionsInput>;
+
+export type SearchSessionsResult = {
+  project: SelectedProjectInfo;
+  scope: "titles" | "transcripts";
+  items: PlatformSessionSummary[];
+  nextCursor?: string;
+};
+
+export const searchSessionsOperation: PlatformOperation<
+  SearchSessionsInput,
+  SearchSessionsResult
+> = {
+  name: "search_sessions",
+  title: "Search MCPJam sessions",
+  description:
+    "Search conversation sessions in a project across every surface (Playground, user testing, evals, swarms), ranked by relevance. " +
+    "scope=titles (default) searches session titles and opening messages; scope=transcripts searches what was said inside the conversations. " +
+    "Older sessions (created before 2026-08-14) are EXCLUDED from transcript search — they cannot match at all; use scope=titles to find them. " +
+    "Every result carries a link to open the session.",
+  readOnly: true,
+  inputSchema: searchSessionsInput,
+  async execute(input, { client, signal }) {
+    // Re-checked here, not just in the schema: `execute()` is called directly
+    // by surfaces that never parse the schema (the CLI binding, raw callers).
+    // The endpoint treats a blank `q` as an EMPTY SEARCH — so a blank query
+    // reaching it would return the project's recency feed, which this
+    // operation promises never to do.
+    const query = input.query?.trim() ?? "";
+    if (query.length === 0) {
+      throw operationInputError(
+        "query is required — search_sessions searches, it does not list.",
+      );
+    }
+
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const requestedScope = input.scope ?? "titles";
+    const page = await client.listSessions(
+      {
+        projectId: project.id,
+        q: query,
+        scope: requestedScope,
+        sourceTypes: input.sourceTypes,
+        status: input.status,
+        limit: input.limit,
+        cursor: input.cursor,
+      },
+      { signal },
+    );
+
+    // FAIL CLOSED on version skew. A backend that predates `scope` ignores the
+    // unknown query param, runs a title search, and answers without the echo.
+    // Returning those rows would label title matches as transcript matches —
+    // an answer the caller cannot detect is wrong. Only checked for a
+    // non-default scope: `titles` is what an old backend does anyway, so its
+    // results are correct with or without the marker.
+    if (requestedScope !== "titles" && page.scope !== requestedScope) {
+      throw new PlatformApiError(
+        "this backend does not support transcript search; retry with scope=titles",
+        "UNSUPPORTED",
+        // `status: 0` like every other client-synthesized error: the request
+        // itself returned 200, so quoting a server status would misreport
+        // what happened.
+        { status: 0 },
+      );
+    }
+
+    return {
+      project: toSelectedProjectInfo(project),
+      scope: requestedScope,
       items: page.items,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
@@ -4799,8 +4979,8 @@ export const cancelJourneyRunOperation: PlatformOperation<
 // ── Scenarios (user testing) ────────────────────────────────────────────────
 //
 // A scenario is a project environment published for people outside the project
-// to talk to. Internally these are `chatboxes` rows and will stay that way;
-// "scenario" is the public noun. The older `list_chatboxes` / `get_chatbox`
+// to talk to. Internally these are `scenarios` rows and will stay that way;
+// "scenario" is the public noun. The older `list_scenarios` / `get_scenario`
 // operations still work and still point at the old routes until GA.
 //
 // Both operations need project ADMIN. Publishing is additionally behind the
@@ -6107,7 +6287,7 @@ const userTestingScenarioSelectorInput = z.object({
     .string()
     .trim()
     .min(1)
-    .describe("Scenario id (the `id` from list_chatboxes / publish_scenario)."),
+    .describe("Scenario id (the `id` from list_scenarios / publish_scenario)."),
 });
 
 export type GetUserTestingScenarioInput = z.infer<
@@ -7054,15 +7234,17 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,
-  listChatboxesOperation,
-  getChatboxOperation,
+  listScenariosOperation,
+  getScenarioOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listJourneysOperation,
   listJourneyRunsOperation,
   getJourneyRunOperation,

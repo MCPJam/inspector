@@ -4,8 +4,8 @@
  * Central wrapper around React Router's navigate/location primitives.
  *
  * URLs are path-based (`/servers`, `/organizations/:orgId/billing`, etc.)
- * matching `react-router` semantics. Chatbox session hashes
- * (`#chatbox-slug`) are NOT app navigation and are preserved verbatim.
+ * matching `react-router` semantics. Scenario session hashes
+ * (`#scenario-slug`) are NOT app navigation and are preserved verbatim.
  */
 import { useCallback, useContext, useLayoutEffect, useState } from "react";
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
@@ -83,7 +83,7 @@ export const routePaths = {
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
   /** Legacy path. Still routed (it redirects), but never build links with it. */
-  chatboxes: "/chatboxes",
+  scenarios: "/scenarios",
   userTesting: "/user-testing",
   swarms: "/swarms",
   environments: "/environments",
@@ -136,9 +136,9 @@ const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
 
 /**
  * Build a path to one User Testing scenario. `scenarioId` is the scenario's
- * CHATBOX id — the identity host-backed and environment-backed scenarios
+ * SCENARIO id — the identity host-backed and environment-backed scenarios
  * share. A HOST id is still accepted by the surface (links minted under the
- * older scheme redirect onto the chatbox id), but new links should never be
+ * older scheme redirect onto the scenario id), but new links should never be
  * built with one. `session` opens straight into one tester session, which is
  * what a copied session link carries; `sel` and `view` carry an Insights
  * selection and which diagram it was made on, so a link to "this cluster, in
@@ -243,7 +243,7 @@ export function parseSwarmDetailTab(search: string): SwarmDetailTab {
 }
 
 /**
- * Build a Swarms deep-link to one synthetic session. Unlike the chatbox
+ * Build a Swarms deep-link to one synthetic session. Unlike the scenario
  * Sessions tab (host-anchored), the Swarms surface is Persona → Journey → Run →
  * Session, so a link that only carried `host`/`session` couldn't restore the
  * persona + run selection the recipient needs to reach the session. This
@@ -287,6 +287,32 @@ export function parseSwarmSessionParams(search: string): {
     hostId: pick("host"),
     threadId: pick("session"),
   };
+}
+
+/**
+ * Build a deep-link to the cross-surface Sessions page, optionally focused on
+ * one session.
+ *
+ * Unlike {@link buildSwarmSessionPath} this carries no selection chain: the
+ * Sessions detail pane loads by `threadId` alone (`ShareUsageThreadDetail`
+ * subscribes per-thread), so a link never has to describe how to page a list
+ * to the row. That is what lets the backend mint `/sessions?session=…` as the
+ * universal permalink fallback for a session whose surface-native target does
+ * not exist (an eval Quick Run, a session whose parent run was deleted).
+ *
+ * `project` is threaded explicitly rather than inherited from the recipient's
+ * picker: `/sessions` has no project segment in its path, so without it the
+ * page renders whatever project the viewer was last parked on rather than the
+ * one the session belongs to.
+ */
+export function buildSessionsPath(
+  opts: { session?: string; project?: string } = {}
+): string {
+  const search = new URLSearchParams();
+  if (opts.session) search.set("session", opts.session);
+  if (opts.project) search.set("project", opts.project);
+  const query = search.toString();
+  return query ? `${routePaths.sessions}?${query}` : routePaths.sessions;
 }
 
 /** Build a path for a specific organization route. */
@@ -541,7 +567,7 @@ export function pathnameToActiveTab(pathname: string): string {
   }
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";
   const normalized = normalizeHostedHashTab(firstSegment);
-  // Unknown first segments include chatbox slugs; App handles those surfaces
+  // Unknown first segments include scenario slugs; App handles those surfaces
   // before route rendering, so the shell falls back to the safe servers body.
   return KNOWN_APP_TAB_SEGMENTS.has(normalized) ? normalized : "servers";
 }
@@ -625,11 +651,11 @@ export function navigationTargetToPath(
   const normalizedTab = normalizeHostedHashTab(segments[0] || "servers");
   if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return fallback;
   // The tab id and the public path segment agree everywhere except User
-  // Testing, whose tab id stayed `chatboxes`. Emit the canonical path so
+  // Testing, whose tab id stayed `scenarios`. Emit the canonical path so
   // agent navigation and legacy bookmarks land directly instead of bouncing
-  // through the `/chatboxes` redirect.
+  // through the `/scenarios` redirect.
   const pathSegment =
-    normalizedTab === "chatboxes" ? "user-testing" : normalizedTab;
+    normalizedTab === "scenarios" ? "user-testing" : normalizedTab;
   return `/${[pathSegment, ...segments.slice(1)].join("/")}${queryPart}`;
 }
 

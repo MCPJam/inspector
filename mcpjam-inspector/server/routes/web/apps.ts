@@ -215,7 +215,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
 
       // Mirror the local CLI route's behavior: only inject the
       // OpenAI Apps SDK shim when the caller has opted in. Hosted
-      // chatboxes resolve this from the active host config's
+      // scenarios resolve this from the active host config's
       // `mcpProfile.apps.compatRuntime` (preset fallback applied),
       // so SEP-1865-native hosts get clean HTML by default.
       const shouldInjectOpenAiCompat = body.injectOpenAiCompat === true;

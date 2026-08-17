@@ -126,8 +126,8 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
 //
-// Exception: same-origin self-embed of the public chatbox runtime (a tester
-// link path — `/user-testing/<slug>/<token>`, or the legacy `/chatbox/…` one).
+// Exception: same-origin self-embed of the public scenario runtime (a tester
+// link path — `/user-testing/<slug>/<token>`).
 // The User Testing tab's Preview pane iframes the publish link to show a live
 // preview inside the app — that's intentional, not a misrouted-pushState
 // misconfiguration, so we let the normal tree mount. Restricted to a tester
@@ -141,10 +141,10 @@ const isInIframe = (() => {
       // Match the documented `<segment>/<slug>/<token>` shape only; a generic
       // prefix test would let any unrelated future subpath slip past the
       // misrouted-pushState guard. See lib/tester-link-path.ts.
-      const isPublicChatboxRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
+      const isPublicScenarioRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
         window.location.pathname
       );
-      if (sameOrigin && isPublicChatboxRuntimePath) {
+      if (sameOrigin && isPublicScenarioRuntimePath) {
         return false;
       }
     } catch {

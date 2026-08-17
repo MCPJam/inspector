@@ -24,9 +24,10 @@ import {
   updateProjectOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
-  getChatboxOperation,
+  getScenarioOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
+  compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
@@ -36,8 +37,9 @@ import {
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
-  listChatboxesOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
@@ -181,6 +183,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -193,9 +196,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // there is no excluded write operation to list because the SDK ships none.
   listProjectPluginsOperation,
   getPluginVersionOperation,
-  listChatboxesOperation,
-  getChatboxOperation,
+  listScenariosOperation,
+  getScenarioOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //
@@ -434,8 +438,8 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
   [getEvalRunOperation.name]: "eval_run",
   [listEvalRunIterationsOperation.name]: "eval_run_iterations",
-  [listChatboxesOperation.name]: "chatboxes",
-  [getChatboxOperation.name]: "chatbox",
+  [listScenariosOperation.name]: "scenarios",
+  [getScenarioOperation.name]: "scenario",
 };
 
 export function registerPlatformCatalogTools(

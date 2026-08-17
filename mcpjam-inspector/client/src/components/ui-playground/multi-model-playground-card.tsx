@@ -41,15 +41,15 @@ import {
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
 import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-  useChatboxChatUiOverride,
-} from "@/contexts/chatbox-client-style-context";
+  ScenarioChatUiOverrideProvider,
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+  useScenarioChatUiOverride,
+} from "@/contexts/scenario-client-style-context";
 import {
-  ChatboxHostCapabilitiesOverrideProvider,
-  useChatboxHostCapabilitiesOverride,
-} from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioHostCapabilitiesOverrideProvider,
+  useScenarioHostCapabilitiesOverride,
+} from "@/contexts/scenario-client-capabilities-override-context";
 import {
   ActiveMcpProfileProvider,
   useActiveMcpProfile,
@@ -61,9 +61,9 @@ import {
 } from "@/lib/client-config-v2";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
-  getChatboxChatBackground,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
@@ -150,7 +150,7 @@ interface MultiModelPlaygroundCardProps {
   };
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
   hideInlineEdit?: boolean;
@@ -192,7 +192,7 @@ interface MultiModelPlaygroundCardProps {
    * into chat + trace + raw views.
    *
    * Note: `hostStyle` lives on the snapshot too but is already a required
-   * card prop above (`hostStyle: ChatboxHostStyle`) — the multi-host
+   * card prop above (`hostStyle: ScenarioHostStyle`) — the multi-host
    * caller passes both, and they must agree. Documenting here so future
    * refactors don't accidentally diverge them.
    */
@@ -269,8 +269,8 @@ export function MultiModelPlaygroundCard({
   // the snapshot is meaningful ("no override; preset wins") — when the
   // snapshot itself is set, we forward the field verbatim including
   // undefined, NOT fall back to the tab-root value.
-  const tabRootHostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
-  const tabRootChatUiOverride = useChatboxChatUiOverride();
+  const tabRootHostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
+  const tabRootChatUiOverride = useScenarioChatUiOverride();
   const tabRootMcpProfile = useActiveMcpProfile();
   const effectiveHostCapabilitiesOverride = hostSnapshot
     ? hostSnapshot.hostCapabilitiesOverride
@@ -482,7 +482,7 @@ export function MultiModelPlaygroundCard({
     [injectedToolRenderOverrides, toolRenderOverrides]
   );
   const hostBackgroundColor =
-    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
+    getScenarioChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
   const isMobileFullTakeover =
     deviceType === "mobile" &&
     (displayMode === "fullscreen" || displayMode === "pip");
@@ -833,7 +833,7 @@ export function MultiModelPlaygroundCard({
         ) : (
           <div
             className={cn(
-              "chatbox-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
+              "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
               shellHeightClass,
               effectiveThreadTheme === "dark" && "dark"
             )}
@@ -906,17 +906,17 @@ export function MultiModelPlaygroundCard({
   // context), so model-mode is byte-equivalent to today (tab-root flows
   // through), host-mode shadows.
   let wrapped: ReactNode = (
-    <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider
+    <ScenarioHostStyleProvider value={hostStyle}>
+      <ScenarioHostCapabilitiesOverrideProvider
         value={effectiveHostCapabilitiesOverride}
       >
-        <ChatboxChatUiOverrideProvider value={effectiveChatUiOverride}>
-          <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+        <ScenarioChatUiOverrideProvider value={effectiveChatUiOverride}>
+          <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             {cardBody}
-          </ChatboxHostThemeProvider>
-        </ChatboxChatUiOverrideProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
-    </ChatboxHostStyleProvider>
+          </ScenarioHostThemeProvider>
+        </ScenarioChatUiOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
+    </ScenarioHostStyleProvider>
   );
 
   // Optional shadow providers — only wrap when the caller explicitly

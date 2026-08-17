@@ -62,6 +62,7 @@ so results respect the caller's project access.
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
+| `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
 | `list_eval_run_iterations` | List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. | ✅ |
 | `get_eval_iteration_trace` | Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. | — |
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
@@ -71,9 +72,10 @@ so results respect the caller's project access.
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
-| `list_chatboxes` | List the chatboxes published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
-| `get_chatbox` | Get one chatbox's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
+| `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
+| `get_scenario` | Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
+| `search_sessions` | Search a project's sessions across every surface (Playground, user testing, evals, swarms), ranked by relevance. `scope=titles` searches titles and opening messages; `scope=transcripts` searches what was said. Every result carries a link. | — |
 | `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
 | `list_personas` | List the project's reusable synthetic characters — the cast Swarms journeys run as. | — |
 | `get_persona` | Get one persona in full, including its behavioural notes. | — |

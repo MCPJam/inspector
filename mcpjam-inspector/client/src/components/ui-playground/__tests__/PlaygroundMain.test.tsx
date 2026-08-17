@@ -936,7 +936,7 @@ describe("PlaygroundMain", () => {
 
     // Removed: "passes the requested loading indicator variant to Thread".
     // PlaygroundMain no longer accepts a `loadingIndicatorVariant` prop —
-    // the inner Thread reads the host id from `ChatboxHostStyleProvider`
+    // the inner Thread reads the host id from `ScenarioHostStyleProvider`
     // context. Brand-indicator behavior is covered in
     // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
   });
@@ -2738,7 +2738,7 @@ describe("PlaygroundMain", () => {
   // (`use-persisted-model.ts:150-159`) under a key shared by every chat
   // surface. Playground is the surface that actually turns compare mode on,
   // and it renders both the real Playground and the eval live-chat panel, so a
-  // clobber here destroys the selection the hosted chatbox reads back.
+  // clobber here destroys the selection the hosted scenario reads back.
   describe("selected-model persistence", () => {
     const LEAD_KEY = "mcp-inspector-selected-model";
     const OWN_PROVIDER_MODEL_ID = "claude-haiku-4-5";

@@ -7,7 +7,7 @@ export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
   | "evals"
-  | "chatboxes"
+  | "scenarios"
   | "cicd"
   | "customDomains"
   | "auditLog"
@@ -17,7 +17,7 @@ export type BillingLimitName =
   | "maxMembers"
   | "maxProjects"
   | "maxServersPerProject"
-  | "maxChatboxesPerProject"
+  | "maxScenariosPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
   | "insightsPerDay"
@@ -31,17 +31,22 @@ export type BillingLimitName =
 
 /** Mirrors backend premiumness gate keys exactly. */
 export type PremiumnessGateKey =
-  | "chatboxes"
+  | "scenarios"
   | "evals"
   | "cicd"
   | "auditLog"
   | "maxMembers"
   | "maxProjects"
   | "maxServersPerProject"
-  | "maxChatboxesPerProject"
+  | "maxScenariosPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
-  | "insightsPerDay";
+  | "insightsPerDay"
+  // Paired with the backend's gate of the same name. A gate key with no entry
+  // here still ARRIVES — `GateDecision.gateKey` is whatever the backend sent —
+  // and falls through `formatPremiumnessGateKey` to be rendered verbatim, so
+  // the user reads "journeyRunsPerDay is not included in the Free plan".
+  | "journeyRunsPerDay";
 
 export type BillingEnforcementState =
   | "active"

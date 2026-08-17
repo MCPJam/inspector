@@ -18,11 +18,17 @@ const spec = JSON.parse(
   )
 ) as {
   security?: unknown[];
+  components?: { parameters?: Record<string, { name?: string; in?: string }> };
   paths: Record<
     string,
     Record<
       string,
-      { operationId?: string; requestBody?: unknown; security?: unknown[] }
+      {
+        operationId?: string;
+        requestBody?: unknown;
+        security?: unknown[];
+        parameters?: Array<{ $ref?: string; name?: string; in?: string }>;
+      }
     >
   >;
 };
@@ -279,5 +285,56 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
         "\n  "
       )}`
     ).toEqual([]);
+  });
+
+  it("declares a path parameter for every placeholder, and no phantoms", () => {
+    // A path item can name a parameter its URL does not contain, or contain one
+    // it never names, and nothing else notices: the route still serves, the
+    // drift check above still matches on path+method, and the playground just
+    // renders the wrong field. `requestEvalRunInsights` shipped with a phantom
+    // `scenarioId` and no `runId` — a copy-paste from the surrounding
+    // user-testing operations — and was found by a person reading, which is not
+    // a mechanism.
+    //
+    // Both directions, because they are different bugs: a MISSING parameter
+    // makes the operation uncallable from a generated client, and a PHANTOM one
+    // asks the caller for an id the route will never read.
+    const shared = spec.components?.parameters ?? {};
+    const resolve = (p: { $ref?: string; name?: string; in?: string }) =>
+      p.$ref ? shared[p.$ref.split("/").pop() ?? ""] ?? {} : p;
+
+    const problems: string[] = [];
+    for (const [path, item] of Object.entries(spec.paths)) {
+      const placeholders = new Set(
+        [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!)
+      );
+      const itemLevel = (
+        (item as { parameters?: Array<{ $ref?: string }> }).parameters ?? []
+      ).map(resolve);
+
+      for (const [method, op] of Object.entries(item)) {
+        if (!HTTP_METHODS.has(method.toUpperCase())) continue;
+        const declared = [...itemLevel, ...(op.parameters ?? []).map(resolve)];
+        const named = new Set(
+          declared.filter((p) => p.in === "path").map((p) => p.name)
+        );
+        for (const placeholder of placeholders) {
+          if (!named.has(placeholder)) {
+            problems.push(
+              `${method} ${path}: no parameter for {${placeholder}}`
+            );
+          }
+        }
+        for (const name of named) {
+          if (name && !placeholders.has(name)) {
+            problems.push(
+              `${method} ${path}: declares {${name}}, not in the path`
+            );
+          }
+        }
+      }
+    }
+
+    expect(problems.sort(), problems.sort().join("\n")).toEqual([]);
   });
 });

@@ -335,12 +335,12 @@ export type ResolvedMcpAppsCapabilities = {
  * loading indicator art, etc.
  *
  * The name `chatUi` deliberately mirrors the backend envelope on
- * `chatboxes.chatUi` (see `mcpjam-backend/convex/lib/chatboxUxValidators.ts`,
- * `chatUiValidator`). Backend stores per-chatbox overrides for this same
+ * `scenarios.chatUi` (see `mcpjam-backend/convex/lib/scenarioUxValidators.ts`,
+ * `chatUiValidator`). Backend stores per-scenario overrides for this same
  * conceptual category; the client uses the same name for per-host defaults
- * so the vocabulary lines up across the stack. A future per-chatbox
+ * so the vocabulary lines up across the stack. A future per-scenario
  * indicator override would land as `chatUi.indicator: string` on the
- * chatbox row, mirroring how `chatUi.welcome` works today.
+ * scenario row, mirroring how `chatUi.welcome` works today.
  */
 export interface HostChatUi {
   /** Brand label, e.g. "Claude". */
@@ -366,7 +366,7 @@ export interface HostChatUi {
 
 /**
  * Single source of truth for one host style. Registered in
- * `@/lib/client-styles` and consumed by chatbox bootstrap, builder pickers,
+ * `@/lib/client-styles` and consumed by scenario bootstrap, builder pickers,
  * shell theming, and the MCP Apps iframe bridge.
  *
  * Adding a new built-in host is a matter of authoring `mcp` + `chatUi`
@@ -374,7 +374,7 @@ export interface HostChatUi {
  * same shape once a scoped host layer exists.
  *
  * Only `id` is persisted to the DB (as `'claude' | 'chatgpt' | 'direct'`
- * on `hostConfigs.hostStyle` / `chatboxes.hostStyle`); both `mcp` and
+ * on `hostConfigs.hostStyle` / `scenarios.hostStyle`); both `mcp` and
  * `chatUi` are reconstituted client-side from the id at runtime.
  */
 export interface HostStyleDefinition {

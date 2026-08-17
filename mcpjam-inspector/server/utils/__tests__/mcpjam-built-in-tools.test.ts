@@ -5,6 +5,7 @@ import {
   EXCLUDED_FROM_WORKSPACE,
   isMcpjamToolId,
   MCPJAM_TOOL_IDS,
+  WORKSPACE_INPUT_CLAMPS,
 } from "../built-in-tools/mcpjam";
 
 // The workspace tools ARE the shared platform operations, executed against a
@@ -148,13 +149,15 @@ describe("workspace tool catalog", () => {
       "run_eval_case",
       "run_eval_suite",
       "get_eval_run",
+      "compare_eval_run",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
-      "list_chatboxes",
-      "get_chatbox",
+      "list_scenarios",
+      "get_scenario",
       "list_chat_sessions",
+      "search_sessions",
       // Swarms: reads and the REVERSIBLE half of authoring. Launching,
       // generation and the removals stay out — see EXCLUDED_FROM_WORKSPACE for
       // why each one wants the tab's context rather than a chat tool.
@@ -280,6 +283,105 @@ describe("ambient project scoping", () => {
 
     expect(result.project.id).toBe("proj_2");
     expect(calls[1]!.path).toBe("/api/v1/projects/proj_2/servers");
+  });
+});
+
+describe("workspace input clamps", () => {
+  const SESSIONS_PAGE = {
+    items: [],
+    scope: "titles",
+  };
+
+  function searchTool() {
+    const { client, calls } = makeClient({
+      "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
+      "GET /api/v1/projects/proj_1/sessions": () => ({ json: SESSIONS_PAGE }),
+    });
+    return {
+      calls,
+      builtTool: buildMcpjamTool("search_sessions", { ...toolOpts, client })!,
+    };
+  }
+
+  /** The sourceType filter the request actually carried. */
+  function sourceTypeParam(path: string): string | null {
+    return new URL(path, "http://self.test").searchParams.get("sourceType");
+  }
+
+  it("injects the three allowed sources when sourceTypes is omitted", async () => {
+    const { builtTool, calls } = searchTool();
+
+    await execTool(builtTool, { query: "refund" });
+
+    const sessionsCall = calls.find((c) => c.path.includes("/sessions"))!;
+    expect(sourceTypeParam(sessionsCall.path)).toBe("direct,eval,swarm");
+  });
+
+  it("treats an EMPTY sourceTypes array exactly like omission", async () => {
+    // Defense in depth. The zod schema's `.min(1)` rejects `[]`, but
+    // `execute()` can be called raw with no schema in the way — and `[]`
+    // serializes to no filter at all, silently widening the search to every
+    // source including scenario. This is the case that must not regress.
+    const { builtTool, calls } = searchTool();
+
+    await execTool(builtTool, { query: "refund", sourceTypes: [] });
+
+    const sessionsCall = calls.find((c) => c.path.includes("/sessions"))!;
+    expect(sourceTypeParam(sessionsCall.path)).toBe("direct,eval,swarm");
+  });
+
+  it("treats a null sourceTypes exactly like omission", async () => {
+    // `transform` reads anything non-array as "no filter given". A raw
+    // execute() caller passing null must land on the narrowed default, not on
+    // every source.
+    const { builtTool, calls } = searchTool();
+
+    await execTool(builtTool, { query: "refund", sourceTypes: null });
+
+    const sessionsCall = calls.find((c) => c.path.includes("/sessions"))!;
+    expect(sourceTypeParam(sessionsCall.path)).toBe("direct,eval,swarm");
+  });
+
+  it("passes an explicit allowed subset through untouched", async () => {
+    const { builtTool, calls } = searchTool();
+
+    await execTool(builtTool, { query: "refund", sourceTypes: ["eval"] });
+
+    const sessionsCall = calls.find((c) => c.path.includes("/sessions"))!;
+    expect(sourceTypeParam(sessionsCall.path)).toBe("eval");
+  });
+
+  it("REFUSES an explicit scenario request instead of silently narrowing it", async () => {
+    // Narrowing would answer a question the caller did not ask; the model
+    // should be told why and pick something else.
+    const { builtTool, calls } = searchTool();
+
+    const result = (await execTool(builtTool, {
+      query: "refund",
+      sourceTypes: ["direct", "scenario"],
+    })) as { error?: string };
+
+    expect(result.error).toContain("visitors");
+    // And it never reached the API.
+    expect(calls.some((c) => c.path.includes("/sessions"))).toBe(false);
+  });
+
+  it("tells the model about the narrowing in the tool description", async () => {
+    const { builtTool } = searchTool();
+    const description = (builtTool as { description?: string }).description!;
+    // The ambient-project note still leads; the clamp note follows it.
+    expect(description).toContain("current chat's project");
+    expect(description).toContain("scenario");
+  });
+
+  it("clamps only operations this surface actually advertises", () => {
+    // A clamp keyed to an unadvertised operation is dead code guarding
+    // nothing — and reads as protection that is not there.
+    const advertised = new Set<string>(MCPJAM_TOOL_IDS);
+    const orphans = Object.keys(WORKSPACE_INPUT_CLAMPS)
+      .filter((name) => !advertised.has(name))
+      .sort();
+    expect(orphans).toEqual([]);
   });
 });
 
