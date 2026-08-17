@@ -96,6 +96,13 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
+/**
+ * Grace period before an App that reported a CSP violation but hasn't
+ * signalled `ui/initialize` is declared blocked. A View that loads a
+ * blocked-but-optional asset (an analytics beacon, a font) still boots, so
+ * the notice must not flash in front of a widget that is merely slow.
+ */
+const CSP_BLOCKED_NOTICE_DELAY_MS = 1500;
 const SAFE_OPEN_IN_APP_PROTOCOLS = new Set(["http:", "https:"]);
 
 function toSafeOpenInAppUrl(value: string): string | null {
@@ -1197,6 +1204,15 @@ export function MCPAppsRendererSurface({
   const [isReady, setIsReady] = useState(false);
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // First CSP violation reported by the sandbox proxy for the current bytes.
+  // Kept locally (the debug sink is write-only) so a View that never boots
+  // because its own resources were blocked can say so instead of rendering
+  // an empty box. First violation wins — it is the one that explains the
+  // failure; later ones are usually cascade noise from the same block.
+  const [firstCspBlock, setFirstCspBlock] = useState<{
+    directive?: string;
+    blockedUri?: string;
+  } | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const [openInAppUrlOverride, setOpenInAppUrlOverride] = useState<
     string | null
@@ -1424,6 +1440,9 @@ export function MCPAppsRendererSurface({
     setWidgetPermissions(undefined);
     setWidgetPermissive(isCachedReplay ? true : false);
     setPrefersBorder(cachedReplayPrefersBorder ?? true);
+    // New bytes incoming — violations recorded against the old ones no
+    // longer describe what is on screen.
+    setFirstCspBlock(null);
   }, [
     cachedReplayWidgetHtmlUrl,
     cachedReplayPrefersBorder,
@@ -2122,6 +2141,7 @@ export function MCPAppsRendererSurface({
   useEffect(() => {
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       clearCspViolations(toolCallId);
+      setFirstCspBlock(null);
     }
   }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
   useEffect(() => {
@@ -2135,6 +2155,7 @@ export function MCPAppsRendererSurface({
         loadedMcpAppsCapabilitiesHash !== widgetMcpAppsCapabilitiesReloadKey);
     if (injectionChanged || capabilitiesChanged) {
       clearCspViolations(toolCallId);
+      setFirstCspBlock(null);
     }
   }, [
     widgetInjectOpenAiCompatReloadKey,
@@ -3663,6 +3684,21 @@ export function MCPAppsRendererSurface({
         timestamp: timestamp || Date.now(),
       });
 
+      // Remember the first block so the render path can explain a View
+      // that never boots. Cleared on every reload alongside the debug
+      // store's violation list.
+      setFirstCspBlock((prev) =>
+        prev ?? {
+          directive:
+            typeof effectiveDirective === "string" && effectiveDirective
+              ? effectiveDirective
+              : typeof directive === "string"
+              ? directive
+              : undefined,
+          blockedUri: typeof blockedUri === "string" ? blockedUri : undefined,
+        }
+      );
+
       if (!minimalMode) {
         console.warn(
           `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
@@ -3868,6 +3904,24 @@ export function MCPAppsRendererSurface({
   };
   const showWidget = isReady && canRenderStreamingInput;
 
+  // An App whose own resources were blocked by CSP never signals ready, so
+  // the iframe sits at `opacity: 0` forever — indistinguishable from a hang.
+  // Surface the block instead, after a grace period so a View that boots
+  // despite a blocked optional asset never flashes the notice.
+  const [cspBlockedNoticeVisible, setCspBlockedNoticeVisible] = useState(false);
+  useEffect(() => {
+    if (!firstCspBlock || isReady) {
+      setCspBlockedNoticeVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setCspBlockedNoticeVisible(true),
+      CSP_BLOCKED_NOTICE_DELAY_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [firstCspBlock, isReady]);
+  const showCspBlockedNotice = cspBlockedNoticeVisible && !showWidget;
+
   useEffect(() => {
     logWidgetDebug("host-to-ui", "debug/widget-visibility", {
       bridgeTransportReady,
@@ -4008,7 +4062,10 @@ export function MCPAppsRendererSurface({
       ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
-  const showHostChrome = !isFullscreen && matrixGatedPrefersBorder;
+  // Suppress the empty bordered box while the blocked-App notice stands in
+  // for it — otherwise the notice renders *below* the blank box it explains.
+  const showHostChrome =
+    !isFullscreen && matrixGatedPrefersBorder && !showCspBlockedNotice;
   const hostChromeStyle: CSSProperties | undefined = showHostChrome
     ? {
         backgroundColor: mergedStyleVariables["--color-background-primary"],
@@ -4154,6 +4211,32 @@ export function MCPAppsRendererSurface({
       >
         {iframe}
       </div>
+      {/* The App reported a CSP violation and never signalled ready — its
+       * own resources were blocked, so the iframe would otherwise stay an
+       * empty box. Name the blocked directive and the first blocked origin
+       * for developer surfaces; testers get the plain-language line. */}
+      {showCspBlockedNotice && (
+        <div
+          data-testid="mcp-app-csp-blocked-notice"
+          role="status"
+          className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2"
+        >
+          <span>
+            {minimalMode
+              ? "This app couldn't load its resources."
+              : `MCP App blocked by Content Security Policy${
+                  firstCspBlock?.directive
+                    ? ` (${firstCspBlock.directive})`
+                    : ""
+                }.`}
+          </span>
+          {firstCspBlock?.blockedUri ? (
+            <span className="mt-0.5 block font-mono break-all opacity-80">
+              {firstCspBlock.blockedUri}
+            </span>
+          ) : null}
+        </div>
+      )}
       {/* SEP-1865 App-Provided Tools: per-iframe busy indicator. Surfaces
        * when the host is dispatching `tools/call` into this iframe (the
        * count comes from `useAppToolsRegistry.pendingControllers`). Sits

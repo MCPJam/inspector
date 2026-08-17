@@ -2877,6 +2877,195 @@ describe("MCPAppsRenderer tool input streaming", () => {
     warnSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  // ── Scenario surface × declared host profile ────────────────────────────
+  // The "MCP Apps render blank in User Testing" regression. A scenario
+  // surface forces `cspMode: "permissive"`; the server used to answer that
+  // request by withholding the resource's declared CSP. Every host template
+  // seeds `apps.sandbox.csp.mode: "declared"`, so `resolveSandboxCsp` then
+  // ran with `resourceCsp: undefined`, fell back to the empty secure
+  // default, and forced `permissive: false` — the sandbox proxy emitted
+  // `script-src 'unsafe-inline' data: blob:` and every esm.sh module load
+  // in the App was refused. The tester saw an empty bordered box.
+  const declaredCspProfile = (): HostConfigMcpProfileV1 => ({
+    profileVersion: 1,
+    apps: { sandbox: { csp: { mode: "declared" } } },
+  });
+
+  it("keeps the resource-declared CSP on a scenario surface under a 'declared' host profile", async () => {
+    // Server response as it now stands: a scenario surface asks for
+    // permissive, and the route reports the declaration regardless.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: {
+            resourceDomains: ["https://esm.sh"],
+            connectDomains: ["https://esm.sh"],
+          },
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(
+      <WidgetSurfaceProvider value="scenario">
+        <ActiveMcpProfileProvider value={declaredCspProfile()}>
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeTruthy();
+    });
+
+    // Before the fix both lists came back `[]` — the empty secure default.
+    expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([
+      "https://esm.sh",
+    ]);
+    expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([
+      "https://esm.sh",
+    ]);
+    // The host policy is in force, so the meta-CSP is injected — with the
+    // declared origins in it, which is the whole point.
+    expect(sandboxedIframePropsRef.current.permissive).toBe(false);
+  });
+
+  it("keeps empty domain lists on a scenario surface when the App declares no CSP", async () => {
+    // The inverse, and a spec MUST: "if `ui.csp` is omitted" the host keeps
+    // the restrictive default, and "Host MAY further restrict but MUST NOT
+    // allow undeclared domains." An undeclared App stays blocked — Change 3
+    // makes that legible rather than blank.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: undefined,
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(
+      <WidgetSurfaceProvider value="scenario">
+        <ActiveMcpProfileProvider value={declaredCspProfile()}>
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeTruthy();
+    });
+
+    expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([]);
+    expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+  });
+
+  // ── Blocked-App notice ──────────────────────────────────────────────────
+  // An App whose own resources are refused never signals ready, so the
+  // iframe stays at `opacity: 0`. Without a notice that is indistinguishable
+  // from a hang — the two-hour-investigation failure mode this replaces.
+  const postCspViolation = (overrides: Record<string, unknown> = {}): void => {
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcp-apps:csp-violation",
+          directive: "script-src-elem",
+          effectiveDirective: "script-src-elem",
+          blockedUri: "https://esm.sh/react@19",
+          ...overrides,
+        },
+      } as MessageEvent);
+    });
+  };
+
+  it("explains a CSP-blocked App that never signals ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation();
+      // Grace period: the notice must not race a View that is merely slow.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      expect(notice.textContent).toContain("Content Security Policy");
+      // Names the blocked directive and the first blocked origin — the two
+      // facts that turn this into a five-second diagnosis.
+      expect(notice.textContent).toContain("script-src-elem");
+      expect(notice.textContent).toContain("https://esm.sh/react@19");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the blocked-App notice plain-language in minimal mode", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} minimalMode={true} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      // Testers get a sentence, not a debug dump.
+      expect(notice.textContent).toContain("couldn't load its resources");
+      expect(notice.textContent).not.toContain("Content Security Policy");
+      expect(notice.textContent).not.toContain("script-src-elem");
+      expect(notice.textContent).toContain("https://esm.sh/react@19");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not show the blocked-App notice when the App boots anyway", async () => {
+    // A blocked optional asset (an analytics beacon, a webfont) still
+    // reports a violation. If the View initializes, there is nothing wrong
+    // to report and the notice must never appear.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation({ blockedUri: "https://analytics.example.com/beacon" });
+      act(() => triggerReady());
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ── Host capability gating ─────────────────────────────────────────────────

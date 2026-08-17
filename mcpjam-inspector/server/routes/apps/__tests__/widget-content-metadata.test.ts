@@ -62,7 +62,10 @@ function buildApp(manager: ReturnType<typeof makeMockManager>) {
   return app;
 }
 
-async function postWidgetContent(app: Hono) {
+async function postWidgetContent(
+  app: Hono,
+  cspMode: "permissive" | "widget-declared" = "widget-declared",
+) {
   return app.request("/api/apps/mcp-apps/widget-content", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -73,7 +76,7 @@ async function postWidgetContent(app: Hono) {
       toolName: "test-tool",
       toolInput: {},
       toolOutput: null,
-      cspMode: "widget-declared",
+      cspMode,
     }),
   });
 }
@@ -160,6 +163,67 @@ describe("/widget-content — SEP-1865 metadata precedence", () => {
       connectDomains: ["https://legacy.example.com"],
     });
     expect(body.prefersBorder).toBe(false);
+  });
+
+  it("still reports the declared csp when the request asks for cspMode='permissive'", async () => {
+    // Regression: the route used to withhold the declaration whenever the
+    // caller asked for permissive. Scenario / minimal surfaces always ask
+    // for permissive, so their client-side `resolveSandboxCsp` ran with
+    // `resourceCsp: undefined` under a `mode: "declared"` host profile and
+    // fell back to the empty secure default — emitting the STRICTEST
+    // possible CSP on exactly the surfaces that requested the loosest.
+    //
+    // `permissive` alone tells the sandbox proxy whether to inject; what
+    // the resource declared is reported either way. Returning it cannot
+    // loosen anything, because `permissive: true` means "no CSP injected".
+    const manager = makeMockManager({
+      contentMeta: {
+        ui: {
+          csp: {
+            resourceDomains: ["https://esm.sh"],
+            connectDomains: ["https://esm.sh"],
+          },
+        },
+      },
+    });
+    const res = await postWidgetContent(buildApp(manager), "permissive");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.permissive).toBe(true);
+    expect(body.cspMode).toBe("permissive");
+    expect(body.csp).toEqual({
+      resourceDomains: ["https://esm.sh"],
+      connectDomains: ["https://esm.sh"],
+    });
+    expect(body.metadataSources.csp).toBe("content");
+  });
+
+  it("reports the listing-declared csp under cspMode='permissive' too", async () => {
+    // Both halves of the fix at once: the listing-only declaration must be
+    // found (SEP-1865 "hosts MUST check both locations") AND survive a
+    // permissive request.
+    const manager = makeMockManager({
+      contentMeta: undefined,
+      listingMeta: {
+        ui: { csp: { resourceDomains: ["https://esm.sh"] } },
+      },
+    });
+    const res = await postWidgetContent(buildApp(manager), "permissive");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.csp).toEqual({ resourceDomains: ["https://esm.sh"] });
+    expect(body.metadataSources.csp).toBe("listing");
+  });
+
+  it("leaves csp undefined under cspMode='permissive' when nothing is declared", async () => {
+    // The spec default: no declaration means no baseline to report. The
+    // client keeps the secure default rather than inventing origins.
+    const manager = makeMockManager({});
+    const res = await postWidgetContent(buildApp(manager), "permissive");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.csp).toBeUndefined();
+    expect(body.permissive).toBe(true);
   });
 
   it("reports metadataSource='none' when no source has any UI metadata", async () => {
