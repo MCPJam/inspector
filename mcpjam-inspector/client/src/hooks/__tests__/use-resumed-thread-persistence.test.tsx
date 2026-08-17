@@ -24,6 +24,8 @@ describe("useResumedThreadPersistence", () => {
     receipt?: PersistReceiptData | null;
     resumedVersion?: number | null;
     enabled?: boolean;
+    /** The turn was stopped by the user (the AI SDK reports it as `ready`). */
+    aborted?: boolean;
   }) {
     const sendBaselineRef = createRef<{
       sessionId: string;
@@ -34,9 +36,16 @@ describe("useResumedThreadPersistence", () => {
     } | null>;
     sendBaselineRef.current = null;
 
-    const consumePersistReceipt = vi.fn(
-      () => overrides?.receipt ?? null
-    ) as unknown as () => PersistReceiptData | null;
+    const consumePersistReceipt = vi.fn(() => overrides?.receipt ?? null);
+    // Consuming, exactly like `useChatSession`'s: the answer describes one
+    // turn, so reading it takes it. That is what keeps a stopped turn from
+    // silencing the turn after it.
+    let turnAborted = overrides?.aborted ?? false;
+    const consumeTurnAborted = vi.fn(() => {
+      const value = turnAborted;
+      turnAborted = false;
+      return value;
+    });
     const syncResumedVersion = vi.fn();
     const markHistorySessionRead = vi.fn();
     const refreshAfterStream = vi.fn();
@@ -50,7 +59,9 @@ describe("useResumedThreadPersistence", () => {
       activeHistorySessionId: SESSION_ID as string | null,
       resumedVersion:
         overrides?.resumedVersion === undefined ? 4 : overrides.resumedVersion,
-      consumePersistReceipt,
+      consumePersistReceipt:
+        consumePersistReceipt as unknown as () => PersistReceiptData | null,
+      consumeTurnAborted,
       reactiveSessionVersion: undefined as number | null | undefined,
       syncResumedVersion,
       markHistorySessionRead,
@@ -76,6 +87,8 @@ describe("useResumedThreadPersistence", () => {
       props,
       runTurn,
       sendBaselineRef,
+      consumePersistReceipt,
+      consumeTurnAborted,
       syncResumedVersion,
       markHistorySessionRead,
       refreshAfterStream,
@@ -443,6 +456,104 @@ describe("useResumedThreadPersistence", () => {
 
     // An inactive surface must not warn about a thread it no longer shows.
     expect(harness.onUnsaved).not.toHaveBeenCalled();
+  });
+
+  it("says nothing when the user stops the turn", () => {
+    // Stop is the one end-of-stream that legitimately saves nothing: the server
+    // persists only `runSucceeded && !aborted`, so no receipt arrives and the
+    // session version never moves. That is byte-for-byte the silence a dropped
+    // write produces, so without an explicit abort signal this turn runs the
+    // full no-receipt window and then calls a deliberate cancel a failure.
+    const harness = setup({ aborted: true, receipt: null });
+
+    harness.runTurn();
+    act(() => {
+      vi.advanceTimersByTime(11_000);
+    });
+
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+    expect(harness.onConflict).not.toHaveBeenCalled();
+    expect(harness.syncResumedVersion).not.toHaveBeenCalled();
+    // Nothing was written, so the rail has nothing new to learn and the row's
+    // unread state is exactly as the server left it.
+    expect(harness.refreshAfterStream).not.toHaveBeenCalled();
+    expect(harness.markHistorySessionRead).not.toHaveBeenCalled();
+  });
+
+  it("still warns on a receipt-less turn the user did NOT stop", () => {
+    // The control for the case above: silence is only forgivable when we know
+    // why it is silent.
+    const harness = setup({ aborted: false, receipt: null });
+
+    harness.runTurn();
+    act(() => {
+      vi.advanceTimersByTime(11_000);
+    });
+
+    expect(harness.consumeTurnAborted).toHaveBeenCalled();
+    expect(harness.onUnsaved).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not carry a stopped turn into the next one", () => {
+    const harness = setup({ aborted: true, receipt: null });
+
+    harness.runTurn();
+    act(() => {
+      vi.advanceTimersByTime(11_000);
+    });
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+
+    // Nobody stopped this one, so its silence is a real dropped write and must
+    // still be reported.
+    harness.runTurn();
+    act(() => {
+      vi.advanceTimersByTime(11_000);
+    });
+    expect(harness.onUnsaved).toHaveBeenCalledTimes(1);
+  });
+
+  it("discards a straggler receipt from a stopped turn", () => {
+    // An aborted turn is not supposed to produce a receipt. If one raced the
+    // abort anyway, leaving it in place would hand it to the NEXT turn's
+    // post-stream pass as though it described that turn.
+    const harness = setup({
+      aborted: true,
+      receipt: { outcome: "saved", chatSessionId: "c", version: 5 },
+    });
+
+    harness.runTurn();
+
+    expect(harness.consumePersistReceipt).toHaveBeenCalledTimes(1);
+    expect(harness.syncResumedVersion).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh the rail for a stopped turn on a fresh thread", () => {
+    // The fresh-thread refresh exists so the surface learns the id of the row
+    // its turn created. A stopped turn creates no row.
+    const harness = setup({
+      resumedVersion: null,
+      aborted: true,
+      receipt: null,
+    });
+
+    harness.runTurn();
+
+    expect(harness.refreshAfterStream).not.toHaveBeenCalled();
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stop pressed while nothing is streaming", () => {
+    const harness = setup({ aborted: true, receipt: null });
+
+    // No turn ran, so there is no stream transition to react to and nothing
+    // consumes the flag — it simply waits for a turn that never happened.
+    act(() => {
+      vi.advanceTimersByTime(11_000);
+    });
+
+    expect(harness.consumeTurnAborted).not.toHaveBeenCalled();
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+    expect(harness.onConflict).not.toHaveBeenCalled();
   });
 
   it("stays inert when disabled", () => {

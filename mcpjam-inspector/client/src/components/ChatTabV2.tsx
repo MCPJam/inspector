@@ -440,6 +440,7 @@ export function ChatTabV2({
     startChatWithMessages,
     detachToLocalFork,
     consumePersistReceipt,
+    consumeTurnAborted,
     loadChatSession,
     rewindToMessage,
     syncResumedVersion,
@@ -1170,6 +1171,7 @@ export function ChatTabV2({
     activeHistorySessionId,
     resumedVersion,
     consumePersistReceipt,
+    consumeTurnAborted,
     reactiveSessionVersion: reactiveHistorySession?.version,
     syncResumedVersion,
     markHistorySessionRead: (sessionId) => {

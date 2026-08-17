@@ -916,6 +916,7 @@ export function PlaygroundMain({
     startChatWithMessages,
     detachToLocalFork,
     consumePersistReceipt,
+    consumeTurnAborted,
     liveTraceEnvelope,
     requestPayloadHistory,
     hasTraceSnapshot,
@@ -2936,6 +2937,7 @@ export function PlaygroundMain({
     activeHistorySessionId,
     resumedVersion,
     consumePersistReceipt,
+    consumeTurnAborted,
     reactiveSessionVersion: reactiveHistorySession?.version,
     syncResumedVersion,
     markHistorySessionRead: (sessionId) => {

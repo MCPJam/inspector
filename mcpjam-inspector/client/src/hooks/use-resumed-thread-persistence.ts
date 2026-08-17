@@ -95,6 +95,17 @@ export interface ResumedThreadPersistenceOptions {
   resumedVersion: number | null;
   consumePersistReceipt: () => PersistReceiptData | null;
   /**
+   * Take whether the turn that just ended was ABORTED — the user pressed Stop,
+   * or the active response was aborted some other way.
+   *
+   * Needed because the AI SDK has no "aborted" status: on abort it sets
+   * `status: "ready"` and returns (ai/dist/index.mjs, `makeRequest`'s catch:
+   * `if (isAbort || err.name === "AbortError") { this.setStatus({ status:
+   * "ready" }); return null; }`). A stopped turn therefore reaches the
+   * end-of-stream path below looking exactly like a completed one.
+   */
+  consumeTurnAborted: () => boolean;
+  /**
    * Live version from the session subscription: `undefined` while loading or
    * torn down (it is disabled mid-stream), `null` when the row is gone.
    */
@@ -119,6 +130,7 @@ export function useResumedThreadPersistence(
     activeHistorySessionId,
     resumedVersion,
     consumePersistReceipt,
+    consumeTurnAborted,
     reactiveSessionVersion,
     syncResumedVersion,
     markHistorySessionRead,
@@ -133,6 +145,7 @@ export function useResumedThreadPersistence(
   // and consume the baseline early.
   const callbacksRef = useRef({
     consumePersistReceipt,
+    consumeTurnAborted,
     syncResumedVersion,
     markHistorySessionRead,
     refreshAfterStream,
@@ -141,6 +154,7 @@ export function useResumedThreadPersistence(
   });
   callbacksRef.current = {
     consumePersistReceipt,
+    consumeTurnAborted,
     syncResumedVersion,
     markHistorySessionRead,
     refreshAfterStream,
@@ -204,6 +218,30 @@ export function useResumedThreadPersistence(
     const baseline = sendBaselineRef.current;
     sendBaselineRef.current = null;
     if (!enabled) return;
+
+    // The user stopped the turn. Nothing below applies, because there is
+    // nothing to reconcile: the server persists only `runSucceeded && !aborted`
+    // (`server/utils/mcpjam-stream-handler.ts`, `onFinishEngine`), so an aborted
+    // turn produces no receipt AND no version bump — the exact signature this
+    // hook otherwise reads as a dropped write. Left to run, the no-receipt
+    // branch would watch the subscription for its full 10 s and then tell the
+    // user their reply "couldn't be saved", which is a false alarm about a
+    // deliberate action: not saving a withdrawn turn IS the intended outcome.
+    if (callbacksRef.current.consumeTurnAborted()) {
+      // Consume and discard. A receipt is not expected here, but a straggler
+      // left in place would be handed to the NEXT turn's post-stream pass as if
+      // it described that turn.
+      callbacksRef.current.consumePersistReceipt();
+      // Belt and braces — the stream-start branch above already cleared it for
+      // this turn. Keeping it here makes the abort path a complete no-op on its
+      // own rather than one that depends on a sibling branch.
+      pendingReconcileRef.current = null;
+      // No rail refresh and no read-marking either. Both exist to reflect a
+      // write that just landed; an aborted turn wrote nothing, so the rail has
+      // nothing new to learn and the row's unread state is exactly as the
+      // server last left it.
+      return;
+    }
 
     if (activeHistorySessionId) {
       callbacksRef.current.markHistorySessionRead(activeHistorySessionId);
