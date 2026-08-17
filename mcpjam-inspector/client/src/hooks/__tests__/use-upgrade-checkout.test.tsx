@@ -71,6 +71,7 @@ beforeEach(() => {
   startPlanChange.mockReset();
   startPlanChange.mockResolvedValue({ kind: "updated", subscription: {} });
   toastError.mockReset();
+  toastInfo.mockReset();
   toastSuccess.mockReset();
   trackMock.mockReset();
   window.history.replaceState(null, "", "/evals");
