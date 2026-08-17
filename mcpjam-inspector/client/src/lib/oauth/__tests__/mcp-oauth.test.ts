@@ -6,6 +6,23 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+describe("formatOAuthCallbackError", () => {
+  it.each([
+    "invalid_grant",
+    "Uncaught InvalidGrantError",
+    "Uncaught InvalidGrantError\n    at async exchangeGenericAuthorizationCode",
+  ])(
+    "keeps the OAuth error code and adds token-exchange context: %s",
+    async (error) => {
+      const { formatOAuthCallbackError } = await import("../mcp-oauth");
+
+      expect(formatOAuthCallbackError(error)).toBe(
+        "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match."
+      );
+    }
+  );
+});
+
 const {
   mockDiscoverAuthorizationServerMetadata,
   mockDiscoverOAuthServerInfo,
@@ -2781,6 +2798,7 @@ describe("mcp-oauth", () => {
         expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
         expect.anything()
       );
+
     });
 
     it("uses the generic Inspector OAuth proxy for Linear-style registry callback token exchange", async () => {
@@ -2853,7 +2871,6 @@ describe("mcp-oauth", () => {
         expect.anything()
       );
     });
-
   });
 
   describe("MCPOAuthProvider.saveTokens convex binding", () => {

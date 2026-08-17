@@ -1,5 +1,6 @@
 ---
 "@mcpjam/sdk": patch
+"@mcpjam/inspector": patch
 ---
 
-Keep the OAuth sequence diagram visible when a server advertises an invalid protected-resource metadata URL.
+Keep OAuth diagnostics visible when a server advertises an invalid protected-resource metadata URL or rejects an authorization code with `invalid_grant`.

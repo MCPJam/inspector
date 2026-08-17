@@ -2920,7 +2920,7 @@ export async function initiateOAuth(
   }
 }
 
-function formatOAuthCallbackError(error: unknown): string {
+export function formatOAuthCallbackError(error: unknown): string {
   const errorMessage =
     error instanceof Error
       ? error.message
@@ -2937,8 +2937,8 @@ function formatOAuthCallbackError(error: unknown): string {
   if (errorMessage.includes("unauthorized_client")) {
     return "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
   }
-  if (errorMessage.includes("invalid_grant")) {
-    return "Authorization code invalid or expired. Please try the OAuth flow again.";
+  if (/invalid[_\s-]?grant|InvalidGrantError/i.test(errorMessage)) {
+    return "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match.";
   }
 
   return errorMessage;
