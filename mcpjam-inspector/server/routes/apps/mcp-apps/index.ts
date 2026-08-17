@@ -15,7 +15,10 @@ import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 import { RECORDER_SHIM_JS } from "./recorder-shim";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
-import { resolveUiResourceMeta } from "../../../utils/ui-resource-meta";
+import {
+  findListingMetaForUri,
+  resolveUiResourceMeta,
+} from "../../../utils/ui-resource-meta";
 
 const apps = new Hono();
 
@@ -232,21 +235,16 @@ apps.post("/widget-content", async (c) => {
     // listing source undefined and the content source wins.
     const resourceMeta = content._meta as Record<string, unknown> | undefined;
 
-    let listingMeta: Record<string, unknown> | undefined;
-    try {
-      const listing = await mcpClientManager.listResources(serverId);
-      const match = listing?.resources?.find(
-        (r: { uri?: unknown }) => r?.uri === resolvedResourceUri
-      ) as { _meta?: Record<string, unknown> } | undefined;
-      if (match?._meta) {
-        listingMeta = match._meta;
-      }
-    } catch (err) {
-      logger.debug("[MCP Apps] resources/list fallback skipped", {
-        resourceUri: resolvedResourceUri,
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
+    const listingMeta = await findListingMetaForUri(
+      mcpClientManager,
+      serverId,
+      resolvedResourceUri,
+      (reason) =>
+        logger.debug("[MCP Apps] resources/list fallback skipped", {
+          resourceUri: resolvedResourceUri,
+          reason,
+        })
+    );
 
     const { csp, permissions, prefersBorder, metadataSources, metadataSource } =
       resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });

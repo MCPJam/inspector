@@ -179,6 +179,69 @@ describe("hosted /widget-content — declared CSP", () => {
   });
 });
 
+describe("hosted /widget-content — malformed declarations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("drops non-array domain fields instead of passing them downstream", async () => {
+    // `_meta` is server-controlled and unvalidated. Downstream consumers
+    // assume `string[]`: the SDK resolver spreads each field (throws on a
+    // number) and the sandbox proxy's buildCSP iterates it. A malformed
+    // declaration must degrade, not take down the render — and reporting
+    // the declaration under `permissive` (this PR) newly exposes scenario
+    // surfaces to that path.
+    mockResource({
+      contentMeta: {
+        ui: {
+          csp: {
+            connectDomains: "https://not-an-array.example.com",
+            resourceDomains: ["https://esm.sh", 42, "", "  "],
+            frameDomains: null,
+          },
+        },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.csp).toEqual({ resourceDomains: ["https://esm.sh"] });
+  });
+
+  it("treats an entirely malformed csp as absent so lower sources still win", async () => {
+    mockResource({
+      contentMeta: { ui: { csp: "totally-not-a-csp" } },
+      listingMeta: { ui: { csp: ESM_CSP } },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.csp).toEqual(ESM_CSP);
+    expect(body.metadataSources.csp).toBe("listing");
+  });
+
+  it("preserves an explicitly empty domain list as a real declaration", async () => {
+    // `{ connectDomains: [] }` means "allow nothing here" — a declaration,
+    // not a missing one. Collapsing it to undefined would hand the decision
+    // to a lower-precedence source the App didn't intend.
+    mockResource({
+      contentMeta: { ui: { csp: { connectDomains: [] } } },
+      listingMeta: { ui: { csp: ESM_CSP } },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.csp).toEqual({ connectDomains: [] });
+    expect(body.metadataSources.csp).toBe("content");
+  });
+
+  it("ignores a non-boolean prefersBorder", async () => {
+    mockResource({ contentMeta: { ui: { prefersBorder: "yes" } } });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.prefersBorder).toBeUndefined();
+    expect(body.metadataSources.prefersBorder).toBe("none");
+  });
+});
+
 describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -245,6 +308,76 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
     });
     expect(body.prefersBorder).toBe(false);
     expect(body.metadataSource).toBe("legacy");
+  });
+
+  it("follows resources/list pagination to find a later-page declaration", async () => {
+    // `resources/list` is paginated and the listing declaration can sit on
+    // any page. Searching only page one would report a declared App as
+    // undeclared — the exact blank-render failure this fallback exists to
+    // prevent.
+    managerState.readResource.mockResolvedValue({
+      contents: [
+        { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
+      ],
+    });
+    managerState.listResources.mockImplementation(
+      async (_serverId: string, params?: { cursor?: string }) => {
+        if (!params?.cursor) {
+          return {
+            resources: [{ uri: "ui://other/a.html" }],
+            nextCursor: "page-2",
+          };
+        }
+        return {
+          resources: [{ uri: RESOURCE_URI, _meta: { ui: { csp: ESM_CSP } } }],
+        };
+      }
+    );
+
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp).toEqual(ESM_CSP);
+    expect(body.metadataSources.csp).toBe("listing");
+    expect(managerState.listResources).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops paginating as soon as the resource is found", async () => {
+    // Latency guard: the walk must not enumerate the whole catalog once it
+    // has what it came for.
+    managerState.listResources.mockImplementation(async () => ({
+      resources: [{ uri: RESOURCE_URI, _meta: { ui: { csp: ESM_CSP } } }],
+      nextCursor: "page-2",
+    }));
+    managerState.readResource.mockResolvedValue({
+      contents: [
+        { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
+      ],
+    });
+
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.csp).toEqual(ESM_CSP);
+    expect(managerState.listResources).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps the pagination walk instead of enumerating a huge catalog", async () => {
+    // A server that paginates forever must not hold the App's HTML hostage.
+    managerState.readResource.mockResolvedValue({
+      contents: [
+        { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
+      ],
+    });
+    managerState.listResources.mockImplementation(async () => ({
+      resources: [{ uri: "ui://other/a.html" }],
+      nextCursor: "more",
+    }));
+
+    const res = await postWidgetContent(makeApp());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.html).toBe(HTML);
+    expect(body.metadataSource).toBe("none");
+    expect(managerState.listResources).toHaveBeenCalledTimes(5);
   });
 
   it("still serves the App when the server has no resources/list", async () => {

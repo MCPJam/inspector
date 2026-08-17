@@ -27,6 +27,7 @@ const RESOURCE_URI = "ui://test/view.html";
 function makeMockManager(opts: {
   contentMeta?: Record<string, unknown>;
   listingMeta?: Record<string, unknown>;
+  listResourcesRejects?: boolean;
 }) {
   return {
     readResource: vi.fn().mockResolvedValue({
@@ -39,14 +40,16 @@ function makeMockManager(opts: {
         },
       ],
     }),
-    listResources: vi.fn().mockResolvedValue({
-      resources: [
-        {
-          uri: RESOURCE_URI,
-          ...(opts.listingMeta ? { _meta: opts.listingMeta } : {}),
-        },
-      ],
-    }),
+    listResources: opts.listResourcesRejects
+      ? vi.fn().mockRejectedValue(new Error("Method not found: resources/list"))
+      : vi.fn().mockResolvedValue({
+          resources: [
+            {
+              uri: RESOURCE_URI,
+              ...(opts.listingMeta ? { _meta: opts.listingMeta } : {}),
+            },
+          ],
+        }),
   };
 }
 
@@ -224,6 +227,37 @@ describe("/widget-content — SEP-1865 metadata precedence", () => {
     const body = await res.json();
     expect(body.csp).toBeUndefined();
     expect(body.permissive).toBe(true);
+  });
+
+  it("still serves content metadata when resources/list fails", async () => {
+    // The listing lookup is a fallback, not a dependency: a server that
+    // doesn't implement `resources/list` (or errors on it) must be no worse
+    // off than before the fallback existed.
+    const manager = makeMockManager({
+      contentMeta: { ui: FULL_UI_META },
+      listResourcesRejects: true,
+    });
+    const res = await postWidgetContent(buildApp(manager));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.html).toBe(HTML);
+    expect(body.csp).toEqual({ connectDomains: ["https://api.example.com"] });
+    expect(body.metadataSources.csp).toBe("content");
+  });
+
+  it("drops malformed domain fields from a declared csp", async () => {
+    // `_meta` is server-controlled. Downstream consumers assume `string[]`
+    // — the SDK resolver spreads each field and throws on a number — so a
+    // malformed declaration must degrade rather than break the render.
+    const manager = makeMockManager({
+      contentMeta: {
+        ui: { csp: { connectDomains: 42, resourceDomains: ["https://esm.sh"] } },
+      },
+    });
+    const res = await postWidgetContent(buildApp(manager), "permissive");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.csp).toEqual({ resourceDomains: ["https://esm.sh"] });
   });
 
   it("reports metadataSource='none' when no source has any UI metadata", async () => {

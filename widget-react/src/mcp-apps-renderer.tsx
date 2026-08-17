@@ -2904,6 +2904,21 @@ export function MCPAppsRendererSurface({
     [effectiveSandbox]
   );
 
+  // `SandboxedIframe` keys its resource-ready payload on the resolved csp /
+  // permissions / sandbox attrs, so any change here re-posts the HTML and the
+  // View boots again. A violation recorded against the PREVIOUS policy no
+  // longer describes what is on screen — without this, widening a profile to
+  // unblock an App would leave the notice naming the origin that is now
+  // allowed. Skip the first commit: the initial resolution is not a reload.
+  const lastEffectiveSandboxKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = lastEffectiveSandboxKeyRef.current;
+    lastEffectiveSandboxKeyRef.current = effectiveSandboxKey;
+    if (previous === null || previous === effectiveSandboxKey) return;
+    clearCspViolations(toolCallId);
+    setFirstCspBlock(null);
+  }, [effectiveSandboxKey, toolCallId, clearCspViolations]);
+
   // Publish the resolved sandbox payload into the widget-debug store so the
   // Sandbox debug panel can render it. `restrictTo` and `cspMode` come from
   // the source profile because the resolver intersects them in but doesn't

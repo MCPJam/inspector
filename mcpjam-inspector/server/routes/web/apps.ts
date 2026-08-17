@@ -6,7 +6,10 @@ import { MCP_APPS_SANDBOX_PROXY_HTML } from "../apps/SandboxProxyHtml.bundled.js
 import { RECORDER_SHIM_JS } from "../apps/mcp-apps/recorder-shim.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { logger } from "../../utils/logger.js";
-import { resolveUiResourceMeta } from "../../utils/ui-resource-meta.js";
+import {
+  findListingMetaForUri,
+  resolveUiResourceMeta,
+} from "../../utils/ui-resource-meta.js";
 import {
   projectServerSchema,
   withEphemeralConnection,
@@ -174,21 +177,16 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       // Best-effort listing lookup: servers without `resources/list` (or
       // that don't return this URI) simply fall through to the content
       // item, exactly as before this lookup existed.
-      let listingMeta: Record<string, unknown> | undefined;
-      try {
-        const listing = await manager.listResources(body.serverId);
-        const match = (listing as any)?.resources?.find(
-          (r: { uri?: unknown }) => r?.uri === resolvedResourceUri,
-        ) as { _meta?: Record<string, unknown> } | undefined;
-        if (match?._meta) {
-          listingMeta = match._meta;
-        }
-      } catch (err) {
-        logger.debug("[MCP Apps] resources/list fallback skipped", {
-          resourceUri: resolvedResourceUri,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
+      const listingMeta = await findListingMetaForUri(
+        manager,
+        body.serverId,
+        resolvedResourceUri,
+        (reason) =>
+          logger.debug("[MCP Apps] resources/list fallback skipped", {
+            resourceUri: resolvedResourceUri,
+            reason,
+          }),
+      );
 
       const {
         csp: cspFromMeta,

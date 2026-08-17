@@ -3066,6 +3066,65 @@ describe("MCPAppsRenderer tool input streaming", () => {
       vi.useRealTimers();
     }
   });
+
+  it("clears a stale blocked-App notice when the sandbox policy changes", async () => {
+    // Widening a profile to unblock an App re-posts the resource-ready
+    // payload (SandboxedIframe keys it on the resolved csp), so the View
+    // boots again. A violation recorded against the PREVIOUS policy must not
+    // keep naming an origin that is now allowed.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const renderTree = (connectDomains: string[]) => (
+        <ActiveMcpProfileProvider
+          value={{
+            profileVersion: 1,
+            apps: {
+              sandbox: {
+                csp: { mode: "declared", restrictTo: { connectDomains } },
+              },
+            },
+          }}
+        >
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      );
+
+      // `restrictTo` INTERSECTS the declared baseline, so the widened value
+      // must be one the baseline actually contains — otherwise the resolved
+      // policy is unchanged and no reload happens.
+      const { rerender } = render(renderTree([]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+      expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+
+      postCspViolation();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByTestId("mcp-app-csp-blocked-notice")).toBeTruthy();
+
+      // Profile edit → new resolved CSP → iframe reload.
+      rerender(renderTree(["https://api.example.com"]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([
+          "https://api.example.com",
+        ]);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Stale violation dropped: nothing has been reported against the new
+      // policy yet, so there is nothing to explain.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ── Host capability gating ─────────────────────────────────────────────────

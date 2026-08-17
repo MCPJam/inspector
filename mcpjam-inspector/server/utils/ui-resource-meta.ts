@@ -102,10 +102,79 @@ function extractLegacyPrefersBorder(
     : undefined;
 }
 
+const CSP_DOMAIN_KEYS = [
+  "connectDomains",
+  "resourceDomains",
+  "frameDomains",
+  "baseUriDomains",
+] as const;
+
+/**
+ * Coerce a resource-declared `_meta.ui.csp` into a shape the downstream CSP
+ * builders can actually consume.
+ *
+ * `_meta` is server-controlled and unvalidated. The consumers assume every
+ * domain field is a `string[]`: the SDK resolver spreads them
+ * (`[...(value.connectDomains ?? [])]`, which THROWS on a number) and the
+ * sandbox proxy's `buildCSP` iterates them. A truthy-but-malformed
+ * declaration would therefore take down the render rather than degrade.
+ *
+ * That path matters more now that the routes report the declaration even for
+ * `cspMode: "permissive"` requests — scenario / minimal surfaces used to be
+ * shielded from a malformed declaration by the withholding this PR removed.
+ *
+ * Non-array fields are dropped; non-string entries within a field are
+ * dropped. An explicitly empty array is preserved — `{ connectDomains: [] }`
+ * is a meaningful "allow nothing here" declaration, not a missing one.
+ * Returns undefined when no recognized field survives, so resolution falls
+ * through to the next source instead of reporting a phantom declaration.
+ */
+function normalizeCsp(value: unknown): McpUiResourceCsp | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const src = value as Record<string, unknown>;
+  const out: McpUiResourceCsp = {};
+  let sawRecognizedField = false;
+  for (const key of CSP_DOMAIN_KEYS) {
+    const list = src[key];
+    if (!Array.isArray(list)) continue;
+    sawRecognizedField = true;
+    out[key] = list.filter(
+      (d): d is string => typeof d === "string" && d.trim().length > 0
+    );
+  }
+  return sawRecognizedField ? out : undefined;
+}
+
+/** Permissions must be a plain object — SEP-1865 declares each as `{}`. */
+function normalizePermissions(
+  value: unknown
+): McpUiResourcePermissions | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as McpUiResourcePermissions;
+}
+
+interface NormalizedUiMeta {
+  csp?: McpUiResourceCsp;
+  permissions?: McpUiResourcePermissions;
+  prefersBorder?: boolean;
+}
+
 function readUiMeta(
   meta: Record<string, unknown> | undefined
-): McpUiResourceMeta | undefined {
-  return (meta as { ui?: McpUiResourceMeta } | undefined)?.ui;
+): NormalizedUiMeta {
+  const ui = (meta as { ui?: McpUiResourceMeta } | undefined)?.ui;
+  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return {};
+  return {
+    csp: normalizeCsp(ui.csp),
+    permissions: normalizePermissions(ui.permissions),
+    // Anything non-boolean is a malformed declaration, not a `false`.
+    prefersBorder:
+      typeof ui.prefersBorder === "boolean" ? ui.prefersBorder : undefined,
+  };
 }
 
 /**
@@ -185,4 +254,78 @@ export function resolveUiResourceMeta(
       : "mixed";
 
   return { csp, permissions, prefersBorder, metadataSources, metadataSource };
+}
+
+/**
+ * Page cap for the `resources/list` lookup below.
+ *
+ * `resources/list` is paginated, and the listing declaration can live on any
+ * page — searching only the first would silently treat a listing-only
+ * declaration as absent, which is the exact failure this fallback exists to
+ * prevent. But this runs on every widget render, so an unbounded walk would
+ * put a large catalog's full enumeration in front of the App's HTML.
+ *
+ * The cap splits the difference: follow `nextCursor` until the URI is found,
+ * the server stops paginating, or this many pages have been read. Nine out of
+ * ten servers answer on page one and never pay for a second round-trip.
+ */
+const LISTING_LOOKUP_MAX_PAGES = 5;
+
+interface ResourceListingClient {
+  listResources(
+    serverId: string,
+    params?: { cursor?: string }
+  ): Promise<unknown>;
+}
+
+/**
+ * Best-effort lookup of a resource's `resources/list` `_meta`, following
+ * pagination up to `LISTING_LOOKUP_MAX_PAGES` and stopping as soon as the URI
+ * is found.
+ *
+ * Returns undefined when the server doesn't implement `resources/list`, the
+ * URI isn't listed, or the walk hits the page cap — all of which leave the
+ * caller with the content-item metadata it already had. Never throws: the
+ * listing is a fallback, so a failure here must not fail the render.
+ */
+export async function findListingMetaForUri(
+  manager: ResourceListingClient,
+  serverId: string,
+  resourceUri: string,
+  onSkipped?: (reason: string) => void
+): Promise<Record<string, unknown> | undefined> {
+  try {
+    let cursor: string | undefined;
+    for (let page = 0; page < LISTING_LOOKUP_MAX_PAGES; page++) {
+      const listing = (await manager.listResources(
+        serverId,
+        cursor ? { cursor } : undefined
+      )) as
+        | {
+            resources?: Array<{ uri?: unknown; _meta?: unknown }>;
+            nextCursor?: unknown;
+          }
+        | undefined;
+
+      const match = listing?.resources?.find((r) => r?.uri === resourceUri);
+      if (match?._meta && typeof match._meta === "object") {
+        return match._meta as Record<string, unknown>;
+      }
+
+      const nextCursor = listing?.nextCursor;
+      // Found the entry but it carries no `_meta`, or the server is done
+      // paginating — either way there is nothing further to read.
+      if (match || typeof nextCursor !== "string" || nextCursor.length === 0) {
+        return undefined;
+      }
+      cursor = nextCursor;
+    }
+    onSkipped?.(
+      `resource not found within the first ${LISTING_LOOKUP_MAX_PAGES} listing pages`
+    );
+    return undefined;
+  } catch (err) {
+    onSkipped?.(err instanceof Error ? err.message : String(err));
+    return undefined;
+  }
 }
