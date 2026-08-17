@@ -3,7 +3,7 @@ import { JourneyRunStreamHub } from "../swarm-stream-hub.js";
 import type { SwarmStreamEvent } from "../../../../shared/swarm-stream-events.js";
 
 function event(
-  partial: Partial<SwarmStreamEvent> & Pick<SwarmStreamEvent, "type">
+  partial: Partial<SwarmStreamEvent> & Pick<SwarmStreamEvent, "type">,
 ): SwarmStreamEvent {
   return {
     runId: "run_1",
@@ -99,7 +99,7 @@ describe("JourneyRunStreamHub", () => {
           action: "type",
           ts: 2_000,
         },
-      })
+      }),
     );
 
     const late: string[] = [];
@@ -123,7 +123,7 @@ describe("JourneyRunStreamHub", () => {
           action: "left_click",
           ts: 1,
         },
-      })
+      }),
     );
     hub.emit(event({ type: "run_complete" }));
 
@@ -155,7 +155,7 @@ describe("JourneyRunStreamHub", () => {
           action: "left_click",
           ts: 1,
         },
-      })
+      }),
     );
     expect(seen).toEqual([1]);
   });

@@ -35,6 +35,11 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // exercise both sides of that gate. Defaults to signed out, which is what every
 // other test in this file has always run as.
 const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
+const mockReactiveHistoryState = vi.hoisted(() => ({
+  session: undefined as any,
+  widgetSnapshots: undefined as any,
+}));
+
 const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
 // (Claude Code, Codex). Default null = an ordinary model host.
@@ -193,6 +198,15 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     if (name === "hosts:getHost") return mockHostQueryState.result;
+    // The reactive chat-history subscription. `useResumedThreadPersistence`
+    // reconciles a failed/absent persist receipt against this, so it needs a
+    // real cell rather than the blanket null the other queries get.
+    if (name === "directChatHistory:getCurrentSession") {
+      return mockReactiveHistoryState.session;
+    }
+    if (name === "directChatHistory:getCurrentSessionWidgetSnapshots") {
+      return mockReactiveHistoryState.widgetSnapshots;
+    }
     return null;
   },
   useMutation: () => () => Promise.resolve(),
@@ -261,6 +275,8 @@ const mockUseChatSession = {
   resetChat: vi.fn(),
   loadChatSession: vi.fn(async () => undefined),
   rewindToMessage: vi.fn(),
+  detachToLocalFork: vi.fn(async () => ({ chatSessionId: "forked-session" })),
+  consumePersistReceipt: vi.fn(() => null),
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},
@@ -686,6 +702,8 @@ describe("PlaygroundMain", () => {
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
+    mockReactiveHistoryState.session = undefined;
+    mockReactiveHistoryState.widgetSnapshots = undefined;
     mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
@@ -2266,7 +2284,7 @@ describe("PlaygroundMain", () => {
       const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
       expect(hint).toHaveTextContent(
-        "Try this prompt with Excalidraw and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients"
       );
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
@@ -2291,7 +2309,7 @@ describe("PlaygroundMain", () => {
       );
 
       expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
-        "Try this prompt with Excalidraw and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients"
       );
     });
 
@@ -2529,7 +2547,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
@@ -2539,7 +2557,7 @@ describe("PlaygroundMain", () => {
       });
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(savedSession._id);
       });
 
@@ -2548,12 +2566,12 @@ describe("PlaygroundMain", () => {
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
-        }),
+        })
       );
 
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(null);
       });
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
@@ -2616,7 +2634,7 @@ describe("PlaygroundMain", () => {
       window.history.replaceState(
         {},
         "",
-        `/playground?conversation=${savedSession.chatSessionId}`,
+        `/playground?conversation=${savedSession.chatSessionId}`
       );
 
       // This file mocks the chat hook with a bare `vi.fn()` for `resetChat`, so
@@ -2643,7 +2661,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
@@ -2653,7 +2671,7 @@ describe("PlaygroundMain", () => {
       });
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(savedSession._id);
       });
 
@@ -2665,11 +2683,13 @@ describe("PlaygroundMain", () => {
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
-        }),
+        })
       );
 
       await waitFor(() => {
-        expect(window.location.search).not.toContain(savedSession.chatSessionId);
+        expect(window.location.search).not.toContain(
+          savedSession.chatSessionId
+        );
       });
     });
 
@@ -2769,7 +2789,11 @@ describe("PlaygroundMain", () => {
           provider: "anthropic",
         },
         availableModels: [
-          { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+          {
+            id: "claude-fable-5",
+            name: "Claude Fable 5",
+            provider: "anthropic",
+          },
           { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
         ],
         selectedModelIds: [OWN_PROVIDER_MODEL_ID],

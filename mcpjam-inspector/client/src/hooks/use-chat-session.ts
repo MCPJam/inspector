@@ -178,6 +178,10 @@ import {
   type HarnessResetReason,
 } from "@/shared/harness-session";
 import {
+  isPersistReceiptDataPart,
+  type PersistReceiptData,
+} from "@/shared/persist-receipt";
+import {
   isSandboxNoticeDataPart,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
@@ -630,6 +634,13 @@ export interface UseChatSessionReturn {
     }
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
+  /**
+   * Take the turn's `data-persist-receipt` — the server's own statement of what
+   * happened to the chat-history save — or null when none arrived (a client
+   * abort, or a server that predates the part). Consuming: each receipt
+   * describes exactly one turn.
+   */
+  consumePersistReceipt: () => PersistReceiptData | null;
 
   // Resumed thread version (for optimistic concurrency)
   resumedVersion: number | null;
@@ -1692,6 +1703,18 @@ export function useChatSession(
   const [chatSessionId, setChatSessionId] = useState(generateId());
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
+  /**
+   * This turn's persist receipt, held until a post-stream consumer takes it.
+   * Refs rather than state: nothing renders from these, and a re-render between
+   * the receipt landing and the post-stream effect reading it would be pure
+   * noise.
+   */
+  const persistReceiptRef = useRef<PersistReceiptData | null>(null);
+  /** Session + turn the in-flight turn belongs to; set at `turn_start`. */
+  const receiptTurnIdentityRef = useRef<{
+    chatSessionId: string;
+    turnId: string;
+  } | null>(null);
   const [, setHydrationTick] = useState(0);
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
   const [restoredToolRenderOverrides, setRestoredToolRenderOverrides] =
@@ -2102,6 +2125,27 @@ export function useChatSession(
           // frames). The `data-rpc-log` part for the same call is what clears
           // the counter; this part exists purely to fill the Tracing view.
           ingestHostedHttpLogs([part.data]);
+        } else if (isPersistReceiptDataPart(part)) {
+          // What actually happened to this turn's chat-history save. Validated
+          // before it is stored, because a receipt is only meaningful for the
+          // conversation it describes: it arrives at the very end of a turn, by
+          // which point a reset, fork, or thread switch may already have moved
+          // this surface somewhere else. Applying a stale receipt would sync a
+          // version baseline onto a thread it does not belong to.
+          const receipt = part.data;
+          const expectedTurn = receiptTurnIdentityRef.current;
+          const sameSession =
+            receipt.chatSessionId === chatSessionIdRef.current;
+          // The turn check is against the identity captured at `turn_start`,
+          // NOT `activeTurnId` — that is cleared by `turn_finish`, which always
+          // arrives BEFORE the receipt.
+          const sameTurn =
+            !receipt.turnId ||
+            !expectedTurn?.turnId ||
+            receipt.turnId === expectedTurn.turnId;
+          if (sameSession && sameTurn) {
+            persistReceiptRef.current = receipt;
+          }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
           // terminal there. Keyed by project + host — and on an ENVIRONMENT
@@ -2168,6 +2212,18 @@ export function useChatSession(
         return;
       }
 
+      if (part.data.type === "turn_start") {
+        // A dedicated identity for receipt matching, captured while the turn is
+        // starting rather than read off trace state later: `activeTurnId` is
+        // cleared by `turn_finish`, which lands before the receipt does. A new
+        // turn also invalidates the previous turn's receipt.
+        receiptTurnIdentityRef.current = {
+          chatSessionId: chatSessionIdRef.current,
+          turnId: part.data.turnId,
+        };
+        persistReceiptRef.current = null;
+      }
+
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
     },
     [
@@ -2178,6 +2234,25 @@ export function useChatSession(
       handleMrtrInputRequired,
     ]
   );
+
+  /**
+   * Take this turn's persist receipt, if one arrived and passed validation.
+   *
+   * Consuming rather than reading: the receipt describes exactly one turn, and
+   * leaving it in place would let a later reconciliation pass mistake it for a
+   * fresh answer about a different turn.
+   *
+   * Ordering is safe. The AI SDK processes stream chunks in order and only
+   * flips `status` to `ready` once the reader completes, so a receipt on the
+   * wire is always observed before any post-stream effect runs. A client abort
+   * or disconnect means no receipt at all — callers fall back to reconciling
+   * against the session subscription.
+   */
+  const consumePersistReceipt = useCallback((): PersistReceiptData | null => {
+    const receipt = persistReceiptRef.current;
+    persistReceiptRef.current = null;
+    return receipt;
+  }, []);
 
   const syncResumedVersion = useCallback((version: number | null) => {
     resumedVersionRef.current = version;
@@ -4609,6 +4684,7 @@ export function useChatSession(
     detachToLocalFork,
     loadChatSession,
     syncResumedVersion,
+    consumePersistReceipt,
 
     // Resumed thread version
     resumedVersion,

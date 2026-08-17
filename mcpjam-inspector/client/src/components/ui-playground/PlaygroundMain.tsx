@@ -69,6 +69,11 @@ import {
   type ChatSessionResetReason,
   useChatSession,
 } from "@/hooks/use-chat-session";
+import {
+  RESUMED_THREAD_CONFLICT_MESSAGE,
+  RESUMED_THREAD_UNSAVED_MESSAGE,
+  useResumedThreadPersistence,
+} from "@/hooks/use-resumed-thread-persistence";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -235,7 +240,6 @@ import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
-const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 // Backoff for retrying a failed seed. Deleting the per-project "seeded"
 // marker only PERMITS a retry — nothing in the seed effect's dependency list
@@ -911,6 +915,7 @@ export function PlaygroundMain({
     resetChat,
     startChatWithMessages,
     detachToLocalFork,
+    consumePersistReceipt,
     liveTraceEnvelope,
     requestPayloadHistory,
     hasTraceSnapshot,
@@ -2542,49 +2547,43 @@ export function PlaygroundMain({
       syncResumedVersion,
     ]
   );
+  /**
+   * Sync the resumed thread's cursor before a send, so the turn carries a
+   * current `expectedVersion` rather than one that went stale while the user
+   * sat idle. ChatTabV2 has always done this; the Playground had no pre-send
+   * sync at all, which mattered little while hosted turns ignored
+   * `expectedVersion` and matters now that they honor it — a stale baseline
+   * becomes a real 409 and a forced new thread.
+   *
+   * Returns false when the send must not proceed: the sync failed (the user is
+   * told, and a blind send could clobber another writer), or the thread is gone
+   * and the surface has detached from it.
+   */
+  const ensureThreadReadyForSend = useCallback(async () => {
+    if (!activeHistorySessionId) return true;
 
-  // After a streaming turn ends we re-fetch the active session so the rail
-  // reflects the new version and the local resume cursor advances. If the
-  // turn was on a resumed thread, we additionally require that the new
-  // detail's version actually exceeds the baseline we sent against — that
-  // proves the server applied this turn rather than a concurrent edit.
-  const refreshHistorySessionAfterStream = useCallback(
-    async (
-      resumedThreadSendBaseline: {
-        sessionId: string;
-        version: number;
-      } | null
-    ) => {
-      const maxAttempts = resumedThreadSendBaseline
-        ? RESUMED_THREAD_REFRESH_RETRIES + 1
-        : 2;
+    let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
+    try {
+      detail = await refreshCurrentHistorySession();
+    } catch (error) {
+      console.error(
+        "[PlaygroundMain] Failed to sync chat history before send",
+        error
+      );
+      toast.error("Failed to sync chat history. Try again.");
+      return false;
+    }
+    if (detail) return true;
 
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        try {
-          const detail = await refreshCurrentHistorySession({
-            markRead: true,
-          });
-          if (
-            !resumedThreadSendBaseline ||
-            (detail &&
-              detail._id === resumedThreadSendBaseline.sessionId &&
-              detail.version > resumedThreadSendBaseline.version)
-          ) {
-            return detail;
-          }
-        } catch (error) {
-          if (attempt >= maxAttempts - 1) {
-            throw error;
-          }
-        }
-        if (attempt < maxAttempts - 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-        }
-      }
-      return null;
-    },
-    [refreshCurrentHistorySession]
-  );
+    detachHistorySession(
+      "This chat is no longer available. Your draft stayed local, and the next send will start a new thread."
+    );
+    return false;
+  }, [
+    activeHistorySessionId,
+    detachHistorySession,
+    refreshCurrentHistorySession,
+  ]);
 
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
@@ -2909,90 +2908,36 @@ export function PlaygroundMain({
     setBridge,
   ]);
 
-  // Track streaming baseline + resumedVersion drift while a history session is
-  // active. Ports ChatTabV2:1017-1088 so that a turn started on a resumed
-  // thread is reconciled against its baseline version when it ends:
-  //   - mark active session read on stream completion
-  //   - refresh the active session detail (with retry) so the rail picks up
-  //     the new version
-  //   - detach if the server's version doesn't advance past the baseline
-  //     (concurrent edit / fork / deletion)
-  const previousStatusRef = useRef(status);
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current;
-    previousStatusRef.current = status;
-    const wasStreaming =
-      previousStatus === "submitted" || previousStatus === "streaming";
-    const isNowStreaming = status === "submitted" || status === "streaming";
-    const hasStartedStream = !wasStreaming && isNowStreaming;
-
-    if (hasStartedStream) {
-      resumedThreadSendBaselineRef.current =
-        activeHistorySessionId && resumedVersion !== null
-          ? { sessionId: activeHistorySessionId, version: resumedVersion }
-          : null;
-      return;
-    }
-
-    if (!wasStreaming) {
-      return;
-    }
-
-    if (status === "error") {
-      resumedThreadSendBaselineRef.current = null;
-      return;
-    }
-
-    // Still mid-stream (submitted ↔ streaming transition). The stream hasn't
-    // ended, so don't consume the baseline yet — otherwise the version-conflict
-    // check below will read `null` when the stream actually completes.
-    if (isNowStreaming) {
-      return;
-    }
-
-    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
-    resumedThreadSendBaselineRef.current = null;
-    const hasCompletedStream = status === "ready";
-    if (!hasCompletedStream) {
-      return;
-    }
-
-    if (activeHistorySessionId) {
-      void markHistorySessionRead(activeHistorySessionId);
-    }
-
-    // Defer slightly so the server has a chance to flush the version bump
-    // before we ask for the new detail row.
-    const timerId = window.setTimeout(() => {
-      void (async () => {
-        const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline
-        );
-        if (
-          resumedThreadSendBaseline &&
-          (!detail ||
-            detail._id !== resumedThreadSendBaseline.sessionId ||
-            detail.version <= resumedThreadSendBaseline.version)
-        ) {
-          detachHistorySession(
-            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
-            { silent: suppressHistoryConflictToastRef.current }
-          );
-        }
-      })().catch((error) => {
+  useResumedThreadPersistence({
+    sendBaselineRef: resumedThreadSendBaselineRef,
+    enabled: true,
+    status,
+    activeHistorySessionId,
+    resumedVersion,
+    consumePersistReceipt,
+    reactiveSessionVersion: reactiveHistorySession?.version,
+    syncResumedVersion,
+    markHistorySessionRead: (sessionId) => {
+      void markHistorySessionRead(sessionId);
+    },
+    refreshAfterStream: () => {
+      void refreshCurrentHistorySession({ markRead: true }).catch((error) => {
         console.error("[PlaygroundMain] Failed to refresh chat history", error);
       });
-    }, 250);
-
-    return () => window.clearTimeout(timerId);
-  }, [
-    activeHistorySessionId,
-    detachHistorySession,
-    markHistorySessionRead,
-    refreshHistorySessionAfterStream,
-    resumedVersion,
-    status,
-  ]);
+    },
+    onConflict: () => {
+      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE, {
+        silent: suppressHistoryConflictToastRef.current,
+      });
+    },
+    onUnsaved: () => {
+      // The eval preview mutates its own session by design, so its
+      // self-inflicted noise stays suppressed here too.
+      if (!suppressHistoryConflictToastRef.current) {
+        toast.error(RESUMED_THREAD_UNSAVED_MESSAGE);
+      }
+    },
+  });
 
   // Delay the spinner so a hover-prefetched (instant) load doesn't flash an
   // overlay for one frame. After ~120 ms the load is "slow enough" to warrant
@@ -3762,6 +3707,9 @@ export function PlaygroundMain({
     if (!(await ensureSelectedServerReadyForChat())) {
       return false;
     }
+    if (!(await ensureThreadReadyForSend())) {
+      return false;
+    }
 
     if (!isCompareMode && displayMode === "fullscreen" && isWidgetFullscreen) {
       setIsFullscreenChatOpen(true);
@@ -3871,6 +3819,7 @@ export function PlaygroundMain({
     fileAttachments,
     sendBlocked,
     ensureSelectedServerReadyForChat,
+    ensureThreadReadyForSend,
     isCompareMode,
     displayMode,
     isWidgetFullscreen,

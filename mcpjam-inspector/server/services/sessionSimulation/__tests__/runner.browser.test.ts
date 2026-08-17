@@ -500,9 +500,7 @@ describe("runSyntheticHostSession — durable browser-artifact capture", () => {
     const outbox = buildFakeOutbox();
     // A first-turn failure is the case you most want to watch back — and it
     // used to return with no `chatSessions` row at all.
-    runAssistantTurnMock
-      .mockReset()
-      .mockRejectedValue(new Error("engine down"));
+    runAssistantTurnMock.mockReset().mockRejectedValue(new Error("engine down"));
     resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
 
     const result = await runSyntheticHostSession({

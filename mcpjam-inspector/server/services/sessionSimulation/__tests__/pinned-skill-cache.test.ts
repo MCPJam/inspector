@@ -81,7 +81,7 @@ describe("pinned-skill cache", () => {
         contentHash: "h1",
         fetcher: failing,
         retryDelaysMs: [0, 0],
-      })
+      }),
     ).rejects.toThrow("not found");
     expect(__pinnedSkillCacheSizeForTest()).toBe(0);
     // Next caller retries fresh (and can succeed).
@@ -124,7 +124,7 @@ describe("pinned-skill cache", () => {
         contentHash: "h1",
         fetcher: bad,
         retryDelaysMs: [0, 0],
-      })
+      }),
     ).rejects.toThrow("hash mismatch");
     expect(calls).toBe(1);
   });
@@ -167,16 +167,8 @@ describe("pinned-skill cache", () => {
       calls++;
       return artifact("h1");
     };
-    await resolvePinnedSkillCached({
-      projectId: "p1",
-      contentHash: "h1",
-      fetcher,
-    });
-    await resolvePinnedSkillCached({
-      projectId: "p2",
-      contentHash: "h1",
-      fetcher,
-    });
+    await resolvePinnedSkillCached({ projectId: "p1", contentHash: "h1", fetcher });
+    await resolvePinnedSkillCached({ projectId: "p2", contentHash: "h1", fetcher });
     expect(calls).toBe(2);
     expect(__pinnedSkillCacheSizeForTest()).toBe(2);
   });
@@ -184,17 +176,11 @@ describe("pinned-skill cache", () => {
 
 describe("isRetryablePinnedSkillError", () => {
   it("classifies per the policy: 5xx/transport retry; 404/integrity/abort never", () => {
-    expect(isRetryablePinnedSkillError(new SwarmAgentError(500, "", "x"))).toBe(
-      true
-    );
-    expect(isRetryablePinnedSkillError(new TypeError("fetch failed"))).toBe(
-      true
-    );
-    expect(isRetryablePinnedSkillError(new SwarmAgentError(404, "", "x"))).toBe(
-      false
-    );
+    expect(isRetryablePinnedSkillError(new SwarmAgentError(500, "", "x"))).toBe(true);
+    expect(isRetryablePinnedSkillError(new TypeError("fetch failed"))).toBe(true);
+    expect(isRetryablePinnedSkillError(new SwarmAgentError(404, "", "x"))).toBe(false);
     expect(
-      isRetryablePinnedSkillError(new PinnedSkillIntegrityError("x"))
+      isRetryablePinnedSkillError(new PinnedSkillIntegrityError("x")),
     ).toBe(false);
     const abort = new Error("aborted");
     abort.name = "AbortError";
