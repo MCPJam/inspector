@@ -430,6 +430,25 @@ export function buildServerConnections(
   });
 }
 
+/**
+ * The `id` literal written into the exported file.
+ *
+ * Prefers the dashboard case's own id so the exported code-first test joins the
+ * hosted case's history. The positional fallback is deliberately NOT derived
+ * from the title: an id derived from display text forks history on the first
+ * rename, which is exactly what a declared id exists to prevent.
+ */
+function exportedCaseId(
+  testCase: EvalExportCaseInput,
+  index: number
+): string {
+  const declared = testCase.id?.trim();
+  if (declared && /^[A-Za-z0-9_-]{1,128}$/.test(declared)) {
+    return declared;
+  }
+  return `c_exported_${index + 1}`;
+}
+
 function buildCaseTestBlock(
   testCase: EvalExportCaseInput,
   index: number
@@ -450,9 +469,16 @@ function buildCaseTestBlock(
 
   pushCaseComments(lines, testCase);
 
-  // Build EvalTest config
+  // Build EvalTest config.
+  //
+  // `id` is the case's declared identity and is required by the SDK. Emit the
+  // dashboard case's own id when we have it — the exported file then joins back
+  // to the same history — and fall back to a positional id only for a case that
+  // never had one. Either way it is minted ONCE, into a file the user commits,
+  // so a later rename of `name` cannot fork the case.
   lines.push(
     "      const evalTest = new EvalTest({",
+    `        id: ${JSON.stringify(exportedCaseId(testCase, index))},`,
     `        name: ${JSON.stringify(caseTitle)},`
   );
 

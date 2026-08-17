@@ -169,6 +169,10 @@ describe("eval-export", () => {
     });
 
     expect(sdkFile).toContain("new EvalTest(");
+    // The dashboard case's own id is emitted as the declared `id`, so the
+    // exported code-first test joins back to the same hosted history instead of
+    // starting a fresh one.
+    expect(sdkFile).toContain('id: "mt-neutral-first"');
     expect(sdkFile).toContain("evalTest.run(agent");
     expect(sdkFile).toContain("mcpjam: { suiteName: SUITE_NAME }");
     expect(sdkFile).toContain("evalTest.accuracy()");

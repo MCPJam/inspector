@@ -21,8 +21,12 @@ import {
   runAndAssertCase,
 } from "../src/index.js";
 
+let mintedCaseIds = 0;
+
 function evalTest(name: string, externalCaseId?: string): EvalTest {
+  mintedCaseIds += 1;
   return new EvalTest({
+    id: `c_plan_${mintedCaseIds}`,
     name,
     ...(externalCaseId ? { externalCaseId } : {}),
     test: async () => true,
@@ -47,7 +51,17 @@ describe("planEvalSuite", () => {
       title: "Refund flow [case_123]",
       testName: "Refund flow",
       scenarioId: "case_123",
+      caseId: expect.stringMatching(/^c_plan_\d+$/),
     });
+  });
+
+  it("carries the declared case id without putting it in the title", () => {
+    // The `[id]` suffix is the hosted-dashboard grep handle and rides
+    // `externalCaseId`. `caseId` is the declared identity, exposed for
+    // reporters — swapping which one names the test would break those greps.
+    const plan = planEvalSuite(suiteOf(evalTest("a local test")));
+    expect(plan.cases[0].caseId).toMatch(/^c_plan_\d+$/);
+    expect(plan.cases[0].title).toBe("a local test");
   });
 
   it("leaves a local test's name bare", () => {

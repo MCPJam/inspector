@@ -36,6 +36,11 @@ import type {
   ScoreResult,
   ScorerContextV1,
 } from "./contract/types.js";
+import {
+  CASE_ID_PREFIX,
+  mintCaseId,
+  opaqueIdSchema,
+} from "./contract/identity.js";
 import { runScorers, scoresPassed } from "./scorers/run.js";
 import { Semaphore } from "./scorers/concurrency.js";
 import type { Scorer } from "./scorers/types.js";
@@ -75,6 +80,48 @@ function assertLocallyEvaluablePredicates(
 }
 
 /**
+ * An id to SUGGEST in the missing-`id` error.
+ *
+ * Minting can fail in a runtime with no CSPRNG, and an error about a missing
+ * id must never be replaced by a secondary error about generating an example.
+ */
+function suggestedCaseId(): string {
+  try {
+    return mintCaseId();
+  } catch {
+    return `${CASE_ID_PREFIX}<paste a unique id here>`;
+  }
+}
+
+/**
+ * A case's identity must be DECLARED, and it must be usable in a URL, a file
+ * path and a CLI argument.
+ *
+ * Deliberately NOT derived from `name` when absent: deriving it would recreate
+ * exactly the bug the field exists to retire — rename the test, fork its
+ * history — while looking like it worked. Failing at construction says what is
+ * wrong once, at the line that is wrong, with the fix in the message.
+ */
+function assertDeclaredCaseId(config: EvalTestConfig): void {
+  const label = config.name ? `"${config.name}"` : "(unnamed)";
+  if (config.id === undefined || config.id === null || config.id === "") {
+    throw new Error(
+      `EvalTest ${label} has no \`id\`. A case's identity is declared, not ` +
+        `derived from its name — otherwise renaming the test forks its hosted ` +
+        `history. Mint one once and commit it: id: "${suggestedCaseId()}"`
+    );
+  }
+  const parsed = opaqueIdSchema.safeParse(config.id);
+  if (!parsed.success) {
+    throw new Error(
+      `EvalTest ${label} has an invalid \`id\` (${JSON.stringify(config.id)}): ` +
+        `${parsed.error.issues.map((issue) => issue.message).join("; ")}. ` +
+        `Ids travel in URLs, file paths and CLI arguments.`
+    );
+  }
+}
+
+/**
  * Configuration for an EvalTest
  *
  * All tests use the multi-turn pattern with a test function that receives a
@@ -82,6 +129,21 @@ function assertLocallyEvaluablePredicates(
  * executor that mirrors the interface).
  */
 export interface EvalTestConfig {
+  /**
+   * This case's DECLARED identity. Required.
+   *
+   * Identity is declared, never derived. It used to be the `name`, which meant
+   * renaming a test forked its hosted history — the bug this field retires.
+   * Mint one ONCE with `mintCaseId()` from `@mcpjam/sdk/contract` and commit
+   * the literal beside the test; an id regenerated on every run is not an
+   * identity. Any URL-safe string of 1..128 characters is accepted (see
+   * `opaqueIdSchema`) — our `c_` prefix is a grep convenience, not a rule.
+   *
+   * Distinct from {@link EvalTestConfig.externalCaseId}, which is the hosted
+   * JOIN key with live wire semantics. Nothing on the wire changes because of
+   * this field yet; the upload payload is byte-identical to before.
+   */
+  id: string;
   name: string;
   test: (executor: HostExecutor) => boolean | Promise<boolean>;
   expectedToolCalls?: EvalExpectedToolCall[];
@@ -105,6 +167,12 @@ export interface EvalTestConfig {
    * (`convex/sdkEvals.ts`), which is what joins a local run to the hosted
    * case's history on the run page. Identity rides HERE, never on `name`:
    * display names collide and get renamed.
+   *
+   * Retained UNCHANGED alongside the new required {@link EvalTestConfig.id}:
+   * this one has live wire semantics that a deployed backend depends on, while
+   * `id` is the declared identity the contract now requires. Converging the two
+   * is a backend change and happens after the mirroring backend work ships —
+   * until then, nothing about the upload payload changes.
    */
   externalCaseId?: string;
   /**
@@ -336,6 +404,7 @@ function wrapAgentWithAbortSignal(
  * @example
  * ```ts
  * const test = new EvalTest({
+ *   id: "c_addition",
  *   name: "addition",
  *   test: async (executor) => {
  *     const result = await executor.run("Add 2+3");
@@ -355,6 +424,7 @@ export class EvalTest {
     if (!config.test) {
       throw new Error("Invalid config: must provide 'test' function");
     }
+    assertDeclaredCaseId(config);
     assertValidMatchOptions(config.matchOptions ?? {});
     assertLocallyEvaluablePredicates(config.predicates);
     // A negative case asserts "no tool was called", so `evaluateToolCalls`
@@ -1118,6 +1188,16 @@ export class EvalTest {
    */
   getName(): string {
     return this.config.name;
+  }
+
+  /**
+   * This case's declared identity.
+   *
+   * Read this — never `getName()` — when joining a case to anything that
+   * outlives one run.
+   */
+  getId(): string {
+    return this.config.id;
   }
 
   /**
