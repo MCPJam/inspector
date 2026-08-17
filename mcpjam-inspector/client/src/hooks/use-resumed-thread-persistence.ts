@@ -211,11 +211,20 @@ export function useResumedThreadPersistence(
 
     const receipt = callbacksRef.current.consumePersistReceipt();
 
-    // A turn on a fresh (non-resumed) thread has no baseline to advance and
-    // nothing to conflict with. It DOES need the rail refresh: this is the turn
-    // that created the row, so the refresh is how the surface learns its id.
+    // A turn on a fresh (non-resumed) thread has no baseline to advance. It DOES
+    // need the rail refresh: this is the turn that created the row, so the
+    // refresh is how the surface learns its id.
+    //
+    // A null baseline does not guarantee a null conflict, though. The baseline
+    // is also cleared mid-stream by every deliberate session change (new chat,
+    // archive-all, reset, a rewind's `onBeforeBranch`), and a turn invalidated
+    // that way can still come back with a `conflict` receipt. Refreshing then
+    // could reattach the session the surface just left, which is exactly what
+    // clearing the baseline was protecting against.
     if (!baseline) {
-      callbacksRef.current.refreshAfterStream();
+      if (receipt?.outcome !== "conflict") {
+        callbacksRef.current.refreshAfterStream();
+      }
       return;
     }
 

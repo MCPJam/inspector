@@ -400,6 +400,20 @@ describe("useResumedThreadPersistence", () => {
     }
   });
 
+  it("skips the rail refresh on a conflict even with no baseline", () => {
+    // The baseline is also cleared mid-stream by deliberate session changes, so
+    // a null baseline does not mean the turn cannot conflict. Refreshing then
+    // could reattach the session the surface just left.
+    const harness = setup({
+      resumedVersion: null,
+      receipt: { outcome: "conflict", chatSessionId: "c", currentVersion: 9 },
+    });
+
+    harness.runTurn();
+
+    expect(harness.refreshAfterStream).not.toHaveBeenCalled();
+  });
+
   it("refreshes the rail for a fresh thread — that is how it learns the new row", () => {
     const harness = setup({ resumedVersion: null, receipt: null });
     harness.runTurn();
