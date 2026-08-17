@@ -55,9 +55,16 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withProbeTimeout<T>(promise: Promise<T>): Promise<T> {
+function withProbeTimeout<T>(
+  promise: Promise<T>,
+  controller: AbortController
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timeoutId = window.setTimeout(() => {
+      // Abort as well as reject. Rejecting only frees this caller: the request
+      // it gave up on keeps its connection open on the server, and the retry
+      // below opens a second one against the same server.
+      controller.abort();
       reject(new Error(`Probe timed out after ${PROBE_TIMEOUT_MS}ms`));
     }, PROBE_TIMEOUT_MS);
     promise.then(
@@ -91,26 +98,56 @@ function withProbeTimeout<T>(promise: Promise<T>): Promise<T> {
  * still unresolved belong to the OAuth gate, which verifies them with this same
  * endpoint. Probing those here would double-connect and report "unreachable"
  * for a server that is merely waiting for consent.
+ *
+ * `sessionKey` identifies the redeemed session these verdicts belong to. Every
+ * verdict is scoped to it, because a verdict says "this session reached this
+ * server", not "this server is up".
  */
 export function useScenarioServerReachability(
   servers: ScenarioServerReachabilityInput[],
-  enabled: boolean
+  enabled: boolean,
+  sessionKey: string | null
 ): Record<string, ScenarioServerReachability> {
   const [reachabilityByServerId, setReachabilityByServerId] = useState<
     Record<string, ScenarioServerReachability>
   >({});
   const probedServerIdsRef = useRef<Set<string>>(new Set());
+  const probedSessionKeyRef = useRef<string | null>(sessionKey);
   const isUnmountedRef = useRef(false);
+  const inFlightProbesRef = useRef<Set<AbortController>>(new Set());
+
+  // A tester opening a different scenario does not remount the page —
+  // `ScenarioChatPage` swaps its session in place — so the previous session's
+  // probe state has to be dropped here. Two scenarios in one project can list
+  // the same server id, and keeping the old verdict would both skip probing it
+  // and show an answer this session never got. Reset during render so no frame
+  // is painted from the previous session's verdicts.
+  if (probedSessionKeyRef.current !== sessionKey) {
+    probedSessionKeyRef.current = sessionKey;
+    probedServerIdsRef.current = new Set();
+    setReachabilityByServerId((previous) =>
+      Object.keys(previous).length === 0 ? previous : {}
+    );
+  }
 
   useEffect(() => {
     isUnmountedRef.current = false;
     return () => {
       isUnmountedRef.current = true;
+      // A probe that outlives the page still holds a connection open on the
+      // server for the rest of its connect timeout, and nobody is left to read
+      // its answer.
+      for (const controller of inFlightProbesRef.current) {
+        controller.abort();
+      }
+      inFlightProbesRef.current.clear();
     };
   }, []);
 
   useEffect(() => {
     if (!enabled) return;
+
+    const probeSessionKey = sessionKey;
 
     for (const server of servers) {
       if (probedServerIdsRef.current.has(server.serverId)) continue;
@@ -128,8 +165,19 @@ export function useScenarioServerReachability(
         let probeAttempts = 0;
 
         for (;;) {
+          const controller = new AbortController();
+          inFlightProbesRef.current.add(controller);
           try {
-            await withProbeTimeout(validateHostedServer(server.serverId));
+            await withProbeTimeout(
+              validateHostedServer(
+                server.serverId,
+                undefined,
+                undefined,
+                undefined,
+                controller.signal
+              ),
+              controller
+            );
             reachability = "reachable";
             break;
           } catch (error) {
@@ -157,17 +205,22 @@ export function useScenarioServerReachability(
               isBootstrap ? BOOTSTRAP_RETRY_DELAY_MS : PROBE_RETRY_DELAY_MS
             );
             if (isUnmountedRef.current) return;
+          } finally {
+            inFlightProbesRef.current.delete(controller);
           }
         }
 
         if (isUnmountedRef.current) return;
+        // The tester moved to another scenario while this ran. The answer is
+        // about a session the page no longer shows, and its map was cleared.
+        if (probedSessionKeyRef.current !== probeSessionKey) return;
         setReachabilityByServerId((previous) => ({
           ...previous,
           [server.serverId]: reachability,
         }));
       })();
     }
-  }, [enabled, servers]);
+  }, [enabled, servers, sessionKey]);
 
   return reachabilityByServerId;
 }
