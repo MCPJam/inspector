@@ -14,6 +14,7 @@ import type {
 } from "./EvalTest.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
+import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 import type { EvalToolCallMatchResult } from "./matchers.js";
@@ -215,6 +216,16 @@ export class EvalSuite {
       apiKey,
       baseUrl: config?.baseUrl,
       strict: config?.strict,
+      // One fingerprint for a run that graded each case with its own scorer
+      // set; see `aggregateEvaluationConfigHash`.
+      ...(() => {
+        const hashes = Array.from(testResults.values())
+          .map((result) => result.evaluationConfig?.hash)
+          .filter((hash): hash is string => Boolean(hash));
+        return hashes.length > 0
+          ? { evaluationConfigHash: aggregateEvaluationConfigHash(hashes) }
+          : {};
+      })(),
       results,
     });
   }
@@ -224,15 +235,25 @@ export class EvalSuite {
     reporting?: MCPJamReportingConfig,
     hostExtras?: Record<string, string | number | boolean>
   ): EvalResultInput[] {
-    const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
+    // Null prototype on ALL FOUR of these: they are keyed by test NAME in the
+    // same loop, so a test called `__proto__` would run the prototype setter
+    // instead of creating an own property and vanish from every one of them.
+    // Fixing one and leaving three is worse than fixing none — it reads as
+    // handled.
+    const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> =
+      Object.create(null);
     const predicatesByTest: Record<
       string,
       import("./predicates/types.js").Predicate[]
-    > = {};
+    > = Object.create(null);
     const matchOptionsByTest: Record<
       string,
       import("./matchers.js").EvalMatchOptions | undefined
-    > = {};
+    > = Object.create(null);
+    const caseIdentityByTest: Record<
+      string,
+      import("./eval-result-mapping.js").EvalCaseIdentity | undefined
+    > = Object.create(null);
     for (const [name, test] of this.tests) {
       const expected = test.getConfig().expectedToolCalls;
       if (expected) {
@@ -242,6 +263,21 @@ export class EvalSuite {
       if (predicates && predicates.length > 0)
         predicatesByTest[name] = predicates;
       matchOptionsByTest[name] = test.getConfig().matchOptions;
+      const config = test.getConfig();
+      const identity = {
+        ...(config.externalCaseId !== undefined
+          ? { externalCaseId: config.externalCaseId }
+          : {}),
+        ...(config.isNegativeTest !== undefined
+          ? { isNegativeTest: config.isNegativeTest }
+          : {}),
+        ...(config.expectedOutput !== undefined
+          ? { expectedOutput: config.expectedOutput }
+          : {}),
+      };
+      if (Object.keys(identity).length > 0) {
+        caseIdentityByTest[name] = identity;
+      }
     }
     return suiteTestResultsToEvalResultInputs(
       testResults,
@@ -251,7 +287,10 @@ export class EvalSuite {
       reporting?.failOnToolError,
       hostExtras,
       Object.keys(predicatesByTest).length > 0 ? predicatesByTest : undefined,
-      matchOptionsByTest
+      matchOptionsByTest,
+      Object.keys(caseIdentityByTest).length > 0
+        ? caseIdentityByTest
+        : undefined
     );
   }
 

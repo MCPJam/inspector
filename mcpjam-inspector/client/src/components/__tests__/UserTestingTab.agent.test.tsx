@@ -1,7 +1,7 @@
 /**
  * UserTestingTab agent bridge handlers. Commands are dispatched through the
  * real command bus against a mounted UserTestingTab; the publish/delete
- * mutations, the environment list and the chatbox list are mocked so the
+ * mutations, the environment list and the scenario list are mocked so the
  * handlers act through the SAME callbacks the buttons and dialogs use.
  *
  * Findings this pins:
@@ -25,7 +25,7 @@ import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
-import type { ChatboxListItem, ChatboxSettings } from "@/hooks/useChatboxes";
+import type { ScenarioListItem, ScenarioSettings } from "@/hooks/useScenarios";
 import type { HostListItem } from "@/hooks/useClients";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type {
@@ -84,11 +84,11 @@ const hostCursorTwin: HostListItem = {
  * Mutable per test: the post-delete case drops a row to prove the surface
  * never re-provisions what an agent just deleted.
  */
-let listRows: ChatboxListItem[] = [];
+let listRows: ScenarioListItem[] = [];
 
-const chatboxList: ChatboxListItem[] = [
+const scenarioList: ScenarioListItem[] = [
   {
-    chatboxId: "cb-1",
+    scenarioId: "cb-1",
     projectId: "proj-1",
     name: "Claude",
     hostStyle: "claude",
@@ -111,7 +111,7 @@ const chatboxList: ChatboxListItem[] = [
     updatedAt: 0,
   },
   {
-    chatboxId: "cb-2",
+    scenarioId: "cb-2",
     projectId: "proj-1",
     name: "Cursor",
     hostStyle: "chatgpt",
@@ -127,8 +127,8 @@ const chatboxList: ChatboxListItem[] = [
   },
 ];
 
-const scenarioChatbox: ChatboxSettings = {
-  chatboxId: "cb-1",
+const scenarioSettings: ScenarioSettings = {
+  scenarioId: "cb-1",
   projectId: "proj-1",
   name: "Claude scenario",
   hostStyle: "claude",
@@ -173,9 +173,9 @@ const scenarioChatbox: ChatboxSettings = {
 const sessionThreads: SharedChatThread[] = [
   {
     _id: "thread-1",
-    sourceType: "chatbox",
+    sourceType: "scenario",
     chatSessionId: "sess-1",
-    chatboxId: "cb-1",
+    scenarioId: "cb-1",
     startedAt: 100,
     lastActivityAt: 200,
     messageCount: 4,
@@ -190,22 +190,22 @@ const sessionThreads: SharedChatThread[] = [
 ];
 
 const {
-  publishEnvironmentChatboxMock,
-  deleteChatboxMock,
+  publishEnvironmentScenarioMock,
+  deleteScenarioMock,
   navigateMock,
   hostListState,
-  chatboxState,
+  scenarioState,
   usageState,
   environmentsState,
   flagState,
 } = vi.hoisted(() => ({
-  publishEnvironmentChatboxMock: vi.fn(),
-  deleteChatboxMock: vi.fn(),
+  publishEnvironmentScenarioMock: vi.fn(),
+  deleteScenarioMock: vi.fn(),
   navigateMock: vi.fn(),
   // Mutable so a case can vary the host list (ambiguity) or drop the scenario's
-  // chatbox mid-test (the post-delete rerender).
+  // scenario mid-test (the post-delete rerender).
   hostListState: { hosts: [] as HostListItem[], isLoading: false },
-  chatboxState: { chatbox: null as ChatboxSettings | null, isLoading: false },
+  scenarioState: { scenario: null as ScenarioSettings | null, isLoading: false },
   usageState: {
     threads: undefined as SharedChatThread[] | undefined,
     breakdown: undefined,
@@ -234,12 +234,12 @@ vi.mock("@/hooks/useClients", () => ({
   useHostMutations: () => ({ createHost: vi.fn() }),
 }));
 
-vi.mock("@/hooks/useChatboxes", () => ({
-  useChatbox: () => chatboxState,
-  useChatboxList: () => ({ chatboxes: listRows, isLoading: false }),
-  useChatboxMutations: () => ({ deleteChatbox: deleteChatboxMock }),
-  useEnvironmentChatboxMutations: () => ({
-    publishEnvironmentChatbox: publishEnvironmentChatboxMock,
+vi.mock("@/hooks/useScenarios", () => ({
+  useScenario: () => scenarioState,
+  useScenarioList: () => ({ scenarios: listRows, isLoading: false }),
+  useScenarioMutations: () => ({ deleteScenario: deleteScenarioMock }),
+  useEnvironmentScenarioMutations: () => ({
+    publishEnvironmentScenario: publishEnvironmentScenarioMock,
   }),
 }));
 
@@ -260,10 +260,10 @@ vi.mock("@/hooks/useUsageInsights", () => ({
 
 // Heavy children — stub so the surface mounts without their hook trees. The
 // bridge (useSurfaceAgentBridge) registers before any of these render.
-vi.mock("@/components/chatboxes/UserTestingScenarioDetail", () => ({
+vi.mock("@/components/scenarios/UserTestingScenarioDetail", () => ({
   UserTestingScenarioDetail: () => <div data-testid="stub-scenario-detail" />,
 }));
-vi.mock("@/components/chatboxes/UserTestingOverviewPanel", () => ({
+vi.mock("@/components/scenarios/UserTestingOverviewPanel", () => ({
   UserTestingOverviewPanel: () => <div data-testid="stub-overview-panel" />,
 }));
 
@@ -311,9 +311,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   hostListState.hosts = [hostClaude, hostCursor, hostJourney];
   hostListState.isLoading = false;
-  listRows = chatboxList.map((row) => ({ ...row }));
-  chatboxState.chatbox = { ...scenarioChatbox };
-  chatboxState.isLoading = false;
+  listRows = scenarioList.map((row) => ({ ...row }));
+  scenarioState.scenario = { ...scenarioSettings };
+  scenarioState.isLoading = false;
   usageState.threads = sessionThreads;
   flagState.enabled = true;
   environmentsState.value = [
@@ -324,8 +324,8 @@ beforeEach(() => {
     { environmentId: "env-3", name: "Onboarding", revision: 1 },
   ];
   // Behaves like the real (idempotent) mutation: returns the row either way.
-  publishEnvironmentChatboxMock.mockResolvedValue({
-    chatboxId: "cb-env",
+  publishEnvironmentScenarioMock.mockResolvedValue({
+    scenarioId: "cb-env",
     environmentId: "env-1",
     name: "Checkout flow",
     mode: "invited_only",
@@ -333,29 +333,29 @@ beforeEach(() => {
     link: null,
     accessVersion: 1,
   });
-  deleteChatboxMock.mockResolvedValue(undefined);
+  deleteScenarioMock.mockResolvedValue(undefined);
 });
 
 describe("UserTestingTab — agent bridge handlers", () => {
-  it("publishChatbox publishes an ENVIRONMENT and opens the scenario", async () => {
+  it("publishScenario publishes an ENVIRONMENT and opens the scenario", async () => {
     renderUserTesting();
     const response = await dispatch({
-      type: "publishChatbox",
+      type: "publishScenario",
       payload: { environment: "Checkout flow", access: "link_guests" },
     });
 
     expect(response).toMatchObject({
       status: "success",
       result: {
-        status: "chatbox_published",
+        status: "scenario_published",
         scenarioId: "cb-env",
         environmentId: "env-1",
         created: true,
       },
     });
     // Access rides in the SAME mutation as the publish — never a follow-up
-    // setChatboxMode, which would leave a window in the wrong mode.
-    expect(publishEnvironmentChatboxMock).toHaveBeenCalledWith({
+    // setScenarioMode, which would leave a window in the wrong mode.
+    expect(publishEnvironmentScenarioMock).toHaveBeenCalledWith({
       environmentId: "env-1",
       mode: "anyone_with_link",
     });
@@ -364,9 +364,9 @@ describe("UserTestingTab — agent bridge handlers", () => {
     expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-env");
   });
 
-  it("publishChatbox passes a name through, and reports an already-published environment honestly", async () => {
-    publishEnvironmentChatboxMock.mockResolvedValue({
-      chatboxId: "cb-env",
+  it("publishScenario passes a name through, and reports an already-published environment honestly", async () => {
+    publishEnvironmentScenarioMock.mockResolvedValue({
+      scenarioId: "cb-env",
       environmentId: "env-1",
       name: "Round 1",
       mode: "invited_only",
@@ -377,11 +377,11 @@ describe("UserTestingTab — agent bridge handlers", () => {
     renderUserTesting();
 
     const response = await dispatch({
-      type: "publishChatbox",
+      type: "publishScenario",
       payload: { environment: "env-1", name: "Round 2" },
     });
 
-    expect(publishEnvironmentChatboxMock).toHaveBeenCalledWith({
+    expect(publishEnvironmentScenarioMock).toHaveBeenCalledWith({
       environmentId: "env-1",
       name: "Round 2",
     });
@@ -394,32 +394,32 @@ describe("UserTestingTab — agent bridge handlers", () => {
     expect((response as any).result.note).toMatch(/already published/i);
   });
 
-  it("publishChatbox refuses when Environments is off, rather than minting a client", async () => {
+  it("publishScenario refuses when Environments is off, rather than minting a client", async () => {
     flagState.enabled = false;
     renderUserTesting();
 
     const error = expectCommandError(
       await dispatch({
-        type: "publishChatbox",
+        type: "publishScenario",
         payload: { environment: "Checkout flow" },
       })
     );
     expect(error.code).toBe("unsupported_in_mode");
-    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
+    expect(publishEnvironmentScenarioMock).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown target as invalid_request on both commands", async () => {
     renderUserTesting();
     const publishError = expectCommandError(
-      await dispatch({ type: "publishChatbox", payload: { environment: "Nope" } })
+      await dispatch({ type: "publishScenario", payload: { environment: "Nope" } })
     );
     expect(publishError.code).toBe("invalid_request");
     const deleteError = expectCommandError(
-      await dispatch({ type: "deleteChatbox", payload: { scenario: "Nope" } })
+      await dispatch({ type: "deleteScenario", payload: { scenario: "Nope" } })
     );
     expect(deleteError.code).toBe("invalid_request");
-    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
-    expect(deleteChatboxMock).not.toHaveBeenCalled();
+    expect(publishEnvironmentScenarioMock).not.toHaveBeenCalled();
+    expect(deleteScenarioMock).not.toHaveBeenCalled();
   });
 
   it("rejects an AMBIGUOUS environment name and asks for the id instead of guessing", async () => {
@@ -427,47 +427,118 @@ describe("UserTestingTab — agent bridge handlers", () => {
     // resolution refuses rather than picking one.
     renderUserTesting();
     const error = expectCommandError(
-      await dispatch({ type: "publishChatbox", payload: { environment: "Onboarding" } })
+      await dispatch({ type: "publishScenario", payload: { environment: "Onboarding" } })
     );
     expect(error.code).toBe("invalid_request");
     expect(error.message).toContain("id");
-    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
+    expect(publishEnvironmentScenarioMock).not.toHaveBeenCalled();
   });
 
-  it("deleteChatbox addresses a SCENARIO by name and leaves its environment alone", async () => {
+  it("deleteScenario addresses a SCENARIO by name and leaves its environment alone", async () => {
     listRows = [
       ...listRows,
       {
-        ...chatboxList[0],
-        chatboxId: "cb-env",
+        ...scenarioList[0],
+        scenarioId: "cb-env",
         name: "Checkout flow",
         namedHostId: "host-1",
         environmentId: "env-1",
         environmentName: "Checkout flow",
       },
     ];
+    // Published from a saved environment: the backend keeps it, and says so.
+    deleteScenarioMock.mockResolvedValue({
+      deleted: true,
+      retirement: { environmentArchived: false, hostDeleted: false },
+    });
     renderUserTesting();
 
     const response = await dispatch({
-      type: "deleteChatbox",
+      type: "deleteScenario",
       payload: { scenario: "Checkout flow" },
     });
 
-    expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-env" });
+    expect(deleteScenarioMock).toHaveBeenCalledWith({ scenarioId: "cb-env" });
     expect(response).toMatchObject({
       status: "success",
-      result: { status: "chatbox_deleted", scenarioId: "cb-env", environmentId: "env-1" },
+      result: { status: "scenario_deleted", scenarioId: "cb-env", environmentId: "env-1" },
     });
     expect((response as any).result.note).toMatch(/environment.*unchanged/i);
   });
 
-  it("deleteChatbox can only reach rows the list actually advertises", async () => {
+  // The copy is driven by the mutation's report, not a fixed sentence: a
+  // scenario created by the User Testing flow retires its private setup and
+  // client with it, and reporting "the environment is unchanged" there would
+  // tell the user less damage was done than actually was.
+  it("deleteScenario reports the retired backing when the scenario owned it", async () => {
+    listRows = [
+      ...listRows,
+      {
+        ...scenarioList[0],
+        scenarioId: "cb-env",
+        name: "Checkout flow",
+        namedHostId: "host-1",
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      },
+    ];
+    deleteScenarioMock.mockResolvedValue({
+      deleted: true,
+      retirement: { environmentArchived: true, hostDeleted: true },
+    });
+    renderUserTesting();
+
+    const response = await dispatch({
+      type: "deleteScenario",
+      payload: { scenario: "Checkout flow" },
+    });
+
+    expect((response as any).result.note).toMatch(
+      /setup and the private client .* removed/i,
+    );
+    expect((response as any).result.note).not.toMatch(/unchanged/i);
+  });
+
+  // Partial retirement is a real outcome (a suite still references the client,
+  // or it is the project's last one). Saying only "removed" would be wrong.
+  it("deleteScenario reports a kept client with its reason", async () => {
+    listRows = [
+      ...listRows,
+      {
+        ...scenarioList[0],
+        scenarioId: "cb-env",
+        name: "Checkout flow",
+        namedHostId: "host-1",
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      },
+    ];
+    deleteScenarioMock.mockResolvedValue({
+      deleted: true,
+      retirement: {
+        environmentArchived: true,
+        hostDeleted: false,
+        keptReason: '2 eval suite reference(s) still point at it.',
+      },
+    });
+    renderUserTesting();
+
+    const response = await dispatch({
+      type: "deleteScenario",
+      payload: { scenario: "Checkout flow" },
+    });
+
+    expect((response as any).result.note).toMatch(/client behind it was kept/i);
+    expect((response as any).result.note).toContain('eval suite');
+  });
+
+  it("deleteScenario can only reach rows the list actually advertises", async () => {
     // An auto-minted client row is filtered out of the list; addressing it by
     // name must not delete it behind the user's back.
     listRows = [
       {
-        ...chatboxList[0],
-        chatboxId: "cb-hidden",
+        ...scenarioList[0],
+        scenarioId: "cb-hidden",
         name: "Copilot",
         mode: "project_members",
         link: null,
@@ -478,28 +549,28 @@ describe("UserTestingTab — agent bridge handlers", () => {
     renderUserTesting();
 
     const error = expectCommandError(
-      await dispatch({ type: "deleteChatbox", payload: { scenario: "Copilot" } })
+      await dispatch({ type: "deleteScenario", payload: { scenario: "Copilot" } })
     );
     expect(error.code).toBe("invalid_request");
-    expect(deleteChatboxMock).not.toHaveBeenCalled();
+    expect(deleteScenarioMock).not.toHaveBeenCalled();
   });
 
   it("keeps the OPEN scenario deleted — nothing re-provisions it", async () => {
     const { rerender } = renderUserTesting({ scenarioId: "cb-1" });
     const response = await dispatch({
-      type: "deleteChatbox",
+      type: "deleteScenario",
       payload: { scenario: "Claude" },
     });
     expect(response).toMatchObject({
       status: "success",
-      result: { status: "chatbox_deleted", scenarioId: "cb-1" },
+      result: { status: "scenario_deleted", scenarioId: "cb-1" },
     });
 
     // The reactive queries now report the row gone. This used to need a
-    // suppression latch, because a back-mint effect read `chatbox === null` as
-    // drift and re-provisioned — contradicting chatbox_deleted.
-    listRows = listRows.filter((row) => row.chatboxId !== "cb-1");
-    chatboxState.chatbox = null;
+    // suppression latch, because a back-mint effect read `scenario === null` as
+    // drift and re-provisioned — contradicting scenario_deleted.
+    listRows = listRows.filter((row) => row.scenarioId !== "cb-1");
+    scenarioState.scenario = null;
     await act(async () => {
       rerender(
         <UserTestingTab projectId="proj-1" isAuthenticated scenarioId="cb-1" />
@@ -511,24 +582,24 @@ describe("UserTestingTab — agent bridge handlers", () => {
   it("refuses every command as unsupported_in_mode when signed out", async () => {
     renderUserTesting({ isAuthenticated: false });
     const deleteError = expectCommandError(
-      await dispatch({ type: "deleteChatbox", payload: { scenario: "Claude" } })
+      await dispatch({ type: "deleteScenario", payload: { scenario: "Claude" } })
     );
     expect(deleteError.code).toBe("unsupported_in_mode");
     const publishError = expectCommandError(
       await dispatch({
-        type: "publishChatbox",
+        type: "publishScenario",
         payload: { environment: "Checkout flow" },
       })
     );
     expect(publishError.code).toBe("unsupported_in_mode");
-    expect(deleteChatboxMock).not.toHaveBeenCalled();
-    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
+    expect(deleteScenarioMock).not.toHaveBeenCalled();
+    expect(publishEnvironmentScenarioMock).not.toHaveBeenCalled();
   });
 
   it("snapshot reports redacted state and NEVER the token / transcript / PII", async () => {
     renderUserTesting({ scenarioId: "cb-1" });
 
-    const snapshot = await readSurfaceSnapshot("chatboxes");
+    const snapshot = await readSurfaceSnapshot("scenarios");
     expect(snapshot).toMatchObject({
       ok: true,
       data: {
@@ -536,8 +607,8 @@ describe("UserTestingTab — agent bridge handlers", () => {
         detailTab: "insights",
         scenarioCount: 2,
         scenarios: [
-          { chatboxId: "cb-1", hostId: "host-1", hasPublishLink: true },
-          { chatboxId: "cb-2", hostId: "host-2", hasPublishLink: false },
+          { scenarioId: "cb-1", hostId: "host-1", hasPublishLink: true },
+          { scenarioId: "cb-2", hostId: "host-2", hasPublishLink: false },
         ],
         selectedHostId: "host-1",
         selectedHostName: "Claude",
@@ -562,16 +633,16 @@ describe("UserTestingTab — agent bridge handlers", () => {
     expect(serialized).not.toContain("Jane Visitor");
   });
 
-  it("snapshot advertises the environments ui_publish_chatbox addresses", async () => {
+  it("snapshot advertises the environments ui_publish_scenario addresses", async () => {
     // Exact resolution refuses a name it can't match, so the tool's own input
     // has to be discoverable somewhere — this is that somewhere.
     listRows = [
       ...listRows,
-      { ...chatboxList[0], chatboxId: "cb-env", environmentId: "env-1" },
+      { ...scenarioList[0], scenarioId: "cb-env", environmentId: "env-1" },
     ];
     renderUserTesting();
 
-    const snapshot = (await readSurfaceSnapshot("chatboxes")) as any;
+    const snapshot = (await readSurfaceSnapshot("scenarios")) as any;
     expect(snapshot.data.environments).toEqual(
       expect.arrayContaining([
         { environmentId: "env-1", name: "Checkout flow", published: true },

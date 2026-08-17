@@ -415,7 +415,7 @@ describe("SessionFlowSankey", () => {
 
     try {
       renderSankey({ fillHeight: true });
-      const root = screen.getByTestId("chatbox-insights-sankey");
+      const root = screen.getByTestId("scenario-insights-sankey");
       expect(root).toHaveAttribute("data-fill-height", "true");
       expect(root.className).toMatch(/h-full/);
       const svg = screen.getByRole("group", {

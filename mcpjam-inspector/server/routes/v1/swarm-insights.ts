@@ -251,7 +251,18 @@ function toFindingDto(row: FindingRow) {
       id: row.subjectId,
       label: row.subjectLabel,
     },
-    /** open | resolved | dismissed. */
+    /**
+     * `new | recurring | regressed | resolved` — the backend's own union
+     * (mcpjam-backend schema.ts `swarmFindings.status`), which is a LIFECYCLE:
+     * first seen, seen again, came back after being resolved, stopped firing.
+     *
+     * This comment used to read `open | resolved | dismissed`, which was wrong
+     * in both directions. Three of the four real values were missing, and
+     * `dismissed` is not a status at all — dismissal is the orthogonal
+     * `dismissedAt` below, set by the dismiss endpoints. A finding can be both
+     * recurring and dismissed, and collapsing them would make that
+     * unrepresentable.
+     */
     status: row.status,
     occurrenceCount: row.occurrenceCount,
     /** The wave this was last seen in. */
@@ -456,11 +467,17 @@ const requestInsightsSchema = z
 //
 // Answers **202**: generation is scheduled, not done. Poll the GET above.
 //
-// SPENDS. The org's `insightsPerDay` ledger is shared with user-testing window
-// insights, so a caller that burns it here has taken it from there too. The
-// ledger's rejection arrives as 429 and the beta gate's as a distinct 403 —
-// collapsing them would tell an org that hit its daily cap that the feature is
-// unavailable to them, and they would go and ask for a plan they already have.
+// SPENDS, and now in two ways. The org's `insightsPerDay` ledger is shared with
+// user-testing window insights, so a caller that burns it here has taken it
+// from there too — and the generation itself DEBITS the org's model budget
+// (it used to be priced and charged to nobody).
+//
+// Two 429s can come back, and they mean different waits: the per-minute burst
+// brake (`rate_limited`, seconds) and the daily ledger
+// (`billing_limit_reached`, until the UTC roll). Both carry `Retry-After`. The
+// beta gate's refusal stays a distinct 403 — collapsing it into the 429s would
+// tell an org that hit its daily cap that the feature is unavailable to them,
+// and they would go and ask for a plan they already have.
 swarmInsights.post("/projects/:projectId/waves/:waveId/insights", async (c) => {
   const projectId = c.req.param("projectId");
   const waveId = c.req.param("waveId");

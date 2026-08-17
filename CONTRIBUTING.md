@@ -78,7 +78,7 @@ This runs:
 Open `http://localhost:5173` in your browser. The client proxies API requests to the server.
 
 The platform MCP worker backs the Home/MCPJam agent's workspace tools (`list_projects`,
-`show_servers`, eval/chatbox tools). It starts automatically with `npm run dev`, and the
+`show_servers`, eval/scenario tools). It starts automatically with `npm run dev`, and the
 agent connects to it on `:8787` — no env var to set. If you only need the UI/server and
 want to skip the worker (and its one-time UI build), use `npm run dev:app` instead.
 

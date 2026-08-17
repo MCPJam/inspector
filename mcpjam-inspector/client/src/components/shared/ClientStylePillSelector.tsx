@@ -4,15 +4,15 @@ import {
 } from "@mcpjam/design-system/toggle-group";
 import {
   getHostLogoSrc,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { listHostStyles } from "@/lib/client-styles";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 
 interface HostStylePillSelectorProps {
-  value: ChatboxHostStyle;
-  onValueChange: (hostStyle: ChatboxHostStyle) => void;
+  value: ScenarioHostStyle;
+  onValueChange: (hostStyle: ScenarioHostStyle) => void;
   className?: string;
 }
 

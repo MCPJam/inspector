@@ -7,7 +7,7 @@
  * API: a swarm is a container users author in the UI, what executes is a
  * JOURNEY, and a public `/swarms` route would inherit the backend's genuinely
  * confusing overload — `kind:"swarm"`, `swarm_grant` and
- * `swarmId: v.id('chatboxes')` all mean chatbox GUEST EXECUTION, a different
+ * `swarmId: v.id('scenarios')` all mean scenario GUEST EXECUTION, a different
  * product entirely. That argument is still correct about the DANGER and this
  * file does not dispute it.
  *

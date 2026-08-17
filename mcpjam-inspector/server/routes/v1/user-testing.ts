@@ -4,7 +4,7 @@
  *
  * NAMING. The public noun is "user testing" and the resource is a "scenario":
  * one project environment, published for people outside the project to talk to
- * through a share link. Internally every one of these is a `chatboxes` row and
+ * through a share link. Internally every one of these is a `scenarios` row and
  * that is not changing — a table rename buys no agent capability and costs a
  * migration. What matters is that a caller who has never seen the codebase can
  * read `/user-testing/scenarios/:id/sessions` and know what it returns.
@@ -16,7 +16,7 @@
  *
  * AUTHORIZATION, and it is not the same as everywhere else on `/v1`:
  *
- *   - Chatbox mutations gate on the WORKSPACE role, not the project role.
+ *   - Scenario mutations gate on the WORKSPACE role, not the project role.
  *     Usually the same people; not always.
  *   - LEGACY WORKSPACES WITH NO `organizationId` HARD-DENY delegated callers
  *     (`delegatedScopeAllowsLegacyWorkspace` upstream). An `sk_` key cannot
@@ -30,8 +30,8 @@
  *     it. For the admin trio, an API key acting as an ordinary member gets a
  *     403, and that is the intended answer.
  *
- * CROSS-PROJECT SCOPING is enforced HERE. Every `chatboxes:*` mutation takes a
- * `chatboxId` alone and authorizes against whatever workspace the row turns out
+ * CROSS-PROJECT SCOPING is enforced HERE. Every `scenarios:*` mutation takes a
+ * `scenarioId` alone and authorizes against whatever workspace the row turns out
  * to be in — never the project in the path. The preflight below resolves the
  * scenario and asserts the project matches, then 404s, so the surface is never
  * an existence oracle for a project the caller cannot see.
@@ -45,6 +45,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 
 const userTesting = new Hono();
 
@@ -56,7 +57,7 @@ function translateReadError(error: unknown): WebRouteError {
 
 /**
  * For SCOPING PREFLIGHTS only — the reads that decide whether a
- * caller-supplied id is visible to the caller at all (`getChatbox`,
+ * caller-supplied id is visible to the caller at all (`getScenario`,
  * `getSession`). Their refusal paths are workspace-scoped plain errors that
  * production Convex redacts to "Server Error", so without `redactedIsRefusal`
  * a cross-workspace probe answers 502 — an existence oracle plus a Sentry
@@ -66,7 +67,7 @@ function translateReadError(error: unknown): WebRouteError {
  */
 function translatePreflightReadError(
   error: unknown,
-  notFoundMessage: string
+  notFoundMessage: string,
 ): WebRouteError {
   return translateConvexReadError(error, {
     scope: "v1.user-testing",
@@ -87,14 +88,14 @@ function translateWriteError(error: unknown): WebRouteError {
 // ── Convex row shapes (hand-mirrored) ───────────────────────────────────────
 
 /**
- * The `chatboxes:getChatbox` settings envelope, hand-mirrored down to the
+ * The `scenarios:getScenario` settings envelope, hand-mirrored down to the
  * fields this module reads. NO `accessVersion`: the envelope
- * (`assembleChatboxSettingsResponse` upstream) does not carry it — the value
- * lives on the `chatboxes` row and only the publish/rebind projection
- * (`projectEnvironmentChatbox`) returns it. Reintroducing it on the update or
+ * (`assembleScenarioSettingsResponse` upstream) does not carry it — the value
+ * lives on the `scenarios` row and only the publish/rebind projection
+ * (`projectEnvironmentScenario`) returns it. Reintroducing it on the update or
  * rotate responses needs the backend envelope to carry it first.
  */
-type ChatboxRow = {
+type ScenarioRow = {
   _id: string;
   projectId?: string;
   workspaceId?: string;
@@ -107,7 +108,7 @@ type ChatboxRow = {
 type SessionThreadRow = {
   _id: string;
   chatSessionId: string;
-  chatboxId?: string;
+  scenarioId?: string;
   modelId?: string;
   messageCount: number;
   firstMessagePreview: string;
@@ -190,22 +191,22 @@ function toSessionSummaryDto(row: SessionThreadRow) {
 /**
  * Assert `scenarioId` is a scenario in `projectId`, and return it.
  *
- * `chatboxes:getChatbox` resolves the row and authorizes it; the project
+ * `scenarios:getScenario` resolves the row and authorizes it; the project
  * comparison is this layer's job, because every downstream mutation takes the
- * chatbox id alone. A scenario in another project answers 404 — identical to
+ * scenario id alone. A scenario in another project answers 404 — identical to
  * one that does not exist.
  */
 async function requireScenarioInProject(
   client: ConvexHttpClient,
   projectId: string,
-  scenarioId: string
-): Promise<ChatboxRow> {
-  let row: ChatboxRow | null;
+  scenarioId: string,
+): Promise<ScenarioRow> {
+  let row: ScenarioRow | null;
   try {
     row = (await client.query(
-      "chatboxes:getChatbox" as never,
-      { chatboxId: scenarioId } as never
-    )) as ChatboxRow | null;
+      "scenarios:getScenario" as never,
+      { scenarioId: scenarioId } as never,
+    )) as ScenarioRow | null;
   } catch (error) {
     throw translatePreflightReadError(error, "Scenario not found");
   }
@@ -217,7 +218,7 @@ async function requireScenarioInProject(
 
 async function parseBody<T>(
   c: { req: { json: () => Promise<unknown> } },
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -226,7 +227,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
   const parsed = schema.safeParse(raw);
@@ -234,7 +235,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
   return parsed.data;
@@ -247,17 +248,17 @@ async function scopedScenario(c: {
   client: ConvexHttpClient;
   projectId: string;
   scenarioId: string;
-  scenario: ChatboxRow;
+  scenario: ScenarioRow;
 }> {
   const projectId = c.req.param("projectId");
   const scenarioId = c.req.param("scenarioId");
   const client = createConvexClient(
-    await getConvexBearerForRequest(c as never)
+    await getConvexBearerForRequest(c as never),
   );
   const scenario = await requireScenarioInProject(
     client,
     projectId,
-    scenarioId
+    scenarioId,
   );
   return { client, projectId, scenarioId, scenario };
 }
@@ -295,8 +296,49 @@ const updateScenarioSchema = z
     {
       message:
         "Send `mode` on its own: identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.",
-    }
+    },
   );
+
+// GET /v1/projects/:p/user-testing/scenarios/:id
+// Scenario detail, enriched with the common insights envelope: findings
+// aggregated over the latest analyzed window of real visitor sessions.
+// Project members only — this route is deliberately absent from the guest
+// allowlist, and the backend envelope query additionally requires workspace
+// MEMBERSHIP, so share-link guests can never reach other visitors' evidence.
+userTesting.get(BASE, async (c) => {
+  const { client, projectId, scenarioId, scenario } = await scopedScenario(c);
+
+  // The envelope is an ENRICHMENT, not the resource. It is gated on workspace
+  // MEMBERSHIP while the preflight above only proved the scenario is visible,
+  // so a legitimate lower-privilege viewer can be refused here — and in
+  // production that refusal arrives as a redacted "Server Error"
+  // indistinguishable from a crash. Failing the route on it would answer 502
+  // (plus a Sentry page) to an ordinary permission outcome. Omitting instead
+  // makes this route behave exactly like the eval and journey-run details:
+  // the resource always returns, `insights` is present when the caller may
+  // have it, and absence reads as `not_available`.
+  const insights = await loadInsightsEnvelope("v1.user-testing", () =>
+    client.query(
+      "scenarioWindowInsights:getScenarioInsightsEnvelope" as never,
+      { scenarioId: scenarioId } as never,
+    ),
+  );
+
+  return v1Resource(c, {
+    id: scenarioId,
+    projectId,
+    name: scenario.name ?? null,
+    description: scenario.description ?? null,
+    mode: scenario.mode ?? null,
+    // No `accessVersion`, for the same reason the PATCH response omits it:
+    // the settings envelope does not carry it, so it would be null on every
+    // response. The publish response in `scenarios.ts` has the real one.
+    environmentId: scenario.environmentId
+      ? String(scenario.environmentId)
+      : null,
+    ...(insights ? { insights } : {}),
+  });
+});
 
 // PATCH /v1/projects/:p/user-testing/scenarios/:id
 userTesting.patch(BASE, async (c) => {
@@ -306,19 +348,19 @@ userTesting.patch(BASE, async (c) => {
   try {
     if (body.mode !== undefined) {
       await client.mutation(
-        "chatboxes:setChatboxMode" as never,
-        { chatboxId: scenarioId, mode: body.mode } as never
+        "scenarios:setScenarioMode" as never,
+        { scenarioId: scenarioId, mode: body.mode } as never,
       );
     } else {
       await client.mutation(
-        "chatboxes:updateChatbox" as never,
+        "scenarios:updateScenario" as never,
         {
-          chatboxId: scenarioId,
+          scenarioId: scenarioId,
           ...(body.name !== undefined ? { name: body.name } : {}),
           ...(body.description !== undefined
             ? { description: body.description }
             : {}),
-        } as never
+        } as never,
       );
     }
   } catch (error) {
@@ -328,7 +370,7 @@ userTesting.patch(BASE, async (c) => {
   const updated = await requireScenarioInProject(client, projectId, scenarioId);
   // No `accessVersion` here, deliberately: a mode change does bump it
   // upstream, but the settings envelope this re-read returns does not carry
-  // the new value (see `ChatboxRow`), and a field that is null on every
+  // the new value (see `ScenarioRow`), and a field that is null on every
   // response is worse than no field. The publish response
   // (`scenarios.ts`) carries the real one.
   return v1Resource(c, {
@@ -359,19 +401,19 @@ userTesting.get(`${BASE}/sessions`, async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "cursor must be a value returned as nextCursor by this endpoint"
+      "cursor must be a value returned as nextCursor by this endpoint",
     );
   }
 
   let rows: SessionThreadRow[];
   try {
     rows = ((await client.query(
-      "chatSessions:listByChatbox" as never,
+      "chatSessions:listByScenario" as never,
       {
-        chatboxId: scenarioId,
+        scenarioId: scenarioId,
         limit,
         ...(before !== undefined ? { before } : {}),
-      } as never
+      } as never,
     )) ?? []) as SessionThreadRow[];
   } catch (error) {
     throw translateReadError(error);
@@ -420,7 +462,7 @@ const TRANSCRIPT_MAX_BLOB_BYTES = 8 * 1024 * 1024;
  */
 async function readCapped(
   response: Response,
-  maxBytes: number
+  maxBytes: number,
 ): Promise<string | null> {
   const body = response.body;
   if (!body) return null;
@@ -516,7 +558,7 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "cursor must be a value returned as nextCursor by this endpoint"
+        "cursor must be a value returned as nextCursor by this endpoint",
       );
     }
     offset = parsedCursor;
@@ -526,7 +568,7 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
   try {
     session = (await client.query(
       "chatSessions:getSession" as never,
-      { sessionId } as never
+      { sessionId } as never,
     )) as typeof session;
   } catch (error) {
     // Preflight semantics: `getSession` refuses with a plain
@@ -539,7 +581,7 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
   // proves the session belongs to it. `getSession` authorizes broadly (project
   // members can read swarm sessions), so without the check a project member
   // could read any session in the project through a scenario's URL.
-  if (!session || String(session.chatboxId ?? "") !== scenarioId) {
+  if (!session || String(session.scenarioId ?? "") !== scenarioId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Session not found");
   }
 
@@ -637,17 +679,17 @@ userTesting.get(`${BASE}/metrics`, async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      'population must be "real" or "synthetic"'
+      'population must be "real" or "synthetic"',
     );
   }
   let metrics: unknown;
   try {
     metrics = await client.query(
-      "chatSessions:getChatboxSessionMetrics" as never,
+      "chatSessions:getScenarioSessionMetrics" as never,
       {
-        chatboxId: scenarioId,
+        scenarioId: scenarioId,
         ...(population ? { population } : {}),
-      } as never
+      } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -656,7 +698,7 @@ userTesting.get(`${BASE}/metrics`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "This scenario has no session metrics yet"
+      "This scenario has no session metrics yet",
     );
   }
   return v1Resource(c, metrics);
@@ -674,7 +716,7 @@ userTesting.get(`${BASE}/usage`, async (c) => {
   try {
     usage = await client.query(
       "chatSessions:getUsageBreakdown" as never,
-      { chatboxId: scenarioId } as never
+      { scenarioId: scenarioId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -683,7 +725,7 @@ userTesting.get(`${BASE}/usage`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "This scenario has no usage data yet"
+      "This scenario has no usage data yet",
     );
   }
   return v1Resource(c, usage);
@@ -697,8 +739,8 @@ userTesting.get(`${BASE}/findings`, async (c) => {
   let rows: unknown[];
   try {
     rows = ((await client.query(
-      "chatboxWindowInsights:listChatboxFindings" as never,
-      { chatboxId: scenarioId } as never
+      "scenarioWindowInsights:listScenarioFindings" as never,
+      { scenarioId: scenarioId } as never,
     )) ?? []) as unknown[];
   } catch (error) {
     throw translateReadError(error);
@@ -716,8 +758,8 @@ userTesting.get(`${BASE}/signals`, async (c) => {
   let signals: unknown;
   try {
     signals = await client.query(
-      "chatboxWindowInsights:getWindowSignals" as never,
-      { chatboxId: scenarioId } as never
+      "scenarioWindowInsights:getWindowSignals" as never,
+      { scenarioId: scenarioId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -726,7 +768,7 @@ userTesting.get(`${BASE}/signals`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "This scenario has no analyzed window yet"
+      "This scenario has no analyzed window yet",
     );
   }
   return v1Resource(c, signals);
@@ -739,8 +781,8 @@ userTesting.get(`${BASE}/windows/:windowId/insights`, async (c) => {
   let insights: unknown;
   try {
     insights = await client.query(
-      "chatboxWindowInsights:getWindowInsights" as never,
-      { chatboxId: scenarioId, windowGroupId: windowId } as never
+      "scenarioWindowInsights:getWindowInsights" as never,
+      { scenarioId: scenarioId, windowGroupId: windowId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -751,7 +793,7 @@ userTesting.get(`${BASE}/windows/:windowId/insights`, async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "No insights have been requested for this window"
+      "No insights have been requested for this window",
     );
   }
   return v1Resource(c, { windowId, ...(insights as object) });
@@ -776,7 +818,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Request body must be JSON"
+        "Request body must be JSON",
       );
     }
     const parsed = requestInsightsSchema.safeParse(parsedJson);
@@ -784,7 +826,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        parsed.error.issues[0]?.message ?? "Invalid request body"
+        parsed.error.issues[0]?.message ?? "Invalid request body",
       );
     }
     body = parsed.data;
@@ -794,11 +836,11 @@ userTesting.post(`${BASE}/insights`, async (c) => {
   let result: { windowGroupId: string };
   try {
     result = (await client.mutation(
-      "chatboxWindowInsights:requestWindowInsights" as never,
+      "scenarioWindowInsights:requestWindowInsights" as never,
       {
-        chatboxId: scenarioId,
+        scenarioId: scenarioId,
         ...(body?.force ? { force: true } : {}),
-      } as never
+      } as never,
     )) as { windowGroupId: string };
   } catch (error) {
     // `window_not_analyzed` is a 409 with real copy rather than a bare
@@ -809,7 +851,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       throw new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        "This scenario's current window has not been analyzed yet, so there is nothing to generate insights over. Wait for sessions to be processed and try again."
+        "This scenario's current window has not been analyzed yet, so there is nothing to generate insights over. Wait for sessions to be processed and try again.",
       );
     }
     throw translateWriteError(error);
@@ -823,7 +865,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
       windowId: result.windowGroupId,
       status: "pending",
     },
-    202
+    202,
   );
 });
 
@@ -841,8 +883,8 @@ userTesting.delete(`${BASE}/insights`, async (c) => {
   const { client, projectId, scenarioId } = await scopedScenario(c);
   try {
     await client.mutation(
-      "chatboxWindowInsights:cancelWindowInsights" as never,
-      { chatboxId: scenarioId, windowGroupId: body.windowId } as never
+      "scenarioWindowInsights:cancelWindowInsights" as never,
+      { scenarioId: scenarioId, windowGroupId: body.windowId } as never,
     );
   } catch (error) {
     throw translateWriteError(error);
@@ -858,7 +900,7 @@ userTesting.delete(`${BASE}/insights`, async (c) => {
 // POST .../findings/:findingId/dismiss  |  /undismiss
 //
 // The same `swarmFindings` mutations the swarm surface uses: they are
-// scope-branched upstream, authorizing a chatbox finding by its workspace role
+// scope-branched upstream, authorizing a scenario finding by its workspace role
 // and a project finding by its project role. Nothing here needs to know which.
 for (const action of ["dismiss", "undismiss"] as const) {
   userTesting.post(`${BASE}/findings/:findingId/${action}`, async (c) => {
@@ -868,12 +910,12 @@ for (const action of ["dismiss", "undismiss"] as const) {
     // could dismiss the other's finding through this URL.
     // `_id`, NOT `findingId`. The swarm findings DTO names the same column
     // `findingId` and this one does not, so matching on the swarm spelling
-    // made every chatbox dismissal 404 — the scope check could never pass.
+    // made every scenario dismissal 404 — the scope check could never pass.
     let findings: Array<{ _id?: string }>;
     try {
       findings = ((await client.query(
-        "chatboxWindowInsights:listChatboxFindings" as never,
-        { chatboxId: scenarioId } as never
+        "scenarioWindowInsights:listScenarioFindings" as never,
+        { scenarioId: scenarioId } as never,
       )) ?? []) as Array<{ _id?: string }>;
     } catch (error) {
       throw translateReadError(error);
@@ -885,7 +927,7 @@ for (const action of ["dismiss", "undismiss"] as const) {
     try {
       await client.mutation(
         `swarmWaveInsights:${action}Finding` as never,
-        { findingId } as never
+        { findingId } as never,
       );
     } catch (error) {
       throw translateWriteError(error);
@@ -935,8 +977,8 @@ userTesting.put(`${BASE}/guest-execution`, async (c) => {
   const { client, projectId, scenarioId } = await scopedScenario(c);
   try {
     await client.mutation(
-      "chatboxes:setChatboxGuestExecution" as never,
-      { chatboxId: scenarioId, guestExecution: body } as never
+      "scenarios:setScenarioGuestExecution" as never,
+      { scenarioId: scenarioId, guestExecution: body } as never,
     );
   } catch (error) {
     throw translateWriteError(error);
@@ -946,16 +988,22 @@ userTesting.put(`${BASE}/guest-execution`, async (c) => {
 
 // POST .../rotate-link
 //
-// DESTRUCTIVE and immediate: the old share link stops working and every
-// session minted under it dies. That is the point — it is what you do when a
-// link has leaked — but it means a caller cannot undo this by rotating back.
+// Mints a new link token; the old URL stops resolving at once, and a caller
+// cannot undo this by rotating back.
+//
+// It does NOT evict anyone who already redeemed the old link. `scenarioAccess`
+// rows are the authoritative grant store and rotation does not touch them —
+// `rotateScenarioLink` patches the token and deliberately leaves
+// `accessVersion` alone (see `lib/scenarioAccessLifecycle.ts`, invariant 2).
+// So this closes the door without removing anyone already inside: for a leak,
+// rotate AND remove the members who should not be there.
 userTesting.post(`${BASE}/rotate-link`, async (c) => {
   const { client, projectId, scenarioId } = await scopedScenario(c);
   let result: { link?: unknown } | null;
   try {
     result = (await client.mutation(
-      "chatboxes:rotateChatboxLink" as never,
-      { chatboxId: scenarioId } as never
+      "scenarios:rotateScenarioLink" as never,
+      { scenarioId: scenarioId } as never,
     )) as { link?: unknown } | null;
   } catch (error) {
     throw translateWriteError(error);
@@ -965,7 +1013,7 @@ userTesting.post(`${BASE}/rotate-link`, async (c) => {
   // THIS route the fields in question are share secrets.
   //
   // No `accessVersion`: the mutation returns the settings envelope, which
-  // does not carry it (see `ChatboxRow`) — the value only travels on the
+  // does not carry it (see `ScenarioRow`) — the value only travels on the
   // publish/rebind projection. Reporting `null` forever documented a
   // revocation signal this response never actually delivered.
   return v1Resource(c, {
@@ -989,9 +1037,9 @@ userTesting.put(`${BASE}/members`, async (c) => {
   let result: { memberId?: string; invited?: boolean } | null;
   try {
     result = (await client.mutation(
-      "chatboxes:upsertChatboxMember" as never,
+      "scenarios:upsertScenarioMember" as never,
       {
-        chatboxId: scenarioId,
+        scenarioId: scenarioId,
         email: body.email,
         // ALWAYS forwarded, never omitted: the backend defaults an absent
         // `sendInviteEmail` to TRUE and mails the person a working share
@@ -999,7 +1047,7 @@ userTesting.put(`${BASE}/members`, async (c) => {
         // must be an explicit `false` — omitting the field here silently
         // inverts the contract on an exposure-granting write.
         sendInviteEmail: body.sendInviteEmail ?? false,
-      } as never
+      } as never,
     )) as { memberId?: string; invited?: boolean } | null;
   } catch (error) {
     throw translateWriteError(error);
@@ -1022,8 +1070,8 @@ userTesting.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
   const memberIdOrEmail = c.req.param("memberIdOrEmail");
   try {
     await client.mutation(
-      "chatboxes:removeChatboxMember" as never,
-      { chatboxId: scenarioId, memberIdOrEmail } as never
+      "scenarios:removeScenarioMember" as never,
+      { scenarioId: scenarioId, memberIdOrEmail } as never,
     );
   } catch (error) {
     throw translateWriteError(error);
@@ -1053,7 +1101,7 @@ userTesting.post(`${BASE}/rebind`, async (c) => {
   try {
     environment = await client.query(
       "projectEnvironments:getEnvironment" as never,
-      { projectId, environmentId: body.environmentId } as never
+      { projectId, environmentId: body.environmentId } as never,
     );
   } catch (error) {
     throw translateReadError(error);
@@ -1065,8 +1113,8 @@ userTesting.post(`${BASE}/rebind`, async (c) => {
   let result: { accessVersion?: number } | null;
   try {
     result = (await client.mutation(
-      "chatboxes:rebindEnvironmentChatbox" as never,
-      { chatboxId: scenarioId, environmentId: body.environmentId } as never
+      "scenarios:rebindEnvironmentScenario" as never,
+      { scenarioId: scenarioId, environmentId: body.environmentId } as never,
     )) as { accessVersion?: number } | null;
   } catch (error) {
     throw translateWriteError(error);

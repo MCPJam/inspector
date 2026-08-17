@@ -24,9 +24,10 @@ import {
   updateProjectOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
-  getChatboxOperation,
+  getScenarioOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
+  compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
@@ -36,8 +37,9 @@ import {
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
-  listChatboxesOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
@@ -94,6 +96,7 @@ import {
   cancelWaveInsightsOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
+  getUserTestingScenarioOperation,
   listUserTestingSessionsOperation,
   getUserTestingSessionOperation,
   getUserTestingMetricsOperation,
@@ -180,6 +183,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -192,9 +196,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // there is no excluded write operation to list because the SDK ships none.
   listProjectPluginsOperation,
   getPluginVersionOperation,
-  listChatboxesOperation,
-  getChatboxOperation,
+  listScenariosOperation,
+  getScenarioOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //
@@ -247,6 +252,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   cancelWaveInsightsOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
+  getUserTestingScenarioOperation,
   listUserTestingSessionsOperation,
   getUserTestingSessionOperation,
   getUserTestingMetricsOperation,
@@ -336,18 +342,21 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name)
+  ALL_OPERATIONS.map((operation) => operation.name),
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name)
+  (name) => !allOperationNames.has(name),
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
+    !Object.prototype.hasOwnProperty.call(
+      EXCLUDED_FROM_CATALOG,
+      operation.name,
+    ),
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -355,10 +364,10 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ","
+      ",",
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`
+      .join(",")}`,
   );
 }
 
@@ -391,8 +400,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   ALL_OPERATIONS.filter(
     (operation) =>
       operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
-  ).map((operation) => operation.name)
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
+  ).map((operation) => operation.name),
 );
 
 /**
@@ -429,13 +438,13 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
   [getEvalRunOperation.name]: "eval_run",
   [listEvalRunIterationsOperation.name]: "eval_run_iterations",
-  [listChatboxesOperation.name]: "chatboxes",
-  [getChatboxOperation.name]: "chatbox",
+  [listScenariosOperation.name]: "scenarios",
+  [getScenarioOperation.name]: "scenario",
 };
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext
+  context: PlatformToolContext,
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -448,7 +457,7 @@ export function registerPlatformCatalogTools(
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined
+      view ? platformWidgetUi(context, operation, view) : undefined,
     );
   }
 }
@@ -463,7 +472,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView
+  view: PlatformWidgetView,
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -476,13 +485,13 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload)
+        tagPlatformWidgetPayload(view, payload),
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>
+  operation: PlatformOperation<unknown, unknown>,
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
@@ -515,7 +524,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object
+  transformPayload?: (payload: TOutput) => object,
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -537,7 +546,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error)
+      errorStructuredContent(error),
     );
   }
 }
@@ -548,7 +557,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown
+  error: unknown,
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
     return { error: { code: error.code, message: error.message } };
@@ -573,7 +582,124 @@ function describeOperationError(error: unknown): string {
 // complete — widgets and programmatic consumers read that, not the text.
 const MODEL_TEXT_CAP = 24_000;
 
+// ── insights-envelope compaction ─────────────────────────────────────────────
+// Runs BEFORE both renderings (text AND structuredContent): the generic text
+// cap is a blind character slice, and an insights envelope sliced mid-JSON
+// would read as complete while silently missing findings. This compaction is
+// deterministic and self-describing — every omission lands in the envelope's
+// own `truncation` counters, so a reader can never mistake a compacted
+// response for a complete one.
+export const MODEL_MAX_FINDINGS = 8;
+export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
+export const MODEL_CONTRACT_JSON_CAP = 600;
+
+type EnvelopeLike = {
+  schemaVersion: number;
+  findings: Array<Record<string, unknown>>;
+  truncation: {
+    truncated: boolean;
+    omittedFindings: number;
+    omittedEvidence: number;
+    contractTruncated: boolean;
+  };
+};
+
+function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as EnvelopeLike;
+  // `typeof null === "object"`, so the truncation check must reject null
+  // explicitly: a payload with `truncation: null` would otherwise pass as an
+  // envelope and throw while compaction read its counters, turning one
+  // malformed field into a failed tool call.
+  return (
+    candidate.schemaVersion === 1 &&
+    Array.isArray(candidate.findings) &&
+    typeof candidate.truncation === "object" &&
+    candidate.truncation !== null
+  );
+}
+
+function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+  let omittedEvidence = 0;
+  let contractTruncated = false;
+  // Findings arrive ready-first from the producer, so a head slice keeps
+  // every server-ready finding before any investigation is dropped.
+  const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
+    const next = { ...finding };
+    const evidence = Array.isArray(finding.evidence)
+      ? (finding.evidence as unknown[])
+      : [];
+    if (evidence.length > MODEL_MAX_EVIDENCE_PER_FINDING) {
+      omittedEvidence += evidence.length - MODEL_MAX_EVIDENCE_PER_FINDING;
+      next.evidence = evidence.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING);
+    }
+    const target = finding.target as
+      | { currentDefinition?: Record<string, unknown> }
+      | undefined;
+    const def = target?.currentDefinition;
+    if (def) {
+      const clipped = { ...def };
+      for (const key of ["inputSchemaJson", "outputSchemaJson"] as const) {
+        const json = clipped[key];
+        if (typeof json === "string" && json.length > MODEL_CONTRACT_JSON_CAP) {
+          clipped[key] = json.slice(0, MODEL_CONTRACT_JSON_CAP);
+          clipped.truncated = true;
+          contractTruncated = true;
+        }
+      }
+      next.target = { ...target, currentDefinition: clipped };
+    }
+    return next;
+  });
+  const omittedFindings = envelope.findings.length - kept.length;
+  if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
+    return envelope;
+  }
+  return {
+    ...envelope,
+    findings: kept,
+    truncation: {
+      truncated: true,
+      omittedFindings: envelope.truncation.omittedFindings + omittedFindings,
+      omittedEvidence: envelope.truncation.omittedEvidence + omittedEvidence,
+      contractTruncated:
+        envelope.truncation.contractTruncated || contractTruncated,
+    },
+  };
+}
+
+/** Compact every insights envelope found at the payload's top level or one
+ * level down (`{ run: { insights } }`, `{ scenario: { insights } }`). */
+export function compactInsightsForModel<T extends object>(payload: T): T {
+  let changed = false;
+  const out: Record<string, unknown> = {
+    ...(payload as Record<string, unknown>),
+  };
+  for (const [key, value] of Object.entries(out)) {
+    if (isInsightsEnvelope(value)) {
+      const compacted = compactEnvelope(value);
+      if (compacted !== value) {
+        out[key] = compacted;
+        changed = true;
+      }
+      continue;
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const inner = value as Record<string, unknown>;
+      if (isInsightsEnvelope(inner.insights)) {
+        const compacted = compactEnvelope(inner.insights);
+        if (compacted !== inner.insights) {
+          out[key] = { ...inner, insights: compacted };
+          changed = true;
+        }
+      }
+    }
+  }
+  return changed ? (out as T) : payload;
+}
+
 function toolSuccess(payload: object) {
+  payload = compactInsightsForModel(payload);
   let text = JSON.stringify(payload, null, 2);
   if (text.length > MODEL_TEXT_CAP) {
     text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
@@ -593,7 +719,7 @@ function toolSuccess(payload: object) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>
+  structuredContent?: Record<string, unknown>,
 ) {
   return {
     isError: true,

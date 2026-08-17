@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CodexShineIndicator } from "../codex-shine";
-import { ChatboxHostThemeProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostThemeProvider } from "@/contexts/scenario-client-style-context";
 
 describe("CodexShineIndicator", () => {
   it("renders the shimmering 'Thinking' text node", () => {
@@ -42,8 +42,8 @@ describe("CodexShineIndicator", () => {
     expect(container.textContent).toContain("Thinking");
   });
 
-  it("defaults to data-theme='dark' when no chatbox host theme is mounted", () => {
-    // Matches the inspector's "no chatbox context" fallback (see
+  it("defaults to data-theme='dark' when no scenario host theme is mounted", () => {
+    // Matches the inspector's "no scenario context" fallback (see
     // CopilotMessageHeader / CursorShineIndicator). The dark base is the
     // verbatim #E4E4E4 capture shared with Cursor; light mode overrides
     // via the [data-theme="light"] rule.
@@ -53,11 +53,11 @@ describe("CodexShineIndicator", () => {
     ).toBe("dark");
   });
 
-  it("switches to data-theme='light' under a light chatbox host theme", () => {
+  it("switches to data-theme='light' under a light scenario host theme", () => {
     const { getByTestId } = render(
-      <ChatboxHostThemeProvider value="light">
+      <ScenarioHostThemeProvider value="light">
         <CodexShineIndicator />
-      </ChatboxHostThemeProvider>,
+      </ScenarioHostThemeProvider>,
     );
     expect(
       getByTestId("loading-indicator-codex-shine").dataset.theme,

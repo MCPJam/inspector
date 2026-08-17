@@ -7,7 +7,7 @@ import { Hono } from "hono";
  *
  * These pin the four things that would fail quietly and expose something:
  *
- *   1. ATOMIC PUBLISH. `chatboxes:publishEnvironmentChatbox` accepts `name`,
+ *   1. ATOMIC PUBLISH. `scenarios:publishEnvironmentScenario` accepts `name`,
  *      `description` and `mode` at create time precisely so publishing a
  *      restricted scenario is ONE transaction. The route used to drop them,
  *      which meant a caller asking for `invited_only` got a scenario live in
@@ -19,7 +19,7 @@ import { Hono } from "hono";
  *   3. NO BLOB URL EVER. `chatSessions:getSession` returns a direct handle on
  *      the stored conversation with no further authorization. Returning it
  *      would turn one authorized read into an unbounded, unrevocable one.
- *   4. CROSS-SCENARIO SCOPING. Every `chatboxes:*` mutation takes a chatbox id
+ *   4. CROSS-SCENARIO SCOPING. Every `scenarios:*` mutation takes a scenario id
  *      alone, and `getSession` authorizes broadly enough that a project member
  *      can read sessions the scenario in the path does not own.
  */
@@ -66,7 +66,7 @@ function call(
   router: Parameters<Hono["route"]>[1],
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
 ) {
   return makeApp(router).request(path, {
     method,
@@ -79,7 +79,7 @@ function call(
   });
 }
 
-// Mirrors the `getChatbox` SETTINGS ENVELOPE, which deliberately carries no
+// Mirrors the `getScenario` SETTINGS ENVELOPE, which deliberately carries no
 // `accessVersion` — that field only travels on the publish/rebind projection.
 // A stub that invented one here would let the routes appear to serve a value
 // the real upstream never sends.
@@ -158,7 +158,7 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_URL", "https://convex.test");
   vi.stubGlobal("fetch", fetchMock);
   queryMock.mockReset();
-  answerQueries({ getChatbox: scenarioRow() });
+  answerQueries({ getScenario: scenarioRow() });
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -175,7 +175,7 @@ describe("publish (scenarios.ts)", () => {
       getEnvironment: { environmentId: "env_1", projectId: PROJECT },
     });
     mutationMock.mockResolvedValue({
-      chatboxId: SCENARIO,
+      scenarioId: SCENARIO,
       environmentId: "env_1",
       name: "Checkout",
       mode: "invited_only",
@@ -193,13 +193,13 @@ describe("publish (scenarios.ts)", () => {
         // regression that dropped `description` would leave this green.
         description: "Checkout flow, mobile web",
         mode: "invited_only",
-      }
+      },
     );
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledTimes(1);
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      Record<string, unknown>
+      Record<string, unknown>,
     ];
     expect(args).toMatchObject({
       environmentId: "env_1",
@@ -216,7 +216,7 @@ describe("publish (scenarios.ts)", () => {
       getEnvironment: { environmentId: "env_1", projectId: PROJECT },
     });
     mutationMock.mockResolvedValue({
-      chatboxId: SCENARIO,
+      scenarioId: SCENARIO,
       environmentId: "env_1",
       name: "Checkout",
       mode: "invited_only",
@@ -228,11 +228,11 @@ describe("publish (scenarios.ts)", () => {
       scenarios,
       "PUT",
       `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
-      { name: "Checkout", mode: "invited_only" }
+      { name: "Checkout", mode: "invited_only" },
     ).then(() => {
       const [, args] = mutationMock.mock.calls[0] as [
         string,
-        Record<string, unknown>
+        Record<string, unknown>,
       ];
       expect(args).not.toHaveProperty("description");
     });
@@ -245,7 +245,7 @@ describe("publish (scenarios.ts)", () => {
       getEnvironment: { environmentId: "env_1", projectId: PROJECT },
     });
     mutationMock.mockResolvedValue({
-      chatboxId: SCENARIO,
+      scenarioId: SCENARIO,
       environmentId: "env_1",
       name: "Existing",
       mode: "anyone_with_link",
@@ -257,7 +257,7 @@ describe("publish (scenarios.ts)", () => {
       scenarios,
       "PUT",
       `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
-      { mode: "invited_only" }
+      { mode: "invited_only" },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -276,7 +276,7 @@ describe("publish (scenarios.ts)", () => {
         method: "PUT",
         body: "not json",
         headers: { "content-type": "application/json" },
-      }
+      },
     );
     expect(res.status).toBe(400);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -293,7 +293,7 @@ describe("publish (scenarios.ts)", () => {
         scenarios,
         "PUT",
         `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
-        body
+        body,
       );
       expect(res.status).toBe(400);
     }
@@ -305,7 +305,7 @@ describe("publish (scenarios.ts)", () => {
       getEnvironment: { environmentId: "env_1", projectId: PROJECT },
     });
     mutationMock.mockResolvedValue({
-      chatboxId: SCENARIO,
+      scenarioId: SCENARIO,
       environmentId: "env_1",
       name: "Checkout",
       mode: "project_members",
@@ -316,7 +316,7 @@ describe("publish (scenarios.ts)", () => {
     const res = await call(
       scenarios,
       "PUT",
-      `/api/v1/projects/${PROJECT}/environments/env_1/scenario`
+      `/api/v1/projects/${PROJECT}/environments/env_1/scenario`,
     );
     expect(res.status).toBe(201);
   });
@@ -336,13 +336,13 @@ describe("scenario update", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
-  it("routes a mode change to setChatboxMode and nothing else", async () => {
+  it("routes a mode change to setScenarioMode and nothing else", async () => {
     mutationMock.mockResolvedValue(null);
     const res = await call(userTesting, "PATCH", BASE, {
       mode: "invited_only",
     });
     expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(mutationMock.mock.calls[0]?.[0]).toBe("chatboxes:setChatboxMode");
+    expect(mutationMock.mock.calls[0]?.[0]).toBe("scenarios:setScenarioMode");
     // No `accessVersion` in the response. The mutation bumps it upstream, but
     // the settings envelope the route re-reads does not carry the value — an
     // always-null field would document a revocation signal never delivered.
@@ -350,15 +350,15 @@ describe("scenario update", () => {
     expect(body).not.toHaveProperty("accessVersion");
   });
 
-  it("routes a rename to updateChatbox and nothing else", async () => {
+  it("routes a rename to updateScenario and nothing else", async () => {
     mutationMock.mockResolvedValue(null);
     await call(userTesting, "PATCH", BASE, { name: "Renamed" });
     expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(mutationMock.mock.calls[0]?.[0]).toBe("chatboxes:updateChatbox");
+    expect(mutationMock.mock.calls[0]?.[0]).toBe("scenarios:updateScenario");
   });
 
   it("404s a scenario that resolves into another project", async () => {
-    answerQueries({ getChatbox: scenarioRow(OTHER_PROJECT) });
+    answerQueries({ getScenario: scenarioRow(OTHER_PROJECT) });
     const res = await call(userTesting, "PATCH", BASE, { name: "Renamed" });
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -377,9 +377,9 @@ describe("scenario update", () => {
 describe("session transcript", () => {
   it("NEVER returns the stored blob URL", async () => {
     answerQueries({
-      getChatbox: scenarioRow(),
+      getScenario: scenarioRow(),
       getSession: {
-        chatboxId: SCENARIO,
+        scenarioId: SCENARIO,
         chatSessionId: "cs_1",
         messagesBlobUrl: "https://storage.test/secret-blob",
       },
@@ -387,7 +387,7 @@ describe("session transcript", () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify([{ role: "user", content: "hello" }]), {
         status: 200,
-      })
+      }),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const raw = await res.text();
@@ -405,8 +405,8 @@ describe("session transcript", () => {
     // sessions — so without this check any session in the project would be
     // readable through a scenario's URL.
     answerQueries({
-      getChatbox: scenarioRow(),
-      getSession: { chatboxId: "cb_other", chatSessionId: "cs_1" },
+      getScenario: scenarioRow(),
+      getSession: { scenarioId: "cb_other", chatSessionId: "cs_1" },
     });
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     expect(res.status).toBe(404);
@@ -414,9 +414,9 @@ describe("session transcript", () => {
 
   it("pages long transcripts instead of returning the whole thing", async () => {
     answerQueries({
-      getChatbox: scenarioRow(),
+      getScenario: scenarioRow(),
       getSession: {
-        chatboxId: SCENARIO,
+        scenarioId: SCENARIO,
         chatSessionId: "cs_1",
         messagesBlobUrl: "https://storage.test/blob",
       },
@@ -427,15 +427,15 @@ describe("session transcript", () => {
           Array.from({ length: 120 }, (_, index) => ({
             role: "user",
             content: `m${index}`,
-          }))
+          })),
         ),
-        { status: 200 }
-      )
+        { status: 200 },
+      ),
     );
     const res = await call(
       userTesting,
       "GET",
-      `${BASE}/sessions/sess_1?limit=50`
+      `${BASE}/sessions/sess_1?limit=50`,
     );
     const body = (await res.json()) as {
       messages: unknown[];
@@ -451,13 +451,13 @@ describe("session transcript", () => {
     // Coercing to 0 handed back already-seen messages with a fresh cursor and
     // no signal, so a paging caller could act on the same conversation twice.
     answerQueries({
-      getChatbox: scenarioRow(),
-      getSession: { chatboxId: SCENARIO, chatSessionId: "cs_1" },
+      getScenario: scenarioRow(),
+      getSession: { scenarioId: SCENARIO, chatSessionId: "cs_1" },
     });
     const res = await call(
       userTesting,
       "GET",
-      `${BASE}/sessions/sess_1?cursor=oops`
+      `${BASE}/sessions/sess_1?cursor=oops`,
     );
     expect(res.status).toBe(400);
   });
@@ -466,9 +466,9 @@ describe("session transcript", () => {
     // 0 is a claim the visitor said nothing — the opposite of what an
     // unreadable blob means, and a consumer reading only the count acts on it.
     answerQueries({
-      getChatbox: scenarioRow(),
+      getScenario: scenarioRow(),
       getSession: {
-        chatboxId: SCENARIO,
+        scenarioId: SCENARIO,
         chatSessionId: "cs_1",
         messagesBlobUrl: "https://storage.test/blob",
       },
@@ -488,9 +488,9 @@ describe("session transcript", () => {
     // body, which passed against a route that never read past the header — so
     // it would have passed against the bug as well.
     answerQueries({
-      getChatbox: scenarioRow(),
+      getScenario: scenarioRow(),
       getSession: {
-        chatboxId: SCENARIO,
+        scenarioId: SCENARIO,
         chatSessionId: "cs_1",
         messagesBlobUrl: "https://storage.test/huge",
       },
@@ -499,7 +499,7 @@ describe("session transcript", () => {
       new Response(oversizedTranscriptStream(), {
         status: 200,
         headers: { "content-length": String(64 * 1024 * 1024) },
-      })
+      }),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as { transcriptUnavailable?: boolean };
@@ -512,15 +512,15 @@ describe("session transcript", () => {
     // test and hands an unbounded body straight to the parser. Storage that
     // streams is the normal case, not an exotic one.
     answerQueries({
-      getChatbox: scenarioRow(),
+      getScenario: scenarioRow(),
       getSession: {
-        chatboxId: SCENARIO,
+        scenarioId: SCENARIO,
         chatSessionId: "cs_1",
         messagesBlobUrl: "https://storage.test/chunked",
       },
     });
     fetchMock.mockResolvedValue(
-      new Response(oversizedTranscriptStream(), { status: 200 })
+      new Response(oversizedTranscriptStream(), { status: 200 }),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as {
@@ -537,9 +537,9 @@ describe("session transcript", () => {
     // perfectly readable, and every one of them would look like a storage
     // fault to whoever was reading the results.
     answerQueries({
-      getChatbox: scenarioRow(),
+      getScenario: scenarioRow(),
       getSession: {
-        chatboxId: SCENARIO,
+        scenarioId: SCENARIO,
         chatSessionId: "cs_1",
         messagesBlobUrl: "https://storage.test/big",
       },
@@ -550,10 +550,10 @@ describe("session transcript", () => {
           Array.from({ length: 200 }, (_, index) => ({
             role: "user",
             content: "x".repeat(1024) + index,
-          }))
+          })),
         ),
-        { status: 200 }
-      )
+        { status: 200 },
+      ),
     );
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as {
@@ -568,9 +568,9 @@ describe("session transcript", () => {
     // "They said nothing" and "we could not fetch it" lead to opposite
     // conclusions about a user test.
     answerQueries({
-      getChatbox: scenarioRow(),
+      getScenario: scenarioRow(),
       getSession: {
-        chatboxId: SCENARIO,
+        scenarioId: SCENARIO,
         chatSessionId: "cs_1",
         messagesBlobUrl: "https://storage.test/blob",
       },
@@ -611,7 +611,7 @@ describe("exposure controls", () => {
     expect(mutationMock).toHaveBeenCalledTimes(1);
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      { guestExecution: Record<string, unknown> }
+      { guestExecution: Record<string, unknown> },
     ];
     expect(args.guestExecution).toEqual(caps);
   });
@@ -631,9 +631,9 @@ describe("exposure controls", () => {
     // preflight a member of two projects could rebind onto the other's
     // environment and expose it under this project's link.
     // Keyed rather than ordered: the default `beforeEach` already answers
-    // `getChatbox`, and `null` for the environment read is what makes this a
+    // `getScenario`, and `null` for the environment read is what makes this a
     // cross-project miss.
-    answerQueries({ getChatbox: scenarioRow(), getEnvironment: null });
+    answerQueries({ getScenario: scenarioRow(), getEnvironment: null });
     const res = await call(userTesting, "POST", `${BASE}/rebind`, {
       environmentId: "env_in_b",
     });
@@ -658,7 +658,7 @@ describe("exposure controls", () => {
   });
 
   it("404s rotate's REAL insufficient-role refusal — it is not an admin gate", async () => {
-    // `rotateChatboxLink` gates at `requireWorkspaceRole(..., 'guest')` and
+    // `rotateScenarioLink` gates at `requireWorkspaceRole(..., 'guest')` and
     // throws PLAIN errors ("Not a member of this workspace"), never a
     // ConvexError with a FORBIDDEN code — a previous version of this test
     // mocked that fictional shape and asserted a 403 the mutation can never
@@ -673,13 +673,13 @@ describe("exposure controls", () => {
   });
 
   it("surfaces guest-execution's REAL admin refusal as 403, not a 404", async () => {
-    // `setChatboxGuestExecution` is the exposure control that genuinely
+    // `setScenarioGuestExecution` is the exposure control that genuinely
     // requires project admin, and its refusal is a plain error naming the
     // requirement. The caller is already a workspace member (Convex confirmed
     // it to serve the preflight), so "only project admins" is actionable and
     // reveals nothing new.
     mutationMock.mockRejectedValue(
-      new Error("Only project admins can configure guest execution")
+      new Error("Only project admins can configure guest execution"),
     );
     const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, {
       enabled: true,
@@ -696,19 +696,19 @@ describe("exposure controls", () => {
 });
 
 describe("findings", () => {
-  it("matches a chatbox finding on `_id`, the column it actually has", async () => {
+  it("matches a scenario finding on `_id`, the column it actually has", async () => {
     // The swarm findings DTO names this column `findingId` and this one does
     // not. Matching on the swarm spelling made the scope check impossible to
-    // pass, so every chatbox dismissal answered 404.
+    // pass, so every scenario dismissal answered 404.
     answerQueries({
-      getChatbox: scenarioRow(),
-      listChatboxFindings: [{ _id: "finding_1" }],
+      getScenario: scenarioRow(),
+      listScenarioFindings: [{ _id: "finding_1" }],
     });
     mutationMock.mockResolvedValue(null);
     const res = await call(
       userTesting,
       "POST",
-      `${BASE}/findings/finding_1/dismiss`
+      `${BASE}/findings/finding_1/dismiss`,
     );
     expect(res.status).toBe(200);
     expect(mutationMock).toHaveBeenCalledTimes(1);
@@ -716,13 +716,13 @@ describe("findings", () => {
 
   it("404s a finding belonging to a different scenario", async () => {
     answerQueries({
-      getChatbox: scenarioRow(),
-      listChatboxFindings: [{ _id: "finding_elsewhere" }],
+      getScenario: scenarioRow(),
+      listScenarioFindings: [{ _id: "finding_elsewhere" }],
     });
     const res = await call(
       userTesting,
       "POST",
-      `${BASE}/findings/finding_1/dismiss`
+      `${BASE}/findings/finding_1/dismiss`,
     );
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -758,18 +758,18 @@ describe("probe answers (the preflight is not an oracle)", () => {
   }
 
   it("404s a malformed scenario id instead of paging as a 502", async () => {
-    // `v.id('chatboxes')` rejects before the handler runs. That is a caller
+    // `v.id('scenarios')` rejects before the handler runs. That is a caller
     // problem, not an incident — and 502-vs-404 must not distinguish
     // "malformed" from "missing".
     failAllQueries(
-      new Error("ArgumentValidationError: Value does not match validator")
+      new Error("ArgumentValidationError: Value does not match validator"),
     );
     const res = await call(userTesting, "GET", `${BASE}/usage`);
     expect(res.status).toBe(404);
   });
 
   it("404s a cross-WORKSPACE refusal exactly like a missing scenario", async () => {
-    // `getChatbox` authorizes at workspace scope, so its refusal wording
+    // `getScenario` authorizes at workspace scope, so its refusal wording
     // differs from the project one — before the classifier knew it, this
     // answered 502 and told the prober the id exists somewhere.
     failAllQueries(new Error("Not a member of this workspace"));
@@ -790,7 +790,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     // error is a genuine upstream incident and must surface as one.
     queryMock.mockImplementation((name: string) => {
       const fn = String(name).split(":").pop() ?? "";
-      if (fn === "getChatbox") return Promise.resolve(scenarioRow());
+      if (fn === "getScenario") return Promise.resolve(scenarioRow());
       return Promise.reject(new Error("[Request ID: abc] Server Error"));
     });
     const res = await call(userTesting, "GET", `${BASE}/usage`);
@@ -803,7 +803,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     const res = await call(
       userTesting,
       "GET",
-      `${BASE}/metrics?population=fake`
+      `${BASE}/metrics?population=fake`,
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { message: string };
@@ -822,7 +822,7 @@ describe("member invite default", () => {
     });
     expect(mutationMock).toHaveBeenCalledTimes(1);
     const [fn, args] = mutationMock.mock.calls[0]!;
-    expect(fn).toBe("chatboxes:upsertChatboxMember");
+    expect(fn).toBe("scenarios:upsertScenarioMember");
     expect((args as { sendInviteEmail?: boolean }).sendInviteEmail).toBe(false);
   });
 
@@ -843,8 +843,8 @@ describe("deleted transcript blob", () => {
     // URL means `storage.getUrl` found the file deleted. "We cannot read it"
     // and "the visitor said nothing" lead to opposite conclusions.
     answerQueries({
-      getChatbox: scenarioRow(),
-      getSession: { chatboxId: SCENARIO, chatSessionId: "cs_1" },
+      getScenario: scenarioRow(),
+      getSession: { scenarioId: SCENARIO, chatSessionId: "cs_1" },
     });
     const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
     expect(res.status).toBe(200);
@@ -857,5 +857,96 @@ describe("deleted transcript blob", () => {
     expect(body.messageCount).toBeNull();
     expect(body.messages).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET scenario detail (insights envelope)", () => {
+  it("returns the scenario with its envelope, members only by construction", async () => {
+    const envelope = {
+      schemaVersion: 1,
+      scope: {
+        kind: "user_testing_window",
+        id: "grp_1",
+        scenarioId: SCENARIO,
+        windowStartAt: 1,
+        windowEndAt: 2,
+      },
+      status: "completed",
+      reasonCode: null,
+      retryable: false,
+      error: null,
+      generatedAt: 5,
+      updatedAt: 6,
+      summary: "One tool keeps failing.",
+      coverage: {
+        unit: "sessions",
+        analyzed: 3,
+        total: 3,
+        feedbackCount: 1,
+        truncated: false,
+        lowConfidence: false,
+      },
+      findings: [],
+      truncation: {
+        truncated: false,
+        omittedFindings: 0,
+        omittedEvidence: 0,
+        contractTruncated: false,
+      },
+    };
+    answerQueries({
+      getScenario: { ...scenarioRow(), environmentId: "env_9" },
+      getScenarioInsightsEnvelope: envelope,
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      id: SCENARIO,
+      projectId: PROJECT,
+      name: "Checkout",
+      environmentId: "env_9",
+    });
+    expect(body.insights).toEqual(envelope);
+  });
+
+  it("still returns the scenario when the envelope query finds nothing", async () => {
+    answerQueries({
+      getScenario: scenarioRow(),
+      getScenarioInsightsEnvelope: null,
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(200);
+    expect((await res.json()).insights).toBeUndefined();
+  });
+
+  it("degrades to the bare scenario when the members-only envelope REFUSES", async () => {
+    // The envelope needs workspace membership; the preflight only proved the
+    // scenario is visible. In production that refusal arrives redacted and is
+    // indistinguishable from a crash, so failing here would answer 502 (and
+    // page someone) for an ordinary permission outcome.
+    queryMock.mockImplementation((name: string) => {
+      const fn = String(name).split(":").pop() ?? "";
+      if (fn === "getScenario") return Promise.resolve(scenarioRow());
+      return Promise.reject(new Error("Server Error"));
+    });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.id).toBe(SCENARIO);
+    expect(body.insights).toBeUndefined();
+  });
+
+  it("404s across projects WITHOUT ever reading insights", async () => {
+    // The assertion that matters is the second one: without it this test
+    // passes even if the project comparison were deleted, because an
+    // unmocked envelope query resolves to null and 404s anyway.
+    answerQueries({ getScenario: scenarioRow(OTHER_PROJECT) });
+    const res = await call(userTesting, "GET", BASE);
+    expect(res.status).toBe(404);
+    const insightReads = queryMock.mock.calls.filter((call) =>
+      String(call[0]).includes("getScenarioInsightsEnvelope"),
+    );
+    expect(insightReads).toHaveLength(0);
   });
 });

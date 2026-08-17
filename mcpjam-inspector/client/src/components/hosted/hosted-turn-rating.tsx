@@ -3,9 +3,9 @@ import { TurnRating } from "@mcpjam/chat-ui";
 
 import type {
   TurnRatingState,
-  UseChatboxTurnRatingResult,
-} from "@/hooks/useChatboxTurnRating";
-import type { ChatboxPerTurnFeedbackPayload } from "@/lib/chatbox-session";
+  UseScenarioTurnRatingResult,
+} from "@/hooks/useScenarioTurnRating";
+import type { ScenarioPerTurnFeedbackPayload } from "@/lib/scenario-session";
 
 interface HostedTurnRatingProps {
   chatSessionId: string;
@@ -15,8 +15,8 @@ interface HostedTurnRatingProps {
    * submit until then.
    */
   turnId: string | null;
-  config: ChatboxPerTurnFeedbackPayload;
-  rating: UseChatboxTurnRatingResult;
+  config: ScenarioPerTurnFeedbackPayload;
+  rating: UseScenarioTurnRatingResult;
 }
 
 /**
@@ -45,6 +45,10 @@ export function HostedTurnRating({
 
   return (
     <TurnRating
+      // The single switch point between the two widget styles. The hook is
+      // told the matching score key by the page, so the control the tester
+      // sees and the key their click writes cannot disagree.
+      variant={config.style === "thumbs" ? "thumbs" : "stars"}
       value={state.value}
       comment={state.comment}
       status={state.status}

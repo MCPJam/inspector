@@ -49,6 +49,8 @@ import {
   formatCriterion,
   isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
+import { EvalSparkline } from "@/components/evals/eval-sparkline";
+import { MIN_TREND_POINTS } from "@/components/evals/metric-strip-data";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
@@ -527,14 +529,90 @@ function SwarmOverviewPanelBody({
         {waves.length === 0 ? (
           <NoRunsEmptyState />
         ) : (
-          <SwarmRunsList
-            waves={waves}
-            onOpenSwarm={onOpenSwarm}
-            environmentsEnabled={environmentsEnabled}
-          />
+          <>
+            <GoalTrendStrip goalCompletion={overview.goalCompletion} />
+            <SwarmRunsList
+              waves={waves}
+              onOpenSwarm={onOpenSwarm}
+              environmentsEnabled={environmentsEnabled}
+            />
+          </>
         )}
       </div>
     </ScrollArea>
+  );
+}
+
+// ── goal completion trend ───────────────────────────────────────────────────
+
+/** Short day label for trend points, e.g. "Aug 3". */
+function formatTrendDay(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/**
+ * Goal-completion pass rate across the overview window, with the daily trend
+ * the backend has computed all along (`getSwarmOverview.goalCompletion.trend`)
+ * and no UI ever rendered.
+ *
+ * The buckets arrive pre-filtered: a day with no graded sessions is DROPPED
+ * server-side rather than emitted as 0% — a flat line at zero would read as
+ * "everything failed" when the truth is "nothing was graded". Never re-insert
+ * missing days here.
+ *
+ * Renders nothing until the window holds a graded pass rate and at least
+ * MIN_TREND_POINTS graded days — a single day is a number, not a trend.
+ * Optional-chained throughout so an older backend that predates the field
+ * degrades to nothing instead of throwing into the panel's ErrorBoundary.
+ */
+function GoalTrendStrip({
+  goalCompletion,
+}: {
+  goalCompletion: SwarmOverview["goalCompletion"] | undefined;
+}) {
+  const trend = goalCompletion?.trend ?? [];
+  if (
+    !goalCompletion ||
+    goalCompletion.passRate === null ||
+    trend.length < MIN_TREND_POINTS
+  ) {
+    return null;
+  }
+
+  return (
+    <section
+      data-testid="swarm-overview-goal-trend"
+      aria-label="Goal completion trend"
+      className="flex items-center gap-6 rounded-xl border border-border/40 bg-muted/10 px-4 py-3"
+    >
+      <div className="flex shrink-0 flex-col">
+        <span className="text-2xl font-semibold tabular-nums leading-none tracking-tight text-foreground">
+          {formatPercent(goalCompletion.passRate)}
+        </span>
+        <span className="mt-1 text-xs tabular-nums text-muted-foreground">
+          Goal completion · {goalCompletion.passedCount}/
+          {goalCompletion.gradedCount} graded sessions ·{" "}
+          {goalCompletion.runsWithGrades} run
+          {goalCompletion.runsWithGrades === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <EvalSparkline
+          points={trend.map((point) => point.passRate * 100)}
+          pointLabels={trend.map((point) => formatTrendDay(point.dayStartMs))}
+          formatValue={(value) => `${Math.round(value)}%`}
+          tooltipValues={trend.map(
+            (point) =>
+              `${Math.round(point.passRate * 100)}% · ${point.passedCount}/${point.gradedCount} passed`,
+          )}
+          testId="swarm-overview-goal-trend-sparkline"
+          height={30}
+        />
+      </div>
+    </section>
   );
 }
 

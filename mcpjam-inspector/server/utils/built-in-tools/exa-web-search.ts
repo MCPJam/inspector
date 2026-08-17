@@ -24,6 +24,13 @@ export interface ExaWebSearchToolOptions {
   projectId: string;
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
+  /**
+   * Set when the search happens inside a shared scenario. A redeemed link grant
+   * on it makes the scenario OWNER the payer — without it a visitor on a shared
+   * link cannot search at all: an anonymous one is told to sign in, and a
+   * signed-in one is told they are not a member of the owner's organization.
+   */
+  scenarioId?: string;
 }
 
 interface ExaWebSearchResult {
@@ -64,6 +71,7 @@ export function buildExaWebSearchTool(
           body: JSON.stringify({
             projectId: opts.projectId,
             chatSessionId: opts.chatSessionId,
+            ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
             toolCallId,
             query,
           }),

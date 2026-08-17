@@ -89,12 +89,12 @@ import {
 } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  getChatboxChatBackground,
-  getChatboxHostFamily,
-  getChatboxHostLogo,
-  getChatboxShellStyle,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  getScenarioHostFamily,
+  getScenarioHostLogo,
+  getScenarioShellStyle,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
@@ -169,11 +169,11 @@ import {
 } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
 import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioChatUiOverrideProvider,
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
@@ -252,10 +252,14 @@ const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 // template like "claude-code" would both leak the gated client to everyone
 // and have no working way to be filtered out.
 const PLAYGROUND_SEED_TEMPLATE_IDS = [
-  "chatgpt",
   "claude",
+  "chatgpt",
   "cursor",
 ] as const;
+
+const PLAYGROUND_SEED_MODEL_OVERRIDES: Partial<Record<string, string>> = {
+  chatgpt: "openai/gpt-5.6-luna",
+};
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
@@ -291,7 +295,7 @@ type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundCompareThemeScopeProps {
   children: ReactNode;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
   chatUiOverride: ChatUiOverride | undefined;
   effectiveThreadTheme: ThreadThemeMode;
@@ -307,13 +311,13 @@ function PlaygroundCompareThemeScope({
   hostShellStyle,
 }: PlaygroundCompareThemeScopeProps) {
   return (
-    <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
-        <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-          <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+    <ScenarioHostStyleProvider value={hostStyle}>
+      <ScenarioHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+        <ScenarioChatUiOverrideProvider value={chatUiOverride}>
+          <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             <div
               className={cn(
-                "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
+                "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
                 effectiveThreadTheme === "dark" && "dark"
               )}
               data-testid="playground-compare-shell"
@@ -323,10 +327,10 @@ function PlaygroundCompareThemeScope({
             >
               {children}
             </div>
-          </ChatboxHostThemeProvider>
-        </ChatboxChatUiOverrideProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
-    </ChatboxHostStyleProvider>
+          </ScenarioHostThemeProvider>
+        </ScenarioChatUiOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
+    </ScenarioHostStyleProvider>
   );
 }
 
@@ -996,7 +1000,7 @@ export function PlaygroundMain({
     mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
     // previewed host's hostConfig. The server re-resolves via the shared
-    // execution-context helper, so this also flows through chatbox sessions
+    // execution-context helper, so this also flows through scenario sessions
     // (where the persisted host config wins via the runtime-config fetch).
     builtInToolIds: previewedHost?.config?.builtInToolIds,
     personalComputerEngine: personalComputerEngineOption,
@@ -1169,11 +1173,11 @@ export function PlaygroundMain({
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const effectiveThreadTheme = extractHostTheme(hostContext) ?? globalThemeMode;
-  const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
+  const hostStyleFamily = getScenarioHostFamily(hostStyle) ?? "claude";
   const hostBackgroundColor =
-    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
+    getScenarioChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
-  const hostShellStyle = getChatboxShellStyle(
+  const hostShellStyle = getScenarioShellStyle(
     hostStyle,
     effectiveThreadTheme,
     chatUiOverride
@@ -1305,6 +1309,11 @@ export function PlaygroundMain({
   // per-project ref so it fires at most once per empty project and never
   // blocks a different empty project from getting its own default hosts.
   const playgroundSeededProjectIdsRef = useRef(new Set<string>());
+  // While the three first-run hosts are being created, a subscription can
+  // surface ChatGPT before Claude. Do not let the generic missing-preview
+  // fallback turn that timing artifact into the selected default; the seed
+  // writes Claude as the lead after all three creates succeed.
+  const playgroundSeedingProjectIdsRef = useRef(new Set<string>());
   // Retry plumbing for the two failure paths below (single-host create
   // rejected / 3-host seed rolled back). Both clear the project's "seeded"
   // marker, which permits a retry but cannot cause one — this tick is what
@@ -1313,6 +1322,10 @@ export function PlaygroundMain({
   const seedRetryCountsRef = useRef(new Map<string, number>());
   const seedRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const [seedRetryTick, setSeedRetryTick] = useState(0);
+  // A seed completion only mutates a ref. This tick lets the missing-preview
+  // fallback run again when a user changed the compare lineup mid-seed and
+  // the seed correctly declined to overwrite that choice.
+  const [seedCompletionTick, setSeedCompletionTick] = useState(0);
   useEffect(() => {
     const timers = seedRetryTimersRef.current;
     return () => {
@@ -1451,14 +1464,20 @@ export function PlaygroundMain({
     const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
     const preSeedPreviewedHostId = loadPreviewedHostId(seedProjectId);
     playgroundSeededProjectIdsRef.current.add(seedProjectId);
+    playgroundSeedingProjectIdsRef.current.add(seedProjectId);
     Promise.allSettled(
       seeds.map(({ host, template }) =>
         createPlaygroundHost({
           projectId: seedProjectId,
           name: host!.label,
-          input: cloneHostTemplateInput(template, {
-            themeMode: seedThemeMode,
-          }),
+          input: {
+            ...cloneHostTemplateInput(template, {
+              themeMode: seedThemeMode,
+            }),
+            ...(PLAYGROUND_SEED_MODEL_OVERRIDES[host!.id]
+              ? { modelId: PLAYGROUND_SEED_MODEL_OVERRIDES[host!.id] }
+              : {}),
+          },
         })
       )
     ).then(async (results) => {
@@ -1549,6 +1568,9 @@ export function PlaygroundMain({
         setPreviewedHostId(leadHostId);
         setSelectedHostIds(hostIds);
       }
+    }).finally(() => {
+      playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
+      setSeedCompletionTick((tick) => tick + 1);
     });
   }, [
     isConvexAuthenticated,
@@ -1575,6 +1597,9 @@ export function PlaygroundMain({
     ) {
       return;
     }
+    if (playgroundSeedingProjectIdsRef.current.has(multiHostProjectId)) {
+      return;
+    }
     const previewedHostIsValid =
       previewedHostId !== null &&
       hostList.some((host) => host.hostId === previewedHostId);
@@ -1589,6 +1614,7 @@ export function PlaygroundMain({
     previewedHostId,
     resolveFallbackHostId,
     setPreviewedHostId,
+    seedCompletionTick,
   ]);
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
@@ -4830,7 +4856,7 @@ export function PlaygroundMain({
                           // identity row so columns are immediately branded.
                           showComparisonChrome={false}
                           showIdentityHeader
-                          logoSrc={getChatboxHostLogo(
+                          logoSrc={getScenarioHostLogo(
                             column.hostSnapshot.hostStyle,
                             column.hostSnapshot.chatUiOverride,
                             effectiveThreadTheme
@@ -4961,11 +4987,11 @@ export function PlaygroundMain({
           ) : (
             <>
               {showLiveTraceDiagnostics && (
-                <ChatboxHostStyleProvider value={hostStyle}>
-                  <ChatboxHostCapabilitiesOverrideProvider
+                <ScenarioHostStyleProvider value={hostStyle}>
+                  <ScenarioHostCapabilitiesOverrideProvider
                     value={hostCapabilitiesOverride}
                   >
-                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                    <ScenarioHostThemeProvider value={effectiveThreadTheme}>
                       <div
                         className={cn(
                           "flex h-full min-h-0 flex-col overflow-hidden",
@@ -5028,9 +5054,9 @@ export function PlaygroundMain({
                           </div>
                         </div>
                       </div>
-                    </ChatboxHostThemeProvider>
-                  </ChatboxHostCapabilitiesOverrideProvider>
-                </ChatboxHostStyleProvider>
+                    </ScenarioHostThemeProvider>
+                  </ScenarioHostCapabilitiesOverrideProvider>
+                </ScenarioHostStyleProvider>
               )}
 
               {/* Device frame container */}
@@ -5040,14 +5066,14 @@ export function PlaygroundMain({
                   showLiveTraceDiagnostics ? { display: "none" } : undefined
                 }
               >
-                <ChatboxHostStyleProvider value={hostStyle}>
-                  <ChatboxHostCapabilitiesOverrideProvider
+                <ScenarioHostStyleProvider value={hostStyle}>
+                  <ScenarioHostCapabilitiesOverrideProvider
                     value={hostCapabilitiesOverride}
                   >
-                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                    <ScenarioHostThemeProvider value={effectiveThreadTheme}>
                       <div
                         className={cn(
-                          "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                          "scenario-host-shell app-theme-scope relative flex flex-col overflow-hidden",
                           effectiveThreadTheme === "dark" && "dark"
                         )}
                         data-testid="playground-thread-shell"
@@ -5074,9 +5100,9 @@ export function PlaygroundMain({
                           {threadContent}
                         </div>
                       </div>
-                    </ChatboxHostThemeProvider>
-                  </ChatboxHostCapabilitiesOverrideProvider>
-                </ChatboxHostStyleProvider>
+                    </ScenarioHostThemeProvider>
+                  </ScenarioHostCapabilitiesOverrideProvider>
+                </ScenarioHostStyleProvider>
               </div>
             </>
           )}

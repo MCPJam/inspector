@@ -130,6 +130,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/computer/reset": "resetComputer",
 
   // Eval suites and cases
+  "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
@@ -152,6 +153,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Eval runs
   "post /projects/{projectId}/eval-runs": "createEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
@@ -160,9 +162,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps":
     "getEvalRunSteps",
 
-  // Chatboxes (deprecated publicly; superseded by scenarios at GA)
-  "get /projects/{projectId}/chatboxes": "listChatboxes",
-  "get /projects/{projectId}/chatboxes/{chatboxId}": "getChatbox",
+  // Scenarios (deprecated publicly; superseded by scenarios at GA)
+  "get /projects/{projectId}/scenarios": "listScenarios",
+  "get /projects/{projectId}/scenarios/{scenarioId}": "getScenario",
 
   // Journeys (Swarms). Flag-gated beta, but the SDK carries them.
   "get /projects/{projectId}/journeys": "listJourneys",
@@ -198,12 +200,16 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "dismissSwarmFinding",
   "post /projects/{projectId}/journey-findings/{findingId}/undismiss":
     "undismissSwarmFinding",
+  "post /projects/{projectId}/eval-runs/{runId}/insights":
+    "requestEvalRunInsights",
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
   "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",
   // The planning read that makes the static agent surfaces survivable.
   "get /projects/{projectId}/capabilities": "getCapabilities",
   // User testing — everything you do with a scenario once it exists.
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}":
+    "getUserTestingScenario",
   "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}":
     "updateUserTestingScenario",
   "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions":

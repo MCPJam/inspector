@@ -1,7 +1,7 @@
 /**
  * Mount/It gating for the catalog registration hook: the registry must be
  * empty on surfaces where the end user is not the inspector operator — the
- * standalone chatbox chat route passes `enabled: false` — and must follow
+ * standalone scenario chat route passes `enabled: false` — and must follow
  * `enabled` toggles across rerenders. Also guards the removal of the
  * browser-native WebMCP mirror: registering the catalog must never touch
  * `document.modelContext` / `navigator.modelContext`.

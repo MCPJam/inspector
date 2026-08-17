@@ -97,11 +97,13 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_capabilities: { command: "capabilities" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
-  // Supersedes the `chatboxes` group below, which is the same product under
-  // its older name.
+  // Publishing and taking down. The reads (`scenarios list` / `scenarios get`)
+  // are bound under "Chat surfaces" below — they used to be a separate group
+  // under the product's older name, and now share this one command.
   publish_scenario: { command: "scenarios publish" },
   unpublish_scenario: { command: "scenarios unpublish" },
   // ── User testing: everything you do with a scenario once it exists ──────
+  get_user_testing_scenario: { command: "user-testing get" },
   update_user_testing_scenario: { command: "user-testing update" },
   list_user_testing_sessions: { command: "user-testing sessions" },
   get_user_testing_session: { command: "user-testing session" },
@@ -134,6 +136,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_suite: { command: "eval run" },
   cancel_eval_run: { command: "eval cancel" },
   get_eval_run: { command: "eval status" },
+  compare_eval_run: { command: "eval compare" },
   list_eval_run_iterations: { command: "eval iterations" },
   get_eval_iteration_trace: { command: "eval trace" },
   get_eval_run_steps: { command: "eval steps" },
@@ -185,9 +188,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   reset_computer: { command: "images reset" },
 
   // ── Chat surfaces ───────────────────────────────────────────────────────
-  list_chatboxes: { command: "chatboxes list" },
-  get_chatbox: { command: "chatboxes get" },
+  list_scenarios: { command: "scenarios list" },
+  get_scenario: { command: "scenarios get" },
   list_chat_sessions: { command: "chat-sessions list" },
+  search_sessions: { command: "sessions search" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "tunnel" },

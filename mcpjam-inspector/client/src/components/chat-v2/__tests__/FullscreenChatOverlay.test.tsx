@@ -4,9 +4,9 @@ import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
 
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
 import {
   useAppToolInvocationLog,
   useAppToolsRegistry,
@@ -23,8 +23,8 @@ vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
     await importOriginal<
       typeof import("../shared/loading-indicator-content")
     >();
-  const { useChatboxHostStyle } = await import(
-    "@/contexts/chatbox-client-style-context"
+  const { useScenarioHostStyle } = await import(
+    "@/contexts/scenario-client-style-context"
   );
   return {
     ...actual,
@@ -34,7 +34,7 @@ vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
       className?: string;
       modelProvider?: string | null;
     }) => {
-      const hostStyle = useChatboxHostStyle();
+      const hostStyle = useScenarioHostStyle();
       let resolved: string | null = hostStyle;
       if (!resolved && modelProvider) {
         const normalized = modelProvider.toLowerCase();
@@ -50,7 +50,7 @@ vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
       return <div data-testid={`loading-indicator-${variant}`} />;
     },
     useResolvedHostStyleForIndicator: (modelProvider?: string | null) => {
-      const hostStyle = useChatboxHostStyle();
+      const hostStyle = useScenarioHostStyle();
       if (hostStyle) return hostStyle;
       if (!modelProvider) return null;
       const normalized = modelProvider.toLowerCase();
@@ -113,20 +113,20 @@ describe("FullscreenChatOverlay", () => {
     ui: ReactElement
   ) =>
     renderWithProviders(
-      <ChatboxHostStyleProvider value={hostStyle}>
-        <ChatboxHostThemeProvider value={theme}>{ui}</ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+      <ScenarioHostStyleProvider value={hostStyle}>
+        <ScenarioHostThemeProvider value={theme}>{ui}</ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     );
 
   it("shows a standalone Claude placeholder row before the first assistant token appears", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[createMessage({ id: "msg-1", role: "user" })]}
           isThinking={true}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(screen.getByTestId("fullscreen-thinking-row")).toBeInTheDocument();
@@ -140,13 +140,13 @@ describe("FullscreenChatOverlay", () => {
 
   it("shows a standalone GPT pulse before the first assistant token appears", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[createMessage({ id: "msg-1", role: "user" })]}
           isThinking={true}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(screen.getByTestId("fullscreen-thinking-row")).toBeInTheDocument();
@@ -157,7 +157,7 @@ describe("FullscreenChatOverlay", () => {
 
   it("hides the GPT pulse once assistant preview text is visible while streaming", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[
@@ -170,7 +170,7 @@ describe("FullscreenChatOverlay", () => {
           ]}
           isThinking={true}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(
@@ -183,7 +183,7 @@ describe("FullscreenChatOverlay", () => {
 
   it("keeps tool-only assistant activity visible while streaming", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[
@@ -204,7 +204,7 @@ describe("FullscreenChatOverlay", () => {
           ]}
           isThinking={true}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(screen.getByText("search_docs")).toBeInTheDocument();
@@ -271,7 +271,7 @@ describe("FullscreenChatOverlay", () => {
 
   it("keeps assistant content visible when a tool part is added to the same message", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[
@@ -293,7 +293,7 @@ describe("FullscreenChatOverlay", () => {
           ]}
           isThinking={true}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(
@@ -370,7 +370,7 @@ describe("FullscreenChatOverlay", () => {
 
   it("keeps the GPT pulse hidden after the response finishes", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[
@@ -383,7 +383,7 @@ describe("FullscreenChatOverlay", () => {
           ]}
           isThinking={false}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(
@@ -448,7 +448,7 @@ describe("FullscreenChatOverlay", () => {
 
   it("moves the Claude mascot onto the latest assistant bubble while streaming", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[
@@ -461,7 +461,7 @@ describe("FullscreenChatOverlay", () => {
           ]}
           isThinking={true}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(
@@ -475,7 +475,7 @@ describe("FullscreenChatOverlay", () => {
 
   it("keeps only one static Claude footer on the latest assistant bubble after loading", () => {
     renderWithProviders(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <FullscreenChatOverlay
           {...defaultProps}
           messages={[
@@ -493,7 +493,7 @@ describe("FullscreenChatOverlay", () => {
           ]}
           isThinking={false}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(
@@ -519,7 +519,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "chatbox-host-composer"
+      "scenario-host-composer"
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(249, 247, 243, 1)"
@@ -539,7 +539,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "chatbox-host-composer"
+      "scenario-host-composer"
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(38, 38, 36, 1)"
@@ -559,7 +559,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "chatbox-host-composer"
+      "scenario-host-composer"
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(255, 255, 255, 1)"
@@ -579,7 +579,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "chatbox-host-composer"
+      "scenario-host-composer"
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(33, 33, 33, 1)"

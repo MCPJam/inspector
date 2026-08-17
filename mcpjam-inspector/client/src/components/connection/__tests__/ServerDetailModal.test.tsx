@@ -168,6 +168,13 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it("prevents browser translation from rewriting the portaled dialog", () => {
+    render(<ServerDetailModal {...defaultProps} />);
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("translate", "no");
+    expect(screen.getByRole("dialog")).toHaveClass("notranslate");
+  });
+
   // Regression: local mode used to hand this modal the LOCAL project id (a
   // `crypto.randomUUID()` value). `projectServerConfig:getConfig` validates
   // `projectId` as `v.id("projects")`, so the query rejected during render
@@ -364,9 +371,7 @@ describe("ServerDetailModal", () => {
     expect(protocolSelect).toBeEnabled();
 
     await user.click(protocolSelect);
-    await user.click(
-      await screen.findByRole("option", { name: "2025-11-25" })
-    );
+    await user.click(await screen.findByRole("option", { name: "2025-11-25" }));
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
@@ -381,6 +386,55 @@ describe("ServerDetailModal", () => {
         },
       });
     });
+  });
+
+  it("does not fire the fallback reconnect after the modal closes", async () => {
+    // The 1.5s safety net is armed by the override change and nothing else
+    // cancels it, so an unmount in that window used to reconnect a server the
+    // user had already navigated away from.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      installPointerCaptureMocks();
+      mockUseFeatureFlagEnabled.mockReturnValue(true);
+      // The read-back never reports the new override, so only the fallback
+      // timer can drive the reconnect.
+      mockUseQuery.mockReturnValue({
+        projectId: "jh7abc123def456ghi789jk",
+        serverIds: [],
+        overrides: {},
+      });
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+
+      const { unmount } = render(
+        <ServerDetailModal
+          {...defaultProps}
+          onReconnect={onReconnect}
+          projectId="jh7abc123def456ghi789jk"
+          hostedServerId="server_123"
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: /connection overrides/i })
+      );
+      await user.click(getProtocolVersionCombobox());
+      await user.click(
+        await screen.findByRole("option", { name: "2025-11-25" })
+      );
+
+      await waitFor(() => {
+        expect(mockSetProjectServerConfig).toHaveBeenCalled();
+      });
+
+      unmount();
+      vi.advanceTimersByTime(2000);
+
+      expect(onReconnect).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("removes implicit auto-connect enrollment when clearing a modal-created protocol override", async () => {
@@ -411,9 +465,7 @@ describe("ServerDetailModal", () => {
     expect(hostDefaultSelect).toHaveTextContent("Client default");
 
     await user.click(hostDefaultSelect);
-    await user.click(
-      await screen.findByRole("option", { name: "2025-11-25" })
-    );
+    await user.click(await screen.findByRole("option", { name: "2025-11-25" }));
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({

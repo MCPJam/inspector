@@ -11,6 +11,7 @@ import type {
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
 import type { Predicate } from "./predicates/types.js";
+import type { EvaluationConfigSnapshot } from "./contract/types.js";
 import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
 import {
@@ -669,6 +670,36 @@ function mergeHostExtrasIntoMetadata(
 }
 
 /**
+ * The contract's wire seat: `metadata.scores` and `metadata.evaluationConfig`.
+ *
+ * `testIteration.metadata` is an open record and `toMetadataRecord` preserves
+ * nested values, so no capability negotiation is required — a backend that has
+ * not yet learned to validate scores simply stores them opaquely and
+ * harmlessly. (Negotiation WOULD be required if scores ever became a top-level
+ * wire field.)
+ *
+ * Both halves ship together or neither does. Results alone are un-joinable:
+ * `role`, `onError` and `onSkipped` live only on the definitions, so a
+ * consumer holding results without the snapshot cannot tell a gating failure
+ * from an advisory one.
+ *
+ * Deliberately NOT written into `advancedConfig`: the backend hashes that into
+ * the caseKey, so a changed threshold would fork case identity and split one
+ * scenario's history in two.
+ */
+function scoreMetadata(
+  iteration: IterationResult,
+  evaluationConfig: EvaluationConfigSnapshot | undefined
+): Record<string, unknown> {
+  if (!iteration.scores || iteration.scores.length === 0) return {};
+  if (!evaluationConfig) return {};
+  return {
+    scores: iteration.scores,
+    evaluationConfig,
+  };
+}
+
+/**
  * The canonical step model for a case whose predicates need to reach the
  * hosted suite: the turns it prompted, then one assert per predicate.
  *
@@ -703,6 +734,19 @@ function syntheticStepsForCase(
   };
 }
 
+/**
+ * Hosted-case identity and semantics carried onto every result row.
+ *
+ * Separate from `expectedToolCalls` and friends because these three describe
+ * WHICH case this is and how it is graded, not what it expected — and the
+ * backend reads them to join a local run to a hosted case's history.
+ */
+export type EvalCaseIdentity = {
+  externalCaseId?: string;
+  isNegativeTest?: boolean;
+  expectedOutput?: string;
+};
+
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
@@ -710,7 +754,9 @@ export function iterationsToEvalResultInputs(
   failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
   predicates?: Predicate[],
-  matchOptions?: import("./matchers.js").EvalMatchOptions
+  matchOptions?: import("./matchers.js").EvalMatchOptions,
+  evaluationConfig?: EvaluationConfigSnapshot,
+  caseIdentity?: EvalCaseIdentity
 ): EvalResultInput[] {
   const advancedConfig = syntheticStepsForCase(iterations, predicates);
   return iterations.map((iteration, index) => {
@@ -741,6 +787,19 @@ export function iterationsToEvalResultInputs(
       durationMs: durationMs > 0 ? durationMs : undefined,
       expectedToolCalls,
       actualToolCalls,
+      // Hosted↔local identity and semantics. These are the SAME wire fields
+      // the backend already hashes into caseKey and renders on the run page,
+      // so a materialized hosted case joins its own history instead of
+      // appearing as a new scenario.
+      ...(caseIdentity?.externalCaseId !== undefined
+        ? { externalCaseId: caseIdentity.externalCaseId }
+        : {}),
+      ...(caseIdentity?.isNegativeTest !== undefined
+        ? { isNegativeTest: caseIdentity.isNegativeTest }
+        : {}),
+      ...(caseIdentity?.expectedOutput !== undefined
+        ? { expectedOutput: caseIdentity.expectedOutput }
+        : {}),
       tokens: {
         input: iteration.tokens.input,
         output: iteration.tokens.output,
@@ -758,6 +817,7 @@ export function iterationsToEvalResultInputs(
           ...(iteration.predicateResults
             ? { predicates: iteration.predicateResults }
             : {}),
+          ...scoreMetadata(iteration, evaluationConfig),
         },
         resolveIterationHostExtras(iteration, hostExtras)
       ),
@@ -777,7 +837,8 @@ export function suiteTestResultsToEvalResultInputs(
   matchOptionsByTest?: Record<
     string,
     import("./matchers.js").EvalMatchOptions | undefined
-  >
+  >,
+  caseIdentityByTest?: Record<string, EvalCaseIdentity | undefined>
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
@@ -811,6 +872,7 @@ export function suiteTestResultsToEvalResultInputs(
         predicateResults: iteration.predicateResults,
       });
 
+      const identity = caseIdentityByTest?.[testName];
       inputs.push({
         caseTitle: testName,
         query: prompts[0]?.getPrompt() ?? testName,
@@ -818,6 +880,15 @@ export function suiteTestResultsToEvalResultInputs(
         durationMs: durationMs > 0 ? durationMs : undefined,
         expectedToolCalls,
         actualToolCalls,
+        ...(identity?.externalCaseId !== undefined
+          ? { externalCaseId: identity.externalCaseId }
+          : {}),
+        ...(identity?.isNegativeTest !== undefined
+          ? { isNegativeTest: identity.isNegativeTest }
+          : {}),
+        ...(identity?.expectedOutput !== undefined
+          ? { expectedOutput: identity.expectedOutput }
+          : {}),
         tokens: {
           input: iteration.tokens.input,
           output: iteration.tokens.output,
@@ -837,6 +908,7 @@ export function suiteTestResultsToEvalResultInputs(
             ...(iteration.predicateResults
               ? { predicates: iteration.predicateResults }
               : {}),
+            ...scoreMetadata(iteration, testResult.evaluationConfig),
           },
           resolveIterationHostExtras(iteration, hostExtras)
         ),

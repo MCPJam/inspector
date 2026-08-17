@@ -13,6 +13,7 @@
 import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
@@ -60,7 +61,30 @@ v1.route("/", publicModels);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
-v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
+//
+// `passthroughRateLimitMiddleware` meters the one credential class the gateway
+// does not CHECK. An `sk_` key is validated against WorkOS and metered per key
+// id, a guest token is validated and metered per guest id — but an AuthKit JWT
+// is deliberately NOT verified here (every route it fronts forwards the bearer
+// to Convex, which verifies it against JWKS), and so reached the handlers with
+// nothing attached to it at all. Anyone can present one. It runs AFTER the auth
+// middleware because the label that middleware sets is the only thing that
+// distinguishes an asserted identity from a verified one.
+//
+// The `slk_`/`dsc_` SERVICE credentials are unmetered here too, and stay that
+// way deliberately: each is a single shared secret compared against a
+// server-side hash (`surface-service-auth.ts`), so a caller cannot mint one,
+// and the surface it fronts is our own bot rather than the public. Their real
+// ceiling is the backend's org-keyed budgets, which no gateway limiter can
+// substitute for. If a first-party surface ever needs braking, it wants its own
+// per-surface budget — not this one, which is keyed on a bearer that costs
+// nothing to rotate.
+v1.use(
+  "*",
+  bearerAuthMiddleware,
+  passthroughRateLimitMiddleware,
+  guestRateLimitMiddleware
+);
 
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
@@ -115,7 +139,7 @@ v1.route("/", swarmInsights);
 // they live here rather than in the read-proxy catalog. Publishing is behind
 // the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
 // not. Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches these,
-// and the existing chatbox guest GETs (which share-link flows depend on) stay
+// and the existing scenario guest GETs (which share-link flows depend on) stay
 // exactly as they are until a guest security review says otherwise.
 v1.route("/", scenarios);
 // User testing — everything you do with a scenario ONCE IT EXISTS: read what

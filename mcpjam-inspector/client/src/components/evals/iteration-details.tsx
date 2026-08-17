@@ -11,6 +11,12 @@ import {
   PredicatesList,
   parseIterationPredicates,
 } from "./predicates-list";
+import {
+  ScoresList,
+  parseEvaluationConfig,
+  parseIterationScores,
+  parseScoreIntegrity,
+} from "./scores-list";
 import { TraceViewer } from "./trace-viewer";
 import {
   gateMcpToolResultImageRenderingByModelVisibility,
@@ -904,6 +910,32 @@ export function IterationDetails({
       </div>
     ) : null;
 
+  // The score gate: every verdict source in one shape, joined to the
+  // definitions that say whether each one gates. Rendered ALONGSIDE the
+  // predicate list rather than replacing it — the predicate rows carry widget
+  // render evidence the score rows do not, and an SDK run that predates
+  // scoring has predicates and no scores at all.
+  const scoresSection = (() => {
+    const scores = parseIterationScores(iteration.metadata);
+    const integrity = parseScoreIntegrity(iteration.metadata);
+    // Rendered when there are scores OR when the backend flagged a downgrade.
+    // An integrity-invalid iteration whose rows were ALL quarantined has
+    // nothing to list, and that is exactly the case where the warning is the
+    // only explanation the operator will get for a failed verdict.
+    if ((!scores || scores.length === 0) && !integrity) return null;
+    return (
+      // `ScoresList` owns its own "Scores" header; a wrapper heading here
+      // rendered it twice.
+      <div data-testid="iteration-scores-section">
+        <ScoresList
+          scores={scores ?? []}
+          evaluationConfig={parseEvaluationConfig(iteration.metadata)}
+          integrity={integrity}
+        />
+      </div>
+    );
+  })();
+
   // Widget probes get an artifacts-first layout: checks + the rendered widget.
   // Tool-call diff (expected vs actual is meaningless for a pinned call) and the
   // full trace viewer (no LLM conversation) are hidden. `isProbe` is computed
@@ -1087,6 +1119,7 @@ export function IterationDetails({
       {isProbe ? (
         <>
           {predicatesSection}
+          {scoresSection}
           {probeArtifactsSection}
         </>
       ) : traceFirst ? (
@@ -1094,11 +1127,13 @@ export function IterationDetails({
           {traceSection}
           {toolCallsSection}
           {predicatesSection}
+          {scoresSection}
         </>
       ) : (
         <>
           {toolCallsSection}
           {predicatesSection}
+          {scoresSection}
           {traceSection}
         </>
       )}
