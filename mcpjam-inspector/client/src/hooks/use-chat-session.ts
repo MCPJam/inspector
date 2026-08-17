@@ -641,6 +641,13 @@ export interface UseChatSessionReturn {
    * describes exactly one turn.
    */
   consumePersistReceipt: () => PersistReceiptData | null;
+  /**
+   * Take whether the turn that just ended was ABORTED (Stop, or any other abort
+   * of the active response). The AI SDK reports an abort as `status: "ready"`
+   * with no receipt, so without this a stopped turn looks exactly like a turn
+   * whose save silently vanished. Consuming: each answer describes one turn.
+   */
+  consumeTurnAborted: () => boolean;
 
   // Resumed thread version (for optimistic concurrency)
   resumedVersion: number | null;
@@ -1715,6 +1722,23 @@ export function useChatSession(
     chatSessionId: string;
     turnId: string;
   } | null>(null);
+  /**
+   * Whether the turn that just ended was ABORTED rather than allowed to finish.
+   *
+   * The AI SDK has no distinct "aborted" status — on abort it sets
+   * `status: "ready"` and returns (ai/dist/index.mjs, in `makeRequest`'s catch:
+   * `if (isAbort || err.name === "AbortError") { this.setStatus({ status:
+   * "ready" }); return null; }`). So a stopped turn is indistinguishable from a
+   * completed one by status alone, and post-stream consumers that expect a
+   * persist receipt would wait out their whole reconciliation window for a
+   * receipt the server never sends: it persists only `runSucceeded && !aborted`.
+   *
+   * Sourced from the SDK's own `onFinish({ isAbort })` rather than from the Stop
+   * button, so an abort from ANY source counts — Stop, an unmounting instance
+   * aborting its controller, a navigation. Set on every turn end (true or
+   * false), so a finished turn always overwrites a stopped predecessor.
+   */
+  const turnAbortedRef = useRef(false);
   const [, setHydrationTick] = useState(0);
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
   const [restoredToolRenderOverrides, setRestoredToolRenderOverrides] =
@@ -2222,6 +2246,11 @@ export function useChatSession(
           turnId: part.data.turnId,
         };
         persistReceiptRef.current = null;
+        // Same lifetime as the receipt: a new turn invalidates the previous
+        // turn's abort just as it invalidates the previous turn's receipt.
+        // `onFinish` already clears it at every turn end, so this only matters
+        // when nothing consumed the flag (no history rail on this surface).
+        turnAbortedRef.current = false;
       }
 
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
@@ -2259,6 +2288,24 @@ export function useChatSession(
       return null;
     }
     return receipt;
+  }, []);
+
+  /**
+   * Take whether the turn that just ended was aborted.
+   *
+   * Consuming, like {@link consumePersistReceipt}: the answer describes exactly
+   * one turn, and a leftover `true` would tell the next turn's post-stream
+   * reconciliation to stand down when it should be watching.
+   *
+   * Deliberately NOT session-scoped the way the receipt is. The receipt carries
+   * data (a version) that would be actively wrong if applied to another thread;
+   * this is a bare "nothing was written", which is true of the aborted turn no
+   * matter which thread the surface is on when it reads it.
+   */
+  const consumeTurnAborted = useCallback((): boolean => {
+    const aborted = turnAbortedRef.current;
+    turnAbortedRef.current = false;
+    return aborted;
   }, []);
 
   const syncResumedVersion = useCallback((version: number | null) => {
@@ -2994,6 +3041,14 @@ export function useChatSession(
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,
+    // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
+    // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
+    // React renders that status — so a post-stream effect reading it on the
+    // ready transition always sees THIS turn's answer. Same ordering guarantee
+    // the persist receipt already relies on.
+    onFinish: ({ isAbort }) => {
+      turnAbortedRef.current = isAbort;
+    },
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
     // `addToolOutput(...)`. Server-tool calls bypass this handler (they
@@ -4692,6 +4747,7 @@ export function useChatSession(
     loadChatSession,
     syncResumedVersion,
     consumePersistReceipt,
+    consumeTurnAborted,
 
     // Resumed thread version
     resumedVersion,

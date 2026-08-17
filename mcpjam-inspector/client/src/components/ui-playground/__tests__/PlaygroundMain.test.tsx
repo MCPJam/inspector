@@ -277,6 +277,7 @@ const mockUseChatSession = {
   rewindToMessage: vi.fn(),
   detachToLocalFork: vi.fn(async () => ({ chatSessionId: "forked-session" })),
   consumePersistReceipt: vi.fn(() => null),
+  consumeTurnAborted: vi.fn(() => false),
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},

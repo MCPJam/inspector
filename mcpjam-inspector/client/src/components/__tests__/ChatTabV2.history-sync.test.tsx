@@ -426,6 +426,7 @@ const mockUseChatSession = {
     chatSessionId: "forked-session",
   })),
   consumePersistReceipt: vi.fn(() => null as any),
+  consumeTurnAborted: vi.fn(() => false),
   loadChatSession: vi.fn(async () => undefined),
   rewindToMessage: vi.fn(),
   syncResumedVersion: vi.fn((version: number | null) => {
@@ -514,6 +515,7 @@ describe("ChatTabV2 history sync", () => {
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
     mockUseChatSession.consumePersistReceipt.mockReset().mockReturnValue(null);
+    mockUseChatSession.consumeTurnAborted.mockReset().mockReturnValue(false);
     Object.assign(mockUseChatSession, {
       messages: [
         {
