@@ -40,6 +40,10 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
   }),
 }));
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "user-1" }, isLoading: false }),
+}));
+
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 vi.mock("@/lib/toast", () => ({
   toast: { error: toastError, info: toastInfo, success: toastSuccess },

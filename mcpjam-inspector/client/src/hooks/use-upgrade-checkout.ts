@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import {
   useOrganizationBilling,
   type BillingInterval,
@@ -39,6 +40,10 @@ const UPGRADE_RETURN_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 export interface UpgradeReturnTicket {
   organizationId: string;
   origin: UpgradeOrigin;
+  /** Who started this checkout. sessionStorage is per-tab, not per-identity:
+   * without this, signing out and letting someone else sign in inside the same
+   * tab hands them a confirmation — and a conversion — they never earned. */
+  userId: string;
   /** We already reported one settlement wait for this checkout. Survives a
    * reload so a slow webhook is still recorded as "late", not "immediate". */
   waited: boolean;
@@ -46,13 +51,14 @@ export interface UpgradeReturnTicket {
 
 export function stashUpgradeReturnToken(
   organizationId: string,
-  origin: UpgradeOrigin
+  origin: UpgradeOrigin,
+  userId: string
 ): void {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(
       UPGRADE_RETURN_TOKEN_KEY,
-      JSON.stringify({ organizationId, origin, issuedAt: Date.now() })
+      JSON.stringify({ organizationId, origin, userId, issuedAt: Date.now() })
     );
   } catch {
     // Storage can be unavailable (private mode, blocked cookies). Checkout
@@ -70,14 +76,21 @@ export function stashUpgradeReturnToken(
  * arrival, so a shared or bookmarked link still confirms nothing. Clearing is
  * `clearUpgradeReturnToken`, once the outcome is known.
  */
-export function readUpgradeReturnToken(): UpgradeReturnTicket | null {
+export function readUpgradeReturnToken(
+  currentUserId: string | null
+): UpgradeReturnTicket | null {
   if (typeof window === "undefined") return null;
+  // No identity to check against yet (auth still resolving, or signed out).
+  // Leave the ticket alone rather than retiring a pending confirmation that
+  // still belongs to whoever comes back — a refresh blip is not a new user.
+  if (!currentUserId) return null;
   try {
     const raw = window.sessionStorage.getItem(UPGRADE_RETURN_TOKEN_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       organizationId?: string;
       origin?: string;
+      userId?: string;
       issuedAt?: number;
       waited?: boolean;
     };
@@ -86,13 +99,16 @@ export function readUpgradeReturnToken(): UpgradeReturnTicket | null {
       Date.now() - parsed.issuedAt < UPGRADE_RETURN_TOKEN_TTL_MS;
     // The TTL is the give-up: a checkout abandoned at Stripe leaves a ticket
     // nothing will ever settle, and it must not wait in this tab forever.
-    if (!fresh || !parsed.organizationId) {
+    // A ticket belonging to someone else — a previous session in this tab, or
+    // one written before tickets carried an identity — is retired on sight.
+    if (!fresh || !parsed.organizationId || parsed.userId !== currentUserId) {
       clearUpgradeReturnToken();
       return null;
     }
     return {
       organizationId: parsed.organizationId,
       origin: parsed.origin === "credits" ? "credits" : "evals",
+      userId: parsed.userId,
       waited: parsed.waited === true,
     };
   } catch {
@@ -209,6 +225,9 @@ export function useUpgradeCheckout({
     isLoadingBilling,
     isLoadingPlanCatalog,
   } = useOrganizationBilling(organizationId);
+  // Stamped onto the return ticket so only the buyer can redeem it.
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   const teamEntry = planCatalog?.plans.team;
   // One rule for the whole path: an interval is offered only if the catalog
@@ -365,7 +384,7 @@ export function useUpgradeCheckout({
         }
         // Same tab, so the return URL brings the user back in place. The token
         // is what makes that return trustworthy on the way back.
-        stashUpgradeReturnToken(organizationId, origin);
+        if (userId) stashUpgradeReturnToken(organizationId, origin, userId);
         window.location.assign(nextUrl);
         return { redirected: true, shouldDismiss: false };
       }
@@ -424,6 +443,7 @@ export function useUpgradeCheckout({
     origin,
     startPlanChange,
     teamEntry,
+    userId,
   ]);
 
   return {

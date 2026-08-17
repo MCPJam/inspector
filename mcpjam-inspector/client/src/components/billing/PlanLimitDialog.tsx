@@ -10,6 +10,7 @@ import {
   useUpgradeCheckout,
   type UpgradeOrigin,
 } from "@/hooks/use-upgrade-checkout";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
@@ -57,21 +58,21 @@ function formatResetDistance(resetsAt: number): string | null {
 interface UpgradeReturn {
   organizationId: string;
   origin: UpgradeOrigin;
+  /** The buyer, carried so the flow can re-read its own ticket. */
+  userId: string;
 }
 
-/** Pure: reading the URL is safe to repeat. Claiming the return is not, and
- * happens once in an effect below. */
-function readUpgradeReturnParams(): UpgradeReturn | null {
-  if (typeof window === "undefined") return null;
-  const params = new URLSearchParams(window.location.search);
-  if (params.get(UPGRADE_RETURN_PARAM) !== "return") return null;
-  const organizationId = params.get(UPGRADE_RETURN_ORG_PARAM);
-  if (!organizationId) return null;
-  const rawOrigin = params.get(UPGRADE_RETURN_ORIGIN_PARAM);
-  return {
-    organizationId,
-    origin: rawOrigin === "credits" ? "credits" : "evals",
-  };
+/**
+ * Only asks whether there is round-trip bookkeeping to clean off the URL. The
+ * params carry no authority any more — the ticket says which org, which
+ * origin, and whose checkout it was — so nothing is read out of them.
+ */
+function hasUpgradeReturnParams(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    new URLSearchParams(window.location.search).get(UPGRADE_RETURN_PARAM) ===
+    "return"
+  );
 }
 
 function stripUpgradeReturnParams(): void {
@@ -107,7 +108,9 @@ function UpgradeReturnFlow({
   const settledRef = useRef(false);
   // Seeded from the ticket: a wait reported before a reload still counts, so
   // the confirmation that lands afterwards is recorded as "late".
-  const waitReportedRef = useRef(readUpgradeReturnToken()?.waited === true);
+  const waitReportedRef = useRef(
+    readUpgradeReturnToken(upgradeReturn.userId)?.waited === true
+  );
   const { billingStatus, planCatalog, isLoadingBilling } =
     useOrganizationBilling(upgradeReturn.organizationId);
 
@@ -194,20 +197,42 @@ function UpgradeReturnFlowBoundary() {
   // which does not. Stripe's webhook can land after the user has refreshed or
   // navigated, and the confirmation they paid for must not depend on the tab
   // sitting still until it does.
-  const [upgradeReturn] = useState<UpgradeReturn | null>(() => {
-    const ticket = readUpgradeReturnToken();
-    return ticket
-      ? { organizationId: ticket.organizationId, origin: ticket.origin }
-      : null;
-  });
+  //
+  // Armed against an identity, not just a tab: sessionStorage outlives a
+  // sign-out, so the next person in this tab would otherwise inherit a pending
+  // confirmation — and its conversion event — from the previous one.
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const [upgradeReturn, setUpgradeReturn] = useState<UpgradeReturn | null>(
+    null
+  );
+  const armedForRef = useRef<string | null>(null);
   const strippedRef = useRef(false);
+
+  useEffect(() => {
+    // Nothing to check against yet; the ticket keeps waiting.
+    if (!userId || armedForRef.current === userId) return;
+    armedForRef.current = userId;
+    // Retires the ticket itself when it belongs to someone else, so an
+    // identity switch inside this tab both disarms and cleans up.
+    const ticket = readUpgradeReturnToken(userId);
+    setUpgradeReturn(
+      ticket
+        ? {
+            organizationId: ticket.organizationId,
+            origin: ticket.origin,
+            userId: ticket.userId,
+          }
+        : null
+    );
+  }, [userId]);
 
   // The params are bookkeeping for the round trip, never the authority: strip
   // them on arrival so a reload, bookmark, or pasted link carries nothing.
   useEffect(() => {
     if (strippedRef.current) return;
     strippedRef.current = true;
-    if (readUpgradeReturnParams()) stripUpgradeReturnParams();
+    if (hasUpgradeReturnParams()) stripUpgradeReturnParams();
   }, []);
 
   if (!upgradeReturn) return null;

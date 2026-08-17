@@ -15,6 +15,7 @@ const {
   upgradeState,
   billingState,
   recipientsState,
+  authState,
 } = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   trackMock: vi.fn(),
@@ -32,6 +33,14 @@ const {
     },
   },
   billingState: { plan: "free" as string, isLoading: false },
+  authState: { userId: "user-1" as string | null },
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    user: authState.userId ? { id: authState.userId } : null,
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -111,6 +120,7 @@ beforeEach(() => {
   recipientsState.current = { recipients: [], isLoading: false };
   billingState.plan = "free";
   billingState.isLoading = false;
+  authState.userId = "user-1";
   window.history.replaceState(null, "", "/evals");
   window.sessionStorage.clear();
   usePlanLimitDialogStore.setState({ isOpen: false, limit: null });
@@ -123,9 +133,10 @@ beforeEach(() => {
 function arriveFromCheckout(
   url: string,
   organizationId = "org-1",
-  origin: "evals" | "credits" = "evals"
+  origin: "evals" | "credits" = "evals",
+  userId = "user-1"
 ) {
-  stashUpgradeReturnToken(organizationId, origin);
+  stashUpgradeReturnToken(organizationId, origin, userId);
   window.history.replaceState(null, "", url);
 }
 
@@ -555,6 +566,65 @@ describe("PlanLimitDialog", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("does not hand the confirmation to whoever signs in next", async () => {
+      // sessionStorage survives a sign-out. Without an identity on the ticket,
+      // the next person in this tab inherits the toast AND the conversion for
+      // a checkout they never started.
+      billingState.plan = "team";
+      arriveFromCheckout(
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
+        "org-1",
+        "evals",
+        "user-1"
+      );
+
+      authState.userId = "user-2";
+      render(<PlanLimitDialog />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.anything()
+      );
+      // Retired on sight, so it cannot wait around for a third user either.
+      expect(window.sessionStorage.getItem("mcpjam.upgradeReturnToken")).toBe(
+        null
+      );
+    });
+
+    it("keeps waiting through a sign-out blip and confirms for the same user", async () => {
+      // A token refresh briefly drops the identity. That is not a new user, so
+      // the pending confirmation must survive it.
+      billingState.plan = "team";
+      arriveFromCheckout(
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+      );
+
+      authState.userId = null;
+      const view = render(<PlanLimitDialog />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(
+        window.sessionStorage.getItem("mcpjam.upgradeReturnToken")
+      ).not.toBe(null);
+
+      authState.userId = "user-1";
+      view.rerender(<PlanLimitDialog />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(toastSuccess).toHaveBeenCalledWith(
+        expect.stringMatching(/You're on the Team plan/)
+      );
     });
 
     it("ignores a return marker that did not come from this tab's checkout", async () => {
