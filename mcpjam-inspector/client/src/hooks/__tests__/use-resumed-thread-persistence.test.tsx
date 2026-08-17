@@ -414,6 +414,52 @@ describe("useResumedThreadPersistence", () => {
     expect(harness.refreshAfterStream).not.toHaveBeenCalled();
   });
 
+  it("detaches on a conflict with no baseline — the failed-detach loop", () => {
+    // The production sequence. `detachToLocalFork` could not confirm its fork
+    // went live, so the surface stayed on the OLD chat session with
+    // `resumedVersion` preserved while `cancelPendingHistorySelection` nulled
+    // `activeHistorySessionId` — which is what makes the baseline null here.
+    // The next send carries the stale `expectedVersion`, the server 409s, and
+    // the receipt names the still-live old session, so it passes
+    // `consumePersistReceipt` and lands in the no-baseline branch. That branch
+    // used to return silently, losing this turn and every turn after it.
+    const harness = setup({
+      receipt: { outcome: "conflict", chatSessionId: "c", currentVersion: 9 },
+    });
+    const detached = { ...harness.props, activeHistorySessionId: null };
+
+    act(() => harness.view.rerender({ ...detached, status: "submitted" }));
+    expect(harness.sendBaselineRef.current).toBeNull();
+    act(() => harness.view.rerender({ ...detached, status: "streaming" }));
+    act(() => harness.view.rerender({ ...detached, status: "ready" }));
+
+    expect(harness.onConflict).toHaveBeenCalledTimes(1);
+    // Still suppressed: the refresh would reattach the thread being left.
+    expect(harness.refreshAfterStream).not.toHaveBeenCalled();
+  });
+
+  it("does not detach a baseline-less turn on any other outcome", () => {
+    // A fresh, non-resumed thread has no baseline by design. Only positive
+    // evidence of a concurrent writer may cost the user their thread.
+    for (const receipt of [
+      { outcome: "saved" as const, chatSessionId: "c", version: 5 },
+      { outcome: "skipped" as const, chatSessionId: "c", version: 4 },
+      { outcome: "failed" as const, chatSessionId: "c" },
+      null,
+    ]) {
+      const harness = setup({ resumedVersion: null, receipt });
+
+      harness.runTurn();
+      act(() => {
+        vi.advanceTimersByTime(11_000);
+      });
+
+      expect(harness.onConflict).not.toHaveBeenCalled();
+      expect(harness.onUnsaved).not.toHaveBeenCalled();
+      expect(harness.refreshAfterStream).toHaveBeenCalled();
+    }
+  });
+
   it("refreshes the rail for a fresh thread — that is how it learns the new row", () => {
     const harness = setup({ resumedVersion: null, receipt: null });
     harness.runTurn();
